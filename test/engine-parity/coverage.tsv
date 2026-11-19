@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 742/742
+# covered: 747/747
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
-# persistence_journal: 56/56
+# persistence_journal: 61/61
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -82,10 +82,10 @@ transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	86	yes	yes	yes	serves
-readPageSnapshot	pages	yes	18	no	yes	yes	serves
+readPageSnapshot	pages	yes	19	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	334	yes	yes	yes	serves
+putPage	pages	yes	335	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
@@ -388,7 +388,7 @@ stampWriteClaim	persistence_journal	yes	18	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	13	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	35	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	36	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -410,7 +410,12 @@ listReservationsAfter	persistence_journal	yes	1	no	yes	yes	serves
 listTrueUpRequests	persistence_journal	yes	1	no	yes	yes	serves
 readCapacityForecastInputs	persistence_journal	yes	2	no	yes	yes	serves
 listPendingSegmentedProjections	persistence_journal	yes	3	no	yes	yes	serves
-selectProjectionWindowJobs	persistence_journal	yes	4	no	yes	yes	serves
+selectProjectionWindowJobs	persistence_journal	yes	5	no	yes	yes	serves
+claimSegmentedProjection	persistence_journal	yes	1	no	yes	yes	serves
+renewSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
+releaseSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
+deleteProjectionJob	persistence_journal	yes	1	no	yes	yes	serves
+markProjectionRebuildFailed	persistence_journal	yes	1	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	1	no	yes	yes	serves

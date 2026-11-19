@@ -56,7 +56,7 @@ mod writer_versions;
 pub use effects::{PublicationEffectsSpec, QueuedEffect};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{
-    ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
+    ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use topology::TopologyChangeInsert;

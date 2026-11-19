@@ -10,11 +10,13 @@
 //! collation).
 //!
 //! `queue_page_projection` keeps the queue in step with every page write as PGLite's
-//! `gbrain_queue_page_projection` trigger does. It is the only writer here: the other writers of a
-//! job's `reason` (`segmented_projecting`, `rebuild_failed`, `chunk_replacement_continuing`) are
-//! raw SQL the Rust engine refuses, so every job here has reason `canonical_change`. The reads
-//! still apply the full reason filters. A source delete removes each page first
-//! (`cascade.rs`), and the hook removes the page's job, so no job outlives its source.
+//! `gbrain_queue_page_projection` trigger does. The segmented projector's queue writes
+//! (`claimSegmentedProjection`, `renewSegmentedProjectionClaim`, `releaseSegmentedProjectionClaim`,
+//! `deleteProjectionJob`, `markProjectionRebuildFailed` of `page-body/projection.ts`) are the
+//! other writers; each runs in one `Store::write`. `chunk_replacement_continuing` and
+//! `protocol_activation` still have no store writer, and the reads apply the full reason
+//! filters. A source delete removes each page first (`cascade.rs`), and the hook removes the
+//! page's job, so no job outlives its source.
 
 use super::{QUEUE, uuid_param};
 use crate::env::{Env, parse_iso, transaction_clock};
@@ -549,6 +551,143 @@ pub(crate) fn select_projection_window_jobs_in(
     Ok(rows)
 }
 
+/// The reason `markProjectionRebuildFailed` writes.
+const REBUILD_FAILED: &str = "rebuild_failed";
+
+/// The transaction's time: `now()` and, for the projector's writes, `clock_timestamp()` (one
+/// store write is one statement, so the two agree).
+fn write_now() -> Result<i64> {
+    transaction_clock::transaction_now().ok_or_else(|| {
+        StoreError::invalid("a projection queue write ran outside a store write transaction")
+    })
+}
+
+/// The key of the job of page `(source_id, slug)`, or none when the source does not exist (the
+/// statements' `(SELECT incarnation FROM sources WHERE id=$1)` is NULL and matches no row).
+fn page_job_key(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Option<Vec<u8>>> {
+    Ok(read_source(read, source_id)?.map(|s| job_key(&s.incarnation, slug)))
+}
+
+fn read_job(read: &dyn KvRead, key: &[u8]) -> Result<Option<JobRecord>> {
+    read.get(key)?.map(|v| decode_job(&v)).transpose()
+}
+
+/// `claimSegmentedProjection`: `claimed` when the page's job had no live claim and now carries
+/// `claim`, `held` when another live claim holds it, `absent` when the page has no job.
+pub(crate) fn claim_segmented_projection_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<&'static str> {
+    let Some(key) = page_job_key(&*tx, source_id, slug)? else {
+        return Ok("absent");
+    };
+    let Some(mut job) = read_job(&*tx, &key)? else {
+        return Ok("absent");
+    };
+    let now = write_now()?;
+    if claimed(&job, now) {
+        return Ok("held");
+    }
+    job.reason = claim.to_owned();
+    job.updated_at_us = now;
+    put_job(tx, &key, &job)?;
+    Ok("claimed")
+}
+
+/// The page's job while its reason is `claim`, with its key.
+fn claimed_job(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<Option<(Vec<u8>, JobRecord)>> {
+    let Some(key) = page_job_key(read, source_id, slug)? else {
+        return Ok(None);
+    };
+    Ok(read_job(read, &key)?
+        .filter(|job| job.reason == claim)
+        .map(|job| (key, job)))
+}
+
+/// `renewSegmentedProjectionClaim`: true when the job still carried `claim` and its time moved to now.
+pub(crate) fn renew_segmented_projection_claim_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<bool> {
+    let Some((key, mut job)) = claimed_job(&*tx, source_id, slug, claim)? else {
+        return Ok(false);
+    };
+    job.updated_at_us = write_now()?;
+    put_job(tx, &key, &job)?;
+    Ok(true)
+}
+
+/// `releaseSegmentedProjectionClaim`: a job that still carries `claim` goes back to `canonical_change`.
+pub(crate) fn release_segmented_projection_claim_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<()> {
+    if let Some((key, mut job)) = claimed_job(&*tx, source_id, slug, claim)? {
+        job.reason = CANONICAL_CHANGE.into();
+        job.updated_at_us = write_now()?;
+        put_job(tx, &key, &job)?;
+    }
+    Ok(())
+}
+
+/// The job at `(source_incarnation, slug)` when it is still queued at `revision`.
+fn job_at_revision(
+    read: &dyn KvRead,
+    job: &ProjectionJobRef,
+) -> Result<Option<(Vec<u8>, JobRecord)>> {
+    let incarnation = uuid_param(&job.source_incarnation, "sourceIncarnation")?;
+    let revision = uuid_param(&job.revision, "revision")?;
+    let key = job_key(&incarnation, &job.slug);
+    Ok(read_job(read, &key)?
+        .filter(|record| record.revision.eq_ignore_ascii_case(&revision))
+        .map(|record| (key, record)))
+}
+
+/// `deleteProjectionJob`: the job goes when it is still queued at `revision`.
+pub(crate) fn delete_projection_job_in(tx: &mut dyn KvWrite, job: &ProjectionJobRef) -> Result<()> {
+    if let Some((key, _)) = job_at_revision(&*tx, job)? {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
+/// `markProjectionRebuildFailed`: a job still queued at `revision` that no live claim holds gets
+/// reason `rebuild_failed` at now, so the retry window starts.
+pub(crate) fn mark_projection_rebuild_failed_in(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+) -> Result<()> {
+    let now = write_now()?;
+    if let Some((key, mut record)) = job_at_revision(&*tx, job)?
+        && !claimed(&record, now)
+    {
+        record.reason = REBUILD_FAILED.into();
+        record.updated_at_us = now;
+        put_job(tx, &key, &record)?;
+    }
+    Ok(())
+}
+
+/// A queued job by its key and revision (`deleteProjectionJob`, `markProjectionRebuildFailed`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionJobRef {
+    pub source_incarnation: String,
+    pub slug: String,
+    pub revision: String,
+}
+
 impl Store {
     /// `listPendingSegmentedProjections(filter)`.
     pub fn list_pending_segmented_projections(
@@ -565,6 +704,46 @@ impl Store {
         retry_cooldown: bool,
     ) -> Result<Vec<Value>> {
         select_projection_window_jobs_in(&*self.read()?, &*self.env, cursor, retry_cooldown)
+    }
+
+    /// `claimSegmentedProjection({ sourceId, slug }, claim)`: `claimed`, `held` or `absent`.
+    pub fn claim_segmented_projection(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+    ) -> Result<&'static str> {
+        self.write(|tx| claim_segmented_projection_in(tx, source_id, slug, claim))
+    }
+
+    /// `renewSegmentedProjectionClaim({ sourceId, slug }, claim)`.
+    pub fn renew_segmented_projection_claim(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+    ) -> Result<bool> {
+        self.write(|tx| renew_segmented_projection_claim_in(tx, source_id, slug, claim))
+    }
+
+    /// `releaseSegmentedProjectionClaim({ sourceId, slug }, claim)`.
+    pub fn release_segmented_projection_claim(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+    ) -> Result<()> {
+        self.write(|tx| release_segmented_projection_claim_in(tx, source_id, slug, claim))
+    }
+
+    /// `deleteProjectionJob(job)`.
+    pub fn delete_projection_job(&self, job: &ProjectionJobRef) -> Result<()> {
+        self.write(|tx| delete_projection_job_in(tx, job))
+    }
+
+    /// `markProjectionRebuildFailed(job)`.
+    pub fn mark_projection_rebuild_failed(&self, job: &ProjectionJobRef) -> Result<()> {
+        self.write(|tx| mark_projection_rebuild_failed_in(tx, job))
     }
 
     /// Whether the page projection queue holds no job.
@@ -792,5 +971,98 @@ mod tests {
             })
             .unwrap();
         assert_eq!(transaction_clock::transaction_now(), None);
+    }
+
+    /// The projector's queue writes: one live claim at a time, renew and release only by the
+    /// holder, and the rebuilt and failed marks only at the queued revision.
+    #[test]
+    fn the_projector_claims_renews_releases_and_settles_a_job() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a");
+        let job = |store: &Store| {
+            store
+                .read()
+                .and_then(|r| read_job(&*r, &job_key(&incarnation_of(&*r, "default")?, "notes/a")))
+                .unwrap()
+        };
+        let (a, b) = ("segmented_projecting:a", "segmented_projecting:b");
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/none", a)
+                .unwrap(),
+            "absent"
+        );
+        assert_eq!(
+            store
+                .claim_segmented_projection("no-such-source", "notes/a", a)
+                .unwrap(),
+            "absent"
+        );
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/a", a)
+                .unwrap(),
+            "claimed"
+        );
+        assert_eq!(job(&store).unwrap().reason, a);
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/a", b)
+                .unwrap(),
+            "held"
+        );
+        assert!(
+            !store
+                .renew_segmented_projection_claim("default", "notes/a", b)
+                .unwrap()
+        );
+        assert!(
+            store
+                .renew_segmented_projection_claim("default", "notes/a", a)
+                .unwrap()
+        );
+        store
+            .release_segmented_projection_claim("default", "notes/a", b)
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, a);
+        let revision = job(&store).unwrap().revision;
+        let incarnation = store
+            .read()
+            .and_then(|r| incarnation_of(&*r, "default"))
+            .unwrap();
+        let at = |revision: &str| ProjectionJobRef {
+            source_incarnation: incarnation.clone(),
+            slug: "notes/a".into(),
+            revision: revision.into(),
+        };
+        // A live claim keeps the failed mark off.
+        store
+            .mark_projection_rebuild_failed(&at(&revision))
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, a);
+        store
+            .release_segmented_projection_claim("default", "notes/a", a)
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, CANONICAL_CHANGE);
+        let other = "00000000-0000-4000-8000-000000000000";
+        store.mark_projection_rebuild_failed(&at(other)).unwrap();
+        assert_eq!(job(&store).unwrap().reason, CANONICAL_CHANGE);
+        store
+            .mark_projection_rebuild_failed(&at(&revision))
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, REBUILD_FAILED);
+        store.delete_projection_job(&at(other)).unwrap();
+        assert!(job(&store).is_some());
+        store
+            .delete_projection_job(&at(&revision.to_uppercase()))
+            .unwrap();
+        assert!(job(&store).is_none());
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/a", a)
+                .unwrap(),
+            "absent"
+        );
+        assert!(store.delete_projection_job(&at("not-a-uuid")).is_err());
     }
 }

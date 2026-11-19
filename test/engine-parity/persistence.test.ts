@@ -844,6 +844,59 @@ describe('engine parity: write-journal housekeeping', () => {
     return walks;
   });
 
+  parityTest('the projector claims, renews, releases, fails and deletes a queued job, one live claim at a time', {
+    methods: ['putPage', 'readPageSnapshot', 'readSourceMembership', 'selectProjectionWindowJobs', 'claimSegmentedProjection',
+      'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed'],
+  }, async (engine) => {
+    await engine.putPage('notes/a', { type: 'note', title: 'a', compiled_truth: 'notes/a body' });
+    const ref = { sourceId: 'default', slug: 'notes/a' };
+    const job = { sourceIncarnation: (await engine.readSourceMembership('default'))!.incarnation, slug: 'notes/a',
+      revision: (await engine.readPageSnapshot('notes/a'))!.revision };
+    const other = { ...job, revision: '00000000-0000-4000-8000-000000000000' };
+    const start = { after: { source_incarnation: '00000000-0000-0000-0000-000000000000', slug: '' }, highWater: null };
+    // Whether the job is in the window: with the retry cooldown (hides claimed and freshly failed jobs) and without it (lists every job).
+    const seen = async () => ({
+      cooldown: (await engine.selectProjectionWindowJobs(start, true)).some(r => r.lane === 'window' && r.slug === 'notes/a'),
+      any: (await engine.selectProjectionWindowJobs(start, false)).some(r => r.lane === 'window' && r.slug === 'notes/a'),
+    });
+    const [a, b] = ['segmented_projecting:a', 'segmented_projecting:b'];
+    const answers: Record<string, unknown> = {};
+    answers.noPage = await engine.claimSegmentedProjection({ sourceId: 'default', slug: 'notes/none' }, a);
+    answers.noSource = await engine.claimSegmentedProjection({ sourceId: 'no-such-source', slug: 'notes/a' }, a);
+    answers.queued = await seen();
+    answers.claim = await engine.claimSegmentedProjection(ref, a);
+    answers.claimed = await seen();
+    answers.second = await engine.claimSegmentedProjection(ref, b);
+    answers.renewOther = await engine.renewSegmentedProjectionClaim(ref, b);
+    answers.renew = await engine.renewSegmentedProjectionClaim(ref, a);
+    answers.renewInTx = await engine.transaction(tx => tx.renewSegmentedProjectionClaim(ref, a));
+    await engine.releaseSegmentedProjectionClaim(ref, b);
+    answers.afterOtherRelease = await seen();
+    // A live claim keeps the failed mark off.
+    await engine.markProjectionRebuildFailed(job);
+    answers.failWhileClaimed = await seen();
+    await engine.releaseSegmentedProjectionClaim(ref, a);
+    answers.released = await seen();
+    await engine.markProjectionRebuildFailed(other);
+    answers.failOtherRevision = await seen();
+    await engine.markProjectionRebuildFailed(job);
+    answers.failed = await seen();
+    answers.reclaim = await engine.claimSegmentedProjection(ref, b);
+    await engine.releaseSegmentedProjectionClaim(ref, b);
+    await engine.deleteProjectionJob(other);
+    answers.deleteOtherRevision = await seen();
+    await engine.deleteProjectionJob(job);
+    answers.deleted = await seen();
+    answers.afterDelete = await engine.claimSegmentedProjection(ref, a);
+    const both = { cooldown: true, any: true }, held = { cooldown: false, any: true }, none = { cooldown: false, any: false };
+    expect(answers).toEqual({
+      noPage: 'absent', noSource: 'absent', queued: both, claim: 'claimed', claimed: held, second: 'held', renewOther: false, renew: true,
+      renewInTx: true, afterOtherRelease: held, failWhileClaimed: held, released: both, failOtherRevision: both,
+      failed: held, reclaim: 'claimed', deleteOtherRevision: both, deleted: none, afterDelete: 'absent',
+    });
+    return answers;
+  });
+
   parityTest('the projection queue reads find no pending job on a brain whose pages are projected', {
     methods: ['listPendingSegmentedProjections', 'selectProjectionWindowJobs'],
   }, async (engine) => {

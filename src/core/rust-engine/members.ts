@@ -598,6 +598,11 @@ export const RUST_ENGINE_MEMBERS = {
   recentWriterVersions: 'persistence_journal',
   listPendingSegmentedProjections: 'persistence_journal',
   selectProjectionWindowJobs: 'persistence_journal',
+  claimSegmentedProjection: 'persistence_journal',
+  renewSegmentedProjectionClaim: 'persistence_journal',
+  releaseSegmentedProjectionClaim: 'persistence_journal',
+  deleteProjectionJob: 'persistence_journal',
+  markProjectionRebuildFailed: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
   listActiveAccessMembers: 'access_control',
