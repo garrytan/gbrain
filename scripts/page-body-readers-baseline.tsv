@@ -664,7 +664,7 @@ src/core/search/relational-recall.ts	hydrate	field	LEAD	synopsis from boundedBod
 src/core/search/safe-chunks.ts	bodyWriteChunkVersion	sql	SEGW	spliced into inline body writes only; a segmented row refuses those writes (CHECK)
 src/core/search/safe-chunks.ts	protectedBodyFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
 src/core/search/safe-chunks.ts	protectedTakesFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
-src/core/secret-store/marker-sql.ts	pageHoldsSql	sql	INLINE	presence check on inline columns in SQL for the page at one named slug; a segmented page counts as a hit
+src/core/secret-store/marker-sql.ts	pageHoldsSql	sql	INLINE	presence check on inline columns in SQL; a segmented body is not read here, and restore reads its segments through readSegmentedBody
 src/core/secret-store/restore.ts	previewRestore	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
 src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-export.ts	exportInventory	field	INLINE	

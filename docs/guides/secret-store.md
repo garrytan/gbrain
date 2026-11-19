@@ -134,7 +134,7 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   original another page still holds. A restore only adds rows and never deletes one it did not write, and it ties a restored place to
   the page at its backed-up slug only when that page holds the entry's marker (`<REDACTED:<rule>:<id>>`), so a page
   that merely took an old slug, or quotes the id, never gets the original, and neither does another page a copy of
-  the marker sits on. A page whose body is stored in segments, which the check cannot read, counts as holding it.
+  the marker sits on. A page whose body is stored in segments is read segment by segment.
   An original recorded only on pages, none of which at its backed-up slugs holds its marker, is skipped and counted as
   `skipped_no_page` ("skipped because no page in this brain holds their marker"): the page was purged, is not synced
   yet, or was renamed before the backup named it by its current slug (a backup from before 0.60.744.0),

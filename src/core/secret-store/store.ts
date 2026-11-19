@@ -14,6 +14,7 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { pageHoldsSql } from './marker-sql.ts';
+import { readSegmentedBody } from '../page-body/ingest.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { currentKey, keyById, keyIdOf, macKeyOf, SECRET_STORE_KEY_ENV, storeHost, keyringDir } from './keyring.ts';
 
@@ -220,7 +221,8 @@ export async function storeSnapshot(engine: BrainEngine): Promise<{ entries: Bac
 /**
  * Writes backed-up entries the store does not hold (by id, and never over a row that holds the same value, so a local
  * row changed since the backup stays as it is), with the occurrences of the entries it wrote or already holds. A place
- * on a page (a slug and no commit) comes back only when the page at that slug holds the entry's marker, so a restore
+ * on a page (a slug and no commit) comes back only when the page at that slug holds the entry's marker (its segments
+ * read when its body is stored in segments), so a restore
  * never ties an original to a page that merely took its old slug, or to another page a copy of its marker sits on. An
  * entry recorded only on pages is written only while one of those pages holds its marker, and an entry whose places
  * all failed to land (its page purged while the restore ran) is taken back out; otherwise it is not written
@@ -233,34 +235,31 @@ export async function storeSnapshot(engine: BrainEngine): Promise<{ entries: Bac
 export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number; skipped_no_page: number }> {
   let written = 0, occ = 0, skippedNoPage = 0;
   const onPage = (o: BackupOccurrenceRow) => o.commit_sha === null && o.slug !== null;
-  const holds = (p: string) => pageHoldsSql(p, '$1');
   const byEntry = new Map<string, BackupOccurrenceRow[]>();
   for (const o of occurrences) byEntry.set(o.entry_id, [...(byEntry.get(o.entry_id) ?? []), o]);
   await engine.transaction(async tx => {
     for (const row of entries) {
       const own = byEntry.get(row.id) ?? [];
-      const pageSlugs = [...new Set(own.filter(onPage).map(o => o.slug as string))];
       const anchored = own.length === 0 || own.some(o => !onPage(o));
-      const inserted = await tx.executeRaw<{ id: string }>(`INSERT INTO secret_store (id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,created_at,updated_at)
+      const holding = await holdingSlugs(tx, row.source_id, [...new Set(own.filter(onPage).map(o => o.slug as string))], row.id);
+      const inserted = anchored || holding.length ? await tx.executeRaw<{ id: string }>(`INSERT INTO secret_store (id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,created_at,updated_at)
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$12::timestamptz WHERE EXISTS (SELECT 1 FROM sources WHERE id=$2)
-          AND ($13::boolean OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug = ANY($14::text[]) AND ${holds('p')}))
         ON CONFLICT DO NOTHING RETURNING id`,
-      [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at, anchored, pageSlugs]);
+      [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at]) : [];
       if (inserted.length) written++;
       else {
-        const [held] = await tx.executeRaw<{ same: boolean | null; paged: boolean }>(`SELECT h.same, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug = ANY($4::text[]) AND ${holds('p')}) AS paged
-          FROM (SELECT 1) one LEFT JOIN (SELECT (source_id=$2 AND value_mac=$3) AS same FROM secret_store WHERE id=$1) h ON true`, [row.id, row.source_id, row.value_mac, pageSlugs]);
-        if (held!.same === null && !anchored && !held!.paged) skippedNoPage++;
-        if (!held!.same) continue;
+        const [held] = await tx.executeRaw<{ same: boolean }>('SELECT (source_id=$2 AND value_mac=$3) AS same FROM secret_store WHERE id=$1', [row.id, row.source_id, row.value_mac]);
+        if (!held && !anchored && !holding.length) skippedNoPage++;
+        if (!held?.same) continue;
       }
       for (const o of own) {
         occ += (await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
           SELECT $1,$2,(SELECT id FROM pages WHERE source_id=$2 AND slug=$3),$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz
-          WHERE ($6::text IS NOT NULL OR $3::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$3 AND ${holds('p')}))
+          WHERE ($6::text IS NOT NULL OR $3::text IS NULL OR ($3 = ANY($12::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$3)))
             AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence x WHERE x.entry_id=$1 AND x.source_id=$2 AND x.slug IS NOT DISTINCT FROM $3 AND x.field=$4
               AND x.commit_sha IS NOT DISTINCT FROM $6 AND x.path IS NOT DISTINCT FROM $7 AND x.line IS NOT DISTINCT FROM $8::integer AND x.origin=$5
               AND x.pre_field_sha256 IS NOT DISTINCT FROM $9 AND x.created_by=$10 AND date_trunc('milliseconds', x.created_at) = $11::timestamptz) RETURNING 1`,
-        [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at])).length;
+        [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at, holding])).length;
       }
       if (!inserted.length || anchored) continue;
       if ((await tx.executeRaw('DELETE FROM secret_store s WHERE s.id=$1 AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.entry_id=s.id) RETURNING 1', [row.id])).length) {
@@ -270,6 +269,31 @@ export async function insertBackupRows(engine: BrainEngine, entries: BackupEntry
     }
   });
   return { entries: written, occurrences: occ, skipped_no_page: skippedNoPage };
+}
+
+/**
+ * The backed-up slugs whose page in the source holds entry `id`'s marker now: pageHoldsSql for every store SQL reads,
+ * and for a page whose body is stored in segments, its segments read in order (a marker split across two is found).
+ */
+async function holdingSlugs(tx: BrainEngine, sourceId: string, slugs: string[], id: string): Promise<string[]> {
+  if (!slugs.length) return [];
+  const rows = await tx.executeRaw<{ id: number | string; slug: string; segmented: boolean; holds: boolean }>(
+    `SELECT p.id, p.slug, p.body_storage = 'segmented' AS segmented, ${pageHoldsSql('p', '$3')} AS holds FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[])`,
+    [sourceId, slugs, id]);
+  const marker = new RegExp(`<REDACTED:[a-z0-9_]{1,64}:${id}>`);
+  const out: string[] = [];
+  for (const page of rows) {
+    if (page.holds) { out.push(page.slug); continue; }
+    if (!page.segmented) continue;
+    const decoder = new TextDecoder();
+    let carry = '';
+    for await (const part of readSegmentedBody(tx, Number(page.id), sourceId)) {
+      const text = carry + decoder.decode(part.bytes, { stream: true });
+      if (marker.test(text)) { out.push(page.slug); break; }
+      carry = text.slice(-96);
+    }
+  }
+  return out;
 }
 
 /**

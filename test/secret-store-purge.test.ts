@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { secretStoreCheck } from '../src/commands/doctor/checks/secret-store.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { createSegmentedPage } from './helpers/segmented-page.ts';
 import { beliefBrain, beliefEngineCase, beliefPage, type BeliefBrain } from './helpers/belief-ledger.ts';
 
 const deleteOp = operations.find(o => o.name === 'delete_page')!;
@@ -416,26 +417,32 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
-    test('a page stored in segments counts as holding the marker at a backed-up slug, and a segmented page elsewhere never does', async () => {
+    test('a page stored in segments holds a marker only when its segments do, and a store row of the page counts too', async () => {
       await brain(async b => {
         const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-segmented-'));
         try {
           const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
-          const seg = `notes/segmented-${randomUUID().slice(0, 6)}`, gone = `notes/gone-${randomUUID().slice(0, 6)}`, other = `notes/other-seg-${randomUUID().slice(0, 6)}`;
-          for (const slug of [seg, other]) await b.engine.putPage(slug, { type: 'note', title: 'Long', compiled_truth: 'Long page.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
-          await b.engine.executeRaw("UPDATE pages SET body_storage = 'segmented', compiled_truth = NULL, timeline = NULL, body_bytes = 10 WHERE source_id = $1 AND slug = ANY($2::text[])", [b.sourceId, [seg, other]]);
           await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE source_id = $1', [b.sourceId]);
           await b.engine.executeRaw('DELETE FROM secret_store WHERE source_id = $1', [b.sourceId]);
-          const atSlug = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`sg${randomUUID().slice(0, 6)}`) })).id;
-          const nowhere = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`nw${randomUUID().slice(0, 6)}`) })).id;
-          await recordOccurrence(b.engine, { entryId: atSlug, sourceId: b.sourceId, slug: seg, field: 'compiled_truth', origin: 'repair' });
-          await recordOccurrence(b.engine, { entryId: nowhere, sourceId: b.sourceId, slug: gone, field: 'compiled_truth', origin: 'repair' });
+          const seal1 = async (tag: string) => (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(tag + randomUUID().slice(0, 6)) })).id;
+          const ids = { inSegments: await seal1('sg'), notInSegments: await seal1('ns'), frontmatter: await seal1('fm'), rawData: await seal1('rd'), timeline: await seal1('te') };
+          const slugs = Object.fromEntries(Object.keys(ids).map(k => [k, 'notes/' + k.toLowerCase() + '-' + randomUUID().slice(0, 6)])) as Record<keyof typeof ids, string>;
+          const filler = 'a long line of ordinary text\n'.repeat(3000);
+          await createSegmentedPage(b.engine, { slug: slugs.inSegments, sourceId: b.sourceId, truth: filler + 'held here ' + markerOf('github_token', ids.inSegments) + '\n' + filler });
+          await createSegmentedPage(b.engine, { slug: slugs.notInSegments, sourceId: b.sourceId, truth: filler + 'took the old slug\n' + filler });
+          await b.engine.putPage(slugs.frontmatter, { type: 'note', title: 'Frontmatter', compiled_truth: 'Body.', timeline: '', frontmatter: { token: markerOf('github_token', ids.frontmatter) } }, { sourceId: b.sourceId });
+          for (const k of ['rawData', 'timeline'] as const) await b.engine.putPage(slugs[k], { type: 'note', title: k, compiled_truth: 'Body.', timeline: '', frontmatter: {} }, { sourceId: b.sourceId });
+          const pid = async (slug: string) => (await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [b.sourceId, slug]))[0]!.id;
+          await b.engine.executeRaw("INSERT INTO raw_data (page_id, source, data) VALUES ($1, 'test', $2::jsonb)", [await pid(slugs.rawData), JSON.stringify({ note: markerOf('github_token', ids.rawData) })]);
+          await b.engine.executeRaw("INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-01-01', $2)", [await pid(slugs.timeline), 'Met ' + markerOf('github_token', ids.timeline)]);
+          for (const k of Object.keys(ids) as (keyof typeof ids)[]) await recordOccurrence(b.engine, { entryId: ids[k], sourceId: b.sourceId, slug: slugs[k], field: 'compiled_truth', origin: 'repair' });
           const out = await backupStore(b.engine, storage);
           await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE source_id = $1', [b.sourceId]);
           await b.engine.executeRaw('DELETE FROM secret_store WHERE source_id = $1', [b.sourceId]);
-          expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 1, skipped_no_page: 1 });
-          expect(await b.engine.executeRaw('SELECT entry_id, slug FROM secret_store_occurrence WHERE source_id = $1', [b.sourceId])).toEqual([{ entry_id: atSlug, slug: seg }]);
-          expect(await b.engine.executeRaw('SELECT id FROM secret_store WHERE id = $1', [nowhere])).toEqual([]);
+          expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 4, skipped_no_page: 1 });
+          const tied = await b.engine.executeRaw<{ entry_id: string; slug: string }>('SELECT entry_id, slug FROM secret_store_occurrence WHERE source_id = $1 ORDER BY slug', [b.sourceId]);
+          expect(new Set(tied.map(t => t.entry_id))).toEqual(new Set([ids.inSegments, ids.frontmatter, ids.rawData, ids.timeline]));
+          expect(await b.engine.executeRaw('SELECT id FROM secret_store WHERE id = $1', [ids.notInSegments])).toEqual([]);
         } finally { rmSync(bucket, { recursive: true, force: true }); }
       });
     }, 120_000);
