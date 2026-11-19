@@ -81,7 +81,7 @@ getPage	pages	yes	93	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	383	yes	yes	yes	serves
+putPage	pages	yes	385	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -137,7 +137,7 @@ countForeignEdges	link_reads	yes	1	no	yes	yes	serves
 listLivePageSummaries	link_reads	yes	3	no	yes	yes	serves
 countInboundLinks	link_reads	yes	3	no	yes	yes	serves
 listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
-listPagesTitledIn	link_reads	yes	3	no	yes	yes	serves
+listPagesTitledIn	link_reads	yes	5	no	yes	yes	serves
 wordLexemes	link_reads	yes	1	no	yes	yes	serves
 readLinkRelationshipEvidence	link_temporal	yes	3	no	yes	yes	serves
 writeLinkRelationshipState	link_temporal	yes	2	no	yes	yes	serves
