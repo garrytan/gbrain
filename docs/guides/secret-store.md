@@ -131,13 +131,13 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   a host whose keyring holds the key the backup names (import the escrow copy first), and it skips, and lists, any row
   that does not authenticate under it. An entry already here is left as it is, even when the backup's copy differs;
   the places the backup recorded for it that this brain lacks are added, so a later purge of one page never removes an
-  original another page still holds. A restore only adds rows and never deletes one, and it ties each restored place
-  only to a page whose text holds the entry's marker: the page at the backed-up slug when that page holds it, and
-  otherwise every page in the source that does (counted as `reattached`: the page was renamed before the backup named
-  it by its current slug). A page that merely took an old slug never gets the original. A page whose body is stored in segments
-  counts as holding the marker at its backed-up slug, and is never found by the search across the source.
-  An original recorded only on pages, none of which in this brain holds its marker, is skipped and counted as
-  `skipped_no_page` ("skipped because no page in this brain holds their marker"): the page was purged, or is not synced yet,
+  original another page still holds. A restore only adds rows and never deletes one it did not write, and it ties a restored place to
+  the page at its backed-up slug only when that page holds the entry's marker (`<REDACTED:<rule>:<id>>`), so a page
+  that merely took an old slug, or quotes the id, never gets the original, and neither does another page a copy of
+  the marker sits on. A page whose body is stored in segments, which the check cannot read, counts as holding it.
+  An original recorded only on pages, none of which at its backed-up slugs holds its marker, is skipped and counted as
+  `skipped_no_page` ("skipped because no page in this brain holds their marker"): the page was purged, is not synced
+  yet, or was renamed before the backup named it by its current slug (a backup from before 0.60.744.0),
   and a restore cannot tell which, so it never brings back what a page purge removed. Sync the pages, then run the
   same restore again; it adds what it skipped. When every entry is skipped that way (a rebuilt brain before sync), the
   restore refuses with `invalid_params` and writes nothing, so a script never reads it as finished.

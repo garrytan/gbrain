@@ -82,7 +82,7 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * caller's rename transaction. The new slug is free (the page UPDATE
  * succeeded), so fence rows or aliases still keyed to it belong to a purged
  * page and yield to the moved ones. A secret occurrence moves only when it is the renamed page's own (its
- * page_id is that page or the stale row a fallback rename retires, or it has none and the page holds its marker): an occurrence another page holds under
+ * page_id is that page or the stale row a fallback rename retires, or it has none and the page now at the new slug holds its marker): an occurrence another page holds under
  * an older slug stays with that page. An ontology observation the new slug
  * already holds is dropped before its key moves (B-10, dropRekeyDuplicates).
  * A brain whose schema predates the facts or alias tables skips them inside a
@@ -110,7 +110,7 @@ export async function moveSlugBindings(
     sql(`UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`),
     sql(`UPDATE secret_store_occurrence SET slug = $3 WHERE source_id = $1 AND slug = $2 AND commit_sha IS NULL
        AND (page_id IN (SELECT id FROM pages WHERE source_id = $1 AND slug IN ($2, $3)) OR (page_id IS NULL
-         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug IN ($2, $3) AND ${pageHoldsSql('p', "':' || secret_store_occurrence.entry_id || '>'", true)})))`),
+         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $3 AND ${pageHoldsSql('p', 'secret_store_occurrence.entry_id')})))`),
   ];
   for (const statement of statements) {
     try {

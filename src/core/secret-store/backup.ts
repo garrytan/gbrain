@@ -137,7 +137,7 @@ export async function backupDue(engine: BrainEngine, backend?: string): Promise<
   return entries.some(row => row.created_at > last || row.updated_at > last) || occurrences.some(o => o.created_at > last);
 }
 
-export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; skipped_no_page: number; reattached: number; unreadable: string[]; occurrences: number }
+export interface RestoreResult { object: string; key_id: string; inserted: number; existing: number; skipped_no_page: number; unreadable: string[]; occurrences: number }
 
 export const SKIPPED_NO_PAGE_TEXT = 'skipped because no page in this brain holds their marker (purged, or not synced yet)';
 export const SKIPPED_NO_PAGE_NEXT = 'Sync the pages, then run the same restore again.';
@@ -180,5 +180,5 @@ export async function restoreBackup(engine: BrainEngine, storage: StorageBackend
   if (body.entries.length && written.skipped_no_page === body.entries.length) {
     throw opError('invalid_params', `Nothing was restored from ${object}: all ${written.skipped_no_page} entr${written.skipped_no_page === 1 ? 'y was' : 'ies were'} ${SKIPPED_NO_PAGE_TEXT}.`, SKIPPED_NO_PAGE_NEXT);
   }
-  return { object, key_id: doc.key_id, inserted: written.entries, existing: verified.length - written.entries - written.skipped_no_page, skipped_no_page: written.skipped_no_page, reattached: written.reattached, unreadable, occurrences: written.occurrences };
+  return { object, key_id: doc.key_id, inserted: written.entries, existing: verified.length - written.entries - written.skipped_no_page, skipped_no_page: written.skipped_no_page, unreadable, occurrences: written.occurrences };
 }
