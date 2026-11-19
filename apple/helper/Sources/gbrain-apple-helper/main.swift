@@ -41,11 +41,16 @@ func save(_ config: Config) {
     }
 }
 
-func lockedConfig() -> Config {
+func lockConfigFile() -> Int32 {
     _ = loadConfig()
     let lockPath = configPath + ".lock"
     let lockFile = Darwin.open(lockPath, O_CREAT | O_RDWR, 0o600)
     guard lockFile >= 0, flock(lockFile, LOCK_EX) == 0 else { fail("could not lock \(lockPath)", code: 75) }
+    return lockFile
+}
+
+func lockedConfig() -> Config {
+    _ = lockConfigFile()
     return loadConfig().0
 }
 
@@ -113,22 +118,26 @@ case "token":
     }
 
 case "send-setup":
-    var config = lockedConfig()
+    let configLock = lockConfigFile()
+    var config = loadConfig().0
     let off = arguments.contains("--off")
-    if !off, config.send?.enabled != true, AdminClient.post(port: UInt16(config.port), fields: ["action": "off"], timeout: 10)?.0 != 200 {
+    if !off, config.send?.enabled != true, AdminClient.post(port: UInt16(config.port), fields: ["action": "off"], timeout: 40)?.0 != 200 {
         fail("GBrain Helper isn't answering on 127.0.0.1:\(config.port). Start it, then run send-setup again.", code: 69)
     }
     config.send = SendSetting(enabled: !off)
     save(config)
+    Darwin.close(configLock)
     if off {
         print("sending is off in \(configPath)")
         let port = config.port
-        guard let (status, body) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 10) else {
+        guard let (status, body) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 40) else {
             print("GBrain Helper didn't answer; the config switch already stops every send")
             exit(0)
         }
         guard status == 200 else {
-            fail("GBrain Helper couldn't save sending off in its keychain item: \(String(decoding: body, as: UTF8.self)). The config switch already stops every send.", code: 1)
+            let code = ((try? JSONSerialization.jsonObject(with: Data(body))) as? [String: Any])?["code"] as? String ?? "HTTP \(status)"
+            let answer = code == "overloaded" ? "GBrain Helper was busy (overloaded)" : "GBrain Helper answered \(code)"
+            fail("\(answer) and didn't record sending off in its keychain item. The config switch already stops every send.", code: 1)
         }
         print("GBrain Helper confirmed sending is off")
         exit(0)
