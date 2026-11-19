@@ -70,10 +70,10 @@
 # connect_gate: 4/4
 # jobs_wake: 19/19
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
-connect	lifecycle	yes	1	yes	yes	yes	serves
-disconnect	lifecycle	yes	1	yes	yes	yes	serves
+connect	lifecycle	yes	2	yes	yes	yes	serves
+disconnect	lifecycle	yes	2	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
-initSchema	lifecycle	yes	2	yes	yes	yes	serves
+initSchema	lifecycle	yes	3	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
 transaction	lifecycle	yes	75	no	yes	yes	serves
 transactionDirect	lifecycle	yes	3	no	yes	yes	serves
@@ -83,7 +83,7 @@ getPage	pages	yes	97	yes	yes	yes	serves
 readPageSnapshot	pages	yes	29	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	451	yes	yes	yes	serves
+putPage	pages	yes	452	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -251,14 +251,14 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	39	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	40	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	19	yes	yes	yes	serves
-getTimelineForDate	timeline	yes	6	no	yes	yes	serves
-getSince	timeline	yes	9	no	yes	yes	serves
-getOnThisDay	timeline	yes	5	no	yes	yes	serves
-getLastSeen	timeline	yes	5	no	yes	yes	serves
-upsertEventProjection	timeline	yes	19	no	yes	yes	serves
+getTimelineForDate	timeline	yes	7	no	yes	yes	serves
+getSince	timeline	yes	10	no	yes	yes	serves
+getOnThisDay	timeline	yes	6	no	yes	yes	serves
+getLastSeen	timeline	yes	6	no	yes	yes	serves
+upsertEventProjection	timeline	yes	20	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	10	no	yes	yes	serves

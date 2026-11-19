@@ -163,10 +163,6 @@ row, and an empty list, read nothing. Parity case: `test/engine-parity/timeline-
 - The core latest-entry marker `G` only goes up, except that `removeTimelineRows` and `deleteTimelineRows` set it
   again after their deletes. A projection moved to another depth page leaves `G` of the old page where it was, while
   Postgres computes the newest `created_at` each time. No parity case reads that today.
-- Time zone: the store reads `current_date`, `te.date::timestamptz` and `effective_date::text` in UTC (the frozen
-  contract). PGLite follows the process time zone; `bun test` pins it to UTC. Follow-up:
-  `chronicle-reads-host-time-zone`.
-
-## Follow-ups
-
-- `chronicle-reads-host-time-zone`: see Known differences.
+- Time zone: none. The shared SQL pins the four chronicle reads to UTC (`src/core/engine-sql/timeline.ts`), so a
+  PGLite brain opened on a non-UTC host prints the same `effective_date`, order and default day as the store. Parity
+  case: "a brain opened in a non-UTC zone ..." in `test/engine-parity/timeline.test.ts`.
