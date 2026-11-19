@@ -22,6 +22,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
 | `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), for the caller with no member page and no private-facts grant. See "Held fence cells". |
+| `readFenceOverlayRows` | The fence overlay's read of one page body's world fence rows (`facts/fence_overlay.rs`): page tier, newest row fact tier and flag, held hold, narrower fact. See "The fence overlay". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
 Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the
@@ -424,6 +425,25 @@ states it. A row states a claim when its fact equals it, or, for a cut claim, co
 held cell, in first-key order (SQL leaves the order open). A NUL character or a row number outside
 `integer` refuses with `invalid_argument`, as Postgres raises for the same parameters. No keys answer
 `[]` without a read.
+
+## The fence overlay (`facts/fence_overlay.rs`)
+
+`read_fence_overlay_rows({ sourceId, slug, incoming, hideHeld })` (`engine-sql/cli-reads-ops.ts`
+`readFenceOverlayRows`): what `eligibility/fence-overlay.ts` `loadFenceChunkOverlay` reads about the world
+fence rows of one page body before chunking, evidence text and remote page reads show them. An incoming row
+is `{ row_num, claim, visibility, fp }`; `fp` is the row's hold fingerprint (null skips the hold check).
+
+The answer is one row per incoming row, in incoming order: `{ row_num, page_tier, row_tier, row_flagged,
+purged, held, narrower }`. `page_tier` is the live page's stored tier (`unknown` when it has none), null when
+no live page has the slug. `row_tier` and `row_flagged` come from the page's fact with the highest id at the
+row number, expired facts included, as the SQL reads `facts` with no `expired_at` filter: its stored tier and
+whether it is activation-suppressed (`trust::activation_suppressed`); both are null when no fact sits there.
+`held` is a `kind = 'fact'` hold of the page with status `held` and the row's fingerprint. `narrower`, with
+`hideHeld` only, is the held-cell rule above for an uncut claim over the page's live facts; the TypeScript
+member refuses a member caller or a private-facts grant (`engine_capability_missing`), as for `listHeldFenceCells`.
+`purged` is always false: fact purges (`fact_purges`) are written through `executeRaw` only, which the Rust
+engine refuses, so the store keeps none. A NUL character or a row number outside `integer` refuses with
+`invalid_argument`. No incoming rows answer `[]` without a read.
 
 ## Not modeled
 

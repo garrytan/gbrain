@@ -194,7 +194,7 @@ export function prepareProseChunks(page: { compiled_truth: string; timeline?: st
 }
 
 /** The importer's projection of one page: its fence overlay read in one query, then prepareMarkdownChunks. */
-export async function prepareFenceAwareMarkdownChunks(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string,
+export async function prepareFenceAwareMarkdownChunks(engine: Pick<BrainEngine, 'readFenceOverlayRows'>, sourceId: string, slug: string,
   page: Parameters<typeof prepareMarkdownChunks>[0]): Promise<ChunkInput[]> {
   return prepareMarkdownChunks(page, undefined, await loadFenceChunkOverlay(engine, { sourceId, slug, compiled_truth: page.compiled_truth, timeline: page.timeline }));
 }

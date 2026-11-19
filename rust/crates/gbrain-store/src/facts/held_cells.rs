@@ -48,7 +48,7 @@ fn states(row: &FactRecord, key: &HeldFenceCellKey) -> bool {
 }
 
 /// `heldRowSql` with both caller admissions `FALSE`, over the page's live rows.
-fn held(rows: &[FactRecord], key: &HeldFenceCellKey, row_num: i32) -> bool {
+pub(super) fn held(rows: &[FactRecord], key: &HeldFenceCellKey, row_num: i32) -> bool {
     let narrower = |r: &&FactRecord| r.visibility != "world";
     rows.iter()
         .filter(narrower)

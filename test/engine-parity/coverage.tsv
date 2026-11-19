@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 658/658
+# covered: 659/659
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -39,7 +39,7 @@
 # minion_queue: 70/70
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_ops: 11/11
+# cli_reads_ops: 12/12
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
@@ -73,7 +73,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	57	no	yes	yes	serves
+transaction	lifecycle	yes	59	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -81,7 +81,7 @@ getPage	pages	yes	93	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	392	yes	yes	yes	serves
+putPage	pages	yes	394	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -294,9 +294,9 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	41	yes	yes	yes	serves
-insertFacts	facts	yes	44	no	yes	yes	serves
+insertFacts	facts	yes	46	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	25	no	yes	yes	serves
+expireFact	facts	yes	27	no	yes	yes	serves
 listFactsByEntity	facts	yes	19	yes	yes	yes	serves
 listFactsSince	facts	yes	11	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -353,7 +353,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	34	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	36	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
@@ -524,6 +524,7 @@ readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactRescanChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listHeldFenceCells	cli_reads_ops	yes	2	no	yes	yes	serves
+readFenceOverlayRows	cli_reads_ops	yes	2	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	5	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	8	no	yes	yes	serves
@@ -630,15 +631,15 @@ hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	1	no	yes	yes	serves
 readTrustGeneration	trust	yes	1	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	9	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	11	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	13	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
-upsertWriteGateHold	trust	yes	3	no	yes	yes	serves
+upsertWriteGateHold	trust	yes	5	no	yes	yes	serves
 listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
-decideWriteGateHold	trust	yes	3	no	yes	yes	serves
+decideWriteGateHold	trust	yes	5	no	yes	yes	serves
 upsertOpenLoop	open_loops	yes	7	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	6	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves

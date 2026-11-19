@@ -1,7 +1,7 @@
 /**
  * The fence guard's read of a page's fact rows with their trust tier (BrainEngine listFenceFactRows;
- * engine-sql/trust-fence.ts on the SQL engines), and the held fence cells of a world-only fact read (listHeldFenceCells;
- * engine-sql/cli-reads-ops.ts).
+ * engine-sql/trust-fence.ts on the SQL engines), the held fence cells of a world-only fact read (listHeldFenceCells;
+ * engine-sql/cli-reads-ops.ts), and the fence overlay's read of one page (readFenceOverlayRows; engine-sql/cli-reads-ops.ts).
  *
  * The store reads the writer's tier and the opened fact ids from its write trust context (rust/docs/store/write_trust.md),
  * which the engine's transaction sets in place of `gbrain.write_trust_tier` and `gbrain.write_open_facts`; with none set,
@@ -10,7 +10,7 @@
  * rust/docs/store/facts.md, "The fence guard's reads".
  */
 import type { FenceFactRow } from '../../engine-sql/trust-fence.ts';
-import type { HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
+import type { FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
 import { grantedPrivateFactSql, memberFactAdmitSql } from '../../access/member-facts.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -35,3 +35,21 @@ export const listHeldFenceCells: StoreMember<[keys: readonly HeldFenceCellKey[]]
   const rows = await storeCall({ member: 'listHeldFenceCells' }, () => brain.listHeldFenceCells({ keys })) as HeldFenceCellRow[];
   return rows.map((row) => ({ ...row, row_num: Number(row.row_num) }));
 };
+
+/**
+ * #5575 ENG-1: the fence overlay's read of one page (BrainEngine readFenceOverlayRows), one row per incoming row in
+ * incoming order. `purged` is always false: fact purges are written through `executeRaw` only, which this engine refuses,
+ * so the store keeps none. With `hideHeld`, `narrower` is listHeldFenceCells' rule for an uncut claim, and a member caller
+ * or a private-facts grant refuses here as it does there. rust/docs/store/facts.md, "The fence overlay".
+ */
+export const readFenceOverlayRows: StoreMember<[page: { sourceId: string; slug: string }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean }], FenceOverlayRow[]> =
+  async (brain, page, incoming, opts) => {
+    if (!incoming.length) return [];
+    if (opts.hideHeld) {
+      if (memberFactAdmitSql('hr') !== 'FALSE') refuseMember('readFenceOverlayRows', "a member caller's own page facts");
+      if (grantedPrivateFactSql('hr') !== 'FALSE') refuseMember('readFenceOverlayRows', 'a private-facts grant');
+    }
+    const rows = await storeCall({ member: 'readFenceOverlayRows', slug: page.slug, sourceId: page.sourceId },
+      () => brain.readFenceOverlayRows({ sourceId: page.sourceId, slug: page.slug, incoming, hideHeld: opts.hideHeld === true })) as FenceOverlayRow[];
+    return rows.map((row) => ({ ...row, row_num: Number(row.row_num) }));
+  };

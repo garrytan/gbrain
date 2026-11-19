@@ -192,6 +192,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readExactSnippetChunks': OOS.cliReadsOps,
   'listExactRescanChunks': OOS.cliReadsOps,
   'listHeldFenceCells': OOS.cliReadsOps,
+  'readFenceOverlayRows': OOS.cliReadsOps,
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
   'hasCompanyBrainReceipt': OOS.cliReadsImport,
