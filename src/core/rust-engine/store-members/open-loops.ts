@@ -1,6 +1,6 @@
 /**
  * Open loops: the upsert, list and close members (BrainEngine upsertOpenLoop, listOpenLoops, closeOpenLoop) and the
- * `loops_close` retry read closedLoopWithActiveFact (engine-sql/facts-repair.ts), over
+ * `loops_close` retry read closedLoopWithActiveFact and the loop-fact retirement scan loopFactDrift (engine-sql/facts-repair.ts), over
  * `rust/crates/gbrain-store/src/facts/loops.rs`. The store returns times as ISO text; these members turn them into
  * Dates, as the SQL engines return them, and loops-store.ts normalizes the rows the same way on every engine.
  *
@@ -85,4 +85,11 @@ export const closedLoopWithActiveFact: Member<'closedLoopWithActiveFact'> = (bra
   const m = 'closedLoopWithActiveFact';
   if (!Number.isSafeInteger(loopId)) refuseMember(m, 'a loop id that is not an integer');
   return storeCall({ member: m, sourceId: sourceId ?? undefined }, () => brain.closedLoopWithActiveFact(sourceId, loopId));
+};
+
+/** `loopFactDrift`: the closed loops whose commitment fact is still active and held by no open loop, in id order. The id binds as `bigint`. */
+export const loopFactDrift: Member<'loopFactDrift'> = (brain, sourceIds, loopId) => {
+  const m = 'loopFactDrift';
+  if (loopId !== null && !Number.isSafeInteger(loopId)) refuseMember(m, 'a loop id that is not an integer');
+  return storeCall({ member: m }, () => brain.loopFactDrift(sourceIds, loopId));
 };

@@ -68,6 +68,10 @@ pub struct PrivacyPolicy {
     pub private_readable_sources: Vec<String>,
     /// The owner-only form the baseline rendered (`src/core/access/owner-only.ts`): see [`OwnerOnly`].
     pub owner_only: OwnerOnly,
+    /// `remoteProvenanceFloorSql('facts')`, the remote floor: only the provenance page is judged
+    /// (`privateProvenanceFilterFragment`), with no entity or holding-page gate.
+    #[serde(default)]
+    pub provenance_only: bool,
 }
 
 /// The owner-only part of `accessAllowedSql` for the no-caller baseline (`ownerOnlyPageSql`). It is part of the
@@ -172,6 +176,9 @@ pub(crate) fn hidden_by_private_provenance(
                 && privacy_allows(read, &page, policy.honor_aliases)?))
     {
         return Ok(true);
+    }
+    if policy.provenance_only {
+        return Ok(false);
     }
     let held = match (&row.entity_slug, &row.source_markdown_slug) {
         (Some(_), Some(slug)) if holding_slug(slug) => Some(slug),
