@@ -65,7 +65,11 @@ const SUBMIT_CANARY = 'canarylofcsubmitx';
 const SUBMIT_REQUEST = '00000000-0000-4000-8000-00000000a1f1';
 /** Submission checks the writer's member twice (writerIdentities, writerLabelledOnly); the stored write's checks come after. */
 const SUBMISSION_LOOKUPS = 2;
-const COMBINED_PROBE = 'AS any_labelled';
+/**
+ * The opening probe of a remote page write's visibility check. It runs through the typed engine member
+ * readWriteVisibilityProbe, not executeRaw, so failStatements fails that member's call instead of matching a text.
+ */
+const COMBINED_PROBE = 'readWriteVisibilityProbe';
 const LOOKUP_FAILURES = 2;
 /** Every lookup of one request fails: a put_page checks visibility at preparation and again at publication, two lookups each. */
 const REQUEST_OUTAGE = 100;
@@ -84,23 +88,37 @@ type Fail = string | ((sql: string) => string);
  * Makes the next `times` statements on `engine` that contain `marker` fail, in every transaction it opens too (a
  * transaction engine is Object.create(engine)): a SQLSTATE raises an error with that code without reaching the
  * database; a function sends its rewrite of the statement instead, which the database rejects with a real SQLSTATE
- * (and which aborts an open transaction). The first `skip` matching statements run untouched. Returns how many failed
+ * (and which aborts an open transaction). The first `skip` matching statements run untouched. With COMBINED_PROBE as
+ * the marker, the matching statement is each readWriteVisibilityProbe call: a failing one sends the rewrite (of '')
+ * through the same engine, with the probe's source id and slug, before the member would run. Returns how many failed
  * and a restore.
  */
 function failStatements(engine: BrainEngine, marker: string, times: number, fail: Fail, skip = 0) {
   const original = engine.executeRaw as (...a: unknown[]) => Promise<unknown[]>;
   const state = { skip, left: times, failed: 0 };
+  const failsNext = () => {
+    if (state.skip > 0) { state.skip--; return false; }
+    if (state.left <= 0) return false;
+    state.left--;
+    state.failed++;
+    return true;
+  };
   engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[], opts?: unknown) {
-    if (sql.includes(marker) && state.skip > 0) state.skip--;
-    else if (state.left > 0 && sql.includes(marker)) {
-      state.left--;
-      state.failed++;
+    if (marker !== COMBINED_PROBE && sql.includes(marker) && failsNext()) {
       if (typeof fail === 'string') throw Object.assign(new Error('injected failure ' + fail), { code: fail });
       return original.call(this, fail(sql), params, opts);
     }
     return original.call(this, sql, params, opts);
   } as BrainEngine['executeRaw'];
-  return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; } };
+  const probe = engine.readWriteVisibilityProbe;
+  if (marker === COMBINED_PROBE) engine.readWriteVisibilityProbe = async function (this: BrainEngine, sourceId: string, slug: string) {
+    if (failsNext()) {
+      if (typeof fail === 'string') throw Object.assign(new Error('injected failure ' + fail), { code: fail });
+      await original.call(this, fail(''), [sourceId, slug]);
+    }
+    return probe.call(this, sourceId, slug);
+  } as BrainEngine['readWriteVisibilityProbe'];
+  return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; delete (engine as { readWriteVisibilityProbe?: unknown }).readWriteVisibilityProbe; } };
 }
 
 async function withFailures<T>(engine: BrainEngine, marker: string, times: number, fail: Fail, fn: () => Promise<T>, skip = 0): Promise<{ value: T; failed: number }> {
