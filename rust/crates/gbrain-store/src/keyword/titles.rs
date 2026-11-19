@@ -256,18 +256,20 @@ struct Ranked {
     score: f64,
 }
 
-/// The representative chunk: visible, text, compiled truth first (only compiled truth for
-/// `detail` low), then the lowest chunk index.
+/// The representative chunk: in the page's live body (`chunkGenerationFilter`, as `title-statement.ts` reads it, so a
+/// chunk a deferred retire left is never shown), text, compiled truth first (only compiled truth for `detail` low),
+/// then the lowest chunk index.
 fn representative(
     read: &dyn KvRead,
     page: &PageRecord,
     detail_low: bool,
 ) -> Result<Option<ChunkRecord>> {
-    let generation = read_segment_view(read, page.id)?.generation;
+    let view = read_segment_view(read, page.id)?;
+    let segmented_page = crate::chunks::segmented(page);
     Ok(read_chunks(read, page.id)?
         .into_iter()
         .filter(|c| {
-            c.visible_at(generation)
+            crate::chunks::in_live_body(c, segmented_page, &view)
                 && c.modality == "text"
                 && (!detail_low || c.chunk_source == "compiled_truth")
         })

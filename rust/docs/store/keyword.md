@@ -225,6 +225,10 @@ no strict rows past the offset, the any-word retry (`buildOrFallbackWebsearchQue
 the rest tagged `keyword_relaxed`. Every attempt ORs in the given-name variants (`titleNameVariants`). The store runs a
 list of attempts over one read (`searchTitlesAttempts`); the rows sort by exact title (`lower(btrim(title, ' "''' ||
 chr(160)))` against `normalizeAlias(query)`), then `ts_rank_cd(vector, q) × source factor`, then page id.
+Each row carries one representative chunk: a text chunk of the page's live body, as `title-statement.ts` reads it
+with `chunkGenerationFilter` (a staged chunk, a chunk of a retired occurrence that a deferred retire left, and an
+inline chunk left on a segmented page are never shown), compiled truth first (only compiled truth for `detail` low),
+then the lowest chunk index. A page with no such chunk gives `chunk_id` 0 and an empty `chunk_text`.
 
 The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last wrote:
 
