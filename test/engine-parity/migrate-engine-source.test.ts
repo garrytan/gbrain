@@ -32,10 +32,12 @@ const { parityTest } = parityArms(testBackends());
 const NOTE = 'people/alice-example';
 const CO = 'companies/acme-example';
 const SIDE = 'side';
+const SIDE_CONFIG = { federated: false, note: 'side source', webhook_secret: 'whsec-example', sync: { cadence: '1h', include: ['a', 'b'] } };
 
 /** Seed the source brain through typed members only. */
 async function seed(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<void> {
-  await createSource(engine, backend, SIDE, { federated: false, note: 'side source' }, '/var/tmp/migrate-side');
+  // A secret and nested keys: the copy hands over the whole stored config on every engine, not a redacted subset.
+  await createSource(engine, backend, SIDE, SIDE_CONFIG, '/var/tmp/migrate-side');
   await engine.putPage(CO, { type: 'company', title: 'Acme', compiled_truth: 'Acme makes widgets.', timeline: '', frontmatter: { stage: 'seed' } });
   await engine.putPage(NOTE, {
     type: 'person', title: 'Alice', compiled_truth: 'Alice advises [[companies/acme-example]].', timeline: '- 2024-01-02: met',
@@ -157,6 +159,13 @@ describe('engine parity: gbrain migrate from each source engine', () => {
       loopColumnsCopied: ['id', 'source_id', 'dedup_key', 'evidence', 'opened_at'].filter(c => loops.columns.includes(c)),
       loops: loops.rows.map(r => ({ dedup_key: r.dedup_key, summary: r.summary, evidence: JSON.parse(String(r.evidence)), status: r.status })),
       suppressions: { columns: suppressions.columns, rows: suppressions.rows.length },
+      // The side source's config is handed over whole: every stored key, the secret and the nested object included.
+      sideConfigWhole: (() => {
+        const side = sources.rows.find(r => r.id === SIDE);
+        const config = JSON.parse(String(side?.config_json));
+        expect(config).toEqual(SIDE_CONFIG);
+        return Object.keys(config).sort();
+      })(),
     };
   });
 });
