@@ -6,12 +6,12 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 648/648
+# covered: 650/650
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
 # search_reads: 9/9
-# link_reads: 10/10
+# link_reads: 12/12
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
@@ -81,13 +81,13 @@ getPage	pages	yes	81	yes	yes	yes	serves
 readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	350	yes	yes	yes	serves
+putPage	pages	yes	353	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	100	yes	yes	yes	serves
+softDeletePage	pages	yes	102	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -139,6 +139,8 @@ countInboundLinks	link_reads	yes	3	no	yes	yes	serves
 listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
 listPagesTitledIn	link_reads	yes	3	no	yes	yes	serves
 wordLexemes	link_reads	yes	1	no	yes	yes	serves
+readLinkContextMatches	link_reads	yes	2	no	yes	yes	serves
+readLinkContextOriginPages	link_reads	yes	2	no	yes	yes	serves
 readLinkRelationshipEvidence	link_temporal	yes	3	no	yes	yes	serves
 writeLinkRelationshipState	link_temporal	yes	2	no	yes	yes	serves
 linkRelationshipKeysForPages	link_temporal	yes	2	no	yes	yes	serves
@@ -204,7 +206,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	86	yes	yes	yes	serves
+addLink	links	yes	89	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -215,8 +217,8 @@ getBacklinks	links	yes	11	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	2	no	yes	yes	serves
 traverseGraph	links	yes	10	yes	yes	yes	serves
-traversePaths	links	yes	3	yes	yes	yes	serves
-traversePathsDetailed	links	yes	8	yes	yes	yes	serves
+traversePaths	links	yes	4	yes	yes	yes	serves
+traversePathsDetailed	links	yes	9	yes	yes	yes	serves
 relationalFanout	links	yes	5	yes	yes	yes	serves
 relationalChainHop	links	yes	5	no	yes	yes	serves
 getBacklinkCounts	links	yes	5	no	yes	yes	serves
