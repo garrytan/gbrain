@@ -47,7 +47,7 @@ final class Fixture {
         path = directory.appendingPathComponent("chat.db").path
         precondition(sqlite3_open(path, &db) == SQLITE_OK)
         if wal { exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;") }
-        let messageExtra = legacy ? "" : ", attributedBody BLOB, associated_message_type INTEGER DEFAULT 0, item_type INTEGER DEFAULT 0, cache_has_attachments INTEGER DEFAULT 0, date_edited INTEGER DEFAULT 0, date_retracted INTEGER DEFAULT 0"
+        let messageExtra = legacy ? "" : ", attributedBody BLOB, associated_message_type INTEGER DEFAULT 0, item_type INTEGER DEFAULT 0, cache_has_attachments INTEGER DEFAULT 0, date_edited INTEGER DEFAULT 0, date_retracted INTEGER DEFAULT 0, is_sent INTEGER DEFAULT 0, error INTEGER DEFAULT 0"
         let joinExtra = legacy ? "" : ", message_date INTEGER DEFAULT 0"
         let tables = [
             "handle": "CREATE TABLE handle (ROWID INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE, id TEXT NOT NULL, service TEXT)",

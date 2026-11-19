@@ -283,6 +283,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
   remember: {
     visibility: 'Already accepted per item in items, which starter lists; the segmented-entity refusal and the connection check pass it.',
     infer_entity: 'false only turns entity inference off; the segmented-entity refusal\'s retry names it.',
+    valid_from: 'Already accepted per item in items; it only dates the fact being written, to the same source under the same grant, and reads nothing.',
   },
   recall: {
     grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',

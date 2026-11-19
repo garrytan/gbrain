@@ -450,6 +450,7 @@ describe('#7619 split rules', () => {
       'src/eval/longmemeval/via-operation.ts': 'git child argv',
       'src/core/git/commit-guard.ts': 'git child argv',
       'src/commands/doctor/checks/foreign-writers.ts': 'git child argv',
+      'src/commands/doctor/checks/secret-store.ts': 'git child argv (log --grep= for held-back publish commits)',
       'src/core/persistence/pending-import.ts': 'git child argv',
       'src/core/persistence/sync-blobs.ts': 'git child argv',
       'src/core/persistence/moved-pages.ts': 'git child argv',

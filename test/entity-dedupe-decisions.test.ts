@@ -20,7 +20,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -34,7 +34,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { linkEntityIdentity } from '../src/core/entity-identity.ts';
 import { enrichEntity } from '../src/core/enrichment-service.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { decisionId, IDENTITY_DIR, identityHome, projectIdentityDecisions } from '../src/core/entities/identity-decisions.ts';
+import { applyIdentityProjection, decisionId, IDENTITY_DIR, identityHome, planIdentityProjection, projectIdentityDecisions } from '../src/core/entities/identity-decisions.ts';
 import { entityDuplicatesEntry } from '../src/commands/doctor/checks/entity-duplicates.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -277,6 +277,35 @@ describe('without a repository', () => {
     expect((await preview()).filter(g => g.members.some(m => m.slug === 'people/alice-example'))).toEqual([]);
   });
 
+  test('--join refuses when the joined identity would hold two pages recorded as different people', async () => {
+    await seed();
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-c', 'source-c') ON CONFLICT DO NOTHING");
+    await page('people/ae-sample', 'Ae Sample', {}, 'source-c');
+    await linkEntityIdentity(engine, { entityId: 'alice-by-hand', slug: 'people/alice-example', sourceId: 'default', canonical: true });
+    await linkEntityIdentity(engine, { entityId: 'alice-by-hand', slug: 'people/ae-sample', sourceId: 'source-c', canonical: false });
+    const apart = [{ source_id: 'source-b', slug: 'people/alice-example' }, { source_id: 'source-c', slug: 'people/ae-sample' }];
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId(apart), verdict: 'different', members: apart, group_id: null, entity_id: null, canonical: null,
+      decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] } as never);
+    await expect(cli(['confirm', await groupOf('people/alice-example'), '--join', 'alice-by-hand'])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'rejected_pair' });
+    expect((await rows()).identities.map(r => [r.source_id, r.established_by])).toEqual([['default', 'manual'], ['source-c', 'manual']]);
+  });
+
+  test('confirm of an already-confirmed group with --join writes nothing and does not throw when the joined identity holds a rejected pair', async () => {
+    await seed();
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await linkEntityIdentity(engine, { entityId: 'bob-by-hand', slug: 'people/bob-sample', sourceId: 'default', canonical: true });
+    await linkEntityIdentity(engine, { entityId: 'bob-by-hand', slug: 'people/bob-sample', sourceId: 'source-b', canonical: false });
+    const bob = [{ source_id: 'default', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }];
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId(bob), verdict: 'different', members: bob, group_id: null, entity_id: null, canonical: null,
+      decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] } as never);
+    const before = await rows();
+    const out = await cli(['confirm', alice, '--join', 'bob-by-hand']);
+    expect(out).toContain(`${alice} is already confirmed.`);
+    expect(out).toContain('Nothing to confirm.');
+    expect(await rows()).toEqual(before);
+  });
+
   test('a brain with no repository records a group with a page in an owner-only source in the database', async () => {
     await seed();
     await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
@@ -349,7 +378,7 @@ describe('with a repository', () => {
   });
   const syncHome = () => performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true, concurrency: 1 });
   const committed = (id: string) => git(root, 'show', `HEAD:${IDENTITY_DIR}/${id}.md`);
-  const doctor = async () => (await entityDuplicatesEntry.run({ engine, orphanRatioSourceId: undefined, progress: { heartbeat() {} } } as unknown as DoctorContext) as Check[])[0] as { status: string; message: string; details: any };
+  const doctor = async () => (await entityDuplicatesEntry.run({ engine, orphanRatioSourceId: undefined, progress: { heartbeat() {} } } as unknown as DoctorContext) as Check[])[0] as { status: string; message: string; details: any; fix: any };
 
   test('decisions are committed before any row; a database rebuilt from git keeps them; a page imported later links on the next sync', async () => {
     const alice = await groupOf('people/alice-example');
@@ -394,6 +423,78 @@ describe('with a repository', () => {
     await cli(['reconcile']);
     expect((await rows()).decisions.map(d => d.origin)).toEqual(['git']);
     expect((await doctor()).message).not.toContain('drift');
+  });
+
+  test('a projection read before a newer decision was committed never writes its older verdict back', async () => {
+    const members = [{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }];
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.applyIdentityDecisions({ remove: [decisionId(members)] });
+    const home = (await identityHome(engine))!;
+    const stale = await planIdentityProjection(engine, home);
+    expect(stale.upsert.map(d => d.verdict)).toEqual(['same']);
+    await cli(['reject', alice]);
+    expect(committed(decisionId(members))).toContain('verdict: different');
+    await applyIdentityProjection(engine, stale);
+    expect((await rows()).decisions.map(d => [d.decision_id, d.verdict])).toEqual([[decisionId(members), 'different']]);
+    expect((await rows()).identities).toEqual([]);
+  });
+
+  test('doctor offers reconcile only for drift reconcile can clear; a missing page or an invalid file gets its own remedy', async () => {
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.deletePage('people/alice-example', { sourceId: 'source-b' });
+    await engine.applyIdentityDecisions({});
+    const missing = await doctor();
+    expect(missing.status).toBe('warn');
+    expect(missing.message).toContain('1 page(s) of confirmed groups are not linked (source-b:people/alice-example page_missing)');
+    expect(missing.fix.argv).not.toEqual(['gbrain', 'dedupe', 'reconcile']);
+    expect(missing.fix.user_message).toContain(`gbrain dedupe reject ${alice}`);
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
+    await engine.applyIdentityDecisions({});
+    const bad = [{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }];
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    writeFileSync(join(root, IDENTITY_DIR, `${decisionId(bad)}.md`), '---\nverdict: maybe\n---\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'a decision file that does not validate');
+    await syncHome();
+    const invalid = await doctor();
+    expect(invalid.status).toBe('warn');
+    expect(invalid.message).toContain(`1 committed decision file(s) do not validate: ${IDENTITY_DIR}/${decisionId(bad)}.md`);
+    expect(invalid.message).not.toContain('not read into the database');
+    expect(invalid.fix.argv).not.toEqual(['gbrain', 'dedupe', 'reconcile']);
+    expect(invalid.details.drift.invalid_files).toEqual([`${IDENTITY_DIR}/${decisionId(bad)}.md`]);
+  });
+
+  test('doctor keeps offering reconcile for a confirmed page restored outside sync, which reconcile links', async () => {
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.deletePage('people/alice-example', { sourceId: 'source-b' });
+    await engine.applyIdentityDecisions({});
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
+    expect((await engine.listIdentityDecisions()).pending.map(p => p.reason)).toEqual(['unlinked']);
+    expect((await doctor()).fix.argv).toEqual(['gbrain', 'dedupe', 'reconcile']);
+    await cli(['reconcile']);
+    expect((await engine.listIdentityDecisions()).pending).toEqual([]);
+  });
+
+  test('a projection whose apply goes stale reads again; five stale applies in a row throw and write nothing', async () => {
+    const members = [{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }];
+    await cli(['confirm', await groupOf('people/alice-example')]);
+    await engine.applyIdentityDecisions({ remove: [decisionId(members)] });
+    const home = (await identityHome(engine))!;
+    const real = engine.applyIdentityDecisions.bind(engine);
+    let staleLeft = 1;
+    const spy = spyOn(engine, 'applyIdentityDecisions').mockImplementation(async (input) =>
+      input.expectRevision !== undefined && staleLeft-- > 0 ? { upserted: 0, removed: 0, linked: 0, unlinked: 0, stale: true } : real(input));
+    try {
+      expect((await projectIdentityDecisions(engine, home)).upserted).toBe(1);
+      expect((await rows()).decisions.map(d => d.verdict)).toEqual(['same']);
+      await real({ remove: [decisionId(members)] });
+      staleLeft = 5;
+      await expect(projectIdentityDecisions(engine, home)).rejects.toThrow('changed while they were being projected, 5 times in a row');
+      expect((await rows()).decisions).toEqual([]);
+    } finally { spy.mockRestore(); }
   });
 
   test('a failed read of the committed decisions removes nothing', async () => {
@@ -442,6 +543,61 @@ describe('with a repository', () => {
     await expect(cli(['reject', bob])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'owner_only_source' });
     expect(await rows()).toEqual({ decisions: [], identities: [] });
     expect(existsSync(join(root, IDENTITY_DIR))).toBe(false);
+  });
+
+  test('reconcile and doctor leave out a decision whose owner-only source is archived or whose source was removed', async () => {
+    const dbRow = (members: Array<{ source_id: string; slug: string }>) => ({ decision_id: decisionId(members), verdict: 'different', members, group_id: null, entity_id: null,
+      canonical: null, decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null });
+    await engine.applyIdentityDecisions({ upsert: [
+      dbRow([{ source_id: 'default', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }]),
+      dbRow([{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-gone', slug: 'people/dan-sample' }]),
+    ] } as never);
+    await engine.executeRaw("UPDATE sources SET config = $1::jsonb, archived = true WHERE id = 'source-b'", ['{"owner_only": true}']);
+    expect((await doctor()).message).not.toContain('in the database but not in git');
+    expect((await cliJson(['reconcile'])).written).toBe(0);
+    expect(existsSync(join(root, IDENTITY_DIR))).toBe(false);
+  });
+
+  test('a page outside the default source that not every reader may read keeps its group out of the repository', async () => {
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example', readable_by: ['alice-example'] }, 'source-b');
+    await expect(cli(['confirm', await groupOf('people/alice-example')])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'restricted_page' });
+    expect(existsSync(join(root, IDENTITY_DIR))).toBe(false);
+  });
+
+  test('a symlink where a decision file goes is refused and the file it points to is untouched', async () => {
+    const alice = await groupOf('people/alice-example');
+    const id = decisionId([{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }]);
+    const outside = join(mkdtempSync(join(tmpdir(), 'dedupe-outside-')), 'keep.txt');
+    writeFileSync(outside, 'keep\n');
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    symlinkSync(outside, join(root, IDENTITY_DIR, `${id}.md`));
+    await expect(cli(['confirm', alice])).rejects.toMatchObject({ code: 'commit_paths_invalid' });
+    expect(readFileSync(outside, 'utf8')).toBe('keep\n');
+    expect((await rows()).decisions).toEqual([]);
+  });
+
+  test('reconcile never rewrites a committed decision from the database: git wins and the disagreement is reported', async () => {
+    const members = [{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }];
+    const id = decisionId(members);
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    writeFileSync(join(root, IDENTITY_DIR, `${id}.md`), ['---', 'verdict: different', 'members:', ...members.flatMap(m => [`  - source_id: ${m.source_id}`, `    slug: ${m.slug}`]),
+      'decided_by: owner', "decided_at: '2026-11-17T00:00:00.000Z'", '---', ''].join('\n'));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'decision');
+    const file = committed(id);
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: id, verdict: 'same', members, group_id: null, entity_id: 'dan-joined', canonical: members[0],
+      decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] } as never);
+    const r = await cliJson(['reconcile']);
+    expect({ written: r.written, git_kept: r.git_kept }).toEqual({ written: 0, git_kept: [id] });
+    expect(committed(id)).toBe(file);
+    expect((await rows()).decisions.map(d => [d.decision_id, d.verdict, d.origin])).toEqual([[id, 'different', 'git']]);
+  });
+
+  test('a clean group with a page in an owner-only source is left out of the bulk confirm list, so it cannot wedge it', async () => {
+    await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
+    const list = await cliJson(['confirm', '--clean']);
+    expect(list.groups).toEqual([]);
+    expect(await cli(['confirm', '--clean', '--expect', list.preview_hash])).toContain('Nothing to confirm.');
   });
 
   test('a host that does not see the checkout refuses instead of writing a decision only the database holds', async () => {

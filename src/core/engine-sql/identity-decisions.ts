@@ -9,10 +9,14 @@
  * 'dedupe:confirm' row with no "same" decision behind it (the decision was removed or turned into "different") is
  * deleted. Rows any other actor wrote (a hand link) are never touched. A member whose page is missing, or sits in
  * another group, is pending: listIdentityDecisions names it, and the next apply retries it.
+ *
+ * Every apply takes one transaction-scoped advisory lock on Postgres, so applies run one at a time; an apply given the
+ * revision of the rows its caller read writes nothing when they changed since (a projection planned from an older read).
  */
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment } from './fragment.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 export interface IdentityMemberRef { source_id: string; slug: string }
 export type IdentityVerdict = 'same' | 'different';
@@ -36,18 +40,28 @@ export interface IdentityDecision {
   git_blob: string | null;
 }
 
-export interface PendingIdentityMember extends IdentityMemberRef { decision_id: string; reason: 'page_missing' | 'other_group' }
+/** page_missing: no live page; unlinked: the page exists and sits in no group (the next apply links it); other_group: it sits in another group. */
+export interface PendingIdentityMember extends IdentityMemberRef { decision_id: string; reason: 'page_missing' | 'unlinked' | 'other_group' }
 
-export interface IdentityDecisionsRead { decisions: IdentityDecision[]; pending: PendingIdentityMember[] }
+/** revision: decisionsRevision of the rows read, for an apply that must not overwrite a newer change (expectRevision). */
+export interface IdentityDecisionsRead { decisions: IdentityDecision[]; pending: PendingIdentityMember[]; revision: string }
 
 export interface ApplyIdentityDecisionsInput {
   /** Decisions written as given (decided_at defaults to now). */
   upsert?: Array<Omit<IdentityDecision, 'decided_at'> & { decided_at?: string }>;
   /** Decision ids removed. */
   remove?: string[];
+  /** decisionsRevision of the rows the caller read; when the rows changed since, nothing is written and the result is stale. */
+  expectRevision?: string;
 }
 
-export interface ApplyIdentityDecisionsResult { upserted: number; removed: number; linked: number; unlinked: number }
+export interface ApplyIdentityDecisionsResult { upserted: number; removed: number; linked: number; unlinked: number; stale?: true }
+
+/** A revision of the decision rows: every row's id, verdict, entity, origin and blob, in id order. */
+function decisionsRevision(decisions: ReadonlyArray<Pick<IdentityDecision, 'decision_id' | 'verdict' | 'entity_id' | 'origin' | 'git_blob'>>): string {
+  return [...decisions].sort((a, b) => (a.decision_id < b.decision_id ? -1 : a.decision_id > b.decision_id ? 1 : 0))
+    .map(d => [d.decision_id, d.verdict, d.entity_id ?? '', d.origin, d.git_blob ?? ''].join(':')).join(',');
+}
 
 interface DecisionRow {
   decision_id: string; verdict: IdentityVerdict; members: unknown; group_id: string | null; entity_id: string | null;
@@ -67,7 +81,7 @@ export async function listIdentityDecisions(exec: LegacyUnscopedRead): Promise<I
      ORDER BY decision_id`);
   const { rows: pending } = await exec.query<PendingIdentityMember>(`
     SELECT r.decision_id, m.member->>'source_id' AS source_id, m.member->>'slug' AS slug,
-           CASE WHEN p.id IS NULL THEN 'page_missing' ELSE 'other_group' END AS reason
+           CASE WHEN p.id IS NULL THEN 'page_missing' WHEN x.entity_id IS NULL THEN 'unlinked' ELSE 'other_group' END AS reason
       FROM ${MEMBER_PAGES}
       LEFT JOIN entity_identities x ON x.source_id = p.source_id AND x.page_id = p.id
      WHERE r.verdict = 'same' AND (p.id IS NULL OR x.entity_id IS DISTINCT FROM r.entity_id)
@@ -81,11 +95,28 @@ export async function listIdentityDecisions(exec: LegacyUnscopedRead): Promise<I
       decided_by: r.decided_by, decided_at: String(r.decided_at), origin: r.origin, home_source_id: r.home_source_id, git_blob: r.git_blob,
     })),
     pending: pending.map(p => ({ decision_id: p.decision_id, source_id: p.source_id, slug: p.slug, reason: p.reason })),
+    revision: decisionsRevision(rows),
   };
+}
+
+/** The members whose page names readers, sits under a folder rule or carries a private label: not every reader may read them. */
+export async function listRestrictedIdentityMembers(exec: LegacyUnscopedRead, members: ReadonlyArray<IdentityMemberRef>): Promise<IdentityMemberRef[]> {
+  if (!members.length) return [];
+  const { rows } = await exec.run<IdentityMemberRef>(sqlFragment`
+    SELECT p.source_id, p.slug FROM pages p
+      JOIN unnest(${members.map(m => m.source_id)}::text[], ${members.map(m => m.slug)}::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
+     WHERE NOT ${trustedSql(privatePagesFilterFragment('p'))}`);
+  return rows;
 }
 
 /** Writes and removes decisions, then reconciles the 'dedupe:confirm' identity rows; the engine runs it in one transaction. */
 export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIdentityDecisionsInput): Promise<ApplyIdentityDecisionsResult> {
+  if (exec.capabilities.transactionAdvisoryLocks) await exec.run(sqlFragment`SELECT pg_advisory_xact_lock(hashtextextended('gbrain:identity-decisions', 0))`);
+  if (input.expectRevision !== undefined) {
+    const { rows } = await exec.run<Pick<IdentityDecision, 'decision_id' | 'verdict' | 'entity_id' | 'origin' | 'git_blob'>>(sqlFragment`
+      SELECT decision_id, verdict, entity_id, origin, git_blob FROM entity_identity_reviews`);
+    if (decisionsRevision(rows) !== input.expectRevision) return { upserted: 0, removed: 0, linked: 0, unlinked: 0, stale: true };
+  }
   let removed = 0;
   if (input.remove?.length) {
     removed = (await exec.run(sqlFragment`DELETE FROM entity_identity_reviews WHERE decision_id = ANY(${input.remove}::text[]) RETURNING 1`)).rows.length;

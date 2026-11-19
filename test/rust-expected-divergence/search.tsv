@@ -1,0 +1,6 @@
+# Parity cases of the search family where the Rust engine is expected to answer differently from PGLite. Edited by hand.
+# One file per family (test/rust-expected-divergence/<family>.tsv); every file is read, so a family adds its own file.
+# Columns (tab separated): parity file, case name, normaliser, why the answer differs. A row lets the case return a different
+# answer on the Rust arm (GBRAIN_TEST_RUST_ARM=1) only when Rust returns a value (a thrown error never passes) and both answers
+# are equal after the named normaliser (DIVERGENCE_NORMALIZERS in test/engine-parity/rust-arm.ts). When the case starts to match
+# PGLite the run fails until the row is removed.

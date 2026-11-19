@@ -292,6 +292,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'timeline_history',
   // #6147: imported conversation pages that may still carry a typed credential (cached audit).
   'transcript_secret_exposure',
+  // GST-2988 PR 3: the secret store's entries, backups, keys, spool and held-back commits (doctor/checks/secret-store.ts).
+  'secret_store',
   // GST-2768: the conversation archive keeping up with the harness sessions (doctor/checks/transcript-archive.ts).
   'transcript_archive_freshness',
   // GST-2731: facts pages with undated fact lines (doctor/checks/facts-pages.ts).

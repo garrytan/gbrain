@@ -1,0 +1,582 @@
+//! Slug renames, slug aliases, page aliases and contextual retrieval state. The PGLite parity
+//! cases are in test/engine-parity/sync-aliases.test.ts; these cover what they cannot show:
+//! durability across a reopen, the hard-delete rules, the rename's alias bookkeeping, the
+//! visibility filter of `resolveAliases` and the inputs this engine refuses.
+
+mod common;
+
+use common::{TempDir, open};
+use gbrain_store::Store;
+use gbrain_store::aliases::*;
+use gbrain_store::error::*;
+use gbrain_store::pages::{PageInput, PutPageOptions, ReadScope, VersionsOptions};
+use gbrain_store::sources::SourceInput;
+use serde_json::{Value, json};
+use std::time::Duration;
+
+fn put_in(store: &Store, slug: &str, title: &str, frontmatter: Value, source: Option<&str>) {
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "note",
+        "title": title,
+        "compiled_truth": format!("{slug} body"),
+        "frontmatter": frontmatter,
+    }))
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({ "sourceId": source })).unwrap();
+    store.put_page(slug, &input, &options).unwrap();
+}
+
+fn put(store: &Store, slug: &str) {
+    put_in(store, slug, slug, json!({}), None);
+}
+
+fn source(store: &Store, id: &str) {
+    let input: SourceInput =
+        serde_json::from_value(json!({ "id": id, "name": id, "config": {} })).unwrap();
+    store.upsert_source(&input).unwrap();
+}
+
+fn page_in(store: &Store, slug: &str, source: &str) -> Option<Value> {
+    let scope = ReadScope {
+        source_id: Some(source.to_string()),
+        include_deleted: true,
+        ..ReadScope::default()
+    };
+    store
+        .read_page_snapshot(slug, &scope)
+        .unwrap()
+        .map(|s| s["page"].clone())
+}
+
+fn page(store: &Store, slug: &str) -> Value {
+    page_in(store, slug, "default").unwrap()
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|s| s.to_string()).collect()
+}
+
+fn set(store: &Store, slug: &str, source: &str, aliases: &[&str]) -> Result<()> {
+    store.set_page_aliases(slug, source, &strings(aliases))
+}
+
+/// `resolveAliases` as `alias -> ["source/slug", ...]`.
+fn resolve(store: &Store, aliases: &[&str], scope: Value) -> Vec<(String, Vec<String>)> {
+    let scope: AliasScope = serde_json::from_value(scope).unwrap();
+    store
+        .resolve_aliases(&strings(aliases), &scope)
+        .unwrap()
+        .into_iter()
+        .map(|(alias, refs)| {
+            let refs = refs
+                .into_iter()
+                .map(|r| format!("{}/{}", r.source_id, r.slug))
+                .collect();
+            (alias, refs)
+        })
+        .collect()
+}
+
+fn pair(alias: &str, refs: &[&str]) -> (String, Vec<String>) {
+    (alias.to_string(), strings(refs))
+}
+
+fn canonical(store: &Store, slug: &str, sources: &[&str]) -> Option<(String, String, usize)> {
+    store
+        .resolve_slug_with_alias_detailed(slug, &strings(sources))
+        .unwrap()
+        .map(|m| (m.canonical_slug, m.source_id, m.matches))
+}
+
+fn tick() {
+    std::thread::sleep(Duration::from_millis(2));
+}
+
+#[test]
+fn page_aliases_are_deduplicated_replaced_and_cleared() {
+    let dir = TempDir::new("aliases-set");
+    let store = open(&dir);
+    put(&store, "people/alice");
+    set(
+        &store,
+        "people/alice",
+        "default",
+        &["ally", "alice example", "ally", ""],
+    )
+    .unwrap();
+    assert_eq!(
+        resolve(&store, &["ally", "alice example", "nobody"], json!({})),
+        vec![
+            pair("alice example", &["default/people/alice"]),
+            pair("ally", &["default/people/alice"]),
+        ]
+    );
+    set(&store, "people/alice", "default", &["al"]).unwrap();
+    assert_eq!(
+        resolve(&store, &["ally", "al"], json!({})),
+        vec![pair("al", &["default/people/alice"])]
+    );
+    set(&store, "people/alice", "default", &[]).unwrap();
+    assert!(resolve(&store, &["al"], json!({})).is_empty());
+    assert!(resolve(&store, &[], json!({})).is_empty());
+}
+
+#[test]
+fn page_aliases_need_a_known_source_only_to_insert() {
+    let dir = TempDir::new("aliases-source");
+    let store = open(&dir);
+    let err = set(&store, "notes/a", "nowhere", &["x"]).unwrap_err();
+    assert_eq!(err.code, SOURCE_NOT_FOUND);
+    set(&store, "notes/a", "nowhere", &[]).unwrap();
+    set(&store, "notes/a", "nowhere", &["", ""]).unwrap();
+    let err = set(&store, "notes/a", "default", &["a\0b"]).unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn resolve_aliases_is_source_scoped_and_hides_pages_that_are_not_live() {
+    let dir = TempDir::new("aliases-scope");
+    let store = open(&dir);
+    source(&store, "other");
+    put(&store, "people/a");
+    put_in(&store, "people/b", "people/b", json!({}), Some("other"));
+    put_in(
+        &store,
+        "people/q",
+        "people/q",
+        json!({ "quarantine": true }),
+        None,
+    );
+    put(&store, "people/gone");
+    set(&store, "people/a", "default", &["shared"]).unwrap();
+    set(&store, "people/b", "other", &["shared"]).unwrap();
+    set(&store, "people/q", "default", &["quiet"]).unwrap();
+    set(&store, "people/gone", "default", &["gone"]).unwrap();
+    store.soft_delete_page("people/gone", None).unwrap();
+
+    assert_eq!(
+        resolve(&store, &["shared", "quiet", "gone"], json!({})),
+        vec![pair("shared", &["default/people/a", "other/people/b"])]
+    );
+    assert_eq!(
+        resolve(&store, &["shared"], json!({ "sourceId": "other" })),
+        vec![pair("shared", &["other/people/b"])]
+    );
+    assert_eq!(
+        resolve(
+            &store,
+            &["shared"],
+            json!({ "sourceId": "other", "sourceIds": ["default"] })
+        ),
+        vec![pair("shared", &["default/people/a"])]
+    );
+    store.set_source_archived("other", true).unwrap();
+    assert_eq!(
+        resolve(&store, &["shared"], json!({})),
+        vec![pair("shared", &["default/people/a"])]
+    );
+}
+
+#[test]
+fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
+    let dir = TempDir::new("aliases-private");
+    let store = open(&dir);
+    source(&store, "other");
+    put(&store, "people/open");
+    put_in(
+        &store,
+        "people/hidden",
+        "hidden",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    put_in(
+        &store,
+        "people/by-access",
+        "access",
+        json!({ "access": "private" }),
+        None,
+    );
+    put_in(&store, "people/b", "b", json!({}), Some("other"));
+    set(&store, "people/open", "default", &["shared", "open"]).unwrap();
+    set(&store, "people/hidden", "default", &["shared", "hid"]).unwrap();
+    set(&store, "people/by-access", "default", &["acc"]).unwrap();
+    set(&store, "people/b", "other", &["shared"]).unwrap();
+    let names = ["shared", "open", "hid", "acc"];
+    let everything = vec![
+        pair("acc", &["default/people/by-access"]),
+        pair("hid", &["default/people/hidden"]),
+        pair("open", &["default/people/open"]),
+        pair(
+            "shared",
+            &[
+                "default/people/hidden",
+                "default/people/open",
+                "other/people/b",
+            ],
+        ),
+    ];
+    assert_eq!(resolve(&store, &names, json!({})), everything);
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": policy })),
+        vec![
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open", "other/people/b"]),
+        ]
+    );
+    // Without the alias-key test (`honorAliases` false) only `visibility` hides a page.
+    let visibility_only =
+        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": visibility_only })),
+        vec![
+            pair("acc", &["default/people/by-access"]),
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open", "other/people/b"]),
+        ]
+    );
+    assert_eq!(
+        resolve(
+            &store,
+            &names,
+            json!({ "sourceId": "default", "excludePrivate": policy })
+        ),
+        vec![
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open"]),
+        ]
+    );
+}
+
+#[test]
+fn alias_rows_outlive_a_hard_delete_and_answer_for_a_new_page() {
+    let dir = TempDir::new("aliases-hard-delete");
+    let store = open(&dir);
+    put(&store, "people/a");
+    set(&store, "people/a", "default", &["ay"]).unwrap();
+    store.delete_page("people/a", None).unwrap();
+    assert!(resolve(&store, &["ay"], json!({})).is_empty());
+    put(&store, "people/a");
+    assert_eq!(
+        resolve(&store, &["ay"], json!({})),
+        vec![pair("ay", &["default/people/a"])]
+    );
+}
+
+#[test]
+fn contextual_retrieval_state_reads_back_and_survives_a_reopen() {
+    let dir = TempDir::new("aliases-cr");
+    {
+        let store = open(&dir);
+        put(&store, "notes/cr");
+        let before = page(&store, "notes/cr");
+        assert!(before.get("contextual_retrieval_mode").is_none());
+        tick();
+        store
+            .update_page_contextual_retrieval_state("notes/cr", "default", "title", Some("gen-1"))
+            .unwrap();
+        let after = page(&store, "notes/cr");
+        assert_eq!(after["contextual_retrieval_mode"], "title");
+        assert_eq!(after["knowledge_revision"], before["knowledge_revision"]);
+        assert_eq!(after["compiled_truth"], before["compiled_truth"]);
+        assert_ne!(after["updated_at"], before["updated_at"]);
+    }
+    let store = open(&dir);
+    assert_eq!(
+        page(&store, "notes/cr")["contextual_retrieval_mode"],
+        "title"
+    );
+    store
+        .update_page_contextual_retrieval_state("notes/cr", "default", "none", None)
+        .unwrap();
+    assert_eq!(
+        page(&store, "notes/cr")["contextual_retrieval_mode"],
+        "none"
+    );
+    // A body write keeps the state, as a putPage without `contextualRetrieval` does.
+    put(&store, "notes/cr");
+    assert_eq!(
+        page(&store, "notes/cr")["contextual_retrieval_mode"],
+        "none"
+    );
+    // A hard delete removes it with the page.
+    store.delete_page("notes/cr", None).unwrap();
+    put(&store, "notes/cr");
+    assert!(
+        page(&store, "notes/cr")
+            .get("contextual_retrieval_mode")
+            .is_none()
+    );
+}
+
+#[test]
+fn contextual_retrieval_state_skips_a_missing_or_deleted_page() {
+    let dir = TempDir::new("aliases-cr-skip");
+    let store = open(&dir);
+    put(&store, "notes/gone");
+    store.soft_delete_page("notes/gone", None).unwrap();
+    let before = page(&store, "notes/gone");
+    store
+        .update_page_contextual_retrieval_state("notes/gone", "default", "title", None)
+        .unwrap();
+    store
+        .update_page_contextual_retrieval_state("notes/none", "default", "title", None)
+        .unwrap();
+    let after = page(&store, "notes/gone");
+    assert_eq!(after, before);
+    assert!(after.get("contextual_retrieval_mode").is_none());
+}
+
+#[test]
+fn a_rename_moves_the_page_and_records_the_old_slug() {
+    let dir = TempDir::new("aliases-rename");
+    let store = open(&dir);
+    source(&store, "other");
+    put(&store, "notes/a");
+    put_in(&store, "notes/a", "notes/a", json!({}), Some("other"));
+    let before = page(&store, "notes/a");
+    assert_eq!(store.update_slug("notes/a", "Notes/B", None).unwrap(), 1);
+    assert!(page_in(&store, "notes/a", "default").is_none());
+    let after = page(&store, "notes/b");
+    assert_eq!(after["id"], before["id"]);
+    assert_ne!(after["knowledge_revision"], before["knowledge_revision"]);
+    assert_eq!(
+        canonical(&store, "notes/a", &["default"]),
+        Some(("notes/b".into(), "default".into(), 1))
+    );
+    assert_eq!(canonical(&store, "notes/a", &["other"]), None);
+    assert_eq!(canonical(&store, "notes/a", &[]), None);
+    assert!(page_in(&store, "notes/a", "other").is_some());
+    // The page as it stood before the move is a version of the moved page.
+    let versions = store
+        .get_versions("notes/b", &VersionsOptions::default())
+        .unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0]["compiled_truth"], "notes/a body");
+}
+
+#[test]
+fn renames_repoint_earlier_aliases_and_drop_the_one_a_page_now_owns() {
+    let dir = TempDir::new("aliases-repoint");
+    let store = open(&dir);
+    put(&store, "notes/a");
+    store.update_slug("notes/a", "notes/b", None).unwrap();
+    store.update_slug("notes/b", "notes/c", None).unwrap();
+    assert_eq!(
+        canonical(&store, "notes/a", &["default"]),
+        Some(("notes/c".into(), "default".into(), 1))
+    );
+    assert_eq!(
+        canonical(&store, "notes/b", &["default"]),
+        Some(("notes/c".into(), "default".into(), 1))
+    );
+    // Moving back onto an alias drops it: a page owns that slug again.
+    store.update_slug("notes/c", "notes/a", None).unwrap();
+    assert_eq!(canonical(&store, "notes/a", &["default"]), None);
+    assert_eq!(
+        canonical(&store, "notes/b", &["default"]),
+        Some(("notes/a".into(), "default".into(), 1))
+    );
+    assert_eq!(
+        canonical(&store, "notes/c", &["default"]),
+        Some(("notes/a".into(), "default".into(), 1))
+    );
+}
+
+#[test]
+fn a_federated_lookup_takes_the_first_source_and_counts_the_matches() {
+    let dir = TempDir::new("aliases-federated");
+    let store = open(&dir);
+    source(&store, "other");
+    put(&store, "notes/x");
+    put_in(&store, "notes/x", "notes/x", json!({}), Some("other"));
+    store.update_slug("notes/x", "notes/y", None).unwrap();
+    store
+        .update_slug("notes/x", "notes/z", Some("other"))
+        .unwrap();
+    assert_eq!(
+        canonical(&store, "notes/x", &["other", "default", "other"]),
+        Some(("notes/z".into(), "other".into(), 2))
+    );
+    assert_eq!(
+        canonical(&store, "notes/x", &["default", "other"]),
+        Some(("notes/y".into(), "default".into(), 2))
+    );
+}
+
+#[test]
+fn a_rename_moves_the_page_aliases() {
+    let dir = TempDir::new("aliases-rename-move");
+    let store = open(&dir);
+    put(&store, "people/a");
+    set(&store, "people/a", "default", &["ay", "shared"]).unwrap();
+    // Rows already held by the new slug merge with the moved ones.
+    set(&store, "people/b", "default", &["shared", "bee"]).unwrap();
+    store.update_slug("people/a", "people/b", None).unwrap();
+    assert_eq!(
+        resolve(&store, &["ay", "bee", "shared"], json!({})),
+        vec![
+            pair("ay", &["default/people/b"]),
+            pair("bee", &["default/people/b"]),
+            pair("shared", &["default/people/b"]),
+        ]
+    );
+    // setPageAliases on the new slug now replaces every moved row.
+    set(&store, "people/b", "default", &["only"]).unwrap();
+    assert!(resolve(&store, &["ay", "bee", "shared"], json!({})).is_empty());
+}
+
+#[test]
+fn a_refused_rename_keeps_nothing() {
+    let dir = TempDir::new("aliases-refused");
+    let store = open(&dir);
+    put(&store, "notes/a");
+    put(&store, "notes/b");
+    set(&store, "notes/a", "default", &["ay"]).unwrap();
+    let before = page(&store, "notes/a");
+    let err = store.update_slug("notes/a", "notes/b", None).unwrap_err();
+    assert_eq!(err.code, CONSTRAINT_VIOLATION);
+    let err = store
+        .update_slug("notes/a", "notes/../escape", None)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_SLUG);
+    assert_eq!(page(&store, "notes/a"), before);
+    assert_eq!(canonical(&store, "notes/a", &["default"]), None);
+    assert_eq!(
+        resolve(&store, &["ay"], json!({})),
+        vec![pair("ay", &["default/notes/a"])]
+    );
+    let versions = store
+        .get_versions("notes/a", &VersionsOptions::default())
+        .unwrap();
+    assert!(versions.is_empty());
+}
+
+#[test]
+fn a_rename_of_nothing_or_onto_itself() {
+    let dir = TempDir::new("aliases-noop");
+    let store = open(&dir);
+    assert_eq!(store.update_slug("notes/none", "notes/x", None).unwrap(), 0);
+    assert_eq!(
+        store
+            .update_slug("notes/none", "notes/x", Some("nowhere"))
+            .unwrap(),
+        0
+    );
+    put(&store, "notes/a");
+    let before = page(&store, "notes/a");
+    tick();
+    assert_eq!(store.update_slug("notes/a", "notes/a", None).unwrap(), 1);
+    let after = page(&store, "notes/a");
+    assert_ne!(after["updated_at"], before["updated_at"]);
+    assert_eq!(after["knowledge_revision"], before["knowledge_revision"]);
+    assert_eq!(canonical(&store, "notes/a", &["default"]), None);
+}
+
+#[test]
+fn a_rename_moves_a_soft_deleted_page_and_keeps_its_state() {
+    let dir = TempDir::new("aliases-rename-deleted");
+    let store = open(&dir);
+    put(&store, "notes/a");
+    store
+        .update_page_contextual_retrieval_state("notes/a", "default", "title", None)
+        .unwrap();
+    store.soft_delete_page("notes/a", None).unwrap();
+    assert_eq!(store.update_slug("notes/a", "notes/b", None).unwrap(), 1);
+    let moved = page(&store, "notes/b");
+    assert!(!moved["deleted_at"].is_null());
+    assert_eq!(moved["contextual_retrieval_mode"], "title");
+}
+
+fn canonical_refs(store: &Store, refs: &[(&str, &str)], policy: Value) -> Vec<String> {
+    let mut query = json!({
+        "refs": refs.iter().map(|(s, slug)| json!({ "source_id": s, "slug": slug })).collect::<Vec<_>>(),
+    });
+    query
+        .as_object_mut()
+        .unwrap()
+        .extend(policy.as_object().unwrap().clone());
+    let query: AliasCanonicalQuery = serde_json::from_value(query).unwrap();
+    store
+        .alias_canonical_refs(&query)
+        .unwrap()
+        .iter()
+        .map(|r| {
+            format!(
+                "{}/{}",
+                r["source_id"].as_str().unwrap(),
+                r["canonical_slug"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
+    let dir = TempDir::new("aliases-canonical");
+    let store = open(&dir);
+    source(&store, "other");
+    for slug in ["c/open", "c/private", "c/gone", "c/quiet"] {
+        put(&store, &format!("{slug}-old"));
+        store
+            .update_slug(&format!("{slug}-old"), slug, None)
+            .unwrap();
+    }
+    put_in(&store, "c/away-old", "away", json!({}), Some("other"));
+    store
+        .update_slug("c/away-old", "c/away", Some("other"))
+        .unwrap();
+    put_in(
+        &store,
+        "c/private",
+        "p",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    put_in(&store, "c/quiet", "q", json!({ "quarantine": true }), None);
+    store.soft_delete_page("c/gone", None).unwrap();
+    put(&store, "c/plain");
+    let refs = [
+        ("default", "c/quiet"),
+        ("default", "c/open"),
+        ("default", "c/private"),
+        ("default", "c/gone"),
+        ("default", "c/plain"),
+        ("other", "c/away"),
+        ("default", "c/open"),
+        ("default", "c/open-old"),
+        ("default", "c/\0nul"),
+    ];
+    let all = strings(&[
+        "default/c/gone",
+        "default/c/open",
+        "default/c/private",
+        "default/c/quiet",
+        "other/c/away",
+    ]);
+    assert_eq!(canonical_refs(&store, &refs, json!({})), all);
+    assert_eq!(
+        canonical_refs(&store, &refs, json!({ "live": true })),
+        strings(&["default/c/open", "default/c/private", "other/c/away"])
+    );
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    assert_eq!(
+        canonical_refs(
+            &store,
+            &refs,
+            json!({ "live": true, "exclude_private": policy })
+        ),
+        strings(&["default/c/open", "other/c/away"])
+    );
+    assert_eq!(
+        canonical_refs(&store, &refs, json!({ "source_ids": ["other"] })),
+        strings(&["other/c/away"])
+    );
+    store.set_source_archived("other", true).unwrap();
+    assert_eq!(
+        canonical_refs(&store, &refs, json!({ "live": true })),
+        strings(&["default/c/open", "default/c/private"])
+    );
+    assert!(canonical_refs(&store, &[], json!({ "live": true })).is_empty());
+}
