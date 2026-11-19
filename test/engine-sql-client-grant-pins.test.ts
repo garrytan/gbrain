@@ -16,6 +16,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
 import { clientHoldsAuthorization, readClientCatalogProvenance, recordFirstConsentInTransaction, rescopeClientGrantInTransaction } from '../src/core/grants/service.ts';
 import { assertScopeSourceGrant } from '../src/core/access/attest-sources.ts';
+import { rescopeOAuthClient } from '../src/core/grants/rescope.ts';
 
 const CLIENT_ROW = {
   client_id: 'client-1', client_name: 'client-1', scope: 'read', source_id: 'default', federated_read: ['default'], source_grant: null,
@@ -27,7 +28,9 @@ const CLIENT_ROW = {
 const FRESH_ROW = { ...CLIENT_ROW, grant_revision: 0 };
 
 type Trace = { text: string; params: unknown[] }[];
+const GRANT_COLUMNS = ['grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day'];
 const RULES = (row: Record<string, unknown>, held = false) => [
+  [/information_schema\.columns/, GRANT_COLUMNS.map(column_name => ({ column_name }))],
   [/FROM oauth_clients WHERE client_id = \$1 FOR UPDATE/, [row]],
   [/SELECT EXISTS \(SELECT 1 FROM oauth_tokens/, [{ held }]],
   [/SELECT archived FROM sources WHERE id = \$1 FOR SHARE/, [{ archived: false }]],
@@ -119,6 +122,12 @@ describe('the grant flows send the same statements through an engine as through 
   test('assertScopeSourceGrant reads the two credential tables the same way', async () => {
     const { template, member } = await both(db => assertScopeSourceGrant(db, { kind: 'client', id: 'client-1' }, ['team-a'], { privatePages: true }));
     expect(template.map(s => s.text)).toContain('SELECT * FROM access_tokens WHERE revoked_at IS NULL');
+    expect(member).toEqual(template);
+  });
+
+  test('rescopeOAuthClient (the surface write of a registration) reads the schema and the source, then rescopes, with the same statements', async () => {
+    const { template, member } = await both(db => rescopeOAuthClient(db, 'client-1', { sourceId: 'team-a', surface: 'verbs' }));
+    expect(template.some(s => s.text === CLIENT_GRANT_SQL.persist)).toBe(true);
     expect(member).toEqual(template);
   });
 

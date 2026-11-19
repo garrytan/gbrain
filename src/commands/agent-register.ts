@@ -564,6 +564,8 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
         surface: preset.surface,
         surfaceSetBy: preset.surfaceSetBy,
         columns,
+        // The transaction's engine, so the client, its audit row and the surface write go through typed members.
+        engine: tx,
       });
     });
     registered.created.source = createdWorkspace;

@@ -1287,7 +1287,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
    * verifyAccessToken re-reads oauth_clients on every verification.
    */
   async rescopeClient(clientId: string, opts: RescopeClientOptions): Promise<RescopeClientResult> {
-    return rescopeOAuthClient(this.sql, clientId, opts);
+    return rescopeOAuthClient(this.engine ?? this.sql, clientId, opts);
   }
 
 }

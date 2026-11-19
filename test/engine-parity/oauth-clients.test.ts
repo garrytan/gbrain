@@ -32,6 +32,7 @@ import { rotateClientSecret } from '../../src/commands/agent-register.ts';
 import { parseRegisterClientArgs, preflightOauthClientColumns, registerScopedClient } from '../../src/commands/auth.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { listClientRows } from '../../src/commands/auth-client-rows.ts';
+import { rescopeOAuthClient } from '../../src/core/grants/rescope.ts';
 import { readClientCatalogProvenance, recordFirstConsentInTransaction, rescopeClientGrant, rescopeClientGrantInTransaction } from '../../src/core/grants/service.ts';
 import { hashToken } from '../../src/core/utils.ts';
 import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
@@ -397,6 +398,35 @@ describe('engine parity: oauth_clients rows and constraints', () => {
       const current = await engine.persistOauthClientGrant(grant('cas', 3));
       const row = await engine.readOauthClient('cas');
       return { stale, missing, unchanged, current, row: { scope: row?.scope, source_id: row?.source_id, grant_revision: row?.grant_revision }, audit: await audit(engine, 'cas') };
+    });
+
+  // The admin registration route, `agent register` and the MCP provisioner call registerScopedClient inside one engine
+  // transaction with that transaction as the engine: the client, its register audit row, its token ttl and the surface
+  // write commit or roll back together.
+  parityTest('register inside a transaction with the surface write: client, audit rows, ttl and surface land together, and a failure after leaves nothing',
+    { methods: ['readOauthClientColumns', 'insertOauthClientGrant', 'setOauthClientTokenTtl', 'readOauthClientForUpdate', 'persistOauthClientGrant', 'getSource', 'listOauthGrantAudit', 'readOauthClient'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      const columns = await preflightOauthClientColumns(engine);
+      const args = (extra: Partial<ReturnType<typeof parseRegisterClientArgs>> = {}) => ({ ...parseRegisterClientArgs(['--grant-types', 'client_credentials', '--scopes', 'read write', '--source', 'src-a', '--token-ttl', '900']), ...extra });
+      const register = (tx: BrainEngine, name: string) => registerScopedClient(sqlQueryForEngine(tx), name, args(),
+        { columns, engine: tx, surface: 'verbs', surfaceSetBy: 'operator', tokenTtlSeconds: 900 });
+      const registered = await engine.transaction(tx => register(tx, 'in-tx'));
+      const id = registered.clientId;
+      const row = await engine.readOauthClient(id);
+      const failure = await refusal(() => engine.transaction(async tx => {
+        await register(tx, 'rolled-back');
+        throw Object.assign(new Error('stop'), { code: 'test_stop' });
+      }));
+      const names = (await engine.listOauthClients()).map(c => c.client_name);
+      const movedSource = await engine.transaction(tx => rescopeOAuthClient(tx, id, { sourceId: 'src-b', federatedRead: ['src-a', 'src-b'] }));
+      const unknownSource = await refusal(() => engine.transaction(tx => rescopeOAuthClient(tx, id, { sourceId: 'src-nowhere' })));
+      return {
+        tokenTtl: registered.tokenTtl, surface: registered.surface, surfaceOld: registered.surfaceOld,
+        row: { surface: row?.surface, surface_set_by: row?.surface_set_by, token_ttl: row?.token_ttl, grant_revision: row?.grant_revision, source_id: row?.source_id },
+        failure: failure && failure.code, names,
+        movedSource: { sourceId: movedSource.sourceId, federatedRead: movedSource.federatedRead }, unknownSource: unknownSource && unknownSource.message,
+        audit: await audit(engine, id),
+      };
     });
 
   parityTest('revoke a client: the delete returns the client once, it is no longer live, and its ttl write finds no row',
