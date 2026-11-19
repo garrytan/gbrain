@@ -71,7 +71,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	54	no	yes	yes	serves
+transaction	lifecycle	yes	55	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -79,7 +79,7 @@ getPage	pages	yes	82	yes	yes	yes	serves
 readPageSnapshot	pages	yes	23	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	319	yes	yes	yes	serves
+putPage	pages	yes	320	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -289,14 +289,14 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	40	yes	yes	yes	serves
-insertFacts	facts	yes	36	no	yes	yes	serves
+insertFact	facts	yes	41	yes	yes	yes	serves
+insertFacts	facts	yes	37	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	23	no	yes	yes	serves
-listFactsByEntity	facts	yes	17	yes	yes	yes	serves
-listFactsSince	facts	yes	9	yes	yes	yes	serves
-listFactsKeyset	facts	yes	2	no	yes	yes	serves
-listFactsBySession	facts	yes	3	yes	yes	yes	serves
+listFactsByEntity	facts	yes	18	yes	yes	yes	serves
+listFactsSince	facts	yes	10	yes	yes	yes	serves
+listFactsKeyset	facts	yes	3	no	yes	yes	serves
+listFactsBySession	facts	yes	4	yes	yes	yes	serves
 listSupersessions	facts	yes	6	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 listFenceRetireCandidates	facts	yes	2	no	yes	yes	serves
@@ -349,7 +349,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	32	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	33	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
@@ -620,7 +620,7 @@ listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	6	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	7	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	14	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
