@@ -1040,6 +1040,9 @@ pub struct GetChunksOptions {
     pub include_deleted: bool,
     pub include_embedding: bool,
     pub include_unsealed: bool,
+    /// PGLite's `requireSafeChunks` (`safeChunksFilter`): only a page whose stored chunker version is at least
+    /// [`SAFE_FENCE_CHUNKER_VERSION`] reads its chunks.
+    pub require_safe_chunks: bool,
 }
 
 /// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`.
@@ -1281,7 +1284,8 @@ impl Store {
     /// index order) while they describe the page's current text. PGLite reads a page's chunks only
     /// when its `text_projection_revision` equals its `knowledge_revision` (the chunks are sealed),
     /// so a page that was never sealed, or whose revision moved since (a tag change, a soft
-    /// delete), reads as no chunks unless `include_unsealed` is set. `include_embedding` returns
+    /// delete), reads as no chunks unless `include_unsealed` is set. `require_safe_chunks` reads
+    /// no chunks of a page cut below the safe fence chunker version. `include_embedding` returns
     /// each stored vector.
     pub fn get_chunks_with(&self, slug: &str, options: &GetChunksOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
@@ -1300,6 +1304,13 @@ impl Store {
         };
         if !options.include_unsealed
             && page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str())
+        {
+            return Ok(Vec::new());
+        }
+        if options.require_safe_chunks
+            && page
+                .chunker_version
+                .is_none_or(|v| v < SAFE_FENCE_CHUNKER_VERSION)
         {
             return Ok(Vec::new());
         }
@@ -1714,6 +1725,55 @@ mod chunker_version_tests {
 
     fn code(err: StoreError) -> &'static str {
         err.code
+    }
+
+    /// The chunk texts of "a" a `requireSafeChunks` read returns.
+    fn safe_rows(store: &Store) -> Vec<String> {
+        let options = GetChunksOptions {
+            require_safe_chunks: true,
+            ..GetChunksOptions::default()
+        };
+        store
+            .get_chunks_with("a", &options)
+            .unwrap()
+            .iter()
+            .map(|c| c["chunk_text"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_safe_chunk_read_serves_only_a_page_cut_at_the_safe_chunker_version() {
+        let store = crate::test_support::store();
+        page(&store);
+        store
+            .upsert_chunks("a", &[chunk(0, "safe")], &sealed_at("4"))
+            .unwrap();
+        assert_eq!(safe_rows(&store), vec!["safe"]);
+        store.set_chunker_version("a", "3", None).unwrap();
+        assert!(safe_rows(&store).is_empty());
+        // Without the option the same page still reads its chunks.
+        assert_eq!(rows(&store), vec!["0:safe"]);
+        store.set_chunker_version("a", "4", None).unwrap();
+        assert_eq!(safe_rows(&store), vec!["safe"]);
+        // An unsealed fragment write marks the page unsafe (-1).
+        store
+            .upsert_chunks(
+                "a",
+                &[chunk(0, "fragment")],
+                &UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        let unsealed_safe = GetChunksOptions {
+            include_unsealed: true,
+            require_safe_chunks: true,
+            ..GetChunksOptions::default()
+        };
+        assert!(
+            store
+                .get_chunks_with("a", &unsealed_safe)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

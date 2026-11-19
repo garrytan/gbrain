@@ -184,9 +184,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
-upsertChunks	chunks	yes	28	yes	yes	yes	serves
-sealChunks	chunks	yes	46	no	yes	yes	serves
-getChunks	chunks	yes	29	yes	yes	yes	serves
+upsertChunks	chunks	yes	29	yes	yes	yes	serves
+sealChunks	chunks	yes	47	no	yes	yes	serves
+getChunks	chunks	yes	30	yes	yes	yes	serves
 getChunkPage	chunks	yes	11	no	yes	yes	serves
 getChunkWindows	chunks	yes	11	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -201,7 +201,7 @@ readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
-setChunkerVersion	chunks	yes	9	no	yes	yes	serves
+setChunkerVersion	chunks	yes	10	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
