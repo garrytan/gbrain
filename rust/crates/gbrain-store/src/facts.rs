@@ -542,7 +542,7 @@ pub(crate) fn write_fact(
     put_json(tx, &fact_key(new.id), new)
 }
 
-/// Deletes a row and its index entries, then clears `superseded_by` on the rows that named it
+/// Deletes a row and its index entries (marking first what an owner-only row leaves, v322), then clears `superseded_by` on the rows that named it
 /// (`facts_superseded_by_fkey ... ON DELETE SET NULL`), an update the trust stamp sees under
 /// `trust`.
 pub(crate) fn delete_fact(
@@ -550,6 +550,7 @@ pub(crate) fn delete_fact(
     trust: &WriteTrust,
     row: &FactRecord,
 ) -> Result<()> {
+    crate::owner_only_marks::mark_before_row_delete(tx, "facts", row.id, None)?;
     for (key, _) in index_keys(row) {
         tx.delete(&key)?;
     }

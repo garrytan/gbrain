@@ -188,6 +188,12 @@ fn own_row(entry: &TimelineRecord) -> Value {
 
 /// Deletes the entry's `E` key and its `D` key when that key still names the entry.
 fn delete_entry(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
+    crate::owner_only_marks::mark_before_row_delete(
+        tx,
+        "timeline_entries",
+        entry.id,
+        Some(entry.page_id),
+    )?;
     tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
     let dedup = entry.dedup_key();
     if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {

@@ -2062,8 +2062,8 @@ pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Resu
 
 /// Deletes a page and everything that hangs off it.
 pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
-    // Before its links go: the marks are what keeps a concept derived from an owner-only page owner-only (v322).
-    crate::owner_only_marks::mark_before_delete(tx, page)?;
+    // Before its links, takes and timeline go: the marks keep what was derived from an owner-only page owner-only (v322).
+    crate::owner_only_marks::mark_before_row_delete(tx, "pages", page.id, None)?;
     let mut doomed = Vec::new();
     scan_prefix(&*tx, &keys::version_prefix(page.id), false, &mut |k, _| {
         doomed.push(k.to_vec());

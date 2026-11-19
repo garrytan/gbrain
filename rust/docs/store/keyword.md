@@ -70,12 +70,16 @@ brain at schema v320 or above, which is how the store reports itself) hides a pa
 input page in one; `closed` (a call outside an engine scope, or a brain below v320) hides every page while the brain
 holds an owner-only source. A text that holds neither form refuses. `entityPrivacy: false` does not drop it. Under `lineage`
 a page named in `owner_only_marks` is hidden too, and under either form a mark keeps the guard on after the last
-owner-only source is gone. `remove_page` writes the marks the SQL delete trigger writes (v322): when the page being
-deleted is itself owner-only lineage (strict form), it marks that page and each concept or question that names it as a
-`concept-provenance` `synthesized_from` input, so a derivative stays hidden after its owner-only input is deleted for
-good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
-only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
-store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it.
+owner-only source is gone. A delete of a page, fact, take or timeline entry writes the marks the SQL delete trigger writes (v322,
+`owner_only_marks.rs`): when the row being deleted is itself owner-only lineage (strict form), or is a take or timeline
+entry of such a page, it marks that row, the takes and timeline entries of a deleted page, each concept or question that
+names a deleted page as a `concept-provenance` `synthesized_from` input, and every row `derivation_inputs` reaches from
+them at any depth. So a derivative stays hidden after its owner-only input is deleted for good, even when the source is
+later flipped off. The marks live under `M owner_only_mark/<table>/<id>`; a page mark keeps its format 6 key. Removing
+only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The SQL
+`*` marks (`unguarded`, a missing delete trigger; `row_security`, a delete by a login whose reads row-level security
+limits) are never written: the store has no SQL triggers to go missing and no row-level security. A `*` mark present
+in the store still makes lineage read closed, as in SQL.
 
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of

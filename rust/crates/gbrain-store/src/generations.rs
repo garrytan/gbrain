@@ -77,7 +77,9 @@ mod needs_rederive;
 mod repair;
 pub use activations::ActivationRecordInput;
 pub use derivation_inputs::DerivationInputsArgs;
-pub(crate) use derivation_inputs::{derived_from, hop_limit, lineage_owner_only};
+pub(crate) use derivation_inputs::{
+    derived_closure, derived_from, has_inputs, hop_limit, lineage_owner_only,
+};
 pub use needs_rederive::HideDerivedRowsArgs;
 pub(crate) use needs_rederive::awaits_rederive;
 pub use repair::RepairFilter;

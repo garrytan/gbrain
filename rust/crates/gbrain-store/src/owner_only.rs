@@ -15,18 +15,22 @@
 //!   question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only
 //!   source, or when `owner_only_marks` names it (`gbrain_owner_only_lineage_strict`, v322: the
 //!   mark a hard delete of its owner-only input leaves, owner_only_marks.rs). A fact is
-//!   owner-only when its source is. Either row is also owner-only when its recorded
-//!   `derivation_inputs` (`h 0x0A`, generations/derivation_inputs.rs) reach, at any depth, a row
-//!   of an owner-only source or a marked page (`gbrain_owner_only_lineage_strict`).
+//!   owner-only when its source is or a mark names it. Either row is also owner-only when its
+//!   recorded `derivation_inputs` (`h 0x0A`, generations/derivation_inputs.rs) reach, at any
+//!   depth, a marked row or a row of an owner-only source (`gbrain_owner_only_lineage_strict`).
+//!   While a closed mark (`*`) exists, every row with a recorded input and every concept or
+//!   question page counts as owner-only too (`gbrain_owner_only_lineage`); this store never
+//!   writes one (owner_only_marks.rs).
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::Result;
+use crate::generations::has_inputs;
 use crate::generations::lineage_owner_only;
 use crate::kv::KvRead;
 use crate::links::out_links;
-use crate::owner_only_marks::is_marked;
+use crate::owner_only_marks::{any_closed, is_marked};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::{all_sources, read_source};
 use crate::timeline_queries::jsonb_field_text;
@@ -67,6 +71,65 @@ pub(crate) fn source_owner_only(read: &dyn KvRead, source_id: &str) -> Result<bo
     Ok(read_source(read, source_id)?.is_some_and(|s| owner_only_config(&s.config)))
 }
 
+/// `gbrain_owner_only_lineage`'s closed test: while a closed mark exists, a row with a recorded
+/// input, and a concept or question page (`synthesized`), counts as owner-only.
+fn closed_lineage(read: &dyn KvRead, table: &str, id: u64, synthesized: bool) -> Result<bool> {
+    Ok(any_closed(read)? && (synthesized || has_inputs(read, table, &id.to_string())?))
+}
+
+fn synthesized(page: &PageRecord) -> bool {
+    matches!(page.page_type.as_str(), "concept" | "question")
+}
+
+/// A concept or question page with a `concept-provenance` / `synthesized_from` link to a page
+/// in an owner-only source.
+fn synthesized_from_owner_only(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    if !synthesized(page) {
+        return Ok(false);
+    }
+    for link in out_links(read, page.id)? {
+        if link.link_source.as_deref() == Some("concept-provenance")
+            && link.link_type == "synthesized_from"
+            && let Some(input) = read_page_by_id(read, link.to_page_id)?
+            && source_owner_only(read, &input.source_id)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// `gbrain_owner_only_lineage_strict('pages', id)` for a page record: marked, of an owner-only source,
+/// synthesized from one, or reaching one through its recorded inputs.
+fn page_strict(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    Ok(is_marked(read, "pages", &page.id.to_string())?
+        || source_owner_only(read, &page.source_id)?
+        || synthesized_from_owner_only(read, page)?
+        || lineage_owner_only(read, "pages", page.id)?)
+}
+
+/// `gbrain_owner_only_lineage_strict(table, id)` (v322), the test the delete triggers mark by: the
+/// row is marked; a page is of an owner-only source or synthesized from one; a fact is of an
+/// owner-only source; or the row's recorded inputs reach a marked row or a row of an owner-only
+/// source. A take or timeline entry has no source test of its own (the trigger adds its page's).
+pub(crate) fn lineage_strict(read: &dyn KvRead, table: &str, id: u64) -> Result<bool> {
+    match table {
+        "pages" => match read_page_by_id(read, id)? {
+            Some(page) => page_strict(read, &page),
+            None => Ok(
+                is_marked(read, table, &id.to_string())? || lineage_owner_only(read, table, id)?
+            ),
+        },
+        "facts" => Ok(is_marked(read, table, &id.to_string())?
+            || crate::facts::read_fact(read, id)?
+                .map(|f| source_owner_only(read, &f.source_id))
+                .transpose()?
+                .unwrap_or(false)
+            || lineage_owner_only(read, table, id)?),
+        _ => Ok(is_marked(read, table, &id.to_string())? || lineage_owner_only(read, table, id)?),
+    }
+}
+
 /// `ownerOnlyPageSql(alias, form)`: whether `page` counts as owner-only. In the `fn` form a
 /// positive row test implies the guard (an owner-only source or a mark exists), so only the
 /// `closed` form reads every source.
@@ -79,25 +142,8 @@ pub(crate) fn page_owner_only(
         OwnerOnlyForm::Off => Ok(false),
         OwnerOnlyForm::Closed => any_owner_only(read),
         OwnerOnlyForm::Fn => {
-            if is_marked(read, page.id)?
-                || source_owner_only(read, &page.source_id)?
-                || lineage_owner_only(read, "pages", page.id)?
-            {
-                return Ok(true);
-            }
-            if !matches!(page.page_type.as_str(), "concept" | "question") {
-                return Ok(false);
-            }
-            for link in out_links(read, page.id)? {
-                if link.link_source.as_deref() == Some("concept-provenance")
-                    && link.link_type == "synthesized_from"
-                    && let Some(input) = read_page_by_id(read, link.to_page_id)?
-                    && source_owner_only(read, &input.source_id)?
-                {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
+            Ok(closed_lineage(read, "pages", page.id, synthesized(page))?
+                || page_strict(read, page)?)
         }
     }
 }
@@ -112,8 +158,9 @@ pub(crate) fn fact_owner_only(
     match form {
         OwnerOnlyForm::Off => Ok(false),
         OwnerOnlyForm::Closed => any_owner_only(read),
-        OwnerOnlyForm::Fn => {
-            Ok(source_owner_only(read, source_id)? || lineage_owner_only(read, "facts", id)?)
-        }
+        OwnerOnlyForm::Fn => Ok(closed_lineage(read, "facts", id, false)?
+            || is_marked(read, "facts", &id.to_string())?
+            || source_owner_only(read, source_id)?
+            || lineage_owner_only(read, "facts", id)?),
     }
 }

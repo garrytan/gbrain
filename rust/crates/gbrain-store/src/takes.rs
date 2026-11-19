@@ -523,8 +523,9 @@ fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
 }
 
-/// Deletes a take with its evidence rows.
+/// Deletes a take with its evidence rows, marking first what an owner-only take leaves (v322).
 fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    crate::owner_only_marks::mark_before_row_delete(tx, "takes", take.id, Some(take.page_id))?;
     let mut synths = Vec::new();
     scan_prefix(
         &*tx,

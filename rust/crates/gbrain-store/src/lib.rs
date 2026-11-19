@@ -978,6 +978,58 @@ mod older_build_tests {
         let _ = fs::remove_dir_all(dir.parent().unwrap());
     }
 
+    /// A delete under an owner-only source leaves marks on non-page tables, which only format 7
+    /// reads: a format-6 build refuses the brain before any write.
+    #[test]
+    fn a_format_6_build_refuses_a_format_7_brain_with_owner_only_marks_and_changes_no_byte() {
+        let dir = fresh_dir("older-6-vs-7-marks").join("brain");
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        let vault: sources::SourceInput = serde_json::from_value(
+            serde_json::json!({ "id": "vault", "config": { "owner_only": true } }),
+        )
+        .unwrap();
+        store.upsert_source(&vault).unwrap();
+        let input: pages::PageInput = serde_json::from_value(serde_json::json!({
+            "type": "note", "title": "v", "compiled_truth": "heron", "timeline": "",
+        }))
+        .unwrap();
+        let options = pages::PutPageOptions {
+            source_id: Some("vault".into()),
+            ..Default::default()
+        };
+        store.put_page("notes/vault", &input, &options).unwrap();
+        let page = pages::read_page(&*store.read().unwrap(), "vault", "notes/vault")
+            .unwrap()
+            .unwrap()
+            .id;
+        let take: takes::TakeInput = serde_json::from_value(serde_json::json!({
+            "page_id": page, "row_num": 1, "claim": "a heron", "kind": "take",
+            "holder": "self", "weight": 0.5, "active": true,
+        }))
+        .unwrap();
+        store.add_takes_batch(&[take]).unwrap();
+        let take_id = takes::page_takes(&*store.read().unwrap(), page).unwrap()[0].id;
+        store
+            .delete_take_rows(page as i64, &[serde_json::json!(1)])
+            .unwrap();
+        assert!(
+            owner_only_marks::is_marked(&*store.read().unwrap(), "takes", &take_id.to_string())
+                .unwrap()
+        );
+        assert_eq!(store.info().format_version, 7);
+        drop(store);
+        assert_refused(&dir, &[1, 2, 3, 4, 5, 6], 7);
+        fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+        assert_refused(&dir, &[1, 2, 3, 4, 5, 6], 7);
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        assert!(
+            owner_only_marks::is_marked(&*store.read().unwrap(), "takes", &take_id.to_string())
+                .unwrap()
+        );
+        drop(store);
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
     #[test]
     fn every_build_refuses_the_next_format_and_changes_no_byte() {
         for n in 1..=FORMAT_VERSION {

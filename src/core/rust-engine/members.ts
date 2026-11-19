@@ -29,10 +29,9 @@ export const RUST_ENGINE_MEMBERS = {
   // Optional on BrainEngine: only Postgres defines it. The Rust engine leaves it undefined, so a migration serializes
   // in-process (schema-migration-lock.ts), as on PGLite, and `schema` can be reported.
   holdSchemaMigrationLock: 'implemented',
-  // Creates and reads the SQL delete triggers behind owner_only_marks (migration v322). The Rust store has no SQL
-  // triggers and no owner-only sources, and every caller reaches it through a migration run or a raw-SQL source write,
-  // so it refuses with raw_sql and `schema` stays served.
-  ownerOnlyMarkTriggers: 'raw_sql',
+  // The state of the SQL delete triggers behind owner_only_marks (migration v322), served from the store, which marks
+  // in code on every delete path and so never misses a trigger (store-members/owner-only-marks.ts).
+  ownerOnlyMarkTriggers: 'schema',
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',

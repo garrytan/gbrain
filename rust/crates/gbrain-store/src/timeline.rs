@@ -292,6 +292,12 @@ pub(crate) fn latest_entry_micros(read: &dyn KvRead, page_id: u64) -> Result<Opt
 /// entry that took the dedup slot keeps it). The page's `G` is not touched; call
 /// `recompute_latest` once after the deletes of one statement.
 pub(crate) fn remove_entry(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
+    crate::owner_only_marks::mark_before_row_delete(
+        tx,
+        "timeline_entries",
+        entry.id,
+        Some(entry.page_id),
+    )?;
     tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
     let dedup = entry.dedup_key();
     if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {
@@ -323,8 +329,9 @@ pub(crate) fn recompute_latest(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>
     }
 }
 
-/// `ON DELETE CASCADE` of `timeline_entries.page_id`.
+/// `ON DELETE CASCADE` of `timeline_entries.page_id`, each entry marked first as its trigger does.
 pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    crate::owner_only_marks::mark_before_page_timeline_delete(tx, page_id)?;
     let mut doomed = Vec::new();
     for prefix in [
         keys::timeline_prefix(page_id),

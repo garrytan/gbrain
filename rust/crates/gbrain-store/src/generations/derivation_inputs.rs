@@ -155,14 +155,41 @@ pub(crate) fn lineage_reaches(
     Ok(false)
 }
 
+/// Whether `(table, id)` has a recorded input.
+pub(crate) fn has_inputs(read: &dyn KvRead, table: &str, id: &str) -> Result<bool> {
+    Ok(!collect_prefix(read, &pair_prefix(BY_DERIVED_HEAD, table, id), false, 1)?.is_empty())
+}
+
+/// Every row derived, at any depth, from one of `seed` (the `down` walk of
+/// `gbrain_owner_only_mark_derived`, v322), through the input index. Each row is visited once, so
+/// a cycle ends.
+pub(crate) fn derived_closure(
+    read: &dyn KvRead,
+    seed: &[(String, String)],
+) -> Result<BTreeSet<(String, String)>> {
+    let mut found: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut queue: VecDeque<(String, String)> = seed.iter().cloned().collect();
+    while let Some((table, id)) = queue.pop_front() {
+        if table.contains('\0') || id.contains('\0') {
+            continue;
+        }
+        for next in pairs_under(read, BY_INPUT_HEAD, &table, &id)? {
+            if found.insert(next.clone()) {
+                queue.push_back(next);
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// The owner-only walk of `gbrain_owner_only_lineage_strict`: a reached row counts when it is
-/// marked (`owner_only_marks`, which this store keeps for pages only) or, with an id of 1 to 18
-/// digits, when it is a page or a fact of an owner-only source, or a take or timeline entry whose
-/// page is in one. The store has no timeline entry index by id, so a reached timeline entry is
-/// found by reading every entry.
+/// marked (`owner_only_marks`, any table and any id) or, with an id of 1 to 18 digits, when it is
+/// a page or a fact of an owner-only source, or a take or timeline entry whose page is in one.
+/// The store has no timeline entry index by id, so a reached timeline entry is found by reading
+/// every entry.
 pub(crate) fn lineage_owner_only(read: &dyn KvRead, table: &str, id: u64) -> Result<bool> {
     let id = id.to_string();
-    if collect_prefix(read, &pair_prefix(BY_DERIVED_HEAD, table, &id), false, 1)?.is_empty() {
+    if !has_inputs(read, table, &id)? {
         return Ok(false);
     }
     let owner_only: BTreeSet<String> = crate::sources::all_sources(read)?
@@ -175,20 +202,12 @@ pub(crate) fn lineage_owner_only(read: &dyn KvRead, table: &str, id: u64) -> Res
             .is_some_and(|page| owner_only.contains(&page.source_id)))
     };
     lineage_reaches(read, table, &id, &mut |t, row_id| {
-        let numeric =
-            (1..=18).contains(&row_id.len()) && row_id.bytes().all(|b| b.is_ascii_digit());
-        let n = if numeric {
-            row_id.parse::<u64>().ok()
-        } else {
-            None
-        };
-        if t == "pages"
-            && let Some(n) = n
-            && crate::owner_only_marks::is_marked(read, n)?
-        {
+        if crate::owner_only_marks::is_marked(read, t, row_id)? {
             return Ok(true);
         }
-        let Some(n) = n else {
+        let numeric =
+            (1..=18).contains(&row_id.len()) && row_id.bytes().all(|b| b.is_ascii_digit());
+        let Some(n) = numeric.then(|| row_id.parse::<u64>().ok()).flatten() else {
             return Ok(false);
         };
         match t {

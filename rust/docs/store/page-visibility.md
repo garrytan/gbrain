@@ -13,6 +13,7 @@ local writer registration it already keeps; it adds no keys.
 | --- | --- | --- |
 | `brain.readPageHiddenFromCaller(sourceId, slug, policy)` | `true` when the page row of the source (live or soft-deleted) fails `policy`; `false` for a missing page | `readPageHiddenFromCaller` |
 | `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is `false` (the store keeps no access members). `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`; the store keeps no folder rules). `owner_only_source` and `owner_only_any`: the source, or any source, has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true` | `readWriteVisibilityProbe` |
+| `brain.ownerOnlyMarkState()` | `{ closed, rowSecurity, held }`: whether the store holds the `('*', 'unguarded')` mark, the `('*', 'row_security')` mark, and any owner-only source or mark. The member `ownerOnlyMarkTriggers` returns it with no trigger missing, role `postgres`, no unflagged state and no denied login: the store runs no SQL triggers and has no row-level security, so it never writes either `*` mark | `ownerOnlyMarkTriggers` |
 | `brain.readCallerPageAccess(pages, policy)` | `[{ source_id, slug, readable }]`, one row per distinct `{ sourceId, slug }` of `pages` that names a page row, `readable` when the row is live and passes `policy`. Rows come in pair order; PGLite sets no order | `readCallerPageAccess` |
 
 `policy` is the store `PrivacyPolicy` of `facts/privacy.rs` (`page_hidden`). With `entityPrivacy` false it is the
@@ -48,8 +49,9 @@ member-access part alone (the page's readers, and the origin of a derived page):
   (`owner_only.rs`), so every read that goes through `page_hidden` applies it, not only these three. `closed`: while
   any source is owner-only, every page is hidden. `fn`: a page is hidden when its source is owner-only, or when it is
   a concept or question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only source. The
-  store keeps no `derivation_inputs` (PGLite writes them only through raw SQL, which a Rust brain refuses), so the
-  function's walk over them finds nothing on either side. A policy with no `ownerOnly` is `closed`.
+  function also hides a row that `derivation_inputs` ties, at any depth, to an owner-only row or to a row named in an
+  owner-only mark (`lineage_owner_only`, `generations/derivation_inputs.rs`); the mark kept by a delete is described in
+  [keyword.md](keyword.md). A policy with no `ownerOnly` is `closed`.
 
 - **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
   or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with
