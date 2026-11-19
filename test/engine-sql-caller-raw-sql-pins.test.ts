@@ -388,6 +388,12 @@ const PINS: Pin[] = [
   (SELECT COALESCE(jsonb_agg(m.enabled), '[]'::jsonb) FROM (${MANAGED_MODE_SQL}) m) AS modes
   FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`],
   },
+  {
+    // An equivalent statement: the caller read `created_at` alone; the member also reads `archived`, which the check ignores.
+    from: 'src/core/persistence/sync-authority.ts:122 validateSyncAuthority (SELECT created_at FROM sources WHERE id=$1)',
+    case: { method: 'readJobSourceState', variant: 'default', run: e => e.readJobSourceState('default') },
+    texts: ['SELECT archived, created_at FROM sources WHERE id = $1'],
+  },
 ];
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */
