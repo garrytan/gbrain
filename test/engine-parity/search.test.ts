@@ -727,7 +727,9 @@ describe('engine parity: search', () => {
       const unmarked = ['notes/otter-fresh false', 'notes/otter-stale false'];
       const arm = backend === 'postgres' ? unmarked : marked;
       expect(out).toEqual({ keyword: arm, chunks: arm, pages: unmarked });
-      return out;
+      // The stale flag differs by engine by design (above), so the arms compare only the pages each search found.
+      const slugs = (rows: string[]) => rows.map((r) => r.split(' ')[0]);
+      return { keyword: slugs(out.keyword), chunks: slugs(out.chunks), pages: out.pages };
     },
   );
 
