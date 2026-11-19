@@ -17,11 +17,11 @@
 //!                                                     background index build; open and build ms, sizes, RSS
 //! run         <store-dir> <queries.json> <member> [budget-secs=900] [passes=2]
 //!                                                     time one member in this fresh process
-//! index-check <store-dir>                             stored postings against a rebuild (writes nothing)
+//! index-check <store-dir>                             stored postings against a rebuild (opens read-only)
 //! verify      <store-dir> <queries.json> <corpus-dir> [fixtures]
 //!                                                     untimed: every query through the index and the
 //!                                                     forced scan, full result bytes compared
-//! sizes       <store-dir>                             key and value bytes per key family, one snapshot
+//! sizes       <store-dir>                             key and value bytes per key family, one snapshot (read-only)
 //! compact     <store-dir>                             redb compact in place (run on a copy)
 //! not-only    <store-dir> <queries.json> [passes=1]   NOT-only fallback latency (the scan's time)
 //! writes      <store-dir> <queries.json> <corpus-dir> [pages=200]
@@ -73,8 +73,10 @@
 //!
 //! # verify
 //!
-//! `verify` opens the store (a format 2 or 3 store is upgraded and its index built first; it
-//! waits for the build), then runs each case twice on the same store: once with the index, once
+//! `verify` opens the store read-only, so the record file keeps every byte; the store must be
+//! format 4 with a complete keyword index (run `build` first). With `fixtures` it opens the store
+//! for writing instead (a format 2 or 3 store is upgraded and its index built first; it waits
+//! for the build). It then runs each case twice on the same store: once with the index, once
 //! with `GBRAIN_RUST_KEYWORD_SCAN=1` set for that call (the store reads it on every call; the tool
 //! sets and removes it in-process, which is why it runs on one thread and the index build has
 //! finished). It compares the full canonical result bytes (`serde_json` of the whole result, not a
@@ -650,7 +652,8 @@ fn build(dir: &Path) {
 /// Sums key and value bytes per key family (first key byte) in one snapshot of `records.redb`.
 fn sizes(dir: &Path) {
     use gbrain_store::kv::Kv;
-    let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap_or_else(|e| die(e));
+    let kv = gbrain_store::redb_kv::RedbReadOnlyKv::open_path(&dir.join("records.redb"))
+        .unwrap_or_else(|e| die(e));
     let snap = kv.snapshot().unwrap_or_else(|e| die(e));
     let mut fam: std::collections::BTreeMap<String, (u64, u64)> = Default::default();
     snap.scan(&[], &[0xFF; 64], false, &mut |k, v| {
@@ -697,14 +700,10 @@ fn wait_index_complete(store: &Store) -> f64 {
     }
 }
 
-/// Verifies every page's keyword postings against a rebuild (writes nothing): the `index-check`
+/// Verifies every page's keyword postings against a rebuild (a read-only open): the `index-check`
 /// mode. It checks what is stored; `verify` checks what the members answer.
 fn index_check(dir: &Path) {
-    let opts = OpenOptions {
-        keyword_index_builder: false,
-        ..OpenOptions::default()
-    };
-    let store = Store::open_dir(dir, opts).unwrap_or_else(|e| die(e));
+    let store = Store::open_dir_read_only(dir).unwrap_or_else(|e| die(e));
     let t = Instant::now();
     let r = store.keyword_index_verify(None).unwrap_or_else(|e| die(e));
     let ok = r.ok;
@@ -1409,8 +1408,20 @@ fn verify(dir: &Path, queries_file: &Path, corpus: &Path, fixtures: bool) {
         serde_json::from_str(&std::fs::read_to_string(queries_file).unwrap_or_else(|e| die(e)))
             .unwrap_or_else(|e| die(e));
     let started = Instant::now();
-    let store = Store::open_dir(dir, OpenOptions::default()).unwrap_or_else(|e| die(e));
-    let build_wait_ms = wait_index_complete(&store);
+    // Without `fixtures` verify only reads, so it opens the store read-only: the record file
+    // keeps every byte (a writable open commits redb's allocator state on close).
+    let (store, build_wait_ms) = if fixtures {
+        let store = Store::open_dir(dir, OpenOptions::default()).unwrap_or_else(|e| die(e));
+        let waited = wait_index_complete(&store);
+        (store, waited)
+    } else {
+        let store = Store::open_dir_read_only(dir).unwrap_or_else(|e| die(e));
+        match store.keyword_index_state().unwrap_or_else(|e| die(e)) {
+            Some(st) if st.complete => {}
+            _ => die("the keyword index is not complete; run `build` on the store first"),
+        }
+        (store, 0.0)
+    };
     let fixture_report = fixtures.then(|| write_fixtures(&store));
     let slugs: Vec<String> = lines(&corpus.join("pages.jsonl"))
         .take(3000)

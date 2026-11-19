@@ -291,6 +291,25 @@ fn admission(n: u32) -> gbrain_store::journal::WriteAdmission {
 }
 
 #[test]
+fn a_read_only_open_refuses_a_brain_that_needs_the_format_upgrade_and_changes_nothing() {
+    use gbrain_store::error::READ_ONLY_TRANSACTION;
+    let dir = TempDir::new("format-read-only");
+    let brain = dir.path().join("brain");
+    open(&dir).close();
+    downgrade_to_format_1(&brain);
+    let records = std::fs::read(brain.join("records.redb")).unwrap();
+    let format = std::fs::read(brain.join("FORMAT")).unwrap();
+    let error = Store::open_dir_read_only(&brain)
+        .err()
+        .expect("the upgrade is a write");
+    assert_eq!(error.code, READ_ONLY_TRANSACTION, "{error}");
+    assert!(records == std::fs::read(brain.join("records.redb")).unwrap());
+    assert_eq!(format, std::fs::read(brain.join("FORMAT")).unwrap());
+    // A plain open still upgrades it.
+    assert_eq!(open(&dir).info().format_version, FORMAT_VERSION);
+}
+
+#[test]
 fn a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts() {
     use gbrain_store::journal::JournalLimits;
     use gbrain_store::pages::{PageInput, PutPageOptions};
