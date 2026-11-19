@@ -986,6 +986,11 @@ final class Harness {
         #expect(!SendKeychainPolicy.trusted(item("/Applications/Other.app"), helperPath: helper))
         #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app/Contents"), helperPath: helper))
         #expect(!SendKeychainPolicy.trusted(item("/Applications"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app.evil.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper .app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/tmp/Applications/GBrain Helper.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app"), helperPath: "/usr/local/bin/gbrain-apple-helper"))
     }
 }
 
