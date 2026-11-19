@@ -10,7 +10,8 @@
  *    outside the six is refused 23514 (`access_tokens_min_trust_check`) with the floor unchanged. The mint inserts a token at
  *    grant revision 1 and returns its id; a repeated token hash is 23505 (`access_tokens_token_hash_key`) and a
  *    `source_grant` outside the list is 23514 (`access_tokens_source_grant_check`), each leaving no row. The same answers
- *    on every engine arm.
+ *    on every engine arm. The bearer check `serve --http` runs (oauth-provider.ts verifyAccessToken with an engine)
+ *    authenticates an active token with its scopes, source grant and read floor, and refuses a revoked or unknown token.
  *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
  *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
  *    wrong credential, which widens or narrows what an agent can read.
@@ -23,6 +24,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { setMinTrust } from '../../src/core/trust/min-trust.ts';
 import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
+import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -160,5 +163,38 @@ describe('engine parity: access_tokens members', () => {
         grants: { solo: await engine.readActiveAccessTokenGrant(solo.id, 'permissions'), keep: (await engine.readActiveAccessTokenGrant(keep.id, 'permissions')) !== null },
         active: { twin: (await engine.findActiveAccessTokens('twin')).length, solo: (await engine.findActiveAccessTokens('solo')).length, keep: (await engine.findActiveAccessTokens('keep')).length },
       };
+    });
+
+  parityTest('bearer check: serve --http authenticates an active token by its hash with its grant, and refuses a revoked or unknown token',
+    { methods: ['insertAccessToken', 'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed', 'revokeAccessToken'] }, async (engine) => {
+      // The provider serve --http builds (serve-http.ts): `sql` for the rest of OAuth, the engine for the bearer check.
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      const reader = await insert(engine, 'reader', 'tok-reader');
+      const writer = await insert(engine, 'writer', 'tok-writer', { scopes: ['read', 'write'], min_trust: 'tool_observed', source_grant: 'federated', source_id: 'default', federated_read: ['default'] });
+      const gone = await insert(engine, 'gone', 'tok-gone');
+      const names = new Map([[reader.id, 'reader'], [writer.id, 'writer'], [gone.id, 'gone']]);
+      const verify = async (token: string) => {
+        try {
+          const auth = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+          const { expiresAt, createdAt, principal, ...rest } = auth;
+          const p = principal as { kind: string; id: string };
+          return { ...rest, principal: { kind: p.kind, id: names.get(p.id) ?? p.id }, expiresInAYear: Number(expiresAt) > Date.now() / 1000 + 364 * 24 * 3600, hasCreatedAt: createdAt != null };
+        } catch (error) {
+          if ((error as { code?: unknown }).code === 'engine_capability_missing') throw error;
+          return { refused: (error as Error).constructor.name, message: (error as Error).message };
+        }
+      };
+      const out: Record<string, unknown> = {};
+      out.reader = await verify('tok-reader');
+      out.writer = await verify('tok-writer');
+      out.beforeRevoke = await verify('tok-gone');
+      await revokeLegacyTokenById(engine, gone.id);
+      out.revoked = await verify('tok-gone');
+      out.unknown = await verify('tok-nobody');
+      out.hashNotToken = await verify(hashToken('tok-reader'));
+      // Not vacuous: the active tokens authenticate and the revoked and unknown ones are refused on every arm.
+      for (const k of ['reader', 'writer', 'beforeRevoke']) if ('refused' in (out[k] as object)) throw new Error(`${k} refused: ${JSON.stringify(out[k])}`);
+      for (const k of ['revoked', 'unknown', 'hashNotToken']) if (!('refused' in (out[k] as object))) throw new Error(`${k} authenticated`);
+      return out;
     });
 });

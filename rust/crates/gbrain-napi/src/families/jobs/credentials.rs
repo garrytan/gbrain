@@ -27,6 +27,16 @@ impl Brain {
         self.run(env, move |s| s.read_active_access_token_grant(&id))
     }
 
+    /// `readActiveAccessTokenByHash(hash)`: the active token's whole row without its hash, or null.
+    #[napi]
+    pub fn read_active_access_token_by_hash<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_active_access_token_by_hash(&hash))
+    }
+
     /// `accessTokenLive(id)`: whether an active token has the id.
     #[napi]
     pub fn access_token_live<'env>(

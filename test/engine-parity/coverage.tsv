@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 834/834
+# covered: 837/837
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -38,7 +38,7 @@
 # entity_reads: 8/8
 # cycle_locks: 10/10
 # minion_jobs: 8/8
-# minion_queue: 95/95
+# minion_queue: 98/98
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
@@ -105,7 +105,7 @@ getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	7	no	yes	yes	serves
+getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 readPlainSyncSource	pages	yes	1	no	yes	yes	serves
@@ -520,7 +520,10 @@ readOauthClientColumns	minion_queue	yes	2	no	yes	yes	serves
 setOauthClientTokenTtl	minion_queue	yes	3	no	yes	yes	serves
 insertOauthClientGrant	minion_queue	yes	2	no	yes	yes	serves
 readTokenLifetimeClampedClients	minion_queue	yes	1	no	yes	yes	serves
-readScopeSourceConfigs	minion_queue	yes	2	no	yes	yes	serves
+readScopeSourceConfigs	minion_queue	yes	3	no	yes	yes	serves
+readOauthAccessTokenRows	minion_queue	yes	1	no	yes	yes	serves
+readActiveAccessTokenByHash	minion_queue	yes	1	no	yes	yes	serves
+touchAccessTokenLastUsed	minion_queue	yes	1	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	3	no	yes	yes	serves
 pauseJob	minion_queue	yes	8	no	yes	yes	serves
 resumeJob	minion_queue	yes	2	no	yes	yes	serves
@@ -601,7 +604,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	11	no	yes	yes	serves
 listOauthClients	minion_queue	yes	1	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	6	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	7	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
@@ -827,7 +830,7 @@ readAudiencePrincipals	write_misc	yes	3	no	yes	yes	serves
 readAccessMembers	write_misc	yes	8	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	3	no	yes	yes	serves
-revokeAccessToken	write_misc	yes	5	no	yes	yes	serves
+revokeAccessToken	write_misc	yes	6	no	yes	yes	serves
 deleteOAuthClient	write_misc	yes	4	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readAccessGroups	write_misc	yes	3	no	yes	yes	serves

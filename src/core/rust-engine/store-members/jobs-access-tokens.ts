@@ -3,10 +3,10 @@
  * binding as ISO text. The store refuses a write that breaks a constraint of the table with `constraint_violation`;
  * `refusing` gives it the SQLSTATE and constraint name PGLite and Postgres raise, so a caller branches on one error shape.
  * The list, the revokes, the active-token grant read and the liveness check are the credential members of
- * engine-sql/access-credentials.ts; no member returns a token hash.
+ * engine-sql/access-credentials.ts, and so are the bearer check reads; no store call returns a token hash.
  */
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
-import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField } from '../../engine-sql/access-credentials.ts';
+import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type OauthTokenRung, type TokenByHashCaller } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 
@@ -39,3 +39,18 @@ export const revokeAccessTokensNamed: StoreMember<[name: string], string[]> = (b
 
 export const revokeAccessToken: StoreMember<[id: string], string | null> = (brain, id) =>
   refusing('revokeAccessToken', () => brain.revokeAccessToken(id)) as Promise<string | null>;
+
+/** The store keeps no OAuth tokens (rust/docs/store/access-tokens.md), so the OAuth rung of the bearer check finds none. */
+export const readOauthAccessTokenRows: StoreMember<[hash: string, rung: OauthTokenRung], Record<string, unknown>[]> = async () => [];
+
+/**
+ * The bearer check's `SELECT *` row: the stored columns, the table defaults for the ones the store does not keep, and
+ * `created_at` as a Date as PGLite and Postgres return it. The store's row leaves out the hash; the caller passed it.
+ */
+export const readActiveAccessTokenByHash: StoreMember<[hash: string, caller: TokenByHashCaller], Record<string, unknown> | null> = async (brain, hash) => {
+  const raw = await storeCall({ member: 'readActiveAccessTokenByHash' }, () => brain.readActiveAccessTokenByHash(hash)) as Record<string, unknown> | null;
+  return raw ? { ...raw, token_hash: hash, created_at: new Date(String(raw.created_at)) } : null;
+};
+
+/** The store keeps no `last_used_at`, so the stamp writes nothing. */
+export const touchAccessTokenLastUsed: StoreMember<[id: string, unified: boolean], void> = async () => {};
