@@ -19,6 +19,7 @@ import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
 import type { Contested } from '../eligibility/labels.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
+import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import { chunkVisibleFilter, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
 import { admitsTrust, compareTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import type { PageReadPolicy } from '../types.ts';
@@ -75,7 +76,7 @@ async function loadTakes(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[],
   const rows = await engine.executeRaw<LiveTake>(
     `SELECT t.id, t.page_id, t.row_num, t.claim, t.holder, p.slug, p.source_id
        FROM takes t JOIN pages p ON p.id = t.page_id
-      WHERE t.id = ANY($1::bigint[]) AND t.active AND ${pageSql}${holderSql}
+      WHERE t.id = ANY($1::bigint[]) AND t.active AND ${pageSql}${holderSql}${policy.excludePrivate ? ownerOnlyTakeAllowedSql('t') : ''}
         AND ${projectionEligibleSql('takes', 't', floor ? { floor } : undefined)}`, params);
   const stamped = await stampRowTrust(engine, 'takes', rows.map(r => ({ ...r, id: Number(r.id), page_id: Number(r.page_id), row_num: Number(r.row_num) })), r => r.id);
   return new Map(stamped
