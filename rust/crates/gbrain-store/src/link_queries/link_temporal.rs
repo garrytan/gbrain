@@ -882,6 +882,8 @@ pub(crate) fn today(now_us: i64) -> String {
 // ---------------------------------------------------------------------------------------------
 
 type DateRange = (Option<String>, Option<String>);
+/// One referrer of a group, before ordering: effective date (us), source id, slug, page id, page type.
+type ReferrerGroupEntry = (i64, String, String, u64, String);
 
 /// Parses a `datemultirange` literal of half-open ranges (`[a,b)`, `(,b)`, `[a,)`, `(,)`).
 fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
@@ -2038,7 +2040,7 @@ impl Store {
         for (source_id, slug) in input.target_sources.iter().zip(&input.target_slugs) {
             targets.extend(scope.target(read, source_id, slug)?);
         }
-        let mut groups: BTreeMap<String, Vec<(i64, String, String, u64, String)>> = BTreeMap::new();
+        let mut groups: BTreeMap<String, Vec<ReferrerGroupEntry>> = BTreeMap::new();
         for (page, canonical) in scope.referrers(read, &mut pages, &targets)? {
             let d = page.effective_date_us.unwrap_or(page.updated_at_us);
             groups.entry(canonical).or_default().push((
