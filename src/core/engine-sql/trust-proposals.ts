@@ -170,14 +170,13 @@ export async function transitionTrustProposal(exec: SqlExecutor, id: number, fro
  * stale pair is not listed), oldest first, at most 1000.
  */
 export async function listPendingContradictions(exec: LegacyUnscopedRead, filter: PendingContradictionFilter = {}): Promise<PendingContradictionRow[]> {
-  const active = (a: string) => `${a}.expired_at IS NULL AND (${a}.valid_until IS NULL OR ${a}.valid_until > now())`;
   return exec.executeRaw<PendingContradictionRow>(
     `SELECT p.id, p.source_id, p.sweep_id, p.created_at, p.new_fact_id, p.old_fact_id, n.fact AS new_fact, o.fact AS old_fact, n.trust_tier,
             n.entity_slug, COALESCE(n.source_markdown_slug, o.source_markdown_slug) AS slug, n.claim_metric, n.claim_unit, n.claim_period,
             n.claim_value AS new_value, o.claim_value AS old_value
        FROM decide_proposals p
-       JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id AND ${active('n')}
-       JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id AND ${active('o')}
+       JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id AND n.expired_at IS NULL AND (n.valid_until IS NULL OR n.valid_until > now())
+       JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id AND o.expired_at IS NULL AND (o.valid_until IS NULL OR o.valid_until > now())
       WHERE p.status = 'pending' AND ($1::text IS NULL OR p.source_id = $1) AND ($2::timestamptz IS NULL OR p.created_at >= $2)
       ORDER BY p.created_at, p.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
 }
