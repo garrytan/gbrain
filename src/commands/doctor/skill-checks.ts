@@ -249,7 +249,7 @@ export async function skillPreconditionsCheck(
       // #4278: `source:<id>`'s contract is EXISTENCE — a registered-but-not-
       // yet-synced source is met. Includes 'default' (it always exists).
       try {
-        const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY id`);
+        const rows = await engine.readDoctorSources('all_ids');
         return rows.map(r => r.id);
       } catch { return []; }
     },
@@ -259,16 +259,7 @@ export async function skillPreconditionsCheck(
       // page. Pre-fix this required a non-default source, so a healthy
       // default-only brain failed `requires: source` forever.
       try {
-        const rows = await engine.executeRaw<{ id: string }>(
-          `SELECT s.id
-             FROM sources s
-            WHERE EXISTS (
-              SELECT 1 FROM pages p
-               WHERE p.source_id = s.id
-                 AND p.deleted_at IS NULL
-            )
-            ORDER BY s.id`,
-        );
+        const rows = await engine.readDoctorSources('ids_with_live_pages');
         return rows.map(r => r.id);
       } catch { return []; }
     },

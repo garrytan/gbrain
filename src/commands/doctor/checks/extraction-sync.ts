@@ -345,16 +345,7 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
   try {
     // #3880: archived sources are out of scope for filesystem audits (v34
     // legacy fallback, house style per pickSoleNonDefaultSource).
-    let sources: Array<{ id: string; local_path: string | null; config: unknown }>;
-    try {
-      sources = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
-        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
-      );
-    } catch {
-      sources = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
-        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL`,
-      );
-    }
+    const sources = await engine.readDoctorSources('roots_live_fallback');
     const authorities = await connectorAuthorities(engine, sources.map(s => ({ id: s.id, kind: parseSourceConfig(s.config).kind })));
     const connectorDb = new Set([...authorities].filter(([, a]) => a === 'connector_database').map(([id]) => id));
     const connectorNote = connectorDb.size > 0 ? ` ${connectorDb.size} API connector source(s) skipped: connector_database pages are DB-only by design (recover them with gbrain sync --source <id> --full).` : '';

@@ -129,7 +129,7 @@ async function sessionCorpusDir(engine: BrainEngine, fileCfg: ReturnType<typeof 
  * preview command. Records `details.corpus_source_holds`.
  */
 async function corpusSourceHoldProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
-  const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
+  const sources = await engine.readDoctorSources('first_two_ids');
   const holds = listCorpusSourceHolds(await sessionCorpusDir(engine, fileCfg), sources.length === 1, { includeIngested: true });
   details.corpus_source_holds = { legacy_unstamped: holds.legacy_unstamped, unresolved: holds.unresolved, sessions: holds.sessions.length };
   const held = holds.legacy_unstamped + holds.unresolved;

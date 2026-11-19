@@ -426,24 +426,32 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
       fail: [],
-      onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
+      // default_source_local_path, frontmatter_repairable and image_assets are gone from this list: the sources reads
+      // are typed members Rust serves, so those checks run on a Rust brain too.
+      onlyPglite: ['pglite_scale'],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
-      onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
-        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
-        'transcript_secret_exposure'],
+      // The git and managed-sync checks (canonical_content_writes, checkout_lagging, commits_outside_source_root,
+      // dirty_age, git_convergence, quarantined_changes, shared_skills_sources, tracked_ownership_marker,
+      // transcript_secret_exposure) are gone from this list: the typed sources reads now show the brain has no git
+      // source root, so those checks emit nothing, as on PGLite.
+      onlyRust: ['sync_failures'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
       // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
+      // provenance_stamp_drift warns the same way: listDriftLiveRows refuses on a populated brain and names the
+      // missing write-request attribution in its parenthesis.
       // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes',
-        'extract_atoms_backlog', 'fact_take_vectors', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
-        'text_projection_readiness', 'trust_scan'],
+      // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
+      // readRawProvenanceGaps counts the gaps in the store.
+      untypedWarnings: ['backup_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'provenance_stamp_drift',
+        'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
-      // age, so it warns with that typed refusal where PGLite reads the age and passes.
-      warnLikePglite: ['brain_score', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
+      // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
+      // warns on both engines: the fixture's pages are file-backed and the default source has no local path.
+      warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
       okWhileRefused: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
