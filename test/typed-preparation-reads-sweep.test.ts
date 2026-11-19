@@ -34,6 +34,7 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['getAllConfig', 'SELECT key, value FROM config', e => e.getAllConfig()],
   ['listConfigKeys', 'SELECT key FROM config WHERE key LIKE', e => e.listConfigKeys('a.')],
   ['readPageSnapshot', 'WITH chosen AS (', e => e.readPageSnapshot('a', { sourceId: 'default' })],
+  ['getPage', 'WITH chosen AS (', e => e.getPage('a', { sourceId: 'default' })],
 ];
 const views = [['managed sync (engineReads)', { engineReads: true }], ['page/maintenance preparer', {}]] as const;
 const never = () => new Promise<never>(() => {});
