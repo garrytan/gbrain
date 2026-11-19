@@ -15,9 +15,14 @@ use std::path::Path;
 ///   (`chunks::STATS_CHUNKS`, `journal::OUTSTANDING`). A format-1 brain is upgraded in one
 ///   write transaction when it opens (`Store::open_kv`); a build that reads only format 1
 ///   refuses a format-2 brain instead of missing its counts.
-pub const FORMAT_VERSION: u32 = 2;
+/// - 3: a page projection job is a compact binary record, not JSON
+///   (`persistence::projection_queue::encode_job`), and the record file keeps its commit
+///   sequence beside the id counters (`redb_kv::SEQ_KEY`). A format-2 brain is upgraded when it
+///   opens; a build that reads only formats 1 and 2 refuses a format-3 brain instead of failing
+///   on its jobs.
+pub const FORMAT_VERSION: u32 = 3;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";
