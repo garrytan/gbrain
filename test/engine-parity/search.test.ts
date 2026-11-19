@@ -734,6 +734,31 @@ describe('engine parity: search', () => {
   );
 
   parityTest(
+    'keyword and chunk search mark a page stale on every engine when a timeline entry is newer than the page',
+    { methods: ['searchKeyword', 'searchKeywordChunks'] },
+    async (engine) => {
+      for (const slug of ['notes/heron-fresh', 'notes/heron-stale']) {
+        const page = { type: 'note' as const, title: slug, compiled_truth: 'heron rookery census', timeline: '' };
+        await seedPage(engine, { slug, input: page, chunks: [chunk(0, 'heron rookery census')] });
+      }
+      // The entry's created_at must be later than the page's updated_at, as when extraction adds a derived row.
+      await new Promise((r) => setTimeout(r, 5));
+      await engine.addTimelineEntry('notes/heron-stale', { date: '2026-01-02', summary: 'heron count', detail: '' });
+      const view = (rows: SearchResult[]) => sorted(rows.map((r) => `${r.slug} ${r.stale === true}`));
+      const out = {
+        keyword: view(await engine.searchKeyword('heron rookery', { limit: 10 })),
+        chunks: view(await engine.searchKeywordChunks('heron rookery', { limit: 10 })),
+      };
+      // The contract is the real flag: `gbrain search` prints "(stale)" for it (search-row-format.ts) and both SQL
+      // engines computed it until v0.9.1 replaced the Postgres keyword statement with `false AS stale`. PGLite and
+      // the Rust arm report it; Postgres reports false, so this case fails on the Postgres arm only.
+      const marked = ['notes/heron-fresh false', 'notes/heron-stale true'];
+      expect(out).toEqual({ keyword: marked, chunks: marked });
+      return out;
+    },
+  );
+
+  parityTest(
     'searchKeywordChunks ignores keywordPhrase, as both SQL engines do, while searchKeyword ranks by it',
     { methods: ['searchKeyword', 'searchKeywordChunks'] },
     async (engine) => {
