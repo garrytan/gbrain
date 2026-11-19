@@ -269,3 +269,154 @@ describe('engine parity: excludePrivate for a caller with a reader identity and 
     },
   );
 });
+
+describe('engine parity: excludePrivate on tags and takes', () => {
+  /** One tag per fixture page, named after the page, plus the same slug's tags in `other`. */
+  async function tagged(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await fixture(engine, backend);
+    for (const [slug] of PAGES) await engine.addTag(slug, `tag-${slug.replace('/', '-')}`);
+    await engine.addTag('notes/private', 'other-private-tag', { sourceId: 'other' });
+    await engine.addTag('notes/open', 'other-open-tag', { sourceId: 'other' });
+  }
+  /** The fixture pages whose tags `getTags` returns under `opts`. */
+  const tagsSeen = async (engine: BrainEngine, opts: Parameters<BrainEngine['getTags']>[1]) => {
+    const seen: string[] = [];
+    for (const [slug] of PAGES) if ((await engine.getTags(slug, opts)).length > 0) seen.push(slug);
+    return sorted(seen);
+  };
+
+  parityTest(
+    'getTags under excludePrivate returns no tag of a page the page policy hides, in one source or across a grant',
+    { methods: ['putPage', 'addLink', 'addTag', 'getTags'] },
+    async (engine, backend) => {
+      await tagged(engine, backend);
+      const all = await tagsSeen(engine, undefined);
+      const kept = await tagsSeen(engine, { excludePrivate: true });
+      const keptLive = await tagsSeen(engine, { excludePrivate: true, liveOnly: true });
+      const privateTags = await engine.getTags('notes/private', { excludePrivate: true });
+      const privateOff = await engine.getTags('notes/private');
+      const federatedPrivate = await engine.getTags('notes/private', { sourceIds: ['default', 'other'], excludePrivate: true });
+      const federatedOpen = await engine.getTags('notes/open', { sourceIds: ['default', 'other'], excludePrivate: true });
+      const otherPrivate = await engine.getTags('notes/private', { sourceId: 'other', excludePrivate: true });
+      const otherOpen = await engine.getTags('notes/open', { sourceId: 'other', excludePrivate: true });
+      expect(all).toEqual(sorted(PAGES.map(([slug]) => slug)));
+      expect(kept).toEqual(KEPT);
+      expect(keptLive).toEqual(KEPT);
+      expect(privateOff).toEqual(['tag-notes-private']);
+      expect(privateTags).toEqual([]);
+      expect(federatedPrivate).toEqual([]);
+      expect(federatedOpen).toEqual(['other-open-tag', 'tag-notes-open']);
+      expect(otherPrivate).toEqual([]);
+      return { all, kept, keptLive, privateTags, privateOff, federatedPrivate, federatedOpen, otherPrivate, otherOpen };
+    },
+  );
+
+  parityTest(
+    'getTags under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'addTag', 'getTags'] },
+    async (engine, backend) => {
+      await tagged(engine, backend);
+      const seen = await asCaller(() => tagsSeen(engine, { excludePrivate: true }));
+      const otherPrivate = await asCaller(() => engine.getTags('notes/private', { sourceId: 'other', excludePrivate: true }));
+      expect(seen).toEqual(CALLER_KEPT);
+      // The grant names `default` only: the private page in `other` stays hidden.
+      expect(otherPrivate).toEqual({ member: [], granted: [] });
+      return { seen, otherPrivate };
+    },
+  );
+
+  /** One resolved bet per fixture page (claim `probe claim <slug>`), plus a private page's bet in `other`. */
+  async function withTakes(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await fixture(engine, backend);
+    const slugOf = new Map<number, string>();
+    let n = 0;
+    for (const [slug] of PAGES) {
+      const id = Number((await engine.getPage(slug))!.id);
+      slugOf.set(id, slug);
+      const weight = [0.15, 0.35, 0.55, 0.75, 0.95][n % 5]!;
+      await engine.addTakesBatch([{ page_id: id, row_num: 1, claim: `probe claim ${slug}`, kind: 'bet', holder: 'garry', weight }]);
+      await engine.resolveTake(id, 1, { quality: n % 3 === 0 ? 'incorrect' : 'correct', resolvedBy: 'garry' });
+      n++;
+    }
+    const other = Number((await engine.getPage('notes/private', { sourceId: 'other' }))!.id);
+    slugOf.set(other, 'other:notes/private');
+    await engine.addTakesBatch([{ page_id: other, row_num: 1, claim: 'probe claim other private', kind: 'bet', holder: 'garry', weight: 0.9 }]);
+    await engine.resolveTake(other, 1, { quality: 'correct', resolvedBy: 'garry' });
+    return slugOf;
+  }
+  type Reads = { list: string[]; search: string[]; card: unknown; curve: unknown };
+  const takesRead = async (engine: BrainEngine, slugOf: Map<number, string>, opts: { excludePrivate?: boolean; sourceId?: string }): Promise<Reads> => {
+    const card = await engine.getScorecard({ ...opts }, undefined);
+    const curve = (await engine.getCalibrationCurve({ ...opts }, undefined))
+      .map((b) => ({ lo: round(b.bucket_lo), hi: round(b.bucket_hi), n: b.n, observed: round(b.observed), predicted: round(b.predicted) }));
+    return {
+      list: sorted((await engine.listTakes({ ...opts, limit: 500 })).map((t) => slugOf.get(t.page_id)!)),
+      search: sorted((await engine.searchTakes('probe claim', { ...opts, limit: 100 })).map((t) => slugOf.get(t.page_id)!)),
+      card: { ...card, brier: round(card.brier), accuracy: round(card.accuracy), partial_rate: round(card.partial_rate) },
+      curve,
+    };
+  };
+  const round = (n: number | null | undefined) => (n == null ? n : Number(n.toFixed(4)));
+
+  parityTest(
+    'listTakes, searchTakes, getScorecard and getCalibrationCurve under excludePrivate read only takes on pages the page policy keeps',
+    { methods: ['putPage', 'addLink', 'getPage', 'addTakesBatch', 'resolveTake', 'listTakes', 'searchTakes', 'getScorecard', 'getCalibrationCurve'] },
+    async (engine, backend) => {
+      const slugOf = await withTakes(engine, backend);
+      const off = await takesRead(engine, slugOf, {});
+      const on = await takesRead(engine, slugOf, { excludePrivate: true });
+      const other = await takesRead(engine, slugOf, { excludePrivate: true, sourceId: 'other' });
+      expect(off.list).toHaveLength(PAGES.length + 1);
+      expect(on.list).toEqual(KEPT);
+      expect(on.search).toEqual(KEPT);
+      expect(other.list).toEqual([]);
+      expect(other.search).toEqual([]);
+      expect((on.card as { total_bets: number }).total_bets).toBe(KEPT.length);
+      expect((other.card as { total_bets: number }).total_bets).toBe(0);
+      expect(other.curve).toEqual([]);
+      expect(on.curve).not.toEqual(off.curve);
+      return { off, on, other };
+    },
+  );
+
+  parityTest(
+    'the takes reads under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'getPage', 'addTakesBatch', 'resolveTake', 'listTakes', 'searchTakes', 'getScorecard', 'getCalibrationCurve'] },
+    async (engine, backend) => {
+      const slugOf = await withTakes(engine, backend);
+      const reads = await asCaller(() => takesRead(engine, slugOf, { excludePrivate: true }));
+      expect(reads.member.list).toEqual(CALLER_KEPT.member);
+      expect(reads.granted.list).toEqual(CALLER_KEPT.granted);
+      expect(reads.granted.search).toEqual(CALLER_KEPT.granted);
+      expect((reads.granted.card as { total_bets: number }).total_bets).toBe(CALLER_KEPT.granted.length);
+      return reads;
+    },
+  );
+
+  parityTest(
+    'getScorecard and getCalibrationCurve under a remote read policy filter holders by the allow-list argument',
+    { methods: ['putPage', 'addLink', 'getPage', 'addTakesBatch', 'resolveTake', 'getScorecard', 'getCalibrationCurve'] },
+    async (engine, backend) => {
+      await withTakes(engine, backend);
+      // `readPolicyOpts` (ops/context.ts) also copies the holder allow-list into the options; the ops pass it as the
+      // second argument too, and that argument is the one the SQL reads.
+      const read = async (holders: string[]) => {
+        const opts = { excludePrivate: true as const, takesHoldersAllowList: holders };
+        const card = await engine.getScorecard(opts, holders);
+        const curve = await engine.getCalibrationCurve(opts, holders);
+        return {
+          bets: card.total_bets,
+          brier: round(card.brier),
+          curve: curve.map((b) => ({ lo: round(b.bucket_lo), n: b.n, observed: round(b.observed) })),
+        };
+      };
+      const plain = await engine.getScorecard({ excludePrivate: true }, undefined);
+      const garry = await read(['garry']);
+      const nobody = await read(['nobody']);
+      expect(garry.bets).toBe(KEPT.length);
+      expect(garry.brier).toBe(round(plain.brier));
+      expect(nobody).toEqual({ bets: 0, brier: null, curve: [] });
+      return { garry, nobody };
+    },
+  );
+});
