@@ -128,6 +128,7 @@ export const RUST_ENGINE_MEMBERS = {
   insertSource: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
+  readSyncDispatchRow: 'sources',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
   listGuestSourceIds: 'sources',
