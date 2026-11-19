@@ -8,7 +8,7 @@
  *    the watermark and its count while the access-rule part stays the same.
  *  - Regression: withdrawalWatermark sent its SELECT through executeRaw, so on a Rust brain every MCP tool call that
  *    builds hot memory (entity first) stopped on the raw_sql refusal before anything else. The build's next read,
- *    readTrustGeneration (eligibility/generation.ts), still runs raw SQL and is not covered here.
+ *    readTrustGeneration (eligibility/generation.ts), is a typed member now, covered by access-grants.test.ts.
  *  - Why existing coverage misses it: the meta-hook tests run on PGLite only, and the trust parity cases compare the
  *    withdrawal ledger members, not the watermark the cache reads.
  *  - Seam: none. The watermark is an opaque token: each case compares the fresh-source token, which every arm spells

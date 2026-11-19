@@ -163,6 +163,14 @@ export async function readWriteRequest(exec: LegacyUnscopedRead, principalKind: 
 }
 
 /**
+ * At most two request rows with this request_id, whoever submitted them (ops/persistence.ts hostOperatorReceipt): the
+ * trusted local CLI reads a receipt by request_id alone only when exactly one row has it.
+ */
+export async function readWriteRequestsByRequestId(exec: LegacyUnscopedRead, requestId: string): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+}
+
+/**
  * `listWriteRequestRows` filters. `before` is a sequence as decimal text; a null list skips its fence and an empty
  * list matches nothing. `slugPrefixes` are lower-case (one ending in `/` matches under it, any other matches the slug
  * or under it); `operations` match `authority.attestedOp`, else `operation`; `slugAllowList` holds exact slugs or

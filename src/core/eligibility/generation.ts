@@ -12,7 +12,7 @@
  * - Read the generation BEFORE the content it caches. The bump commits with
  *   the change, so content read after the generation is never older than it.
  * - Revalidate the generation on every hit, before delivery.
- * - Fail closed: when the generation cannot be read (no executeRaw, a brain
+ * - Fail closed: when the generation cannot be read (no reader, a brain
  *   before the migration, any error) `readTrustGeneration` throws, and the
  *   caller delivers nothing rather than cached content.
  */
@@ -21,13 +21,15 @@ import type { OperationContext } from '../ops/contract.ts';
 import type { ReadEligibility } from './policy.ts';
 import { proactiveEligibility, type ProactiveSurface } from './registry.ts';
 
-/** The brain's current trust policy generation, as a decimal string. Throws when it cannot be read. */
-export async function readTrustGeneration(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
-  if (typeof engine.executeRaw !== 'function') throw new Error('trust generation unreadable: engine has no raw SQL');
-  const [row] = await engine.executeRaw<{ generation: string | number | bigint }>(
-    'SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1');
-  if (row?.generation === undefined || row.generation === null) throw new Error('trust generation unreadable: trust_policy_state has no row');
-  return String(row.generation);
+/**
+ * The brain's current trust policy generation, as decimal text, through the typed member (engine-sql/access-grants.ts).
+ * Throws when it cannot be read.
+ */
+export async function readTrustGeneration(engine: Partial<Pick<BrainEngine, 'readTrustGeneration'>>): Promise<string> {
+  if (typeof engine.readTrustGeneration !== 'function') throw new Error('trust generation unreadable: engine has no trust generation reader');
+  const generation = await engine.readTrustGeneration();
+  if (generation === null) throw new Error('trust generation unreadable: trust_policy_state has no row');
+  return generation;
 }
 
 /** The eligibility part of a cache identity: effective read floor and activation control. */

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { sourceScopeOpts } from '../ops/context.ts';
-import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, type LocalGrant } from '../persistence/identity.ts';
+import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter } from '../persistence/identity.ts';
 import type { Principal } from '../persistence/model.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
-import { authSourcesFromGrant, grantFromTokenRow, tokenGrantRowSelect, type TokenGrantRow } from '../grants/model.ts';
+import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { hasScope } from '../scope.ts';
 
 const deny = (): never => {
@@ -23,16 +23,17 @@ export async function memberAuthority(ctx: OperationContext, operation: string):
       (auth.issuedScopes && !auth.issuedScopes.includes('skills_member_self')) || !auth.allowedOperations?.includes(operation)) deny();
     principal = auth.principal;
     if (principal.kind === 'oauth_client') {
-      const [row] = await ctx.engine.executeRaw<{ scope: string; source_id: string; federated_read: string[] | null; allowed_operations: string[] | null; grant_revision: number }>(
-        'SELECT scope,source_id,federated_read,allowed_operations,grant_revision FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL FOR SHARE', [principal.id]);
+      // A live (not deleted) client's grant row, FOR SHARE (engine-sql/access-grants.ts).
+      const row = await ctx.engine.readOAuthClientMemberGrant(principal.id);
       const scopes = row?.scope?.split(/\s+/) ?? [];
-      if (!row || !hasScope(scopes, 'read') || !hasScope(scopes, 'skills_member_self') || !row.allowed_operations?.includes(operation)) deny();
+      if (!row || !hasScope(scopes, 'read') || !hasScope(scopes, 'skills_member_self') || !row.allowed_operations?.includes(operation)) return deny();
       sources = [...new Set([row.source_id, ...(row.federated_read ?? [])])].filter(Boolean);
       grant = row;
     } else {
-      // GST-2314: named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
-      const [row] = await ctx.engine.executeRaw<TokenGrantRow>(`SELECT ${await tokenGrantRowSelect(ctx.engine)} FROM access_tokens WHERE id=$1 AND revoked_at IS NULL FOR SHARE`, [principal.id]);
-      if (!row) deny();
+      // GST-2314: named columns, not SELECT *: inside this transaction a plan cached before a migration added a column
+      // fails 0A000. The member reads a live (not revoked) token's grant columns FOR SHARE (engine-sql/access-grants.ts).
+      const row = await ctx.engine.readAccessTokenMemberGrant(principal.id);
+      if (!row) return deny();
       const scopes = normalizeTokenScopes(row.scopes) ?? [];
       const tokenGrant = grantFromTokenRow(row);
       if (!hasScope(scopes, 'read') || !hasScope(scopes, 'skills_member_self') || !tokenGrant.allowedOperations?.includes(operation)) deny();
@@ -48,8 +49,8 @@ export async function memberAuthority(ctx: OperationContext, operation: string):
     const verified = currentVerifiedLocalWriter() ?? await verifyLocalWriter(ctx.engine, await readLocalWriter(ctx.engine, ctx.remote === false ? 'cli' : 'stdio'));
     principal = verified.principal;
     if (verified.remote !== (ctx.remote !== false)) deny();
-    const [row] = await ctx.engine.executeRaw<{ grant_ceiling: LocalGrant; revoked_at: unknown }>('SELECT grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE', [principal.id]);
-    if (!row || row.revoked_at != null) deny();
+    const row = await ctx.engine.readLocalWriterMemberGrant(principal.id);
+    if (!row || row.revoked_at != null) return deny();
     if (ctx.remote !== false && [row.grant_ceiling, verified.grant].some(g => !hasScope(g.scopes, 'read') || !hasScope(g.scopes, 'skills_member_self') || !g.operations?.includes(operation))) deny();
     const original = verified.grant.sourceIds;
     sources = row.grant_ceiling.sourceIds.filter(s => original.includes('*') || original.includes(s));
@@ -62,9 +63,9 @@ export async function memberAuthority(ctx: OperationContext, operation: string):
     }
     grant = { current: row.grant_ceiling, original: verified.grant };
   }
-  const [state] = await ctx.engine.executeRaw<{ serving_epoch: string }>('SELECT serving_epoch FROM shared_skill_state WHERE singleton=1');
-  if (!state) deny();
+  const servingEpoch = await ctx.engine.readSharedSkillServingEpoch();
+  if (servingEpoch === null) deny();
   const digest = createHash('sha256').update(JSON.stringify({ principal, grant, sources, issued: auth?.issuedScopes, original: auth?.allowedOperations,
-    scopes: auth?.scopes, revision: auth?.grantRevision, serving_epoch: state.serving_epoch })).digest('hex');
+    scopes: auth?.scopes, revision: auth?.grantRevision, serving_epoch: servingEpoch })).digest('hex');
   return { principal, digest, ctx };
 }
