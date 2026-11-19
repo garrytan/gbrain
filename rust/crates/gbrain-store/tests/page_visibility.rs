@@ -280,7 +280,7 @@ fn owner_only_form_reads_from_the_policy_json() {
     assert_eq!(policy.owner_only, OwnerOnlyForm::Closed);
     assert!(
         serde_json::from_value::<PrivacyPolicy>(
-            json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"})
+            json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"})
         )
         .is_err()
     );

@@ -1205,7 +1205,7 @@ mod tests {
         let has = |slug: &str| every.iter().any(|r| r["slug"] == slug);
         assert!(has("q-vault") && has("r-from-vault"));
         for privacy in [true, false] {
-            let served = top("lineage", privacy);
+            let served = top("fn", privacy);
             assert!(!served.iter().any(|x| x == "q-vault" || x == "r-from-vault"));
             assert!(served.iter().any(|x| x == "a-exact"));
             assert!(served.iter().any(|x| x == "s-from-open"));

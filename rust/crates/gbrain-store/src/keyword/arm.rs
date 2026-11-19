@@ -351,7 +351,7 @@ mod tests {
         );
     }
 
-    /// The owner-only part of the page policy: a page of an owner-only source is hidden, and under the lineage form so is a
+    /// The owner-only part of the page policy: a page of an owner-only source is hidden, and under the `fn` form so is a
     /// concept synthesized from one; under the closed form every page is hidden while the brain holds an owner-only source.
     /// It is part of the member-access test, so a relaxed privacy part does not drop it.
     #[test]
@@ -410,7 +410,7 @@ mod tests {
             found
         };
         assert_eq!(
-            top("lineage"),
+            top("fn"),
             ["concepts/from-open", "notes/flagged-off", "notes/open"]
         );
         assert!(top("closed").is_empty());
@@ -431,12 +431,11 @@ mod tests {
             found,
             ["concepts/from-open", "notes/flagged-off", "notes/open"]
         );
-        // A policy that names no owner-only form is refused: the store does not guess one.
-        assert!(
-            serde_json::from_value::<KeywordOptions>(
-                json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } })
-            )
-            .is_err()
+        // A policy that names no owner-only form takes `closed`, the form that hides the most (owner_only.rs).
+        let named = opts(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }));
+        assert_eq!(
+            named.exclude_private.as_ref().map(|p| p.owner_only),
+            Some(crate::owner_only::OwnerOnlyForm::Closed)
         );
     }
 
