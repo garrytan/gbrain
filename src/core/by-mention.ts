@@ -1098,15 +1098,7 @@ export async function scanStaleMentions(
 ): Promise<StaleMentionsScan> {
   const limit = opts.limit ?? STALE_MENTIONS_DEFAULT_LIMIT;
 
-  const totalRow = await engine.executeRaw<{ count: number }>(
-    `SELECT COUNT(DISTINCT l.from_page_id)::int AS count
-       FROM links l
-       JOIN pages p ON p.id = l.from_page_id
-      WHERE l.link_source = 'mentions'
-        AND p.deleted_at IS NULL`,
-    [],
-  );
-  const totalPagesWithMentions = totalRow[0]?.count ?? 0;
+  const totalPagesWithMentions = await engine.countPagesWithMentionLinks();
 
   const empty: StaleMentionsScan = {
     totalPagesWithMentions,

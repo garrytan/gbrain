@@ -105,6 +105,7 @@ function stubEngine(opts: {
     kind: opts.kind ?? 'pglite',
     // loadAllSources reads the typed member; the page count still runs executeRaw.
     listSourceRecords: sources,
+    countLivePages: async () => opts.pages ?? 0,
     executeRaw: async (sql: string) => {
       if (sql.includes('FROM pages')) return [{ n: opts.pages ?? 0 }];
       if (sql.includes('FROM sources')) return sources();

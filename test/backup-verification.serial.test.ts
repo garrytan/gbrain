@@ -52,8 +52,9 @@ function engine(roots: string[]): BrainEngine {
   const sources = () => roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} }));
   return {
     kind: 'pglite',
-    // loadAllSources reads the typed member; the page count still runs executeRaw.
+    // loadAllSources reads the typed member; the page count is the typed countLivePages.
     listSourceRecords: async () => sources(),
+    countLivePages: async () => 1,
     executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }] : sources(),
   } as unknown as BrainEngine;
 }

@@ -125,10 +125,7 @@ async function brainMaturity(engine: BrainEngine): Promise<BackupStatus['maturit
 
 async function countLivePages(engine: BrainEngine): Promise<number | null> {
   try {
-    const rows = await engine.executeRaw<{ n: number }>(
-      'SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL',
-    );
-    const n = rows[0]?.n;
+    const n = await engine.countLivePages();
     // An empty rowset / non-numeric n is UNESTABLISHED, not zero — returning 0
     // would fabricate a "no pages at risk" all-clear and skip the degraded flag.
     return typeof n === 'number' && Number.isFinite(n) ? n : null;

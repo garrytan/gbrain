@@ -26,7 +26,6 @@ import {
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
 import { resolveSourceLocalFilePath, sourceGitScope } from '../../../core/markdown.ts';
 import { scannerSlugRootMode } from '../../../core/write-through.ts';
-import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import { persistenceEnabledForHealth } from '../../../core/persistence/ownership.ts';
 import { upstreamFreshness } from '../../../core/sync-upstream.ts';
@@ -169,21 +168,7 @@ export async function checkUnverifiedExtractions(
   const days = opts?.days ?? 7;
   const sourceId = opts?.sourceId;
   try {
-    const params: unknown[] = [String(days)];
-    let srcClause = '';
-    if (sourceId) {
-      params.push(sourceId);
-      srcClause = 'AND p.source_id = $2';
-    }
-    const rows = await engine.executeRaw<{ n: string | number }>(
-      `SELECT COUNT(*)::int AS n FROM pages p
-       WHERE p.deleted_at IS NULL
-         AND ${unverifiedExtractionFragment('p')}
-         AND p.created_at < now() - ($1 || ' days')::interval
-         ${srcClause}`,
-      params,
-    );
-    const n = Number(rows[0]?.n ?? 0);
+    const n = await engine.countUnverifiedExtractions(days, sourceId || null);
     return {
       name,
       status: n > 0 ? 'warn' : 'ok',
@@ -217,15 +202,7 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
     // safe); a group WITHOUT that shape (all-nested, or distinct bare slugs)
     // is listed with NO delete hint (#3942 — either copy may be the canonical
     // one that links point at, so deleting one automatically is a guess).
-    const rows = await engine.executeRaw<{ source_id: string; content_hash: string; slugs: string }>(
-      `SELECT source_id, content_hash,
-              string_agg(slug, '|' ORDER BY length(slug), slug) AS slugs
-         FROM pages
-        WHERE deleted_at IS NULL AND content_hash IS NOT NULL AND content_hash <> ''
-        GROUP BY source_id, content_hash
-       HAVING count(*) > 1
-        LIMIT 51`,
-    );
+    const rows = await engine.listContentHashDuplicates();
     const capped = rows.length > 50, atLeast = capped ? 'At least ' : ''; // #7145: a 51st group makes the counts floors
     if (rows.length === 0) {
       return { name, status: 'ok', message: 'No same-source content-hash duplicate groups' };

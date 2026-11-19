@@ -489,7 +489,10 @@ export interface TrustTierTableCounts { table: TrustTable; rows: number; counts:
 export async function readTrustTierCounts(engine: BrainEngine): Promise<TrustTierTableCounts[]> {
   const out: TrustTierTableCounts[] = [];
   for (const table of BACKFILL_ORDER) {
-    const rows = await engine.executeRaw<{ tier: string; n: number | string }>(`SELECT trust_tier AS tier, count(*) AS n FROM ${table} GROUP BY trust_tier`);
+    // The pages table is a typed engine read (engine-sql/doctor-pages.ts); the other tables stay raw.
+    const rows: Array<{ tier: string | null; n: number | string }> = table === 'pages'
+      ? await engine.countPageTrustTiers()
+      : await engine.executeRaw<{ tier: string; n: number | string }>(`SELECT trust_tier AS tier, count(*) AS n FROM ${table} GROUP BY trust_tier`);
     const counts = zero();
     for (const row of rows) counts[isTrustTier(row.tier) ? row.tier : 'unknown'] += Number(row.n);
     out.push({ table, rows: rows.reduce((n, r) => n + Number(r.n), 0), counts });
