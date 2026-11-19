@@ -134,6 +134,10 @@ describe('test:stress runner', () => {
     expect(reason).toBeNull();
   });
 
+  test('test/e2e/openclaw-skill-resolver-real.test.ts is owned by the e2e.yml job that sets GBRAIN_TEST_REQUIRE_OPENCLAW', () => {
+    expect(skipReason('test/e2e/openclaw-skill-resolver-real.test.ts')).toContain('.github/workflows/e2e.yml supplies the prerequisite and sets GBRAIN_TEST_REQUIRE_OPENCLAW');
+  });
+
   test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', async () => {
     const reason = await withEnv({ GBRAIN_PGBOUNCER_URL: undefined }, () => skipReason('test/e2e/pgbouncer-teardown.test.ts'));
     expect(reason).toContain('PgBouncer fixture');
