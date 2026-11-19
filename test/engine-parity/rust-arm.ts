@@ -84,6 +84,11 @@ export async function createRustSource(engine: unknown, id: string, config: Reco
   await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null });
 }
 
+/** Fixture: archive a source on the Rust brain (BrainEngine has no typed "archive source"). */
+export async function archiveRustSource(engine: unknown, id: string): Promise<void> {
+  await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
+}
+
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
 
 /**
