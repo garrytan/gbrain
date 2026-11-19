@@ -1,4 +1,0 @@
-**The Mac helper's send log no longer keeps a recipient hash that can be reversed by trying every phone number.**
-
-### Fixed
-- After 90 days, a line in GBrain Helper's send log keeps only a short hash of the recipient. That hash was a plain SHA-256 of the phone number or email, so anyone holding the log could recover a number by hashing every possible one. It is now keyed with a random 32-byte secret the helper makes on its first send and keeps with the send keys in its keychain item, so the hash can't be reversed without that secret and differs from Mac to Mac. The hourly limit to one recipient uses the same keyed hash. A malformed secret in the keychain item stops sending with `send_keys_tampered` instead of being replaced. Nothing is installed on any Mac yet, so no existing log needs rewriting.
