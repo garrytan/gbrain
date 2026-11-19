@@ -1,7 +1,8 @@
 /**
  * Rust engine owner IPC (src/core/rust-engine/owner-ipc/): a second process on a Rust brain becomes a client of the
- * owner process and sends its BrainEngine calls over the owner socket. The owner here hosts a PGLite engine, because
- * the Rust store is still being built; the server takes any BrainEngine.
+ * owner process and sends its BrainEngine calls over the owner socket. Most owners here host a PGLite engine (the
+ * server takes any BrainEngine); the write-journal blocks with the built addon run a real Rust owner, so a forwarded
+ * put_page runs the real Rust journal and the test pins where it stops today (the publication effects step).
  *
  * 1. Protects: two or more client processes read and write one brain through its owner; their results and errors are
  *    byte-identical to the same calls made in-process; calls end with `timeout` / `cancelled` within the caller's
@@ -33,7 +34,7 @@ import { withReadDeadline } from '../src/core/read-deadline.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { maybeDelegateLocalOperation } from '../src/core/persistence/local-client.ts';
-import { persistenceSocketPathForConfig, startPersistenceIpcServer, type PersistenceIpcRequest } from '../src/core/persistence/ipc.ts';
+import { persistenceSocketPathForConfig, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { openRustEngine, RustEngine } from '../src/core/rust-engine.ts';
@@ -44,6 +45,8 @@ import { createPersistenceIpcProvider } from '../src/core/persistence/provider.t
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
+import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
+import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { errorShape, readScript } from './helpers/owner-ipc-child.ts';
 
 const CHILD = join(import.meta.dir, 'helpers', 'owner-ipc-child.ts');
@@ -393,6 +396,77 @@ describe('a page write sent whole to an owner that reports persistence_journal',
   });
 });
 
+// A real Rust owner, built from the addon `bun run rust:build` writes (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing
+// addon an error). The store holds persistence_journal back (store-capabilities.ts HELD_FOR_CALLERS), so a client
+// refuses a whole write at once (the describe below). This block lifts that one capability on one owner instance, so a
+// forwarded put_page runs the real Rust journal and the test pins where it stops today: the journal admits the write,
+// the page store writes inside the publication transaction, and the publication's effects step asks the owner for
+// executeRaw, which the store refuses with engine_capability_missing (raw_sql). Nothing commits and the page is absent.
+const ADDON_TARGET = detectAddonTarget();
+const ADDON_BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${ADDON_TARGET ?? 'unsupported'}.node`);
+const HAVE_ADDON = ADDON_TARGET !== null && existsSync(ADDON_BUILT);
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
+  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${ADDON_BUILT} does not exist; run bun run rust:build`);
+}
+
+describe.skipIf(!HAVE_ADDON)('a page write sent whole to a real Rust owner on the real write journal', () => {
+  let dir: string;
+  let owner: RustEngine;
+  let socketPath: string;
+  const refusals: Array<{ inTransaction: boolean; code: unknown; reason: unknown; sql: string }> = [];
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-rust-journal-'));
+    const db = join(dir, 'brain.rust');
+    mkdirSync(db, { recursive: true });
+    const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT } });
+    owner = openRustEngine({ addon, databasePath: db });
+    expect(owner.capabilities.has('persistence_journal')).toBe(false);
+    // Lifted before connect: the owner socket's hello names the capabilities the engine reports when it is elected.
+    (owner.capabilities as Set<string>).add('persistence_journal');
+    // Record each executeRaw refusal, on the owner and on its transaction-bound clones (they inherit this property). The
+    // owner's background writer loops also ask for raw SQL outside any transaction; the publication runs inside one.
+    const refuse = (RustEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).executeRaw!;
+    Object.defineProperty(owner, 'executeRaw', { configurable: true, writable: true, value(this: RustEngine, ...a: unknown[]) {
+      return refuse.apply(this, a).catch((e: OperationError) => {
+        refusals.push({ inTransaction: this !== owner, code: e?.code, reason: e?.reason, sql: String(a[0]).trim().split(/\s+/).slice(0, 3).join(' ') });
+        throw e;
+      });
+    } });
+    await owner.connect({ engine: 'rust', database_path: db } as never);
+    // The connected engine won the owner election, so it already serves the owner socket with the real whole operations.
+    socketPath = ownerSocketPath(db);
+    expect(existsSync(socketPath)).toBe(true);
+  }, 120_000);
+
+  afterAll(async () => {
+    if (owner) await disposePersistenceConsumer(owner as unknown as BrainEngine);
+    await owner?.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }, 60_000);
+
+  test('put_page reaches the journal and stops at the publication effects step with a typed raw_sql refusal; it never reports committed', async () => {
+    const { engine, close } = await clientOf(socketPath);
+    try {
+      const { operationsByName } = await import('../src/core/operations.ts');
+      const requestId = crypto.randomUUID();
+      const error = await operationsByName.put_page!.handler(localCtx(engine), { slug: 'journal/rust', content: wholePage('Rust'), request_id: requestId })
+        .then(() => null, e => e) as OperationError | null;
+      // The caller is told the write is still pending, never that it committed.
+      expect(error?.code).toBe('write_pending');
+      // The write was sent whole and admitted by the real journal: its receipt names this request, still running.
+      const receipt = (error as unknown as { writeRequest?: Record<string, unknown> }).writeRequest;
+      expect(receipt).toMatchObject({ request_id: requestId, state: 'running' });
+      // The stop point: inside the publication transaction, the effects insert is the first member the owner refuses,
+      // typed engine_capability_missing (raw_sql).
+      expect(refusals.find(r => r.inTransaction)).toEqual({ inTransaction: true, code: 'engine_capability_missing', reason: 'raw_sql',
+        sql: 'INSERT INTO persistence_effects' });
+      // The publication rolled back: no page.
+      expect(await owner.getPage('journal/rust')).toBeNull();
+    } finally { close(); }
+  }, 120_000);
+});
+
 describe('closing the owner server', () => {
   test('close() resolves only after every running engine call has settled', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-close-'));
@@ -464,7 +538,7 @@ describe('a CLI write on a Rust brain whose owner is gbrain serve', () => {
   beforeAll(async () => { owner = new PGLiteEngine(); await owner.connect({}); }, 120_000);
   afterAll(async () => { await owner?.disconnect(); });
 
-  test('put_page goes to the serve owner\'s persistence socket; with no serve owner the engine path runs', async () => {
+  test('with no owner, or an owner that is not a serve, the engine path runs', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-cli-'));
     const db = join(dir, 'brain.rust');
     mkdirSync(db, { recursive: true });
@@ -472,9 +546,7 @@ describe('a CLI write on a Rust brain whose owner is gbrain serve', () => {
     const folder = join(dir, '.gbrain', 'persistence');
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, `${BRAIN}.cli.json`), JSON.stringify({ id: BRAIN, credential: 'a'.repeat(64), lane: 'cli' }), { mode: 0o600 });
-    const seen: PersistenceIpcRequest[] = [];
     let ownerServer: Awaited<ReturnType<typeof serveOwnerEngine>> = null;
-    let persistence: Awaited<ReturnType<typeof startPersistenceIpcServer>> = null;
     try {
       await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host' }, async () => {
         const params = () => ({ slug: 'notes/a', content: 'body' });
@@ -483,19 +555,10 @@ describe('a CLI write on a Rust brain whose owner is gbrain serve', () => {
         // An owner that is not a serve: the engine path runs and reaches it as a client (whole-op forward).
         ownerServer = await serveOwnerEngine(owner, ownerSocketPath(db), { serve: false });
         expect(await maybeDelegateLocalOperation('put_page', params(), config, { brain: 'host', cwd: dir })).toEqual({ handled: false });
-        await ownerServer!.close();
-        // A serve owner: the write goes whole to its persistence socket, as on a PGLite brain.
-        ownerServer = await serveOwnerEngine(owner, ownerSocketPath(db), { serve: true });
-        persistence = await startPersistenceIpcServer(persistenceSocketPathForConfig(config)!, {
-          brainId: BRAIN,
-          dispatch: async request => { seen.push(request); return { slug: 'notes/a', status: 'created_or_updated' }; },
-        });
-        const result = await maybeDelegateLocalOperation('put_page', params(), config, { brain: 'host', cwd: dir });
-        expect(result).toEqual({ handled: true, result: { slug: 'notes/a', status: 'created_or_updated' } });
-        expect(seen.map(r => r.operation)).toEqual(['put_page']);
+        // A serve owner's persistence socket runs the real Rust journal: 'with a real Rust serve owner on the real write
+        // journal' below, which replaced a stand-in dispatch that answered success without a journal.
       });
     } finally {
-      (persistence as { close(): void } | null)?.close();
       await (ownerServer as { close(): Promise<void> } | null)?.close();
       rmSync(dir, { recursive: true, force: true });
     }
@@ -627,10 +690,10 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
 describe('gbrain CLI in a second process on a Rust brain', () => {
   const cliEnv = (home: string) => ({ ...process.env, GBRAIN_HOME: home, GBRAIN_BRAIN_ID: 'host', GBRAIN_NO_BANNER: '1',
     GBRAIN_BACKUP_CHECK: '0', GBRAIN_SKIP_UPGRADE_CHECK: '1', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined });
-  const cli = async (home: string, args: string[]) => {
+  const cli = async (home: string, args: string[], extraEnv: Record<string, string> = {}) => {
     const started = Date.now();
     const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), ...args], {
-      cwd: home, env: cliEnv(home), stdout: 'pipe', stderr: 'pipe',
+      cwd: home, env: { ...cliEnv(home), ...extraEnv }, stdout: 'pipe', stderr: 'pipe',
     });
     const timeout = setTimeout(() => child.kill('SIGKILL'), 45_000);
     try {
@@ -676,6 +739,62 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 60_000);
+
+  describe.skipIf(!HAVE_ADDON)('with a real Rust serve owner on the real write journal', () => {
+    // The owner is a connected Rust engine with persistence_journal lifted on that one instance (the store holds it
+    // back, store-capabilities.ts HELD_FOR_CALLERS), serving the real persistence provider; no PGLite stand-in.
+    let served: ReturnType<typeof rustHome>;
+    let owner: RustEngine;
+    let binding: Awaited<ReturnType<typeof startPersistenceIpcServer>> = null;
+    const dispatched: string[] = [];
+    const refusals: Array<{ code: unknown; reason: unknown; sql: string }> = [];
+
+    beforeAll(async () => {
+      served = rustHome('gbrain-owner-ipc-cli-rust-journal-');
+      const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT } });
+      owner = openRustEngine({ addon, databasePath: served.db });
+      (owner.capabilities as Set<string>).add('persistence_journal');
+      const refuse = (RustEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).executeRaw!;
+      Object.defineProperty(owner, 'executeRaw', { configurable: true, writable: true, value(this: RustEngine, ...a: unknown[]) {
+        return refuse.apply(this, a).catch((e: OperationError) => {
+          // Only refusals inside a transaction: the owner's background writer loops ask for raw SQL outside one.
+          if (this !== owner) refusals.push({ code: e?.code, reason: e?.reason, sql: String(a[0]).trim().split(/\s+/).slice(0, 3).join(' ') });
+          throw e;
+        });
+      } });
+      await withEnv({ GBRAIN_HOME: served.home, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        // The election marks its owner a `gbrain serve` from argv (election.ts processIsServe), the mark the CLI checks
+        // before it sends a write to the persistence socket. The argv is put back as soon as the owner is elected.
+        const argv = process.argv;
+        process.argv = [argv[0]!, argv[1]!, 'serve'];
+        try { await owner.connect(served.config); } finally { process.argv = argv; }
+        const provider = await createPersistenceIpcProvider(owner as unknown as BrainEngine, served.config);
+        binding = await startPersistenceIpcServer(persistenceSocketPathForConfig(served.config)!, {
+          ...provider, dispatch: request => { dispatched.push(request.operation); return provider.dispatch(request); },
+        });
+      });
+    }, 120_000);
+
+    afterAll(async () => {
+      if (binding) { const b = binding as { server: import('node:net').Server; close(): void }; const closed = once(b.server, 'close'); b.close(); await closed; }
+      if (owner) await disposePersistenceConsumer(owner as unknown as BrainEngine);
+      await owner?.disconnect();
+      rmSync(served.home, { recursive: true, force: true });
+    }, 60_000);
+
+    test('gbrain call put_page goes to the owner\'s persistence socket, is admitted, and stops at the publication effects step; it never reports committed', async () => {
+      expect(binding).not.toBeNull();
+      const result = await cli(served.home, ['call', 'put_page', JSON.stringify({ slug: 'notes/rust-journal', content: page('Rust journal') })],
+        { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT });
+      // Exit 10: the write is accepted and still pending (a running request in the real journal), never committed.
+      expect(result.code).toBe(10);
+      expect(result.output).toContain('write_pending');
+      expect(result.output).toMatch(/Request: [0-9a-f-]{36} \(running\)/);
+      expect(dispatched).toEqual(['put_page']);
+      expect(refusals[0]).toEqual({ code: 'engine_capability_missing', reason: 'raw_sql', sql: 'INSERT INTO persistence_effects' });
+      expect(await owner.getPage('notes/rust-journal')).toBeNull();
+    }, 120_000);
+  });
 
   describe('with a serve owner that reports persistence_journal', () => {
     // The owner hosts PGLite, which reports persistence_journal; the Rust engine does not yet (see the test above).
