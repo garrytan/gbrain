@@ -4877,6 +4877,7 @@
         "listFreshExtractionOutcomes": "none",
         "listGatedMirrorRequests": "none",
         "listGuestSourceIds": "none",
+        "listHeldFenceCells": "none",
         "listHeldFenceFactRows": "none",
         "listHostConsumerRows": "none",
         "listJobAttachmentNames": "none",
