@@ -9,6 +9,7 @@ final class SetupWorld: @unchecked Sendable {
     var log: [String] = []
     var config = Config(port: 8792)
     var replies: [String: AdminReply] = [:]
+    var helperRunning = false
     var holds: [String: (entered: DispatchSemaphore, gate: DispatchSemaphore)] = [:]
 
     func note(_ event: String) {
@@ -40,7 +41,8 @@ final class SetupWorld: @unchecked Sendable {
                           hold.gate.wait()
                       }
                       return self.replies[fields["action"] ?? ""] ?? .answered(status: 200, body: Data("{}".utf8))
-                  })
+                  },
+                  helperRunning: { self.helperRunning })
     }
 }
 
@@ -142,5 +144,46 @@ func loopbackSocket() -> (fd: Int32, port: UInt16) {
         let (fd, port) = loopbackSocket()
         defer { Darwin.close(fd) }
         #expect(AdminClient.post(port: port, fields: ["action": "off"], timeout: 1) == .noReply)
+    }
+
+    @Test func offIsNotConfirmedWhenNothingAnswersButAHelperProcessIsRunning() {
+        let world = SetupWorld()
+        world.config.send = SendSetting(enabled: true)
+        world.replies["off"] = .notRunning
+        world.helperRunning = true
+        let result = world.setup.off()
+        #expect(result.code == 69)
+        #expect(world.config.send?.enabled == false)
+        #expect(result.err?.contains("process is still running, so sending off isn't confirmed") == true)
+        #expect(result.err?.hasSuffix("a text it was already handing over may still go out.") == true)
+    }
+
+    @Test(arguments: [("overloaded", true), ("send_keys_unreadable", false)])
+    func anErrorAnswerSaysATextMayStillGoOutOnlyWhenTheHelperDidNotGetToTheSwitch(code: String, caveat: Bool) {
+        let world = SetupWorld()
+        world.replies["off"] = .answered(status: 503, body: Data("{\"code\":\"\(code)\"}".utf8))
+        let result = world.setup.off()
+        #expect(result.code == 1)
+        #expect(result.err?.contains("may still go out") == caveat)
+    }
+
+    @Test func aRunningProcessIsFoundByItsExecutableName() throws {
+        let sleeper = Process()
+        sleeper.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        sleeper.arguments = ["30"]
+        try sleeper.run()
+        defer { sleeper.terminate() }
+        #expect(HelperProcess.others(named: "sleep", in: try #require(HelperProcess.allPids())).contains(sleeper.processIdentifier))
+        let own = (ProcessInfo.processInfo.arguments[0] as NSString).lastPathComponent
+        #expect(!HelperProcess.others(named: own, in: try #require(HelperProcess.allPids())).contains(getpid()))
+        sleeper.terminate()
+        sleeper.waitUntilExit()
+        #expect(!HelperProcess.others(named: "sleep", in: try #require(HelperProcess.allPids())).contains(sleeper.processIdentifier))
+    }
+
+    @Test func anUnreadableProcessTableCountsAsAHelperRunning() {
+        #expect(HelperProcess.running(named: "no-process-has-this-name", in: nil))
+        #expect(!HelperProcess.running(named: "no-process-has-this-name", in: [getpid()]))
+        #expect(!HelperProcess.running(named: "no-process-has-this-name"))
     }
 }
