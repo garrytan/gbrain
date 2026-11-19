@@ -36,6 +36,7 @@ test/engine-parity/jobs-wake.test.ts	15	0
 test/engine-parity/jobs.test.ts	13	1
 test/engine-parity/keyword-visibility.test.ts	6	0
 test/engine-parity/lifecycle.test.ts	10	1
+test/engine-parity/link-read-options.test.ts	7	0
 test/engine-parity/link-reads.test.ts	9	0
 test/engine-parity/link-temporal.test.ts	13	0
 test/engine-parity/links.test.ts	30	0

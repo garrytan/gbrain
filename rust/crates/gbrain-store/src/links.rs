@@ -10,8 +10,10 @@
 //!
 //! Reads follow `src/core/engine-sql/links.ts`: soft-deleted endpoints and origins hide an edge,
 //! slugs match exactly (no lowercasing), and a source scope is `sourceIds` (when not empty), else
-//! `sourceId`, else every source. The privacy, temporal and keyset-page options are refused with
-//! `invalid_argument`; the TypeScript shell must not send them to this engine.
+//! `sourceId`, else every source. The page policy (`excludePrivate`) and the temporal edge policy
+//! apply to every read (`link_read`); `getLinks` / `getBacklinks` also serve the temporal
+//! annotation columns and the keyset page. The keyset page of the path walks is refused with
+//! `invalid_argument`; the TypeScript shell must not send it to this engine.
 //!
 //! `traverse_paths_detailed` orders rows by `(depth, from_slug, to_slug, from_source_id,
 //! to_source_id)` like PGLite, then by `link_type` and link id, where PGLite's order is undefined.
@@ -25,6 +27,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
+
+use crate::facts::PrivacyPolicy;
+
+mod link_read;
+use link_read::EdgeRules;
+pub use link_read::{During, EdgeTemporal, FromType, Keep, LinkPage, RelationshipKeep};
 
 const NEXT_LINK_ID: &str = "next_link_id";
 /// `TRAVERSE_WALK_ROW_CAP`: a walk keeps at most this many visited pages.
@@ -121,9 +129,9 @@ pub struct RemoveLinkOptions {
 pub struct LinkScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
-    pub exclude_private: Option<bool>,
-    pub temporal: Option<Value>,
-    pub page: Option<Value>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub temporal: Option<EdgeTemporal>,
+    pub page: Option<LinkPage>,
 }
 
 /// `TraverseGraphOpts`.
@@ -133,8 +141,8 @@ pub struct TraverseGraphOptions {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub frontier_cap: Option<i64>,
-    pub exclude_private: Option<bool>,
-    pub temporal: Option<Value>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub temporal: Option<EdgeTemporal>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -155,8 +163,8 @@ pub struct PathOptions {
     pub direction: Option<Direction>,
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
-    pub exclude_private: Option<bool>,
-    pub temporal: Option<Value>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub temporal: Option<EdgeTemporal>,
     pub page: Option<Value>,
 }
 
@@ -173,28 +181,15 @@ pub(crate) fn no_nul(op: &str, parts: &[(&str, &str)]) -> Result<()> {
     Ok(())
 }
 
-fn refuse_unsupported(
-    op: &str,
-    exclude_private: Option<bool>,
-    temporal: &Option<Value>,
-    page: &Option<Value>,
-) -> Result<()> {
-    let refused = if exclude_private == Some(true) {
-        Some("excludePrivate")
-    } else if temporal.as_ref().is_some_and(|v| !v.is_null()) {
-        Some("temporal")
-    } else if page.as_ref().is_some_and(|v| !v.is_null()) {
-        Some("page")
-    } else {
-        None
-    };
-    match refused {
-        Some(name) => Err(StoreError::new(
+/// The keyset page of the path walks, which this engine does not serve.
+fn refuse_page(op: &str, page: &Option<Value>) -> Result<()> {
+    if page.as_ref().is_some_and(|v| !v.is_null()) {
+        return Err(StoreError::new(
             INVALID_ARGUMENT,
-            format!("{op}: the {name} option is not supported by the rust engine"),
-        )),
-        None => Ok(()),
+            format!("{op}: the page option is not supported by the rust engine"),
+        ));
     }
+    Ok(())
 }
 
 /// `link_source` CHECK: NULL, or `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` and at most 64 characters.
@@ -481,6 +476,7 @@ fn link_row(heads: &mut Heads, link: &LinkRecord, from: &PageHead, to: &PageHead
 fn bfs_walk(
     read: &dyn KvRead,
     heads: &mut Heads,
+    rules: &mut EdgeRules,
     slug: &str,
     scope: &Scope,
     max_layer: i64,
@@ -488,12 +484,12 @@ fn bfs_walk(
     link_type: Option<&str>,
     layer_cap: Option<i64>,
 ) -> Result<Vec<(u64, i64)>> {
-    let mut seed: Vec<(String, u64)> = scope
-        .pages(read, slug)?
-        .into_iter()
-        .filter(|p| p.deleted_at_us.is_none())
-        .map(|p| (p.slug, p.id))
-        .collect();
+    let mut seed: Vec<(String, u64)> = Vec::new();
+    for page in scope.pages(read, slug)? {
+        if page.deleted_at_us.is_none() && rules.page_ok(page.id)? {
+            seed.push((page.slug, page.id));
+        }
+    }
     seed.sort();
     let mut frontier: Vec<u64> = seed.into_iter().map(|(_, id)| id).collect();
     let mut visited: HashSet<u64> = frontier.iter().copied().collect();
@@ -525,7 +521,11 @@ fn bfs_walk(
                 let Some(head) = heads.live(other, scope)? else {
                     continue;
                 };
-                if heads.origin_ok(&link, scope)? {
+                if heads.origin_ok(&link, scope)?
+                    && rules.page_ok(other)?
+                    && rules.origin_ok(&link)?
+                    && rules.walk_ok(&link)?
+                {
                     next.insert((head.slug.clone(), other));
                 }
             }
@@ -771,14 +771,29 @@ impl Store {
         options: &LinkScope,
         outgoing: bool,
     ) -> Result<Vec<Value>> {
-        refuse_unsupported(
-            op,
-            options.exclude_private,
-            &options.temporal,
-            &options.page,
-        )?;
         no_nul(op, &[("slug", slug)])?;
+        if let Some(page) = &options.page {
+            page.check()?;
+        }
         let read = self.read()?;
+        let mut rules = EdgeRules::new(
+            &*read,
+            options.exclude_private.as_ref(),
+            None,
+            self.env.now_micros(),
+        )?;
+        // `linkPageSql`'s pinned rule: a paged read inside a grant with a sourceId keeps that
+        // source's queried page only.
+        let pinned = options
+            .page
+            .as_ref()
+            .filter(|_| {
+                options
+                    .source_ids
+                    .as_ref()
+                    .is_some_and(|ids| !ids.is_empty())
+            })
+            .and(options.source_id.as_deref());
         let scope = Scope::new(&options.source_id, &options.source_ids);
         // A scalar sourceId scopes only the queried page; sourceIds scope every page of the edge.
         let (near_scope, far_scope) = match &scope {
@@ -788,7 +803,7 @@ impl Store {
         let mut heads = Heads::new(&*read);
         let mut rows: Vec<(u64, Value)> = Vec::new();
         for page in near_scope.pages(&*read, slug)? {
-            if page.deleted_at_us.is_some() {
+            if page.deleted_at_us.is_some() || pinned.is_some_and(|s| s != page.source_id) {
                 continue;
             }
             let Some(near) = heads.get(page.id)? else {
@@ -808,18 +823,48 @@ impl Store {
                 let Some(far) = heads.live(other, far_scope)? else {
                     continue;
                 };
-                if !heads.origin_ok(&link, far_scope)? {
+                if !heads.origin_ok(&link, far_scope)? || !rules.link_private_ok(&link)? {
                     continue;
                 }
-                let row = if outgoing {
+                let from = if outgoing { &near } else { &far };
+                if let Some(page) = &options.page {
+                    if !page.bounds_ok(&link)
+                        || !page.source_type_ok(&from.page_type, &from.source_id)
+                    {
+                        continue;
+                    }
+                    if let Some(rel) = &page.relationship
+                        && rules.matches(&link, &rel.policy)? != (rel.keep == Keep::Match)
+                    {
+                        continue;
+                    }
+                }
+                let mut row = if outgoing {
                     link_row(&mut heads, &link, &near, &far)?
                 } else {
                     link_row(&mut heads, &link, &far, &near)?
                 };
+                if let Value::Object(fields) = &mut row {
+                    if let Some(page) = &options.page {
+                        fields.insert("context".into(), json!(page.context(&link.context)));
+                    }
+                    if options.temporal.is_some() {
+                        rules.temporal_columns(&link, fields)?;
+                    }
+                    if options.page.is_some() {
+                        fields.insert("link_id".into(), json!(link.id));
+                    }
+                }
                 rows.push((link.id, row));
             }
         }
         rows.sort_by_key(|(id, _)| *id);
+        if let Some(limit) = options.page.as_ref().and_then(|p| p.limit) {
+            rows.truncate(limit as usize);
+        }
+        if options.page.as_ref().is_some_and(|p| p.count == Some(true)) {
+            return Ok(vec![json!({"link_total": rows.len()})]);
+        }
         Ok(rows.into_iter().map(|(_, row)| row).collect())
     }
 
@@ -831,19 +876,20 @@ impl Store {
         depth: Option<i64>,
         options: &TraverseGraphOptions,
     ) -> Result<Vec<Value>> {
-        refuse_unsupported(
-            "traverseGraph",
-            options.exclude_private,
-            &options.temporal,
-            &None,
-        )?;
         no_nul("traverseGraph", &[("slug", slug)])?;
         let read = self.read()?;
         let scope = Scope::new(&options.source_id, &options.source_ids);
         let mut heads = Heads::new(&*read);
+        let mut rules = EdgeRules::new(
+            &*read,
+            options.exclude_private.as_ref(),
+            options.temporal.as_ref(),
+            self.env.now_micros(),
+        )?;
         let walk = bfs_walk(
             &*read,
             &mut heads,
+            &mut rules,
             slug,
             &scope,
             depth.unwrap_or(5),
@@ -861,7 +907,11 @@ impl Store {
                 let Some(to) = heads.live(link.to_page_id, &scope)? else {
                     continue;
                 };
-                if heads.origin_ok(&link, &scope)? {
+                if heads.origin_ok(&link, &scope)?
+                    && rules.page_ok(link.to_page_id)?
+                    && rules.origin_ok(&link)?
+                    && rules.walk_ok(&link)?
+                {
                     pairs.insert((to.slug.clone(), link.link_type.clone()));
                 }
             }
@@ -901,12 +951,7 @@ impl Store {
     /// `traversePathsDetailed(slug, opts)`: each qualifying edge once, at one past the depth of
     /// its shallower visited endpoint on the walked side. `{paths, truncated}`.
     pub fn traverse_paths_detailed(&self, slug: &str, options: &PathOptions) -> Result<Value> {
-        refuse_unsupported(
-            "traversePathsDetailed",
-            options.exclude_private,
-            &options.temporal,
-            &options.page,
-        )?;
+        refuse_page("traversePathsDetailed", &options.page)?;
         no_nul(
             "traversePathsDetailed",
             &[
@@ -920,9 +965,16 @@ impl Store {
         let direction = options.direction.unwrap_or_default();
         let link_type = options.link_type.as_deref();
         let mut heads = Heads::new(&*read);
+        let mut rules = EdgeRules::new(
+            &*read,
+            options.exclude_private.as_ref(),
+            options.temporal.as_ref(),
+            self.env.now_micros(),
+        )?;
         let walk = bfs_walk(
             &*read,
             &mut heads,
+            &mut rules,
             slug,
             &scope,
             depth.saturating_sub(1),
@@ -974,7 +1026,10 @@ impl Store {
             let Some(to) = heads.live(link.to_page_id, &scope)? else {
                 continue;
             };
-            if !heads.origin_ok(&link, &scope)? {
+            if !heads.origin_ok(&link, &scope)?
+                || !rules.link_private_ok(&link)?
+                || !rules.walk_ok(&link)?
+            {
                 continue;
             }
             rows.push(PathRow {
