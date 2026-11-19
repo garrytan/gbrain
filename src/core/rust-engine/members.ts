@@ -563,6 +563,7 @@ export const RUST_ENGINE_MEMBERS = {
   listGatedMirrorRequests: 'persistence_journal',
   listEffectRecoveries: 'persistence_journal',
   selectClaimableEffect: 'persistence_journal',
+  readRequestEffects: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
   readWriterVersionCutoff: 'persistence_journal',
   listWriterVersions: 'persistence_journal',

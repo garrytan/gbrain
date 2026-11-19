@@ -603,7 +603,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
   'readCapacityForecastInputs': OOS.journal, 'listPendingSegmentedProjections': OOS.journal, 'selectProjectionWindowJobs': OOS.journal,
   'readWriterVersionCutoff': OOS.writerVersions, 'listWriterVersions': OOS.writerVersions, 'recentWriterVersions': OOS.writerVersions,
-  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans,
+  'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans, 'readRequestEffects': OOS.effectScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -1428,4 +1428,5 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
   ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
   ...variants('selectClaimableEffect', [['default', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, []))], ['dead', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, ['1:n:2']))]]),
+  ...variants('readRequestEffects', [['default', (e) => e.readRequestEffects(JOURNAL_REQUEST)], ['git', (e) => e.readRequestEffects(JOURNAL_REQUEST, 'git')]]),
 ];

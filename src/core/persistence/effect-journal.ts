@@ -408,9 +408,8 @@ export async function failEffect(engine: SqlEngine, effect: PersistenceEffect, r
  * with the last attempt's error, `running`, `recovering`, and `queued` only while the effect is queued. Null when the
  * request has no Git effect row.
  */
-export async function gitReceiptState(engine: SqlEngine, requestId: string): Promise<{ git_state: string; git_commit?: string; git_reason?: string } | null> {
-  const [row] = await engine.executeRaw<{ state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
-    `SELECT state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid AND kind='git' ORDER BY id DESC LIMIT 1`, [requestId]);
+export async function gitReceiptState(engine: Pick<BrainEngine, 'readRequestEffects'>, requestId: string): Promise<{ git_state: string; git_commit?: string; git_reason?: string } | null> {
+  const [row] = await engine.readRequestEffects(requestId, 'git');
   if (!row) return null;
   const reason = (value: unknown) => typeof value === 'string' && /^[a-z_]{1,80}$/.test(value) ? { git_reason: value } : {};
   if (row.recovering) return { git_state: 'recovering' };
@@ -424,11 +423,10 @@ export async function gitReceiptState(engine: SqlEngine, requestId: string): Pro
 }
 
 /** Only public kind/state/reason, aggregated so withdrawal page counts cannot leak. */
-export async function publicEffectsForRequest(engine: SqlEngine, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
+export async function publicEffectsForRequest(engine: Pick<BrainEngine, 'readRequestEffects'>, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
   invalid_targets?: Array<{ slug: string; reason: 'invalid_slug' }> }>> {
-  const rows = await engine.executeRaw<{ kind: EffectKind; state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
-    'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [requestId]);
-  return rows.filter(row => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
+  const rows = await engine.readRequestEffects(requestId);
+  return rows.filter((row): row is typeof row & { kind: EffectKind } => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
     const reason = row.error_code ?? row.outcome?.reason;
     const push = row.outcome?.push;
     const invalid = Array.isArray(row.outcome?.skipped_targets) ? (row.outcome.skipped_targets as Array<{ slug: string; reason: string }>)

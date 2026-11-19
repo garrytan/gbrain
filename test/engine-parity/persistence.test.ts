@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
  * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
- * the publication's effects insert, the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
+ * the publication's effects insert and the receipt's read of them, the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
  * the ledger's source view).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -495,6 +495,28 @@ describe('engine parity: write journal', () => {
     const switchesOn = await insert(fourth, [{ kind: 'links', data: page, gated: true }]);
     const answers = { queued, again, remoteOff, autoLinkOff, switchesOn };
     expect(answers).toEqual({ queued: ['embedding', 'facts-backstop', 'links'], again: [], remoteOff: ['embedding'], autoLinkOff: ['git'], switchesOn: ['links'] });
+    return answers;
+  });
+
+  parityTest('readRequestEffects reads a request\'s queued effects in kind order, or only its Git effect, and refuses a non-uuid id', {
+    methods: ['readRequestEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const page = { slug: 'notes/parity', page_id: 1 };
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const bare = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'links', data: page, gated: true }, { kind: 'git', data: { relative_path: 'notes/parity.md' } }, { kind: 'embedding', data: page }] });
+    });
+    let refusal = 'ok';
+    try { await engine.readRequestEffects('not-a-uuid'); } catch (e) { refusal = /invalid input syntax for type uuid/.exec(String((e as Error).message))?.[0] ?? String(e); }
+    const answers = { all: await engine.readRequestEffects(id), git: await engine.readRequestEffects(id, 'git'), none: await engine.readRequestEffects(bare),
+      noGit: await engine.readRequestEffects(bare, 'git'), refusal };
+    const waiting = (kind: string) => ({ kind, state: 'queued', error_code: null, outcome: null, recovering: false });
+    expect(answers).toEqual({ all: [waiting('embedding'), waiting('git'), waiting('links')], git: [waiting('git')], none: [], noGit: [],
+      refusal: 'invalid input syntax for type uuid' });
     return answers;
   });
 

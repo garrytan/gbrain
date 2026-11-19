@@ -22,7 +22,7 @@ import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 /** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
 export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
@@ -149,11 +149,12 @@ export const completeWriteRow: StoreMember<[completion: WriteCompletion], Comple
 export const requireSynchronousCommit: StoreMember<[], void> = async () => undefined;
 
 /**
- * This engine records no persistence effect (rust/docs/store/persistence.md, "Effect scans"), so a publication's
- * effects are refused, never dropped: a receipt that says an embedding is queued needs an effect that runs.
+ * Stores a publication's effects (rust/docs/store/persistence.md, "Publication effects"): every kind is stored, a
+ * gated kind is left out while `auto_link` or `mcp.remote_auto_links` is off, and a kind already queued for the
+ * request is kept. Returns the kinds inserted, in queue order.
  */
-export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec], string[]> = async () =>
-  refuseMember('insertPublicationEffects', 'a publication effect, which this engine does not record');
+export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec], string[]> = async (brain, spec) =>
+  await storeCall({ member: 'insertPublicationEffects' }, () => brain.insertPublicationEffects(spec)) as string[];
 
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
