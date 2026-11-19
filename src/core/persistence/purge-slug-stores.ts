@@ -12,17 +12,18 @@ const SLUG_STORES: ReadonlyArray<readonly [table: string, column: string]> = [
  * it and the rename rows that end at it (a redirect from this slug to another page stays). A purge's cascade never
  * reaches them, so every hard delete of a page calls this inside its transaction; a soft delete keeps them, because
  * restore_page can bring the page back. `ifPresent` skips a store the database does not have (a restored archive
- * older than it). Returns rows removed per store, keyed as the purge receipt names them.
+ * older than it); `keep` skips the stores named (a concept revive keeps the redirects). Returns rows removed per store, keyed as the purge receipt names them.
  */
 export async function scrubPurgedSlugStores(
   engine: Pick<BrainEngine, 'executeRaw'>,
   sourceId: string,
   slugs: readonly string[],
-  opts: { ifPresent?: boolean } = {},
+  opts: { ifPresent?: boolean; keep?: readonly string[] } = {},
 ): Promise<Record<string, number>> {
   if (!slugs.length) return {};
   const removed: Record<string, number> = {};
   for (const [table, column] of SLUG_STORES) {
+    if (opts.keep?.includes(table)) continue;
     if (opts.ifPresent) {
       const [present] = await engine.executeRaw<{ present: boolean }>('SELECT to_regclass($1) IS NOT NULL AS present', [table]);
       if (!present?.present) continue;

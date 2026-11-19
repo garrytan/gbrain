@@ -17,6 +17,7 @@ import { isAvailable } from '../ai/gateway.ts';
 import { importFromContent } from '../import-file.ts';
 import type { ConceptRetryBound } from './concept-retry-bound.ts';
 import { publicationHold } from '../persistence/accepted-pending.ts';
+import type { ConceptRevive } from '../persistence/concept-revive.ts';
 import {
   conceptProvenanceCovers, replaceConceptProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcepts,
 } from './concept-publication.ts';
@@ -39,6 +40,8 @@ export interface ConceptWrite {
   revision: string | null;
   /** Unmanaged: the narrative the page held when synthesis started; a different narrative under the page lock defers the concept (D-N3). */
   baseline: string;
+  /** #9653: a held concept's rebuild, carried by its first publication only (concept-revive.ts). */
+  revive?: ConceptRevive;
 }
 
 export interface ConceptWriterDeps {
@@ -77,9 +80,10 @@ export function conceptWriter(deps: ConceptWriterDeps) {
   const publishClassic = async (write: ConceptWrite, pageVisibility: Visibility): Promise<boolean> => {
     try {
       write.baseline = await publishClassicConcept(engine, write.conceptSlug, src, write.synthesized(pageVisibility), write.narrative,
-        write.baseline, { writeThrough: deps.writeThrough, members: write.atomSlugs, importPage: (markdown) => importFromContent(engine, write.conceptSlug, markdown, {
+        write.baseline, { writeThrough: deps.writeThrough, members: write.atomSlugs, revive: write.revive, importPage: (markdown, tx) => importFromContent(tx ?? engine, write.conceptSlug, markdown, {
           noEmbed: !isAvailable('embedding'), sourceId: deps.importSourceId, preserveGateMarkers: true,
         }) });
+      write.revive = undefined;
       return true;
     } catch (err) { return recorded(write, err); }
   };
@@ -126,11 +130,13 @@ export function conceptWriter(deps: ConceptWriterDeps) {
   /** One managed batch; each concept settles on its own, and the ones that published carry their new revision. */
   const publishManaged = async (writes: ConceptWrite[], pageVisibility: (write: ConceptWrite) => Visibility): Promise<ConceptWrite[]> => {
     const outcomes = writes.length ? await publishManagedConcepts(engine, maintenance!, writes.map(write => ({ slug: write.conceptSlug,
-      synthesized: write.synthesized(pageVisibility(write)), narrative: write.narrative, expectedRevision: write.revision, members: write.atomSlugs })), deps.brainDir) : [];
+      synthesized: write.synthesized(pageVisibility(write)), narrative: write.narrative, expectedRevision: write.revision, members: write.atomSlugs,
+      ...(write.revive ? { revive: write.revive } : {}) })), deps.brainDir) : [];
     return writes.filter((write, i) => {
       const outcome = outcomes[i]!;
       if ('error' in outcome) return recorded(write, outcome.error);
       write.revision = outcome.revision;
+      write.revive = undefined;
       return true;
     });
   };

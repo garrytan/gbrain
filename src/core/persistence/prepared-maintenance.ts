@@ -30,6 +30,7 @@ import { preparePageMutation, prepareFileTarget } from './page-prepare.ts';
 import { prepareTakesMutation } from './takes-prepare.ts';
 import { digest, sha256 } from './digest.ts';
 import type { PreparedMutation } from './coordinator.ts';
+import { conceptReviveHeld, readConceptRevive, type ConceptRevive } from './concept-revive.ts';
 import { withTrustKeep } from './context.ts';
 import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -186,8 +187,15 @@ async function prepareMaintenanceAdmission(engine: BrainEngine, authority: Maint
   }
   // #5876: only a Life Chronicle event its extractor retired may be restored by a later generation; the stamp counts only
   // when the generation ledger (or the chronicle ledger's owned hashes) verifies it (GBRA-161 PR 3).
+  // #9653: nor may a concept the input purge hid, rebuilt over its own tombstone while its hold stands (concept-revive.ts).
+  const revive = readConceptRevive(intent.concept_revive);
+  if (revive && !(snapshot?.page.deleted_at && revive.page_id === Number(snapshot.page.id) && await conceptReviveHeld(engine, revive))) {
+    throw opError('revision_conflict', 'The concept is no longer held for a rebuild.',
+      `Concept ${slug} in '${authority.writer.sourceId}' was deleted, purged or published after synthesis read it, so nothing was submitted; the next run reads it again.`);
+  }
   if (snapshot?.page.deleted_at && intent.deleted_page !== true && !(intent.restore_retired === true
-    && await (await import('../generations/adapters/chronicle-events.ts')).verifiedChronicleRetirement(engine, authority.writer.sourceId, snapshot.page))) {
+    && await (await import('../generations/adapters/chronicle-events.ts')).verifiedChronicleRetirement(engine, authority.writer.sourceId, snapshot.page))
+    && !revive) {
     throw opError('page_not_found', 'Maintenance cannot restore a deleted page.',
       `Page ${slug} in '${authority.writer.sourceId}' was deleted after maintenance read it, and maintenance never recreates deleted pages; nothing was submitted. Run maintenance again to plan from the current pages.`);
   }
@@ -257,7 +265,9 @@ export interface MaintenanceEventProjection { depth_slug: string; date: string; 
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
   eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true; labelEdit?: LabelEdit;
   /** #8194: with keepTrust, the fence rows `gbrain repair open-facts` opens in place (repair/open-facts.ts openFactsPublication). */
-  openFacts?: Array<{ id: number; row_num: number | null; fact_md5: string }> };
+  openFacts?: Array<{ id: number; row_num: number | null; fact_md5: string }>;
+  /** #9653: a held concept's rebuild over its tombstone (concept-revive.ts). */
+  conceptRevive?: ConceptRevive };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
 function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, content: string, options: MaintenancePageOptions, batch?: string) {
@@ -265,7 +275,7 @@ function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, c
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
   const keep = { ...(options.keepTrust ? { keep_trust: true } : {}), ...(options.labelEdit ? { label_edit: options.labelEdit } : {}),
-    ...(options.keepTrust && options.openFacts ? { open_facts: options.openFacts } : {}) };
+    ...(options.keepTrust && options.openFacts ? { open_facts: options.openFacts } : {}), ...(options.conceptRevive ? { concept_revive: options.conceptRevive } : {}) };
   return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...keep },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
       ...projection, ...derivation, ...grouped, ...keep }) };

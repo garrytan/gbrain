@@ -41,6 +41,7 @@ import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import { conceptProvenanceCovers, conceptPublicationHold, stripFenceSections } from './concept-publication.ts';
 import { conceptWriter, type ConceptWrite } from './concept-writes.ts';
+import { heldConceptRevive } from '../persistence/concept-revive.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
 import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
@@ -335,6 +336,8 @@ export async function runPhaseSynthesizeConcepts(
   const publicationPending: Array<{ concept: string; reason: string }> = [];
   const skippedHumanOwned: string[] = [];
   const skippedDeleted: string[] = [];
+  const rebuilds: ConceptWrite[] = [];
+  const rebuildDeferred: string[] = [];
   const skippedUnchanged: string[] = [];
   const provenanceRestored: string[] = [];
   const rehashed: string[] = [];
@@ -368,8 +371,11 @@ export async function runPhaseSynthesizeConcepts(
     // A concept page this phase did not write belongs to a human (or another
     // writer). Check before any spend; never replace its body.
     const existingSnapshot = await engine.readPageSnapshot(conceptSlug, { sourceId: opts.sourceId ?? 'default', includeDeleted: true });
-    if (existingSnapshot?.page.deleted_at) { skippedDeleted.push(conceptSlug); continue; } // #6161: a deleted concept is never resurrected
-    const existing = existingSnapshot?.page ?? null;
+    // #6161: a deleted concept is never resurrected, except (#9653) one hidden only by an input purge, which is rebuilt
+    // from its current members as a first publication over the same row (concept-revive.ts).
+    const revive = existingSnapshot?.page.deleted_at ? await heldConceptRevive(engine, src, existingSnapshot, group.atomSlugs) : null;
+    if (existingSnapshot?.page.deleted_at && !revive) { skippedDeleted.push(conceptSlug); continue; }
+    const existing = revive ? null : existingSnapshot?.page ?? null;
     if (existing && !String(existing.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts')) {
       skippedHumanOwned.push(conceptSlug);
       continue;
@@ -405,7 +411,7 @@ export async function runPhaseSynthesizeConcepts(
       continue;
     }
     // #6643 (B1): a drifted concept would only add a conflict receipt per publication; checked live before any spend.
-    if (await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
+    if (!revive && await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
     const held = existing && conceptPublicationHold(existing); // checked before any spend
     if (held) { publicationHeld.push({ concept: group.conceptSlug, reason: held }); continue; }
     // A page hashed by the pre-D-N3 formula (full atom bodies) whose inputs are
@@ -505,6 +511,11 @@ export async function runPhaseSynthesizeConcepts(
       keptExistingNarrative.push(conceptSlug);
       continue;
     }
+    // #9653: a failed synthesis never rebuilds a held concept; it stays hidden and held for the next cycle.
+    if (revive && synthesisMode !== 'llm' && synthesisMode !== 'deterministic_tier') {
+      rebuildDeferred.push(conceptSlug);
+      continue;
+    }
     if (!grandfathered) synthesisModeCounts[synthesisMode]++;
 
     await stopIfAborted();
@@ -532,7 +543,8 @@ export async function runPhaseSynthesizeConcepts(
       // world, so a strict source never commits an intermediate private page.
       const covered = visibility === 'world' && await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs);
       const write: ConceptWrite = { concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, visibility, covered, synthesisMode, synthesized, narrative,
-        revision: existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '' };
+        revision: existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '', ...(revive ? { revive } : {}) };
+      if (revive) rebuilds.push(write);
       // GBRA-60: a managed run's concepts publish in batches (concept-writes.ts), each one publication group on Postgres.
       await stopIfAborted();
       await (maintenance ? writer.queue(write) : writer.publish(write));
@@ -588,6 +600,7 @@ export async function runPhaseSynthesizeConcepts(
     });
   }
 
+  const rebuilt = rebuilds.filter(write => !write.revive).map(write => write.conceptSlug);
   return reportDerivedWriteThrough({
     phase: 'synthesize_concepts',
     status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || publicationPending.length > 0
@@ -599,6 +612,8 @@ export async function runPhaseSynthesizeConcepts(
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
       (budgetCapped > 0 ? ` (${budgetCapped} over the $${budgetCap.toFixed(2)} budget → template fallback)` : '') +
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : '') +
+      (rebuilt.length > 0 ? ` (${rebuilt.length} hidden by an input purge rebuilt)` : '') +
+      (rebuildDeferred.length > 0 ? ` (${rebuildDeferred.length} hidden by an input purge left hidden: synthesis failed, retried next run)` : '') +
       (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : '') +
       (skippedUnchanged.length > 0 ? ` (${skippedUnchanged.length} unchanged)` : '') +
       (rehashed.length > 0 ? ` (${rehashed.length} rehashed without synthesis)` : '') +
@@ -619,6 +634,8 @@ export async function runPhaseSynthesizeConcepts(
       warnings,
       skipped_human_owned: skippedHumanOwned,
       skipped_deleted: skippedDeleted,
+      rebuilt,
+      rebuild_deferred: rebuildDeferred,
       skipped_unchanged: skippedUnchanged,
       provenance_restored: provenanceRestored,
       rehashed,
