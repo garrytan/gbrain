@@ -17,6 +17,7 @@ import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
+import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
@@ -2579,6 +2580,76 @@ export interface BrainEngine {
    * housekeeping — reads already treat expired rows as misses (#4069).
    */
   sweepDreamVerdicts(): Promise<number>;
+
+  // Dream-cycle statements (engine-sql/dream-cycle.ts): the retriage queue reads, the dream breaker and write-deferral config map, the provenance stamp, the consolidate phase and the synthesize family. Each runs the statement its caller ran through executeRaw.
+  /** Waiting, delayed and paused subagent jobs of a dream synthesis key or a private dream-inline queue (dream retriage). Reads minion_jobs. */
+  listDreamQueueCandidates(): Promise<DreamCycleSql.DreamQueueCandidate[]>;
+  /** Cycle locks that are unexpired or refreshed within `graceSecs`, with their acquisition time in epoch milliseconds (dream retriage). Reads gbrain_cycle_locks. */
+  listLiveDreamCycleLocks(graceSecs: number): Promise<DreamCycleSql.LiveDreamCycleLock[]>;
+  /** The status of one job, or null when it is gone (the retriage pre-cancel re-check). Reads minion_jobs. */
+  readDreamJobStatus(id: number): Promise<{ status: string } | null>;
+  /** Creates the config row `key` holding an empty map when it is missing (dream breaker and write deferrals; run in a transaction). */
+  ensureDreamMapConfigRow(key: string): Promise<void>;
+  /** Locks the config row `key` until the transaction ends; returns its value and the database clock, or null when it is missing. */
+  lockDreamMapConfigRow(key: string): Promise<DreamCycleSql.DreamMapConfigRow | null>;
+  /** Writes the config row `key` (dream breaker and write deferrals). */
+  writeDreamMapConfigRow(key: string, value: string): Promise<void>;
+  /** Upserts a dream breaker reset of `baseKey` into the map at `resetsKey` in one statement, dropping entries older than 24 hours. */
+  recordDreamBreakerReset(resetsKey: string, baseKey: string): Promise<void>;
+  /** Stamps a dream-written page: merges the frontmatter and keeps the first cycle date; a page older than `firstWriteAt` is left alone. Writes pages. */
+  stampDreamPageProvenance(stamp: DreamCycleSql.DreamPageProvenanceStamp): Promise<void>;
+  /** The id of the live page `slug` in `sourceId` (zero or one row). */
+  listDreamPageIds(slug: string, sourceId: string): Promise<Array<{ id: number }>>;
+  /** How many dream pages carry `cycleDate` (not the summary) and how many of `writtenSlugs` keep an earlier cycle date. */
+  countDreamProvenancePages(sourceId: string, cycleDate: string, summarySlug: string, writtenSlugs: string[]): Promise<DreamCycleSql.DreamProvenanceCounts | null>;
+  /** The durable receipt of a deferred dream write by request row id, or null. Reads persistence_requests. */
+  readDreamDeferralReceipt(receiptId: string): Promise<DreamCycleSql.DreamDeferralReceipt | null>;
+  /** The typed claim value of each fact in `ids` (consolidate). Reads facts. */
+  listConsolidationClaimValues(ids: number[]): Promise<DreamCycleSql.ConsolidationClaimValue[]>;
+  /** Sets a consolidated fact's valid_until; a no-op when it already holds `validUntil`. Writes facts. */
+  setConsolidatedFactValidUntil(validUntil: Date, id: number): Promise<void>;
+  /** The ids among `ids` of facts on a page that names readers or sits under a folder rule (consolidate). Reads facts and pages. */
+  listReadersSourcedFactIds(ids: number[]): Promise<Array<{ id: number }>>;
+  /** The id of the live page `slug` in `sourceId` (zero or one row; consolidate). */
+  findConsolidationPageIds(sourceId: string, slug: string): Promise<Array<{ id: number }>>;
+  /** The highest take row number on a page, 0 when it has none. Reads takes. */
+  readConsolidationTakesMaxRowNum(pageId: number): Promise<number>;
+  /** The earliest self-held fact take of `claim` on a page, active or not (zero or one row). Reads takes. */
+  findConsolidatedTakes(pageId: number, claim: string): Promise<DreamCycleSql.ConsolidatedTake[]>;
+  /** Refreshes a consolidated take's source-aggregation string. Writes takes. */
+  refreshConsolidatedTakeSource(source: string, id: number): Promise<void>;
+  /** The id of the take at `rowNum` on a page. Reads takes. */
+  findConsolidatedTakeIds(pageId: number, rowNum: number): Promise<Array<{ id: number }>>;
+  /** The typed claim columns of each fact in `ids` (consolidate). Reads facts. */
+  listConsolidationClaimShapes(ids: number[]): Promise<DreamCycleSql.ConsolidationClaimShapeRow[]>;
+  /** The distinct `raw_source` of the live dream-generated pages of `sourceId` that name one. Reads pages. */
+  listRetainedDreamOutputSources(sourceId: string): Promise<Array<{ raw_source: string }>>;
+  /** The incarnation of `sourceId`, or null when it is missing. Reads sources. */
+  readDreamSourceIncarnation(sourceId: string): Promise<{ incarnation: string | null } | null>;
+  /** The live atom pages of `sourceId` that were not imported, each with whether it is private (synthesize concepts). Reads pages. */
+  listDreamAtomPages(sourceId: string): Promise<DreamCycleSql.DreamAtomPage[]>;
+  /** The slug, title and body of each live non-segmented page of `slugs` in `sourceId`, by slug. Reads pages. */
+  listSynthesisPageBodies(sourceId: string, slugs: string[]): Promise<Array<{ slug: string; title: string | null; body: string | null }>>;
+  /** Queued, running, recovering and committed requests on a page after `sequence`, oldest first (synthesize postprocess). Reads persistence_requests. */
+  listLaterPersistenceRequests(sourceId: string, incarnation: string, slug: string, sequence: number | string): Promise<import('./persistence/model.ts').WriteRequest[]>;
+  /** The committed put_page journal rows of `requestIds` in a source and incarnation, newest first. Reads persistence_requests. */
+  listCommittedOutputRequests(requestIds: string[], sourceId: string, incarnation: string): Promise<Array<{ request: import('./persistence/model.ts').WriteRequest }>>;
+  /** The database clock now, as the driver returns it (the dream verification epoch). */
+  readDreamVerifyEpoch(): Promise<unknown>;
+  /** The creation time of each job in `ids`. Reads minion_jobs. */
+  listDreamJobCreatedAt(ids: number[]): Promise<Array<{ id: number | string; created_at: unknown }>>;
+  /** The first version snapshot of a page taken at or after `sinceIso`, or null when none exists. Reads page_versions. */
+  readDreamPreRunRevision(slug: string, sourceId: string, sinceIso: string): Promise<DreamCycleSql.DreamPreRunRevision | null>;
+  /** The id and idempotency key of each completed job under the synthesis key `key` or one of its chunks, by id. Reads minion_jobs. */
+  listCompletedSynthJobs(key: string): Promise<Array<{ id: number; idempotency_key: string }>>;
+  /** How many jobs under `keys` still count as existing (not cancelled or dead). Reads minion_jobs. */
+  countCoalescibleSynthJobs(keys: string[]): Promise<number>;
+  /** The ids of the jobs waiting or delayed in `queue`. Reads minion_jobs. */
+  listWaitingChildJobIds(queue: string): Promise<Array<{ id: number }>>;
+  /** The timestamps and token counts of each job in `ids`. Reads minion_jobs. */
+  listDreamChildJobTimings(ids: number[]): Promise<DreamCycleSql.DreamChildJobTiming[]>;
+  /** The dream synthesis subagent jobs submitted for `sourceId` in the last 24 hours, not counting cancelled ones (the daily cap). Reads minion_jobs. */
+  countRecentDreamSynthSubmissions(sourceId: string): Promise<number>;
 
   // ============================================================
   // v0.32.6 Contradiction probe — batched takes fetch + cache + trends

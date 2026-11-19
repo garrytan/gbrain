@@ -20,7 +20,7 @@ const PLAIN: Record<string, string> = {
   'src/core/belief/backfill.ts preparePage privatePagesFilterFragment': 'maintenance: stamps the ledger visibility of each page',
   'src/core/belief/purge.ts registerVersionCarriers privatePagesFilterFragment': 'maintenance: classifies the purged versions',
   'src/core/belief/state.ts readBeliefState privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
-  'src/core/cycle/synthesize-concepts.ts runPhaseSynthesizeConcepts privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is',
+  'src/core/engine-sql/dream-cycle.ts listDreamAtomPages privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is (moved from cycle/synthesize-concepts.ts runPhaseSynthesizeConcepts)',
   'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/engine-sql/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/engine-sql/facts-purge.ts readHeldRowVisibility privatePagesFilterFragment': 'write-side: whether the target page is world (the held-fact move plan read)',

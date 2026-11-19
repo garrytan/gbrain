@@ -159,13 +159,10 @@ src/core/cycle/synthesize-child-verify.ts	readTranscript	field	INLINE	a segmente
 src/core/cycle/synthesize-child-verify.ts	verifyChildPages	call:serializeMarkdown	INLINE	serializes the child's own model output, never a stored body
 src/core/cycle/synthesize-child-verify.ts	verifyChildPages	field	INLINE	a segmented page it would replace skips child verification: postprocessing verifies
 src/core/cycle/synthesize-concepts.ts	runPhaseSynthesizeConcepts	field	INLINE	
-src/core/cycle/synthesize-concepts.ts	runPhaseSynthesizeConcepts	sql	INLINE	
-src/core/cycle/synthesize-generations.ts	pages	sql	INLINE	reads the synthesis outputs of one re-synthesized transcript for the predecessor coverage match (generations/synthesis-coverage.ts); segmented pages are excluded in SQL, so a segmented earlier output is never compared and stays live as an unreadable unmatched predecessor
 src/core/cycle/synthesize-postprocess.ts	postprocessManagedSynthesis	call:serializePageToMarkdown	INLINE	
 src/core/cycle/synthesize-postprocess.ts	postprocessManagedSynthesis	field	INLINE	
 src/core/cycle/synthesize-postprocess.ts	sameBody	field	INLINE	
 src/core/cycle/synthesize-verify-epochs.ts	loadPreRunRevision	field	STREAM	
-src/core/cycle/synthesize-verify-epochs.ts	loadPreRunRevision	sql	STREAM	
 src/core/cycle/synthesize-verify.ts	quarantineUnits	field	INLINE	
 src/core/cycle/synthesize-verify.ts	verifyAndRepairDreamPages	call:serializePageToMarkdown	INLINE	
 src/core/cycle/synthesize-verify.ts	verifyAndRepairDreamPages	field	INLINE	
@@ -189,6 +186,9 @@ src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships who
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/dream-cycle.ts	listDreamAtomPages	sql	INLINE	dream-cycle statements: moved from synthesize-concepts.ts runPhaseSynthesizeConcepts unchanged
+src/core/engine-sql/dream-cycle.ts	listSynthesisPageBodies	sql	INLINE	dream-cycle statements: moved from synthesize-generations.ts unchanged; segmented pages are excluded in SQL, so a segmented earlier output is never compared and stays live as an unreadable unmatched predecessor
+src/core/engine-sql/dream-cycle.ts	readDreamPreRunRevision	sql	STREAM	dream-cycle statements: moved from synthesize-verify-epochs.ts loadPreRunRevision unchanged
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-purge.ts	selectFactsReconcileDrain	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts selectFactsReconcileDrain unchanged
 src/core/engine-sql/facts-purge.ts	PROSE_IN	sql	STREAM	segmented pages probed through their segment texts (purge-verify.ts segmentedProse); moved from verifyPagePurge with listPageProseHits
