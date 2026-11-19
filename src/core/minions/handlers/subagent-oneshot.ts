@@ -500,10 +500,8 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
     tokens.cache_create += chatResult.usage.cache_creation_tokens;
     logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_completed', turn_idx: turn, tokens: { in: chatResult.usage.input_tokens, out: chatResult.usage.output_tokens, cache_read: chatResult.usage.cache_read_tokens, cache_create: chatResult.usage.cache_creation_tokens } });
 
-    // #9648: a model that answers a routine transcript in prose, with no JSON at all, is asked once for the JSON, so
-    // its skip is banked instead of falling through to the agentic loop and dead-lettering under require_writes.
-    const stop = chatResult.stopReason;
-    const text = chatResult.text ?? '';
+    // #9648: an answer in prose with no JSON at all is asked once for the JSON, so a skip is banked, not dead-lettered.
+    const stop = chatResult.stopReason, text = chatResult.text ?? '';
     if (turn > 0 || stop === 'length' || stop === 'refusal' || stop === 'content_filter' || text.trim() === '' || text.includes('{')) break;
     messages.push({ role: 'assistant', content: text }, { role: 'user', content: ONESHOT_REASK });
   }
