@@ -436,7 +436,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
       // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
+      // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
+      untypedWarnings: ['backup_coverage', 'canonical_content_writes',
         'extract_atoms_backlog', 'fact_take_vectors', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack

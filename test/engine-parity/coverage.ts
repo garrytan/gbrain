@@ -149,6 +149,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countStaleFactEmbeddings'],
   // embedding_catalog: the vector column catalog the embedding commands read (engine-sql/embedding-catalog.ts)
   embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
+  // doctor_reads: the statements doctor checks ran through executeRaw (engine-sql/doctor-reads.ts)
+  doctor_reads: ['countPageChildOrphans'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],

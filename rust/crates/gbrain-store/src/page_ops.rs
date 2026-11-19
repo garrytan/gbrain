@@ -510,7 +510,7 @@ fn atom_not_imported(page: &PageRecord) -> bool {
 /// is a live page of the same source, that no live non-imported atom of the same source and origin
 /// replaced with a different hash, and whose hash is the hash of the origin's latest retirement
 /// (`retired_at` text descending, NULL last, then id descending).
-fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
+pub(crate) fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
     let live_slugs: HashSet<(&str, &str)> = pages
         .iter()
         .filter(|p| p.deleted_at_us.is_none())
