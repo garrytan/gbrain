@@ -117,6 +117,10 @@ Rust guesses and gaps (1x parity):
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
 
+`listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) answers
+`[]` without a store call: the store keeps no `decide_proposals`, because `insertProposal` (ai/decide/proposals-store.ts)
+writes one through `executeRaw`, which the Rust engine refuses.
+
 ## The write gate (`trust::write_gate`)
 
 Receipts record a flag or quarantine verdict on a persisted row (a page, fact, take, timeline entry or hold). Holds
@@ -139,6 +143,10 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `listWriteGateHoldRows` | `list_write_gate_hold_rows`: filters on status, kind, source list or source and `beforeId`; sorted by id descending, cut to `limit` | `… ORDER BY id DESC LIMIT $n` |
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
 | `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
+
+`listTrustAllowRuleRows` (the owner's allow rules, `trust_allow_rules`) answers `[]` without a store call: the store
+keeps no allow rule, because `trust allow` writes one through `executeRaw`, which the Rust engine refuses. So
+`trust review` and the write gate's allow check read an empty rule set on Rust instead of a refusal.
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
 `page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the

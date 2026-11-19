@@ -1,0 +1,62 @@
+{
+  "golden": {
+    "byId": [
+      {
+        "params": [
+          "number[]"
+        ],
+        "text": "SELECT pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ((CASE pages.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3\n    AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'pages' AND elig_r.target_id = pages.id::text\n      AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AS flagged,\n  (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = pages.source_id)) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id WHERE pages.id = ANY($1::int[])"
+      }
+    ],
+    "byIdAndKey": [
+      {
+        "params": [
+          "number[]"
+        ],
+        "text": "SELECT pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ((CASE pages.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3\n    AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'pages' AND elig_r.target_id = pages.id::text\n      AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AS flagged,\n  (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = pages.source_id)) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id WHERE pages.id = ANY($1::int[])"
+      },
+      {
+        "params": [
+          "string[]",
+          "string[]"
+        ],
+        "text": "SELECT pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ((CASE pages.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3\n    AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'pages' AND elig_r.target_id = pages.id::text\n      AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AS flagged,\n  (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = pages.source_id)) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id\n          WHERE pages.deleted_at IS NULL AND (pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))"
+      }
+    ],
+    "byKeyWithDeleted": [
+      {
+        "params": [
+          "string[]",
+          "string[]"
+        ],
+        "text": "SELECT pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ((CASE pages.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3\n    AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'pages' AND elig_r.target_id = pages.id::text\n      AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AS flagged,\n  (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = pages.source_id)) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id\n          WHERE (pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))"
+      }
+    ],
+    "byLiveKey": [
+      {
+        "params": [
+          "string[]",
+          "string[]"
+        ],
+        "text": "SELECT pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ((CASE pages.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3\n    AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'pages' AND elig_r.target_id = pages.id::text\n      AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AS flagged,\n  (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = pages.source_id)) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id\n          WHERE pages.deleted_at IS NULL AND (pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))"
+      }
+    ],
+    "byLiveKeyWithoutGuestTable": [
+      {
+        "params": [
+          "string[]",
+          "string[]"
+        ],
+        "text": "SELECT pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ((CASE pages.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3\n    AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'pages' AND elig_r.target_id = pages.id::text\n      AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AS flagged,\n  (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = pages.source_id)) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id\n          WHERE pages.deleted_at IS NULL AND (pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))"
+      },
+      {
+        "params": [
+          "string[]",
+          "string[]"
+        ],
+        "text": "SELECT pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ((CASE pages.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3\n    AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'pages' AND elig_r.target_id = pages.id::text\n      AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AS flagged,\n  COALESCE(s.config->>'guest' = 'true', false) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id\n          WHERE pages.deleted_at IS NULL AND (pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))"
+      }
+    ]
+  },
+  "normalizer": "page-trust-rows-v1"
+}

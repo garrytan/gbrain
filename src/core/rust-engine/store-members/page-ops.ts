@@ -3,7 +3,7 @@
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
- * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
+ * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
  * stamp on the page row, and removes and scrubs the rest as deletePages does (rust/docs/store/page_ops.md).
@@ -36,12 +36,12 @@ function checkBatch(member: string, n: number): void {
  * PGLite's live filter (not deleted, not quarantined, source not archived), so `live` says one was passed.
  * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
  * private-readable grant included; `minTrust` and `suppressFlagged`
- * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
- * nothing on these reads.
+ * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` and
+ * `takesHoldersAllowList` change nothing on these reads.
  */
 function readScope(member: string, opts: PageReadScope | undefined, unread: readonly string[] = []): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...unread]);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', 'takesHoldersAllowList', ...unread]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -156,10 +156,14 @@ export const resolveSlugsByPaths: StoreMember<[paths: string[], opts: { sourceId
 };
 
 export const findPages: StoreMember<[query: FindPagesQuery], FoundPages> = async (brain, query) => {
-  const taken = takeOptions('findPages', query, ['pattern', 'types', 'limit', 'sourceId', 'sourceIds', 'excludeSlugPrefixes']);
+  const { untrusted, ...taken } = takeOptions('findPages', query,
+    ['pattern', 'types', 'limit', 'sourceId', 'sourceIds', 'excludeSlugPrefixes', 'untrusted']);
   const pattern = query.pattern;
-  const found: FoundPages = await storeCall({ member: 'findPages' }, () =>
-    brain.findPages({ ...taken, pattern: { kind: pattern.kind, like: pattern.like }, limit: Math.max(0, Math.trunc(Number(query.limit))) }));
+  // PGLite applies an untrusted policy (any object) as a live page read filter; the store reads it as a read scope.
+  const policy = untrusted ? readScope('findPages', untrusted as PageReadScope) : null;
+  const found: FoundPages = await storeCall({ member: 'findPages' }, () => brain.findPages({
+    ...taken, pattern: { kind: pattern.kind, like: pattern.like }, limit: Math.max(0, Math.trunc(Number(query.limit))), untrusted: policy,
+  }));
   return { rows: found.rows, total: Number(found.total) };
 };
 
@@ -241,6 +245,12 @@ function pageIds(member: string, ids: number[]): number[] {
   for (const id of ids) if (!Number.isSafeInteger(id)) throw new TypeError(`${member}: page id ${String(id)} is not an integer`);
   return ids;
 }
+
+/** Records now as each page's retrieval time, 5-minute throttled (gbrain-store `page_ops/retrievals.rs`). */
+export const bumpPageRetrievals: StoreMember<[pageIds: number[]], void> = async (brain, ids) => {
+  if (!ids.length) return;
+  await storeCall({ member: 'bumpPageRetrievals' }, () => brain.bumpPageRetrievals(pageIds('bumpPageRetrievals', ids)));
+};
 
 export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: PageReadScope], Map<number, { reason: string; detail: string }>> = async (
   brain,

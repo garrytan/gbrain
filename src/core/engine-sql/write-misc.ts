@@ -65,6 +65,16 @@ export async function sharedSkillPackTablePresent(exec: LegacyUnscopedRead): Pro
   return row?.present === true;
 }
 
+/**
+ * Whether a resident notifier has recorded coverage for any source (a `sync_notifier_sources` row with `observed_at`):
+ * one half of whether search carries the freshness notice (notifier/status.ts freshnessReported).
+ */
+export async function notifierCoverageRecorded(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
+  const covered = row?.covered;
+  return covered === true || covered === 't' || covered === 1;
+}
+
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
 export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: string): Promise<SharedSkillPackRoot[]> {
   return exec.executeRaw<SharedSkillPackRoot>(`SELECT p.source_id,p.source_incarnation,s.local_path AS source_root,

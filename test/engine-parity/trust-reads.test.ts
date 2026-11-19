@@ -23,6 +23,7 @@ import type { PageReadPolicy, SearchOpts } from '../../src/core/types.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk } from './chunk-fixtures.ts';
+import { parseFindPattern } from '../../src/core/page-find.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -513,6 +514,25 @@ describe('engine parity: trust floor and flag suppression on reads', () => {
       expect(narrow.map(r => r.fact)).toEqual(['plain', 'text row']);
       expect(none).toEqual([]);
       return { wide, narrow, none };
+    },
+  );
+
+  parityTest(
+    'findPages under untrusted drops a page below the trust floor and a flagged agent-written page under suppression',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'sealChunks', 'upsertPageWriteGateReceipt', 'getPage', 'readPageTrustRows', 'findPages'] },
+    async (engine) => {
+      await seedPages(engine);
+      expect(await tiers(engine)).toEqual(EXPECTED_TIERS);
+      const out: Record<string, { total: number; rows: string[] }> = {};
+      for (const [name, policy] of Object.entries(POLICIES)) {
+        const untrusted = { excludePrivate: true, minTrust: policy.minTrust, suppressFlagged: policy.suppressFlagged };
+        const found = await engine.findPages({ pattern: parseFindPattern('notes/'), limit: 50, untrusted, excludeSlugPrefixes: [] });
+        out[name] = { total: found.total, rows: found.rows.map(r => `${r.source_id}:${r.slug}`) };
+      }
+      expect(out.agentSuppressed.rows)
+        .toEqual(['default:notes/agent', 'default:notes/agent-other-flag', 'default:notes/curated', 'default:notes/observed']);
+      expect(out.confirmedOnly.rows).toEqual([]);
+      return out;
     },
   );
 });

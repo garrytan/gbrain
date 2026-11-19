@@ -572,7 +572,7 @@ fn list_sorts_filters_and_pages() {
 }
 
 #[test]
-fn resolve_slugs_answers_only_the_exact_live_slug() {
+fn resolve_slugs_answers_the_exact_live_slug_then_the_fuzzy_half() {
     let dir = TempDir::new("pages-resolve");
     let store = open(&dir);
     for slug in ["people/ada", "people/adam", "notes/ada-diary"] {
@@ -580,10 +580,15 @@ fn resolve_slugs_answers_only_the_exact_live_slug() {
     }
     let resolve = |p: &str| store.resolve_slugs(p, &ReadScope::default()).unwrap();
     assert_eq!(resolve("people/ada"), ["people/ada"]);
-    // A partial name, a different case and a title are the trigram half of PGLite's answer, which
-    // this store does not have: the list is empty, and the TypeScript member refuses it.
-    assert!(resolve("ADA").is_empty());
-    assert!(resolve("people/ad").is_empty());
+    // No exact slug: the fuzzy half lists slugs containing the name (any case) or titles similar
+    // to it, best title similarity first (the titles are the slugs). Expected rows read from
+    // Postgres 16 with the same WHERE and ORDER BY.
+    assert_eq!(
+        resolve("ADA"),
+        ["people/ada", "notes/ada-diary", "people/adam"]
+    );
+    assert_eq!(resolve("people/ad"), ["people/ada", "people/adam"]);
+    assert!(resolve("zz").is_empty());
     store
         .upsert_source(&SourceInput {
             id: "work".into(),
@@ -595,9 +600,10 @@ fn resolve_slugs_answers_only_the_exact_live_slug() {
         .unwrap();
     assert!(in_work.is_empty());
     store.soft_delete_page("people/ada", None).unwrap();
-    assert!(
-        resolve("people/ada").is_empty(),
-        "a soft-deleted page is not resolved"
+    assert_eq!(
+        resolve("people/ada"),
+        ["people/adam"],
+        "a soft-deleted page is not resolved; the fuzzy half still finds the slug that contains it"
     );
 }
 
@@ -835,4 +841,133 @@ fn put_page_writes_the_contextual_retrieval_stamp_it_is_given_and_none_keeps_the
         .unwrap()
         .unwrap();
     assert_eq!(body["page"]["compiled_truth"], json!("Four."));
+}
+
+/// `excludePrivate` on the page reads: a hidden page reads as missing, a scope whose first source
+/// holds a hidden page answers the next source, and `resolveSlugs` never names a hidden page.
+#[test]
+fn exclude_private_hides_a_private_page_from_every_page_read() {
+    let dir = TempDir::new("pages-exclude-private");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "alt".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let private: PageInput = serde_json::from_value(json!({
+        "type": "person", "title": "Secret", "compiled_truth": "secret",
+        "frontmatter": { "visibility": "private" },
+    }))
+    .unwrap();
+    store
+        .put_page("people/secret", &private, &PutPageOptions::default())
+        .unwrap();
+    store
+        .put_page("people/ada", &private, &opts(json!({ "sourceId": "alt" })))
+        .unwrap();
+    put(&store, "people/ada", "public");
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let hidden = scope(json!({ "excludePrivate": policy }));
+    assert!(
+        store
+            .read_page_snapshot("people/secret", &hidden)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_page_snapshot("people/secret", &ReadScope::default())
+            .unwrap()
+            .is_some()
+    );
+    let alt_first = scope(json!({ "excludePrivate": policy, "sourceIds": ["alt", "default"] }));
+    let snapshot = store
+        .read_page_snapshot("people/ada", &alt_first)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot["page"]["source_id"], "default");
+    // The hidden exact page is skipped; the fuzzy half then finds the public `people/ada`, whose
+    // title (`people/ada`) shares the `people` trigrams (7 of 18, over the 0.3 threshold).
+    assert_eq!(
+        store.resolve_slugs("people/secret", &hidden).unwrap(),
+        ["people/ada"]
+    );
+    assert_eq!(
+        store.resolve_slugs("people/ada", &alt_first).unwrap(),
+        vec!["people/ada".to_string()]
+    );
+    let listed = store
+        .list_pages(&filters(json!({ "excludePrivate": policy })))
+        .unwrap();
+    assert_eq!(slugs(&listed), vec!["people/ada"]);
+    assert_eq!(listed[0]["source_id"], "default");
+}
+
+#[test]
+fn resolve_alias_follows_a_rename_alias_and_require_unambiguous_refuses_two_candidates() {
+    let dir = TempDir::new("pages-resolve-alias");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "alt".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    put(&store, "people/old-name", "body");
+    assert_eq!(
+        store
+            .update_slug("people/old-name", "people/new-name", None)
+            .unwrap(),
+        1
+    );
+    store
+        .put_page(
+            "people/old-name",
+            &input("alt", "alt body"),
+            &opts(json!({ "sourceId": "alt" })),
+        )
+        .unwrap();
+    let at = |v: Option<Value>| {
+        v.map(|s| {
+            format!(
+                "{}:{}",
+                s["page"]["source_id"].as_str().unwrap(),
+                s["page"]["slug"].as_str().unwrap()
+            )
+        })
+    };
+    // Without resolveAlias only the exact page in alt answers; with it the exact page still outranks the alias.
+    let read = |v: Value| store.read_page_snapshot("people/old-name", &scope(v));
+    assert_eq!(
+        at(read(json!({})).unwrap()).as_deref(),
+        Some("alt:people/old-name")
+    );
+    assert_eq!(
+        at(read(json!({ "resolveAlias": true })).unwrap()).as_deref(),
+        Some("alt:people/old-name")
+    );
+    assert_eq!(
+        at(read(json!({ "resolveAlias": true, "sourceId": "default" })).unwrap()).as_deref(),
+        Some("default:people/new-name")
+    );
+    assert_eq!(
+        code(read(json!({ "resolveAlias": true, "requireUnambiguous": true })).unwrap_err()),
+        PAGE_AMBIGUOUS
+    );
+    // preserveExactIdentity skips an alias of a source that has a page at the slug.
+    assert_eq!(
+        at(read(
+            json!({ "resolveAlias": true, "preserveExactIdentity": true, "sourceId": "default" })
+        )
+        .unwrap()),
+        Some("default:people/new-name".to_string())
+    );
+    put(&store, "people/old-name", "recreated");
+    store.soft_delete_page("people/old-name", None).unwrap();
+    assert!(
+        read(json!({ "resolveAlias": true, "preserveExactIdentity": true, "sourceId": "default" }))
+            .unwrap()
+            .is_none()
+    );
 }

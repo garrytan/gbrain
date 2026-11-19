@@ -83,6 +83,7 @@ export const RUST_ENGINE_MEMBERS = {
   getPageTimestamps: 'pages',
   getEffectiveDates: 'pages',
   getContentFlagsByPageIds: 'pages',
+  bumpPageRetrievals: 'pages',
   getUnverifiedExtractionPageIds: 'pages',
   countStalePagesForExtraction: 'pages',
   listStalePagesForExtraction: 'pages',
@@ -136,6 +137,7 @@ export const RUST_ENGINE_MEMBERS = {
   attachSourcePath: 'sources',
   sharedSkillPackTablePresent: 'sources',
   listSharedSkillPackRoots: 'sources',
+  notifierCoverageRecorded: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',
   isSourceClaimed: 'persistence_journal',
@@ -503,6 +505,7 @@ export const RUST_ENGINE_MEMBERS = {
   deleteStaleWriteGateReceipts: 'facts',
   upsertWriteGateHold: 'facts',
   listWriteGateHoldRows: 'facts',
+  listTrustAllowRuleRows: 'facts',
   getWriteGateHoldRow: 'facts',
   decideWriteGateHold: 'facts',
   // trust: the trust decision queue (engine-sql/trust-proposals.ts)
@@ -512,6 +515,7 @@ export const RUST_ENGINE_MEMBERS = {
   pendingTrustProposalsFor: 'facts',
   updatePendingTrustProposalAfter: 'facts',
   transitionTrustProposal: 'facts',
+  listPendingContradictions: 'facts',
   // open loops (engine-sql/open-loops.ts)
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',

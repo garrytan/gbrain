@@ -75,6 +75,12 @@ export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
 
 /**
+ * The store keeps no notifier state (a resident notifier refuses to start on this engine, notifier/store.ts), so no
+ * source has recorded coverage and search carries the freshness notice only when `sync.on_commit` is on.
+ */
+export const notifierCoverageRecorded: StoreMember<[], boolean> = async () => false;
+
+/**
  * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that
  * state is raw SQL, which this engine refuses). A slug is restricted under none of them, so the answer is false, as
  * PGLite answers for a brain with no folder rules and no pending covers (engine-sql/access-control.ts).

@@ -1221,7 +1221,7 @@ pub(crate) fn hidden_by_policy(
 }
 
 /// `quarantinedProjectionHiddenSql('facts')`: the row's live page carries a `quarantine` key.
-fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(crate) fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(slug) = &row.source_markdown_slug else {
         return Ok(false);
     };

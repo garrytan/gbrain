@@ -19,7 +19,7 @@ secondary indexes yet.
 | `brain.listPages(filters?)` | `Page[]` (default `limit` 100). Filters: `type`, `tag`, `updated_after`, `updatedAfterKeyset { updatedAt, slug }`, `slugPrefix` (literal), `excludeSlugPrefixes`, `slugAfter`, `sourceId`, `sourceIds`, `includeDeleted`, `sort` (`updated_desc` default, `updated_asc`, `created_desc`, `slug`) | `listPages` |
 | `brain.countPages({ sourceId? }?)` | number of live pages | `countPages` |
 | `brain.lockPageKeys([{ sourceId, slug }])` | `null`. One process owns the brain and one write runs at a time, so keys are already held; it checks the keys are well formed | `lockPageKeys` |
-| `brain.resolveSlugs(partial, { sourceId?, sourceIds? }?)` | `[slug]` for the exact live slug, else `[]`. Exact only: PGLite goes on to a fuzzy title match this store does not have, so `[]` means "no exact match", and the TypeScript engine refuses `engine_capability_missing` instead of returning it | `resolveSlugs` (exact half) |
+| `brain.resolveSlugs(partial, { sourceId?, sourceIds?, excludePrivate? }?)` | `[slug]` for the exact live slug. Otherwise up to five slugs of live pages whose title passes pg_trgm `title % partial` (similarity 0.3 or more) or whose slug matches `ILIKE '%partial%'`, best similarity first, then slug and source id in byte order, as the SQL engines order them. Scores come from the store's pg_trgm port (`keyword/trgm.rs`) | `resolveSlugs` |
 | `brain.softDeletePage(slug, { sourceId? }?)` | `{ slug }` or `null` | `softDeletePage` |
 | `brain.restorePage(slug, { sourceId? }?)` | `boolean` | `restorePage` |
 | `brain.deletePage(slug, { sourceId? }?)` | `null`; removes the page and its versions | `deletePage` |
