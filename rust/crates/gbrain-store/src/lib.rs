@@ -48,6 +48,7 @@ pub mod import_members;
 pub mod jobs;
 pub mod keyword;
 pub mod link_queries;
+pub mod memory_mutation_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_ops;

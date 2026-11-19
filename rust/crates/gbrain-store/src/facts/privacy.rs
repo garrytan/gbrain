@@ -81,11 +81,7 @@ pub(crate) fn hidden_by_private_provenance(
     row: &FactRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    if let Some(slug) = &row.source_markdown_slug
-        && let Some(page) = read_page(read, &row.source_id, slug)?
-        && !(readers_allowed(read, &page, provenance_identity(policy, slug))?
-            && privacy_allows(read, &page, policy.honor_aliases)?)
-    {
+    if hidden_by_provenance_page(read, row, policy, true)? {
         return Ok(true);
     }
     let held = match (&row.entity_slug, &row.source_markdown_slug) {
@@ -102,6 +98,32 @@ pub(crate) fn hidden_by_private_provenance(
     }
     // `sharedHeldRuledSql` hides a held fact only under a folder rule or pending coverage.
     Ok(false)
+}
+
+/// Whether the row's provenance page (`source_markdown_slug`) fails the page policy: the
+/// provenance half of the policy above, and by itself `privateProvenanceFilterFragment` (the
+/// remote provenance floor, `remoteProvenanceFloorSql`, for a caller that is not labelled-only),
+/// which judges no entity or holding page. A missing page hides nothing. `restricted` is the
+/// caller record's flag: false (a brain that holds no member-access restrictions) renders the
+/// member-access part as `page_readers IS NULL AND folder_rule_ids IS NULL`, with no origin test.
+pub(crate) fn hidden_by_provenance_page(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    policy: &PrivacyPolicy,
+    restricted: bool,
+) -> Result<bool> {
+    let Some(slug) = &row.source_markdown_slug else {
+        return Ok(false);
+    };
+    let Some(page) = read_page(read, &row.source_id, slug)? else {
+        return Ok(false);
+    };
+    let access = if restricted {
+        readers_allowed(read, &page, provenance_identity(policy, slug))?
+    } else {
+        !names_readers(&page)
+    };
+    Ok(!(access && privacy_allows(read, &page, policy.honor_aliases)?))
 }
 
 /// The identity the provenance page at `slug` is judged by: the caller's on its own member page,

@@ -871,6 +871,12 @@ Facts and their supersession chains.
     The relink writes `placeRelinkedFact` and `linkConversationFact` change `F 0x01` rows through `write_fact`, so
     the fence key `F 0x05` refuses a held position as the unique index does. `listConversationRelinkPages`, the
     conversation relink's page pick, reads the source's `F 0x01` rows and the tried memos.
+  - The reads `remember` and `forget` make before admission are typed members (`engine-sql/memory-mutation-reads.ts`:
+    `readSourceWriteRow`, `readSourceLocalPath`, `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder`,
+    and `readRemoteForgetTier` for the remote forget guard in `trust/supersede-handlers.ts`).
+    The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
+    rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
+    a member page or a private-facts grant widens, and a remote provenance floor that is not the no-caller one. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`.
 - **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.

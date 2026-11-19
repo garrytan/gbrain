@@ -730,6 +730,12 @@ export const RUST_ENGINE_MEMBERS = {
   readPageVersionEdition: 'page_versions',
   readCursorEdition: 'page_versions',
   pageAwaitsRederive: 'pages',
+  readSourceWriteRow: 'sources',
+  readSourceLocalPath: 'sources',
+  readFactEntitySlug: 'facts',
+  hasLiveFileBackedPage: 'pages',
+  factReadableUnder: 'facts',
+  readRemoteForgetTier: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

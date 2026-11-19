@@ -52,7 +52,7 @@ pub mod trust_reads;
 pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::{page_hidden, version_hidden};
+pub(crate) use privacy::{hidden_by_provenance_page, page_hidden, version_hidden};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -1211,7 +1211,7 @@ pub(crate) fn hidden_by_policy(
 }
 
 /// `quarantinedProjectionHiddenSql('facts')`: the row's live page carries a `quarantine` key.
-fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(crate) fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(slug) = &row.source_markdown_slug else {
         return Ok(false);
     };

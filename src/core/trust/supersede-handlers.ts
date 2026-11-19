@@ -29,7 +29,6 @@ import { tierRaiseFix } from './confirm.ts';
 import { queueTierProjection } from './page-write.ts';
 import { propagateTierLowering } from './propagation.ts';
 import { compareTrust, effectiveWriteTrust, storedTrustTier, type TrustTier, type WriteTrust } from './tier.ts';
-import { remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 
 /** I3: a write at `writer` may supersede, expire or forget a row at `target` only when it is at least as trusted. */
 export function supersessionGuarded(writer: TrustTier | null | undefined, target: unknown): boolean {
@@ -139,9 +138,9 @@ export async function forgetRequiresOwner(engine: BrainEngine, input: { sourceId
 
 /** Pre-admission check for a remote forget: a guarded target becomes a `forget` proposal and the verb error. */
 export async function guardRemoteForget(engine: BrainEngine, input: { sourceId: string; factId: number; principal: Principal; reason: string | null; excludePrivate?: boolean }): Promise<void> {
-  const [fact] = await engine.executeRaw<{ trust_tier: string }>(`SELECT trust_tier FROM facts WHERE id = $1 AND source_id = $2 AND visibility = 'world'${input.excludePrivate ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`, [input.factId, input.sourceId]);
-  if (!fact || !supersessionGuarded('agent_written', fact.trust_tier)) return;
-  throw await forgetRequiresOwner(engine, { ...input, factTier: storedTrustTier(fact.trust_tier), writerTier: 'agent_written' });
+  const tier = await engine.readRemoteForgetTier({ factId: input.factId, sourceId: input.sourceId, remoteFloor: input.excludePrivate === true });
+  if (tier === null || !supersessionGuarded('agent_written', tier)) return;
+  throw await forgetRequiresOwner(engine, { ...input, factTier: storedTrustTier(tier), writerTier: 'agent_written' });
 }
 
 /** The target's tier rose between the pre-check and the locked read: refuse without changing anything; a retry files the proposal. */
