@@ -81,13 +81,13 @@ getPage	pages	yes	76	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	318	yes	yes	yes	serves
+putPage	pages	yes	320	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	97	yes	yes	yes	serves
+softDeletePage	pages	yes	98	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -292,9 +292,9 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	39	yes	yes	yes	serves
-insertFacts	facts	yes	40	no	yes	yes	serves
+insertFacts	facts	yes	42	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	23	no	yes	yes	serves
+expireFact	facts	yes	24	no	yes	yes	serves
 listFactsByEntity	facts	yes	17	yes	yes	yes	serves
 listFactsSince	facts	yes	9	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
@@ -521,7 +521,7 @@ rankEntities	cli_reads_ops	yes	4	no	yes	yes	serves
 readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactRescanChunks	cli_reads_ops	yes	1	no	yes	yes	serves
-listHeldFenceCells	cli_reads_ops	yes	2	no	yes	yes	serves
+listHeldFenceCells	cli_reads_ops	yes	4	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	5	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	6	no	yes	yes	serves
