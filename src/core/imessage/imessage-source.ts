@@ -9,9 +9,15 @@
  * are unchanged (the fingerprint) publishes nothing, so a second run over the same messages writes nothing. A message
  * deleted on the phone after the lookback stays until the page is deleted by hand.
  *
- * Privacy: every page is `visibility: private`, the record is always the database (no directory, nothing committed
- * on a brain with a Git repository), and the source is owner-only (access/owner-only.ts), which is decided at read
- * time from the source's kind. `source_kind: imessage` keeps every copy at the external-untrusted trust tier.
+ * Privacy: every page is `visibility: private` and the source is owner-only (access/owner-only.ts), decided at read
+ * time from the source's kind; `source_kind: imessage` keeps every copy at the external-untrusted trust tier.
+ *
+ * Record (GST-3022): on a personal, unmanaged brain whose default source is a Git checkout, every chat-day page is also
+ * a file under `.gbrain-owned/<id>/` in that checkout (owned-folder/), written by one commit per run before the
+ * database rows, and pushed the way every other page is. Anywhere else the pages are database-only and the run says
+ * why (owned-folder/destination.ts). In the folder, a day file is removed only when the helper positively reported the
+ * day empty inside the window it read, and a run that would remove more than 20 day files, or more than a tenth of
+ * them, removes none and says so.
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
@@ -32,6 +38,9 @@ import { nextSlackDay, slackAlignToDay, slackDayKey, slackDayStartMs } from '../
 import { IMESSAGE_THREADS_LIMIT, helperNotRunning, imessageHelper, type IMessageHelper } from '../apple/helper-client.ts';
 import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessageDay, shownMessages } from './render.ts';
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
+import { resolveOwnedDestination, type OwnedDatabaseOnlyReason } from '../owned-folder/destination.ts';
+import { commitOwnedBatch, OWNER_FILE, README_FILE, type OwnedFolderState, type OwnedHold } from '../owned-folder/writer.ts';
+import { ownedFolderRel } from '../owned-folder/paths.ts';
 
 export interface IMessageChatState {
   committed_to: string | null;
@@ -40,11 +49,31 @@ export interface IMessageChatState {
   days: Record<string, { path: string; fp: string }>;
 }
 
+/** Where the last run put the pages, for `gbrain sources status` (pages_in). */
+export interface IMessageRecordStatus {
+  record: 'folder' | 'database';
+  folder: string | null;
+  reason: OwnedDatabaseOnlyReason | null;
+  detail: string | null;
+  checked_at: string;
+}
+
 export interface IMessageState extends Record<string, unknown> {
   /** Keyed by the handle-free chat key, so no handle is stored in the cursor. */
   chats: Record<string, IMessageChatState>;
   item_holds?: unknown;
+  /** The owned folder's record (GST-3022): what this source last committed there. */
+  owned?: OwnedFolderState & { held?: Record<string, OwnedHold> };
+  record_status?: IMessageRecordStatus;
 }
+
+/** A day file removal this run holds back: more than this many day files, or more than this share of them. */
+export const OWNED_MASS_REMOVAL_DAYS = 20;
+export const OWNED_MASS_REMOVAL_SHARE = 0.1;
+
+type DayOp =
+  | { op: 'write'; key: string; chatKey: string; day: string; relPath: string; markdown: string; fp: string }
+  | { op: 'delete'; key: string; chatKey: string; day: string; relPath: string; positive: boolean };
 
 const emptyState = (): IMessageState => ({ chats: {} });
 
@@ -111,8 +140,24 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     await writeConnectorDbCursor(engine, cursorKey, state, final ? { run_id: runId, finished_at: new Date(now()).toISOString(),
       counts: { added: summary.added, modified: summary.modified, deleted: summary.deleted, facts_retired: summary.factsRetired, failed: summary.failedFiles } } : undefined);
   };
-  // Always the database: message text never reaches a directory, a commit or a push, whatever the brain has.
+  // The database rows are imported after the run's one commit (owned-folder/writer.ts); the import itself is database-mode.
   const ctx: ConnectorPublishCtx = { engine, sourceId, managed, summary, label: 'iMessage', tag: 'imessage', record: 'database', dir: null, gated: true };
+  const owned = state.owned?.incarnation === source.incarnation ? state.owned : undefined;
+  const destination = managed
+    ? { record: 'database' as const, reason: 'managed' as const, detail: 'the brain is managed by its coordinator', root: null }
+    : await resolveOwnedDestination(engine, sourceId, owned?.push_urls ?? null);
+  state.record_status = { record: destination.record, folder: destination.record === 'folder' ? ownedFolderRel(sourceId) : null,
+    reason: destination.record === 'database' ? destination.reason : null, detail: destination.record === 'database' ? destination.detail : null,
+    checked_at: new Date(now()).toISOString() };
+  const ownedDays = Object.keys(owned?.files ?? {}).filter(p => p !== OWNER_FILE && p !== README_FILE).length;
+  if (destination.record === 'database' && destination.reason !== 'no_repository' && destination.reason !== 'managed') {
+    process.stderr.write(`[gbrain notice owned_folder_database_only] iMessage source ${sourceId}: pages stay in the database only because ${destination.detail}.${
+      ownedDays ? ` The ${ownedDays} day file(s) committed under ${ownedFolderRel(sourceId)}/ earlier stay there; gbrain sources remove ${sourceId} removes them.` : ''}${
+      destination.reason === 'remote_changed' ? ` If the new destination is right, run: gbrain sources rebind ${sourceId}` : ''}\n`);
+  }
+  const ops: DayOp[] = [];
+  const horizons = new Map<string, number>();
+  const heldPaths = new Set(Object.keys(owned?.held ?? {}));
   const handle = async (key: string, work: () => Promise<void>, slug: string | null): Promise<boolean> => {
     try { await work(); holds.succeed(key); return true; } catch (error) {
       if (stopsRun(error)) throw error;
@@ -122,23 +167,28 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     }
   };
 
-  const publishDay = async (thread: IMessageThread, chatKey: string, day: string, messages: IMessageMessage[], fp: string) => {
+  /** Queues a day page; the run commits every queued file at once, then imports the rows (applyOp). */
+  const publishDay = (thread: IMessageThread, chatKey: string, day: string, messages: IMessageMessage[], fp: string) => {
     const relPath = imessagePagePath(chatKey, day);
-    await publishConnectorPage(ctx, {
-      relPath,
-      markdown: connectorRender(renderIMessageDay({ thread, chatKey, day, timezone: cfg.timezone, messages }), { path: relPath, imessage_chat: chatKey }),
-      commitMessage: `imessage(${sourceId}): ${chatKey} ${day}`,
-      privateMessage: `imessage(${sourceId}): ${chatKey} ${day} is private; database only`,
-      retireReason: 'the iMessage day changed on the Mac',
-    });
-    state.chats[chatKey]!.days[day] = { path: relPath, fp };
+    ops.push({ op: 'write', key: `${chatKey}/${day}`, chatKey, day, relPath, fp,
+      markdown: connectorRender(renderIMessageDay({ thread, chatKey, day, timezone: cfg.timezone, messages }), { path: relPath, imessage_chat: chatKey }) });
   };
 
-  const deleteDay = async (chatKey: string, day: string) => {
+  /** `positive`: the helper reported the day empty inside a window it read (a listed chat), not a guess from an unlisted one. */
+  const deleteDay = (chatKey: string, day: string, positive: boolean) => {
     const entry = state.chats[chatKey]!.days[day];
-    await deleteConnectorPage(ctx, entry?.path ?? imessagePagePath(chatKey, day), `imessage(${sourceId}): ${chatKey} ${day} has no messages`,
-      'the iMessage day was deleted on the Mac');
-    delete state.chats[chatKey]!.days[day];
+    ops.push({ op: 'delete', key: `${chatKey}/${day}`, chatKey, day, relPath: entry?.path ?? imessagePagePath(chatKey, day), positive });
+  };
+
+  const applyOp = async (op: DayOp) => {
+    if (op.op === 'write') {
+      await publishConnectorPage(ctx, { relPath: op.relPath, markdown: op.markdown, commitMessage: `imessage(${sourceId}): ${op.chatKey} ${op.day}`,
+        privateMessage: `imessage(${sourceId}): ${op.chatKey} ${op.day} is private; database only`, retireReason: 'the iMessage day changed on the Mac' });
+      state.chats[op.chatKey]!.days[op.day] = { path: op.relPath, fp: op.fp };
+      return;
+    }
+    await deleteConnectorPage(ctx, op.relPath, `imessage(${sourceId}): ${op.chatKey} ${op.day} has no messages`, 'the iMessage day was deleted on the Mac');
+    delete state.chats[op.chatKey]!.days[op.day];
   };
 
   const pageExists = async (slug: string) =>
@@ -151,8 +201,8 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     const start = slackDayStartMs(day, cfg.timezone);
     const end = slackDayStartMs(nextSlackDay(day), cfg.timezone);
     const messages = (await helper!.messages(thread.threadId, new Date(start).toISOString(), signal)).filter(m => Date.parse(m.timestamp) < end && dayOf(m) === day);
-    if (shownMessages(messages).length) await publishDay(thread, chatKey, day, messages, imessageDayFingerprint(thread, day, messages));
-    else if (state.chats[chatKey]!.days[day] || await pageExists(slugifyPath(imessagePagePath(chatKey, day)))) await deleteDay(chatKey, day);
+    if (shownMessages(messages).length) publishDay(thread, chatKey, day, messages, imessageDayFingerprint(thread, day, messages));
+    else if (state.chats[chatKey]!.days[day] || await pageExists(slugifyPath(imessagePagePath(chatKey, day)))) deleteDay(chatKey, day, true);
   };
 
   const syncChat = async (thread: IMessageThread | null, chatKey: string) => {
@@ -176,13 +226,13 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       if (!holds.shouldAttempt(key) || slackDayStartMs(day, cfg.timezone) < from) continue;
       if (!shownMessages(messages).length) { byDay.delete(day); continue; }
       const fp = imessageDayFingerprint(thread!, day, messages);
-      if (!opts.full && ch.days[day]?.fp === fp) continue;
-      await handle(key, () => publishDay(thread!, chatKey, day, messages, fp), slugifyPath(imessagePagePath(chatKey, day)));
+      if (!opts.full && ch.days[day]?.fp === fp && !heldPaths.has(imessagePagePath(chatKey, day))) continue;
+      publishDay(thread!, chatKey, day, messages, fp);
     }
     for (const day of Object.keys(ch.days)) {
       const start = slackDayStartMs(day, cfg.timezone);
       if (byDay.has(day) || start < from || start >= to) continue;
-      await handle(`${chatKey}/${day}`, () => deleteDay(chatKey, day), slugifyPath(ch.days[day]!.path));
+      deleteDay(chatKey, day, !!thread);
     }
     if (thread) {
       // Days held by an earlier run and now outside the window are read again on their own.
@@ -192,8 +242,79 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
         await handle(key, () => rebuildDay(thread, chatKey, day), slugifyPath(imessagePagePath(chatKey, day)));
       }
     }
-    const horizon = closeCoverageWindow(ch, cfg.lookbackDays);
-    for (const day of Object.keys(ch.days)) if (slackDayStartMs(nextSlackDay(day), cfg.timezone) <= horizon) delete ch.days[day];
+    horizons.set(chatKey, closeCoverageWindow(ch, cfg.lookbackDays));
+  };
+
+  /** Days that ended at or before a chat's closed window are forgotten, once this run's pages are in. */
+  const forgetClosedDays = () => {
+    for (const [chatKey, horizon] of horizons) {
+      const ch = state.chats[chatKey];
+      if (ch) for (const day of Object.keys(ch.days)) if (slackDayStartMs(nextSlackDay(day), cfg.timezone) <= horizon) delete ch.days[day];
+    }
+  };
+
+  /**
+   * The run's one commit, then the database rows. In the folder, a removal needs a positive report (the helper listed
+   * the chat and read the window), a mass removal is held whole, and a held file still imports its day to the database.
+   */
+  const commitAndApply = async () => {
+    if (destination.record !== 'folder') {
+      for (const op of ops) await handle(op.key, () => applyOp(op), slugifyPath(op.relPath));
+      forgetClosedDays();
+      return;
+    }
+    const recorded = owned?.files ?? {};
+    const dayFiles = ownedDays;
+    const writes = new Map<string, string>();
+    const removes: string[] = [];
+    const apply: DayOp[] = [];
+    for (const op of ops) {
+      if (op.op === 'write') { writes.set(op.relPath, op.markdown); apply.push(op); continue; }
+      if (!recorded[op.relPath]) { apply.push(op); continue; }
+      if (op.positive) { removes.push(op.relPath); apply.push(op); }
+    }
+    if (removes.length > OWNED_MASS_REMOVAL_DAYS || (removes.length > 2 && removes.length > dayFiles * OWNED_MASS_REMOVAL_SHARE)) {
+      process.stderr.write(`[gbrain notice owned_mass_removal_held] iMessage source ${sourceId}: this run would remove ${removes.length} of ${dayFiles} day files from ${ownedFolderRel(sourceId)}/, so it removed none and kept those days in the database. The next run tries again; if the chats really were deleted on the Mac, run: gbrain sources remove ${sourceId}\n`);
+      const held = new Set(removes);
+      removes.length = 0;
+      for (let i = apply.length - 1; i >= 0; i--) if (held.has(apply[i]!.relPath) && apply[i]!.op === 'delete') apply.splice(i, 1);
+    }
+    const days = writes.size + removes.length;
+    const where = destination.pushUrls.length ? destination.pushUrls.join(', ') : 'this checkout only';
+    let batch: ReturnType<typeof commitOwnedBatch>;
+    let folderRefused = false;
+    try {
+      batch = commitOwnedBatch({ root: destination.root, rel: destination.rel, sourceId, kind: 'imessage', incarnation: source.incarnation,
+      pushUrls: destination.pushUrls, writes, removes,
+      message: owned?.last_batch ? `imessage(${sourceId}): ${writes.size} chat-days updated, ${removes.length} removed`
+        : `imessage(${sourceId}): import ${days} chat-days into ${destination.rel} (${where})` }, owned ?? null);
+    } catch (error) {
+      if (!(error instanceof OperationError) || error.code !== 'owned_folder_conflict') throw error;
+      folderRefused = true;
+      // The folder itself is not this source's (another OWNER.json, a symlink, foreign files): nothing is written there
+      // this run, every day goes to the database, and each written day is retried in the folder next run.
+      state.record_status = { ...state.record_status!, record: 'database', folder: null, reason: 'conflict', detail: error.message };
+      process.stderr.write(`[gbrain notice owned_folder_database_only] iMessage source ${sourceId}: pages stay in the database only because ${error.message} ${error.suggestion ?? ''}\n`);
+      batch = { sha: null, written: {}, removed: [], firstWrite: false,
+        held: Object.fromEntries([...writes.keys()].map(p => [p, { code: 'owned_folder_conflict' as const, detail: error.message }])) };
+      apply.splice(0, apply.length, ...ops.filter(op => op.op === 'write' || !recorded[op.relPath] || op.positive));
+    }
+    const files = { ...recorded, ...batch.written };
+    for (const p of batch.removed) delete files[p];
+    const held = { ...owned?.held ?? {} };
+    for (const p of [...Object.keys(batch.written), ...batch.removed, ...writes.keys()]) delete held[p];
+    Object.assign(held, batch.held);
+    state.owned = { incarnation: source.incarnation, push_urls: owned?.push_urls ?? destination.pushUrls, files,
+      last_batch: batch.sha ?? owned?.last_batch ?? null, last_batch_at: batch.sha ? new Date(now()).toISOString() : owned?.last_batch_at ?? null, held };
+    // The commit is recorded before any row is imported, so a run that stops here finds its own files next time.
+    if (batch.sha) await save(false);
+    if (!folderRefused) for (const hold of Object.values(batch.held)) {
+      process.stderr.write(`[gbrain notice ${hold.code}] iMessage source ${sourceId}: ${hold.detail}; that day is in the database only until it is fixed.\n`);
+    }
+    for (const op of apply) await handle(op.key, () => applyOp(op), slugifyPath(op.relPath));
+    forgetClosedDays();
+    const live = new Set(Object.values(state.chats).flatMap(c => Object.values(c.days).map(d => d.path)));
+    for (const p of Object.keys(held)) if (!live.has(p)) delete held[p];
   };
 
   try {
@@ -210,6 +331,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
         await handle(chatKey, () => syncChat(null, chatKey), null);
       }
     }
+    await commitAndApply();
     if (summary.failedFiles > 0) summary.status = 'partial';
     state.item_holds = holds.finish();
     await save(true);
