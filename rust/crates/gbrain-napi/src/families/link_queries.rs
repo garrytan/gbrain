@@ -308,4 +308,31 @@ impl Brain {
             s.word_lexemes(&words)
         })
     }
+
+    /// `readLinkContextMatches(asks)`: `[{ i, link_source, context, page_id }]`.
+    #[napi]
+    pub fn read_link_context_matches<'env>(
+        &self,
+        env: &'env Env,
+        asks: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let asks: Vec<gbrain_store::link_queries::LinkContextAsk> =
+                arg(asks, "readLinkContextMatches asks")?;
+            s.read_link_context_matches(&asks)
+        })
+    }
+
+    /// `readLinkContextOriginPages(ids)`: `[{ id, source_id, slug, compiled_truth, timeline }]`.
+    #[napi]
+    pub fn read_link_context_origin_pages<'env>(
+        &self,
+        env: &'env Env,
+        ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<u64> = arg(ids, "readLinkContextOriginPages ids")?;
+            s.read_link_context_origin_pages(&ids)
+        })
+    }
 }

@@ -36,6 +36,8 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | served |
 | `listPagesTitledIn(queryLower, scope)` | served |
 | `wordLexemes(words)` | served under the English text search configuration |
+| `readLinkContextMatches(asks)` | served |
+| `readLinkContextOriginPages(ids)` | served |
 
 ### Refusals (`engine_capability_missing`)
 
@@ -151,6 +153,13 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   `pageReadFilter(.., scope, live)`, by source then slug in byte order, at most 50.
 - `wordLexemes`: each word's `tsvector_to_array(to_tsvector('english', w))`, in tsvector order. The member returns a
   `Map` from word to lexemes.
+- `readLinkContextMatches`: for each ask (a returned link context and its stored edge: from page, to page, link type;
+  the pages deleted or not), the links of that edge whose context is the ask's text or, for a text that ends in `…`,
+  starts with the text before it (counted in characters). `page_id` is the link's origin page (its from page when it
+  has none) when that page is live, else null. Ask order, then link id order; the SQL leaves the order to the plan. A
+  stored context is never NULL here, so an ask of `…` alone matches an empty context the SQL engines can store as NULL.
+- `readLinkContextOriginPages`: `{ id, source_id, slug, compiled_truth, timeline }` of the pages named in `ids`
+  (deleted or not) that are not segmented shells, by id. The SQL leaves the order to the plan.
 
 ## Known differences
 

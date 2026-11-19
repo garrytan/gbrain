@@ -223,9 +223,10 @@ interface StoreAnomalies {
 }
 
 export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> = async (brain, opts) => {
-  // PGLite reads only excludePrivate of the read scope here: minTrust, suppressFlagged and requireSafeChunks change nothing.
+  // PGLite reads only excludePrivate of the read policy here: minTrust, suppressFlagged, requireSafeChunks and the
+  // takes-holder allow-list an MCP caller's policy carries change nothing.
   const o = takeOptions('findAnomalies', opts, ['sourceId', 'sourceIds', 'since', 'lookback_days', 'sigma', 'excludePrivate'],
-    ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
+    ['minTrust', 'suppressFlagged', 'requireSafeChunks', 'takesHoldersAllowList']);
   const excludePrivate = storePagePolicy('findAnomalies', o.excludePrivate, { callerReaders: true });
   const sigma = (o.sigma as number | undefined) ?? 3.0;
   const lookbackDays = Math.max(1, (o.lookback_days as number | undefined) ?? 30);

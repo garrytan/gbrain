@@ -65,7 +65,7 @@ pub use retrieval_coverage::{
 mod site_reads;
 pub use site_reads::{
     EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
-    JunkHubsInput, TitledInput,
+    JunkHubsInput, LinkContextAsk, TitledInput,
 };
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).

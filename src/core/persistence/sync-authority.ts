@@ -47,10 +47,8 @@ export async function resolveSyncPersistenceMode(engine: BrainEngine, opts: Sync
   const managed = routing ? dispatchManagedMode(routing) : await readManagedMode(engine);
   assertSyncDispatchActive();
   if (managed || opts.signal?.aborted) return managed;
-  const [source] = routing ? [routing.id === null ? undefined : routing] : await engine.executeRaw<{ claimed: boolean }>(`SELECT
-    EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed
-    FROM sources s WHERE s.id=$1`, [opts.sourceId ?? 'default']);
-  if (source?.claimed) throw await preActivationClaimRefusal(engine, opts.sourceId ?? 'default');
+  const claimed = routing ? (routing.id !== null && routing.claimed === true) : await engine.isSourceClaimed(opts.sourceId ?? 'default');
+  if (claimed) throw await preActivationClaimRefusal(engine, opts.sourceId ?? 'default');
   return false;
 }
 /**

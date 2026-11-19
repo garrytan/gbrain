@@ -784,10 +784,12 @@ export async function traversePathsDetailed(
     const rows = (await exec.run(sqlFragment`
       WITH RECURSIVE ${walk}, ${visited}
       SELECT ${walkTruncated}, ${edges}
-      ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
+      ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id, link_type COLLATE "C", l.id
       LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
     `)).rows;
 
+    // Ties between two links of one edge pair go by link type in byte order, then link id, so
+    // every engine returns them, and keeps the same duplicate below, in one order.
     // Row cap: the LIMIT above fetched CAP + 1 rows; the probe row only tells
     // us the walk overflowed and is dropped with everything past the cap.
     const truncated = rows.length > TRAVERSE_PATH_ROW_CAP || (rows as Array<{ walk_truncated?: boolean }>).some((r) => r.walk_truncated === true);

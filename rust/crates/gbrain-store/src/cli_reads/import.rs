@@ -11,18 +11,23 @@
 //!
 //! A page reads the trust tier and write origin its last write stamped (`pages::write_page`), and
 //! `flagged` is `activationSuppressedSql` over the page's write-gate receipts
-//! (`trust::activation_suppressed`). A timeline row (`readRowTrustRows`) reads the tier and origin
-//! its last write stamped (`timeline::tier`) the same way, and is never contested.
+//! (`trust::activation_suppressed`). A timeline, fact or take row (`readRowTrustRows`) reads the
+//! tier and origin its last write stamped (`timeline::tier`, `facts::write_fact`,
+//! `trust::stamp_row` through the takes writers) the same way. A fact or take is `contested` by a
+//! pending supersede proposal (`trust::proposals::contested_ref`); a timeline row never is.
 //!
-//! Keys: none of its own. It reads the source, page, timeline and write-gate receipt records.
+//! Keys: none of its own. It reads the source, page, timeline, fact, take, trust proposal and
+//! write-gate receipt records.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::read_fact;
 use crate::kv::{KvRead, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use crate::sources::{DEFAULT_SOURCE, SourceRecord, all_sources, read_source};
+use crate::takes::read_take;
 use crate::timeline::TimelineRecord;
-use crate::trust::TrustTier;
+use crate::trust::{RowTrust, TrustTier};
 use crate::{Store, keys};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -89,8 +94,8 @@ pub struct PageTrustRow {
     pub by_id: bool,
 }
 
-/// Input of `readRowTrustRows`: a row table and the ids to read. This store serves
-/// `timeline_entries`; the TypeScript member refuses `facts` and `takes` before it calls the store.
+/// Input of `readRowTrustRows`: a row table (`timeline_entries`, `facts` or `takes`) and the ids
+/// to read.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RowTrustLookup {
@@ -274,48 +279,73 @@ impl Store {
         Ok(out)
     }
 
-    /// The trust rows of the timeline entries named by id, in id order; an id with no entry reads
-    /// no row. Entries are keyed by page, so this reads every `E` record once.
+    /// The trust rows of the `timeline_entries`, `facts` or `takes` rows named by id, in id order;
+    /// an id with no row reads no row. `flagged` is the activation suppression of the row's tier;
+    /// `contested` names the pending supersede proposal of a fact or take (`trust::contested_ref`)
+    /// and is `None` for a timeline row. Timeline entries are keyed by page, so that table reads
+    /// every `E` record once; facts and takes are read by id.
     pub fn read_row_trust_rows(&self, lookup: &RowTrustLookup) -> Result<Vec<RowTrustRow>> {
-        if lookup.table != "timeline_entries" {
+        let table = lookup.table.as_str();
+        if !matches!(table, "timeline_entries" | "facts" | "takes") {
             return Err(StoreError::invalid(format!(
-                "readRowTrustRows: table \"{}\" is not served by this store",
-                lookup.table
+                "readRowTrustRows: unknown table \"{table}\""
             )));
         }
         let wanted: BTreeSet<u64> = lookup.ids.iter().copied().collect();
         let read = self.read()?;
-        let mut found = Vec::new();
-        let mut failure = None;
-        if !wanted.is_empty() {
-            scan_prefix(&*read, &[keys::TIMELINE], false, &mut |_, v| {
-                match serde_json::from_slice::<TimelineRecord>(v) {
-                    Ok(r) if wanted.contains(&r.id) => found.push(r),
-                    Ok(_) => {}
-                    Err(e) => failure = Some(StoreError::from(e)),
+        let mut found: Vec<(u64, RowTrust)> = Vec::new();
+        match table {
+            "timeline_entries" if !wanted.is_empty() => {
+                let mut failure = None;
+                scan_prefix(&*read, &[keys::TIMELINE], false, &mut |_, v| {
+                    match serde_json::from_slice::<TimelineRecord>(v) {
+                        Ok(r) if wanted.contains(&r.id) => found.push((r.id, r.trust)),
+                        Ok(_) => {}
+                        Err(e) => failure = Some(StoreError::from(e)),
+                    }
+                    failure.is_none()
+                })?;
+                if let Some(e) = failure {
+                    return Err(e);
                 }
-                failure.is_none()
-            })?;
+                found.sort_by_key(|(id, _)| *id);
+            }
+            "facts" => {
+                for &id in &wanted {
+                    if let Some(f) = read_fact(&*read, id)? {
+                        let trust = RowTrust {
+                            trust_tier: Some(f.trust_tier.clone()),
+                            write_origin: f.write_origin.clone(),
+                        };
+                        found.push((id, trust));
+                    }
+                }
+            }
+            "takes" => {
+                for &id in &wanted {
+                    if let Some(t) = read_take(&*read, id)? {
+                        found.push((id, t.trust));
+                    }
+                }
+            }
+            _ => {}
         }
-        if let Some(e) = failure {
-            return Err(e);
-        }
-        found.sort_by_key(|r| r.id);
         found
             .into_iter()
-            .map(|r| {
-                let tier = r.trust.tier();
+            .map(|(id, trust)| {
+                let tier = trust.tier();
+                let contested = match (table, i64::try_from(id)) {
+                    ("timeline_entries", _) | (_, Err(_)) => None,
+                    (_, Ok(row_id)) => {
+                        crate::trust::proposals::contested_ref(&*read, table, row_id)?
+                    }
+                };
                 Ok(RowTrustRow {
-                    id: r.id,
+                    id,
                     trust_tier: tier.as_str().to_owned(),
-                    write_origin: r.trust.write_origin.clone(),
-                    flagged: crate::trust::activation_suppressed(
-                        &*read,
-                        "timeline_entries",
-                        r.id,
-                        tier,
-                    )?,
-                    contested: None,
+                    write_origin: trust.write_origin,
+                    flagged: crate::trust::activation_suppressed(&*read, table, id, tier)?,
+                    contested,
                 })
             })
             .collect()

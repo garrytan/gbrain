@@ -123,6 +123,7 @@ test/embedding-completion-atomic.serial.test.ts
 test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
+test/engine-parity/access-flag.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/chunk-reads.test.ts
@@ -137,6 +138,7 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
+test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/facts-cycle.test.ts
@@ -145,8 +147,10 @@ test/engine-parity/facts-purge.test.ts
 test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/forget-reach-reads.test.ts
+test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
@@ -160,17 +164,22 @@ test/engine-parity/jobs-subagent.test.ts
 test/engine-parity/jobs-wake.test.ts
 test/engine-parity/jobs.test.ts
 test/engine-parity/keyword-visibility.test.ts
+test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
+test/engine-parity/link-read-options.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/open-loops.test.ts
+test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/remote-policy.test.ts
+test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
@@ -192,6 +201,7 @@ test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/typed-config-reads.test.ts
+test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts

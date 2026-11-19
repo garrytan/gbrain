@@ -10,12 +10,12 @@
  *  - Regression: an engine that answers one of these differently changes what the repair commands classify and
  *    repair, which loops_close retires and which world facts the visibility check flags; the Rust engine has no SQL,
  *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves the four that read
- *    only `facts` and `pages`, and closedLoopWithActiveFact over its open loops; the other five read a table it does
- *    not hold and refuse (rust/docs/store/facts.md).
+ *    only `facts` and `pages`, closedLoopWithActiveFact and loopFactDrift over its open loops, and countLabelFacts;
+ *    the other three refuse (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none. Every fact, page and loop is seeded through the typed members. The tables behind the five refused members
- *    (open_loops, fact_withdrawals, persistence_requests, page_purges, derived_generations) have no typed writer on the
+ *  - Seam: none. Every fact, page, loop and withdrawal is seeded through the typed members. The tables behind the three
+ *    refused members (persistence_requests, page_purges, derived_generations) have no typed writer on the
  *    engine, so those cases seed the facts the statement joins from and assert the answer an empty table gives; the
  *    Rust arm counts each as a typed refusal. Generated values (ids) are compared by relation, never by value.
  */
@@ -23,6 +23,7 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { METADATA_LABELS } from '../../src/core/conversation-parser/builtins.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -63,6 +64,60 @@ describe('engine parity: group 5 facts repair statements', () => {
     const none = await engine.loopFactDrift([], null);
     expect({ all, one, none }).toEqual({ all: [], one: [], none: [] });
     return { all, one, none };
+  });
+
+  parityTest('loopFactDrift lists the closed loops of the sources whose fact is active and held by no open loop, in id order', {
+    methods: ['insertFact', 'insertFacts', 'expireFact', 'upsertOpenLoop', 'closeOpenLoop', 'loopFactDrift'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const live = await fenced(engine, 'send the deck', { kind: 'commitment', source_markdown_slug: 'notes/deck' });
+    const held = await fact(engine, 'call back', { kind: 'commitment' });
+    const gone = await fact(engine, 'book the room', { kind: 'commitment' });
+    const elsewhere = await fact(engine, 'pay the invoice', { kind: 'commitment' }, 'other');
+    const at = '2026-03-01T10:00:00.000Z';
+    const open = async (dedupKey: string, factId: number | null, sourceId = 'default') => Number((await engine.upsertOpenLoop({ sourceId, dedupKey,
+      loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com', summary: dedupKey, evidence: [], detector: 'manual',
+      factId, lastActivityAt: at, openedAt: at })).id);
+    const ids: Record<string, string> = {};
+    const name = async (key: string, factId: number | null, sourceId = 'default') => { const id = await open(key, factId, sourceId); ids[id] = key; return id; };
+    const done = await name('done', live);
+    const dropped = await name('dropped', live);
+    const heldClosed = await name('held-closed', held);
+    await name('held-open', held);
+    const expired = await name('expired', gone);
+    const stale = await name('stale', live);
+    const noFact = await name('no-fact', null);
+    const other = await name('other', elsewhere, 'other');
+    const crossed = await name('crossed', elsewhere);
+    await engine.closeOpenLoop('default', done, 'done', 'manual');
+    await engine.closeOpenLoop('default', dropped, 'dropped', 'manual');
+    await engine.closeOpenLoop('default', heldClosed, 'done', 'manual');
+    await engine.closeOpenLoop('default', expired, 'done', 'manual');
+    await engine.closeOpenLoop('default', stale, 'stale', 'manual');
+    await engine.closeOpenLoop('default', noFact, 'done', 'manual');
+    await engine.closeOpenLoop('other', other, 'dropped', 'manual');
+    await engine.closeOpenLoop('default', crossed, 'done', 'manual');
+    expect(await engine.expireFact(gone)).toBe(true);
+    const facts: Record<string, string> = { [live]: 'live', [held]: 'held', [gone]: 'gone', [elsewhere]: 'elsewhere' };
+    const view = (rows: Awaited<ReturnType<BrainEngine['loopFactDrift']>>) =>
+      rows.map(r => ({ loop: ids[Number(r.loop_id)] ?? String(r.loop_id), source_id: r.source_id, fact: facts[Number(r.fact_id)] ?? String(r.fact_id), status: r.status, slug: r.slug }));
+    const out = {
+      both: view(await engine.loopFactDrift(['other', 'default'], null)),
+      one: view(await engine.loopFactDrift(['default'], dropped)),
+      notInSource: view(await engine.loopFactDrift(['other'], done)),
+      held: view(await engine.loopFactDrift(['default'], heldClosed)),
+    };
+    expect(out).toEqual({
+      both: [
+        { loop: 'done', source_id: 'default', fact: 'live', status: 'done', slug: 'notes/deck' },
+        { loop: 'dropped', source_id: 'default', fact: 'live', status: 'dropped', slug: 'notes/deck' },
+        { loop: 'other', source_id: 'other', fact: 'elsewhere', status: 'dropped', slug: null },
+      ],
+      one: [{ loop: 'dropped', source_id: 'default', fact: 'live', status: 'dropped', slug: 'notes/deck' }],
+      notInSource: [],
+      held: [],
+    });
+    return out;
   });
 
   parityTest('closedLoopWithActiveFact finds no loop that does not exist, scoped or not', { methods: ['closedLoopWithActiveFact'] }, async (engine) => {
@@ -202,6 +257,77 @@ describe('engine parity: group 5 facts repair statements', () => {
     expect(capped).toEqual({ count: 0, capped: true });
     expect(none).toEqual({ count: 0, capped: false });
     return { counted, capped, none };
+  });
+
+  parityTest('countLabelFacts folds case, allows spaces before the colon, needs the label at a line start and skips covered facts', {
+    methods: ['putPage', 'softDeletePage', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'upsertOpenLoop', 'countLabelFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const page = (slug: string, body: string, timeline = '', sourceId = 'default') =>
+      engine.putPage(slug, { ...note(slug, body), timeline }, { sourceId });
+    await page('chats/fold', 'intro\n**DATE\u2003\t :** today');
+    await page('chats/first', '**Action Items:** call back');
+    await page('chats/timeline', 'no label in the body', '- 2026-01-01 a call\n**Organiser:** someone');
+    await page('chats/crlf', 'intro\r\n**notes:**\r\nmore');
+    await page('chats/mid', 'see **Date:** inline');
+    await page('chats/near', '**Dates:** soon\n**Dat:** x');
+    await page('chats/audited', '**Date:** done');
+    await page('chats/audit-open', '**Date:** not done');
+    await page('chats/gone', '**Date:** gone');
+    await page('chats/away', '**Date:** elsewhere', '', 'other');
+    await engine.softDeletePage('chats/gone');
+    const ctx = 'segment 1970-01-01 x';
+    const label = (slug: string, text: string, extra: Record<string, unknown> = {}, sourceId = 'default') =>
+      fenced(engine, text, { source: EXTRACTOR, visibility: 'private', source_markdown_slug: slug, context: ctx, ...extra }, sourceId);
+    await label('chats/fold', 'fold counted');
+    await label('chats/first', 'first counted');
+    await label('chats/timeline', 'timeline counted');
+    await label('chats/crlf', 'crlf counted');
+    await label('chats/mid', 'mid not counted');
+    await label('chats/near', 'near not counted');
+    await label('chats/audited', 'audited not counted');
+    await label('chats/audit-open', 'audit-open counted');
+    await label('chats/gone', 'gone not counted');
+    await label('chats/missing', 'missing page not counted');
+    await label('chats/away', 'away counted in other', {}, 'other');
+    await label('chats/fold', 'wrong context', { context: 'segment 2020-01-01' });
+    await label('chats/fold', 'no context', { context: null });
+    await label('chats/fold', 'versioned source', { source: `${EXTRACTOR}:v1` });
+    const expired = await label('chats/fold', 'expired');
+    expect(await engine.expireFact(expired)).toBe(true);
+    await label('chats/fold', 'withdrawn for all');
+    await label('chats/fold', 'withdrawn for its entity', { entity_slug: 'people/a' });
+    await label('chats/fold', 'withdrawn for another entity', { entity_slug: 'people/b' });
+    await label('chats/fold', 'withdrawn in world only');
+    const looped = await label('chats/fold', 'held by a loop');
+    const [r1, r2] = [nextRow(engine), nextRow(engine)];
+    await engine.insertFacts([
+      { row_num: r1, source_markdown_slug: 'chats/first', fact: 'superseded', entity_slug: null, kind: 'fact', visibility: 'private', source: EXTRACTOR, context: ctx, superseded_by_row: r2 },
+      { row_num: r2, source_markdown_slug: 'chats/first', fact: 'the successor', entity_slug: null, kind: 'fact', visibility: 'private', source: EXTRACTOR, context: ctx },
+    ] as never, { source_id: 'default' });
+    const audit = (slug: string, source: string, context: string) => fenced(engine, `audit ${slug} ${context}`, { source, visibility: 'private', source_markdown_slug: slug, context });
+    await audit('chats/audited', 'audit:terminal', 'decided extractor_version=3');
+    await audit('chats/audit-open', 'audit:terminal', 'extractor_version=3 later');
+    await audit('chats/audit-open', 'audit:other', 'decided extractor_version=3');
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for all', '*', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for its entity', 'people/a', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for another entity', 'people/c', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'world', 'withdrawn in world only', '*', null)).toBe(true);
+    const at = '2026-03-01T10:00:00.000Z';
+    await engine.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop', loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com',
+      summary: 'loop', evidence: [], detector: 'manual', factId: looped, lastActivityAt: at, openedAt: at });
+    const labelLine = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
+    const args = { segmentSource: EXTRACTOR, contextLike: '%segment 1970-01-01%', labelLine, terminalSource: 'audit:terminal', nonExtractableSource: 'audit:non-extractable' };
+    const counted = await engine.countLabelFacts(['default'], 100, args);
+    const both = await engine.countLabelFacts(['other', 'default', 'other'], 100, args);
+    const atCap = await engine.countLabelFacts(['default'], 7, args);
+    const under = await engine.countLabelFacts(['default'], 6, args);
+    const other = await engine.countLabelFacts(['other'], 100, args);
+    expect({ counted, both, atCap, under, other }).toEqual({
+      counted: { count: 7, capped: false }, both: { count: 8, capped: false }, atCap: { count: 7, capped: false },
+      under: { count: 6, capped: true }, other: { count: 1, capped: false },
+    });
+    return { counted, both, atCap, under, other };
   });
 
   parityTest('listExtractorFactsForClassification lists the expired fenceless extractor facts with their evidence', {

@@ -5,14 +5,15 @@
  *
  * A member not exported here refuses with `engine_capability_missing`: `listFactsReconcileBacklog` reads
  * `page_facts_reconcile`, a table the store does not have. `listSingleFactMetadata` is served by facts-trust-reads.ts.
- * `findActiveSingleFact` refuses the remote provenance floor and `listSimilarActiveFacts` refuses `excludePrivate`
- * for a caller whose policy the store does not model (private-provenance.ts).
+ * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy) and
+ * `listSimilarActiveFacts` serves `excludePrivate`; each refuses a caller whose policy the store does not model
+ * (private-provenance.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePrivacyPolicy } from './private-provenance.ts';
+import { storeCall, type StoreMember } from './common.ts';
+import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
@@ -46,10 +47,10 @@ export const listSimilarActiveFacts: Member<'listSimilarActiveFacts'> = (brain, 
 };
 
 export const findActiveSingleFact: Member<'findActiveSingleFact'> = async (brain, opts) => {
-  if (opts.remoteFloor) refuseMember('findActiveSingleFact', 'the remote provenance floor');
+  const remoteFloor = opts.remoteFloor ? storeFloorPolicy('findActiveSingleFact') : undefined;
   const row: Row | null = await storeCall({ member: 'findActiveSingleFact' }, () => brain.findActiveSingleFact({
     sourceId: opts.sourceId, entitySlug: opts.entitySlug, visibility: opts.visibility, fact: opts.fact,
-    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug }));
+    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor }));
   return row === null ? null : withDates(row, FACT_DATES) as never;
 };
 
@@ -68,3 +69,6 @@ export const listWithdrawalSlugs: Member<'listWithdrawalSlugs'> = (brain, source
 
 export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain, sourceId, visibility, fact, subject) =>
   storeCall({ member: 'expireFactsByWithdrawal' }, () => brain.expireFactsByWithdrawal({ sourceId, visibility, fact, subject }));
+
+export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
+  storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));

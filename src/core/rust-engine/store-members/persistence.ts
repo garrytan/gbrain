@@ -176,14 +176,16 @@ export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], Topo
   topologyRow(await storeCall({ member: 'insertTopologyChange' }, () => brain.insertTopologyChange(row)))!;
 
 /**
- * The belief ledger's view of a source. Belief events and fact, take and page purges are written only through
- * `executeRaw`, which this engine refuses, so the epoch is 0, coverage is null and no purge is possible. A batch also
- * returns the one unmanaged brain row and the plan-cache mode PGLite reports, which it never changes here.
+ * The belief ledger's view of a source. Belief events, the purge epoch and take and page purges are written only
+ * through `executeRaw`, which this engine refuses, so the epoch is 0 and coverage is null; a purge is possible when the
+ * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the one unmanaged brain row and the
+ * plan-cache mode PGLite reports, which it never changes here.
  */
 export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: boolean }], LedgerSource | null> = async (brain, sourceId, opts) => {
   const membership = await storeCall({ member: 'readLedgerSource' }, () => brain.readSourceMembership(sourceId)) as SourceMembership | null;
   if (!membership) return null;
-  return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible: false,
+  const purgesPossible = await storeCall({ member: 'readLedgerSource' }, () => brain.hasFactPurges(sourceId)) as boolean;
+  return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible,
     ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
 };
 

@@ -542,9 +542,8 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       noteBelief({ kind: 'purged', table: 'takes', ids: plan.takes.map(t => t.id), request: admitted.id });
       // Derived rows are hidden while their evidence still exists.
       const derived = await hideDerivedRows(tx, plan.derived.rows, { sourceId: p.sourceId, requestId: admitted.id, reason: `purge:${token}` });
-      await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
-        VALUES ($1,$2,$3,$4,$5::uuid,$6,$7) ON CONFLICT DO NOTHING`,
-      [p.sourceId, current.visibility, plan.subject, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason]);
+      await tx.insertFactPurge({ sourceId: p.sourceId, visibility: current.visibility, subject: plan.subject, factHash: current.fact_hash,
+        requestId: admitted.id, actor: `${principal.kind}:${principal.id}`, reason: p.reason });
       // GST-2492: a fact a holding page holds for an entity with no page is purged from that holding page as well.
       if (plan.subject !== '*') await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
         SELECT DISTINCT $1::text,$2::text,f.source_markdown_slug,$3::text,$4::uuid,$5::text,$6::text FROM facts f

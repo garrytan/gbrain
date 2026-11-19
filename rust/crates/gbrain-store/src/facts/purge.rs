@@ -40,7 +40,7 @@ const MEMBER_PAGE_PREFIX: &str = "memory/members/";
 const SCOPE_PAGE_SLUG: &str = "memory/scope";
 
 /// `outcomeMarkerSql`.
-fn outcome_marker(row: &FactRecord) -> bool {
+pub(super) fn outcome_marker(row: &FactRecord) -> bool {
     AUDIT_ROW_SOURCES.contains(&row.source.as_str())
         && OUTCOME_MARKER_FACTS.contains(&row.fact.as_str())
 }
@@ -208,6 +208,8 @@ pub struct SingleFactQuery {
     pub fact: String,
     pub attributed_to: Option<String>,
     pub page_slug: Option<String>,
+    /// `remoteProvenanceFloorSql('facts')` when the caller passes `remoteFloor`.
+    pub remote_floor: Option<PrivacyPolicy>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -460,6 +462,7 @@ impl Store {
                 && fits_page
                 && fact_fingerprint(&row.fact) == hash
                 && found.as_ref().is_none_or(|best| row.id < best.id)
+                && !hidden_by_policy(&*read, &row, &q.remote_floor)?
             {
                 found = Some(row);
             }
