@@ -328,6 +328,27 @@ describe('engine parity: graph traversal', () => {
   );
 
   parityTest(
+    'traversePaths orders links of one edge pair by link type in byte order, then link id, past the small-sort size',
+    { methods: ['traversePaths', 'traversePathsDetailed', 'addLink', 'putPage'] },
+    async (engine) => {
+      await seedPages(engine, ['tt/a', 'tt/b', ...Array.from({ length: 12 }, (_, k) => `tt/n${String(k).padStart(2, '0')}`)]);
+      for (let k = 0; k < 12; k++) await engine.addLink('tt/a', `tt/n${String(k).padStart(2, '0')}`, 'n', 'mentions', 'manual');
+      for (const t of ['b', 'c', 'a', 'D', 'd']) await engine.addLink('tt/a', 'tt/b', `ctx ${t}`, t, 'manual');
+      await engine.addLink('tt/b', 'tt/a', 'back', 'mentions', 'manual');
+      const pair = (paths: Awaited<ReturnType<BrainEngine['traversePaths']>>) =>
+        edgeShape(paths).filter((e) => e.startsWith('tt/a>tt/b:') || e.startsWith('tt/b>tt/a:'));
+      const out = pair(await engine.traversePaths('tt/a', { depth: 2, direction: 'out' }));
+      const both = pair(await engine.traversePaths('tt/a', { depth: 2, direction: 'both' }));
+      const into = pair(await engine.traversePaths('tt/b', { depth: 2, direction: 'in' }));
+      const detailed = pair((await engine.traversePathsDetailed('tt/a', { depth: 2, direction: 'both' })).paths);
+      expect(out).toEqual(['tt/a>tt/b:D@1', 'tt/a>tt/b:a@1', 'tt/a>tt/b:b@1', 'tt/a>tt/b:c@1', 'tt/a>tt/b:d@1', 'tt/b>tt/a:mentions@2']);
+      expect(both).toEqual(['tt/a>tt/b:D@1', 'tt/a>tt/b:a@1', 'tt/a>tt/b:b@1', 'tt/a>tt/b:c@1', 'tt/a>tt/b:d@1', 'tt/b>tt/a:mentions@1']);
+      expect(detailed).toEqual(both);
+      return { out, both, into, detailed };
+    },
+  );
+
+  parityTest(
     'traverseGraph source scope keeps cross-source nodes out of a scoped walk',
     { methods: ['traverseGraph', 'addLink', 'putPage'] },
     async (engine, backend) => {
