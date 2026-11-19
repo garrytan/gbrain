@@ -76,9 +76,9 @@ export function sameSecondTests(open: Open): void {
     const { engine, close } = await open();
     try {
       await addMember(engine, 'alice-example');
-      await startOfSecond();
       await addMember(engine, 'bob-example');
       const issued = await sinceSecond(engine);
+      await engine.setConfig('access.serves_since', new Date(issued * 1000 + 500).toISOString().replace('.500Z', '.500000Z'));
       await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris, grant_types, scope, token_endpoint_auth_method,
         client_id_issued_at) VALUES ('client-after', 'x', 'client-after', '{}', '{client_credentials}', 'read', 'client_secret_post', $1)`, [issued]);
       expect(Date.parse((await engine.getConfig('access.serves_since'))!) / 1000).toBeGreaterThan(issued);
