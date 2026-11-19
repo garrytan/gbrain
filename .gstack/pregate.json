@@ -258,6 +258,14 @@
       ],
       "pattern": "\\[load_[a-z0-9_]+, \"(?:[a-z][A-Za-z]*Operations|[a-z]+(?:_[a-z]+)+)\"\\],?$",
       "reason": "generated operation-loader table: each value is a loader identifier and an operations export name, never a credential; an operation named like a secret (reveal_secret) trips the key-name heuristic"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "apple/helper/Tests/HelperCoreTests/Fixtures/send-sign-vectors.json"
+      ],
+      "pattern": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+      "reason": "the Ed25519 public key of the test-only seed 01..20 that the Swift and TypeScript send-signing tests share; a public key is not a credential, and only this exact value in this one fixture is covered"
     }
   ]
 }

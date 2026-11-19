@@ -11,6 +11,11 @@
 //!
 //! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md.
 
+mod privacy;
+
+pub use privacy::{OwnerOnly, PrivacyPolicy};
+pub(crate) use privacy::{OwnerOnlySources, page_hidden};
+
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
 /// Nothing to delete yet. Full paths keep this stub clear of the imports this file will add.
 pub(crate) fn remove_source_rows(

@@ -1684,6 +1684,23 @@
           {
             "lane": "tx",
             "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT current_setting(t.name, true) AS value FROM unnest($1::text[]) WITH ORDINALITY AS t(name, position) ORDER BY t.position",
+            "textSha256": "b9fb1ea4b0273886752e85cdbb2dc7838809fa86d5b404104af0ae8015ca07c4"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
+          },
+          {
+            "lane": "tx",
+            "params": [
               "string",
               "string",
               "string",
@@ -1949,6 +1966,15 @@
             "lane": "tx>sp"
           },
           {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
+          },
+          {
             "event": "commit",
             "lane": "tx"
           }
@@ -1957,6 +1983,23 @@
           {
             "event": "begin",
             "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT current_setting(t.name, true) AS value FROM unnest($1::text[]) WITH ORDINALITY AS t(name, position) ORDER BY t.position",
+            "textSha256": "b9fb1ea4b0273886752e85cdbb2dc7838809fa86d5b404104af0ae8015ca07c4"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
           },
           {
             "lane": "tx",
@@ -1996,6 +2039,15 @@
             ],
             "sql": "UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id",
             "textSha256": "bf3641ff709a5368753967c9c95db40c4ef2c2f065e9449147765b3f40922370"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
           },
           {
             "event": "commit",
