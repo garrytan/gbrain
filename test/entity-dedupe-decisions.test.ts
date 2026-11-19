@@ -600,19 +600,6 @@ describe('with a repository', () => {
     expect((await rows()).decisions.map(d => [d.decision_id, d.verdict, d.origin])).toEqual([[id, 'different', 'git']]);
   });
 
-  test('a clean company group with a page in an owner-only source is never linked automatically, since reject could not undo it', async () => {
-    for (const s of ['default', 'source-b']) {
-      await engine.putPage('companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'Acme.', timeline: '', frontmatter: { github: 'acme-example' } } as never, { sourceId: s });
-    }
-    await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
-    await syncHome();
-    expect((await cliJson(['--preview', '--kind', 'auto'])).auto).toEqual([]);
-    expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM entity_identities WHERE established_by = 'dedupe:auto'"))[0]!.n).toBe(0);
-    await engine.executeRaw("UPDATE sources SET config = '{}'::jsonb WHERE id = 'source-b'");
-    await syncHome();
-    expect((await cliJson(['--preview', '--kind', 'auto'])).auto.map((a: { members: unknown[] }) => a.members.length)).toEqual([2]);
-  });
-
   test('a clean group with a page in an owner-only source is left out of the bulk confirm list, so it cannot wedge it', async () => {
     await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
     const list = await cliJson(['confirm', '--clean']);

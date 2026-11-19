@@ -3799,7 +3799,6 @@
         {
           "category": "brain",
           "details": {
-            "auto_linked": 0,
             "counts": {
               "by_class": {
                 "clean": 0,
@@ -3819,7 +3818,7 @@
             "groups": []
           },
           "elapsed_ms": "<volatile>",
-          "message": "No undecided duplicate person or company pages.",
+          "message": "No likely duplicate person or company pages.",
           "name": "entity_duplicates",
           "status": "ok"
         },

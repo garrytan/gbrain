@@ -340,10 +340,7 @@ async function databaseOnly(engine: BrainEngine, home: IdentityHome, decisions: 
   return { dbOnly: rows.filter((_, i) => blocked[i] === null), committed };
 }
 
-/**
- * Sync's hook: re-project the home source's decisions after it syncs, retry pending members after any sync, then recompute
- * the automatic company links (company-links.ts). Never throws.
- */
+/** Sync's hook: re-project the home source's decisions after it syncs, and retry pending members after any sync. Never throws. */
 export async function syncIdentityDecisions(engine: BrainEngine, sourceId: string, log?: (line: string) => void): Promise<void> {
   try {
     const home = await identityHome(engine);
@@ -355,14 +352,6 @@ export async function syncIdentityDecisions(engine: BrainEngine, sourceId: strin
     }
   } catch (e) {
     log?.(`[dedupe] duplicate decisions were not reconciled after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
-  }
-  try {
-    const { sweepCompanyLinks } = await import('./company-links.ts');
-    const r = await sweepCompanyLinks(engine);
-    if (r.stale) log?.('[dedupe] automatic company links were not updated after this sync because other decisions kept changing while they were computed (the next sync or gbrain dedupe reconcile retries)');
-    else if (r.linked || r.unlinked) log?.(`[dedupe] automatic company links: ${r.linked} page(s) linked, ${r.unlinked} unlinked (gbrain dedupe --preview --kind auto lists them)`);
-  } catch (e) {
-    log?.(`[dedupe] automatic company links were not updated after this sync: ${e instanceof Error ? e.message : String(e)} (the next sync or gbrain dedupe reconcile retries)`);
   }
 }
 

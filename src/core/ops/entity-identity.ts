@@ -39,11 +39,11 @@ async function refuseDedupeMember(ctx: Parameters<Operation['handler']>[0], slug
     .find(m => m.slug === slug && m.source_id === sourceId && m.established_by.startsWith('dedupe:'));
   if (!member) return;
   throw opError('identity_link_owned_by_dedupe',
-    `${op}: ${sourceId}:${slug} was linked into ${member.entity_id} by gbrain dedupe ${member.established_by === 'dedupe:auto' ? '(automatically, as one company)' : 'confirm'}, so it is not moved or removed by hand; nothing changed.`,
+    `${op}: ${sourceId}:${slug} was linked into ${member.entity_id} by gbrain dedupe confirm, so it is not moved or removed by hand; nothing changed.`,
     `Run gbrain dedupe reject ${member.entity_id} on the brain host to record that the pages are different people and remove the link.`,
     { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', member.entity_id], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Records the "different people" decision (in git on a brain with a repository) and removes the confirmed link.',
-      user_message: `${sourceId}:${slug} is in the group ${member.established_by === 'dedupe:auto' ? 'linked automatically as one company' : 'you confirmed as one person'} (${member.entity_id}). Should I record that they are different ${member.established_by === 'dedupe:auto' ? 'companies' : 'people'}?`,
+      user_message: `${sourceId}:${slug} is in the group you confirmed as one person (${member.entity_id}). Should I record that they are different people?`,
       verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
 }
 

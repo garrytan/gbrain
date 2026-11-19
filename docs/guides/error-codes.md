@@ -2952,7 +2952,7 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm or the automatic company link linked, so nothing changed. | That link is the projection of a recorded duplicate decision (kept in git on a brain with a repository) or, for an automatic company link, of the ids the pages share: removing the row alone would come back at the next reconcile or sync while the decision or the ids still say the pages are one entity. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different and removes the link, which is never made again. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
+| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, so nothing changed. | That link is the projection of a recorded duplicate decision (kept in git on a brain with a repository): removing the row alone would come back at the next reconcile while the decision still says the pages are one person. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### identity_member_in_other_group
 

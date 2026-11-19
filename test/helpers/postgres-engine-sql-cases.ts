@@ -95,8 +95,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'listIdentityDecisions': OOS.identityDecisions,
   'listRestrictedIdentityMembers': OOS.identityDecisions,
   'applyIdentityDecisions': OOS.identityDecisions,
-  'readAutoLinkState': OOS.identityDecisions,
-  'replaceAutoLinks': OOS.identityDecisions,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,
