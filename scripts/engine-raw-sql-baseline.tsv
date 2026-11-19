@@ -1039,7 +1039,7 @@ src/core/timeline-extract.ts	execute_raw	9
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/token-mint.ts	execute_raw	3
 src/core/token-mint.ts	sql_template	1
-src/core/transcripts/archive.ts	execute_raw	12
+src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3

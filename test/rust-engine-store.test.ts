@@ -26,6 +26,8 @@ import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { addMember, bindCredential, getMember, listMembers } from '../src/core/access/members.ts';
+import { rescopeArchiveBefore } from '../src/commands/archive-rescope.ts';
+import { rescopeArchiveOnShared } from '../src/core/transcripts/archive.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -294,6 +296,19 @@ describe('Rust engine on the store', () => {
     // Without a token the same insert writes the member.
     expect(await engine.insertAccessMember({ ...spec, bindTokenId: null })).toEqual({ groupsCreated: ['team-a'] });
     expect(await engine.listActiveAccessMembers()).toEqual(['alice-example']);
+  });
+
+  withAddon('access members: gbrain access member add keeps the archive pages to the owner first, then adds the member', async () => {
+    const { engine } = await open();
+    // The command's beforeWrite and its follow-up read the archive audience keys through typed config reads.
+    const add = (id: string) => addMember(engine, id, { groups: ['team-a'], remote: false, beforeWrite: () => rescopeArchiveBefore(engine, id, 'add') });
+    expect((await add('census-owner')).member.status).toBe('enabled');
+    expect(await rescopeArchiveOnShared(engine)).toEqual([]);
+    await engine.setConfig('transcripts.archive.audience.default', 'shared');
+    expect((await add('bob-example')).member.id).toBe('bob-example');
+    expect(await rescopeArchiveOnShared(engine)).toEqual([]);
+    expect((await listMembers(engine)).map(m => m.id)).toEqual(['bob-example', 'census-owner']);
+    expect(await engine.getConfig('access.restrictions_present')).toBe('1');
   });
 
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
