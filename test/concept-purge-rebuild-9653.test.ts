@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import { __setChatTransportForTests } from '../src/core/ai/gateway.ts';
@@ -9,7 +11,7 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { purgeDeletedPagesCoordinated, rebuildNote, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
-import { REBUILD_STORES } from '../src/core/persistence/concept-rebuild.ts';
+import { REBUILD_STORES, __setManagedConceptRebuildForTests } from '../src/core/persistence/concept-rebuild.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
@@ -141,6 +143,28 @@ const stillHeld = async (engine: BrainEngine, id: number, links = 1) => {
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   describe(`a concept hidden by an input purge is rebuilt as a fresh page (${backend})`, () => {
+    beforeAll(() => __setManagedConceptRebuildForTests(true));
+    afterAll(() => __setManagedConceptRebuildForTests(false));
+    test('managed, without the write owner re-check: synthesis leaves the hidden concept exactly as it was and says why', async () => {
+      __setManagedConceptRebuildForTests(false);
+      try {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          const before = (await engine.readPageSnapshot(CONCEPT, { sourceId: 'default', includeDeleted: true }))!.revision;
+          const requests: ChatOpts[] = [];
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, requests });
+          expect(details.rebuilt).toEqual([]);
+          expect(details.rebuild_kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'managed' }]);
+          expect(requests).toHaveLength(0);
+          await stillHeld(engine, id);
+          expect((await engine.readPageSnapshot(CONCEPT, { sourceId: 'default', includeDeleted: true }))!.revision).toBe(before);
+          const preview = (await selectPurgeCandidates(engine, 72, { automatic: true, model: true })).rebuild;
+          expect(preview.kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'managed' }]);
+          expect(rebuildNote(preview)).toContain(`default/${CONCEPT}: stays hidden, its rebuild on a managed brain waits for a later release`);
+        }, { databaseUrl });
+      } finally { __setManagedConceptRebuildForTests(true); }
+    }, 300_000);
+
     for (const unmanaged of [false, true]) {
       const mode = unmanaged ? 'unmanaged' : 'managed';
       test(`${mode}: the tombstone is purged and a fresh page written; nothing of the old body reaches the model or stays`, async () => {
@@ -207,6 +231,22 @@ for (const backend of testBackends()) {
           } finally { spy.mockRestore(); }
           await stillHeld(engine, id);
           expect((await readDerivedOriginParks(engine)).map(p => p.page_id)).toEqual([id]);
+        }, { databaseUrl });
+      }, 300_000);
+
+      test(`${mode}: a curated ## Facets section on the hidden concept keeps it hidden and held${unmanaged ? ' (no git repository)' : ''}`, async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          const id = await heldConcept(engine, ctx, root);
+          await raw(engine, "UPDATE pages SET compiled_truth = compiled_truth || E'\\n\\n## Facets\\n\\n- storage-alt-example: merged here.\\n' WHERE source_id='default' AND slug=$1", [CONCEPT]);
+          if (unmanaged) {
+            rmSync(join(root, '.git'), { recursive: true, force: true });
+            await raw(engine, "UPDATE sources SET local_path=NULL WHERE id='default'");
+          }
+          const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged, settle: !unmanaged });
+          expect(details.rebuilt).toEqual([]);
+          expect(details.rebuild_kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'stated', kinds: ['curated_sections'] }]);
+          await stillHeld(engine, id);
+          expect((await state(engine)).body).toContain('storage-alt-example: merged here.');
         }, { databaseUrl });
       }, 300_000);
 

@@ -24,6 +24,10 @@ import { pendingRequestId } from '../cycle/dream-write-deferral.ts';
 import { OWED_PURGE_OP } from './derived-origin-hold.ts';
 import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
 import { PRIVACY_ALIASES, privacyPartSql, privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { preservedConceptSections } from '../cycle/concept-sections.ts';
+import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
+import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
+import { managedPersistenceEnabled } from './ownership.ts';
 
 type Sql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -31,7 +35,12 @@ type Sql = Pick<BrainEngine, 'executeRaw'>;
 export interface ConceptRebuild { page_id: number; deleted_us: string; revision: string; members: Array<{ slug: string; revision: string }> }
 
 /** Why a held concept is not rebuilt: something a person or an agent stated (with the kinds), no model, or wider access. */
-export type RebuildKept = { source_id: string; slug: string } & ({ reason: 'stated'; kinds: string[] } | { reason: 'no_model' } | { reason: 'access'; why: string });
+export type RebuildKept = { source_id: string; slug: string } & ({ reason: 'stated'; kinds: string[] } | { reason: 'no_model' } | { reason: 'managed' } | { reason: 'access'; why: string });
+
+let managedRebuild = false;
+/** GST-3179 re-checks the hold and the members inside the write owner's transaction; until then a managed brain keeps its held concepts hidden. */
+export function __setManagedConceptRebuildForTests(on: boolean): void { managedRebuild = on; }
+const managedHeld = async (engine: Sql) => !managedRebuild && await managedPersistenceEnabled(engine);
 
 /** Frontmatter keys only an owner or an agent sets on a concept (synthesis writes visibility alone): any of them is stated. */
 const STATED_LABEL_KEYS: readonly string[] = [...Object.keys(PRIVACY_ALIASES), 'readable_by', 'pinned_question', 'derived_from'];
@@ -79,12 +88,15 @@ const STATED_SQL = `SELECT array_remove(ARRAY[
   CASE WHEN EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.source_id = $2 AND h.slug = $3) THEN 'write_gate_holds' END,
   CASE WHEN EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = $1) OR EXISTS (SELECT 1 FROM pages p WHERE p.id = $1
     AND p.frontmatter ?| $5::text[]) THEN 'labels' END
-], NULL) AS kinds`;
+], NULL) AS kinds,
+  (SELECT ${boundedBodyPrefixSql('p')} FROM pages p WHERE p.id = $1) AS lead, (SELECT p.body_storage = 'segmented' FROM pages p WHERE p.id = $1) AS segmented`;
 
 /** The kinds of stated rows the concept carries; empty when it carries none. */
 export async function statedKinds(engine: Sql, pageId: number, sourceId: string, slug: string): Promise<string[]> {
-  const [row] = await engine.executeRaw<{ kinds: string[] | null }>(STATED_SQL, [pageId, sourceId, slug, DERIVED_LINK_SOURCES, STATED_LABEL_KEYS]);
-  return row?.kinds ?? [];
+  const [row] = await engine.executeRaw<{ kinds: string[] | null; lead: string | null; segmented: boolean | null }>(STATED_SQL, [pageId, sourceId, slug, DERIVED_LINK_SOURCES, STATED_LABEL_KEYS]);
+  // A body past the bounded lead is not scanned, so it may hold curated sections and counts as if it did.
+  const unread = row?.segmented === true || (row?.lead ?? '').length >= BOUNDED_PREFIX_BYTES;
+  return [...row?.kinds ?? [], ...unread || preservedConceptSections(row?.lead ?? '').length ? ['curated_sections'] : []];
 }
 
 /** Who may read a page, as the read predicate decides it: compared before and after a rebuild (rebuildWidens). */
@@ -122,6 +134,7 @@ export async function heldConceptRebuild(engine: Sql, sourceId: string, snapshot
   const slug = snapshot.page.slug;
   const kinds = await statedKinds(engine, pageId, sourceId, slug);
   if (kinds.length) return { kept: { source_id: sourceId, slug, reason: 'stated', kinds } };
+  if (await managedHeld(engine)) return { kept: { source_id: sourceId, slug, reason: 'managed' } };
   const access = await readRebuildAccess(engine, pageId);
   if (!access || (visibility === 'world' && !access.public_part)) return { kept: { source_id: sourceId, slug, reason: 'access', why: WIDER } };
   const rows = await engine.executeRaw<{ slug: string; revision: string }>(`SELECT slug, knowledge_revision::text AS revision FROM pages
@@ -232,9 +245,11 @@ export async function readHeldConcepts(engine: Sql, model: boolean): Promise<{ h
       WHERE d.derived_table = 'pages' AND d.derived_id = p.id::text AND m.deleted_at IS NULL AND NOT (${privatePagesFilterFragment('m')})) AS members_private
     FROM pages p WHERE ${HELD_SQL} ORDER BY p.source_id, p.slug`);
   const kept: RebuildKept[] = [];
+  const managed = rows.length > 0 && await managedHeld(engine);
   for (const row of rows) {
     const kinds = await statedKinds(engine, Number(row.id), row.source_id, row.slug);
     if (kinds.length) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'stated', kinds });
+    else if (managed) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'managed' });
     else if (row.private && !row.members_private) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'access', why: WIDER });
     else if (!model) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'no_model' });
   }
@@ -252,5 +267,6 @@ export async function tombstoneWindow(tx: Sql, pageId: number, hours: number): P
 export function keptReason(kept: RebuildKept): string {
   if (kept.reason === 'stated') return `${kept.source_id}/${kept.slug}: stays hidden, it carries what a person or an agent stated (${kept.kinds.join(', ')})`;
   if (kept.reason === 'access') return `${kept.source_id}/${kept.slug}: stays hidden, a rebuild would be readable more widely (${kept.why})`;
+  if (kept.reason === 'managed') return `${kept.source_id}/${kept.slug}: stays hidden, its rebuild on a managed brain waits for a later release`;
   return `${kept.source_id}/${kept.slug}: stays hidden, no synthesis model is configured to rebuild it`;
 }
