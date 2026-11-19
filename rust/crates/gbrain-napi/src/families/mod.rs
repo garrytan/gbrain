@@ -20,6 +20,7 @@ mod links;
 mod page_visibility;
 mod pages;
 mod search;
+mod session_state;
 mod sources;
 mod tags;
 mod timeline;

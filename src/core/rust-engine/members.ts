@@ -465,6 +465,8 @@ export const RUST_ENGINE_MEMBERS = {
   getDreamVerdict: 'dream_verdicts',
   putDreamVerdict: 'dream_verdicts',
   sweepDreamVerdicts: 'dream_verdicts',
+  // session_state (rust/docs/store/session_state.md)
+  upsertSessionState: 'session_state',
   // contradictions
   writeContradictionsRun: 'contradictions',
   loadContradictionsTrend: 'contradictions',

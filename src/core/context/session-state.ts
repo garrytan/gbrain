@@ -198,41 +198,17 @@ export async function upsertSessionContextState(
   try {
     const replaceStanding = Array.isArray(patch.standingEntities);
     const replaceCursorSlug = typeof patch.cursorSlug === 'string';
-    const rows = await engine.executeRaw<{ degraded_wakes: string | number }>(
-      `INSERT INTO session_context_state
-         (source_id, client_id, session_id, standing_entities, surfaced_slugs, last_wake_at,
-          facts_cursor_at, facts_cursor_id, degraded_wakes, updated_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6::text::timestamptz, $9::text::timestamptz, $10::bigint,
-               CASE WHEN $11::text = 'increment' THEN 1 ELSE 0 END, now())
-       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
-         standing_entities = CASE WHEN $7::boolean THEN EXCLUDED.standing_entities
-                                  ELSE session_context_state.standing_entities END,
-         surfaced_slugs    = CASE WHEN $8::boolean THEN EXCLUDED.surfaced_slugs
-                                  ELSE session_context_state.surfaced_slugs END,
-         last_wake_at      = COALESCE(EXCLUDED.last_wake_at, session_context_state.last_wake_at),
-         facts_cursor_at   = COALESCE(EXCLUDED.facts_cursor_at, session_context_state.facts_cursor_at),
-         facts_cursor_id   = CASE WHEN EXCLUDED.facts_cursor_at IS NULL THEN session_context_state.facts_cursor_id
-                                  ELSE EXCLUDED.facts_cursor_id END,
-         degraded_wakes    = CASE $11::text WHEN 'increment' THEN session_context_state.degraded_wakes + 1
-                                            WHEN 'reset' THEN 0
-                                            ELSE session_context_state.degraded_wakes END,
-         updated_at        = now()
-       RETURNING degraded_wakes`,
-      [
-        sourceId,
-        resolveClientId(clientId),
-        normSession(sessionId),
-        JSON.stringify(patch.standingEntities ?? []),
-        JSON.stringify(typeof patch.cursorSlug === 'string' ? [patch.cursorSlug.slice(0, ID_MAX_LEN)] : []),
-        patch.lastWakeAt ?? null,
-        replaceStanding,
-        replaceCursorSlug,
-        patch.factsCursor?.at ?? null,
-        patch.factsCursor ? patch.factsCursor.id : null,
-        patch.degradedWakes ?? 'keep',
-      ],
-    );
-    return { ok: true, degradedWakes: Number(rows[0]?.degraded_wakes ?? 0) };
+    const degradedWakes = await engine.upsertSessionState(sourceId, resolveClientId(clientId), normSession(sessionId), {
+      standingEntities: patch.standingEntities ?? [],
+      surfacedSlugs: typeof patch.cursorSlug === 'string' ? [patch.cursorSlug.slice(0, ID_MAX_LEN)] : [],
+      lastWakeAt: patch.lastWakeAt ?? null,
+      replaceStanding,
+      replaceCursorSlug,
+      factsCursorAt: patch.factsCursor?.at ?? null,
+      factsCursorId: patch.factsCursor ? patch.factsCursor.id : null,
+      degradedWakes: patch.degradedWakes ?? 'keep',
+    });
+    return { ok: true, degradedWakes };
   } catch (e) {
     /* fail-open: a state-write failure never blocks the read path; delta surfaces it as `session_state` */
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

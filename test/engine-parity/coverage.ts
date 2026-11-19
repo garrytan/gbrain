@@ -205,6 +205,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
   ],
   // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)
   field_usage: ['readFieldUsageSamples'],
+  // session_state: the session cursor, the checkpoint manifest and their garbage collection (engine-sql/session-state.ts)
+  session_state: [
+    'upsertSessionState',
+  ],
   // alias_fanout_reads: search's alias fan-out reads (engine-sql/alias-fanout-reads.ts)
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',

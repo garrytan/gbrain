@@ -535,6 +535,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAppliedPolicyRevisions': OOS.callerRawSql,
   'readLiveMember': OOS.callerRawSql,
   'readFolderAccess': OOS.callerRawSql,
+  'upsertSessionState': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,

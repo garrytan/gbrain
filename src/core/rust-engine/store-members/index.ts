@@ -25,6 +25,7 @@ import * as ontology from './ontology.ts';
 import * as takes from './takes.ts';
 import * as contradictions from './contradictions.ts';
 import * as dream from './dream.ts';
+import * as sessionState from './session-state.ts';
 import * as evalCapture from './eval-capture.ts';
 import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
@@ -120,6 +121,8 @@ export const STORE_MEMBERS = {
   ...importMembers,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
+  // The session cursor and checkpoint manifest of context_pack and delta (rust/docs/store/session_state.md).
+  ...sessionState,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

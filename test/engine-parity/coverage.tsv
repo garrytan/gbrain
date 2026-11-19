@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 646/646
+# covered: 647/647
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -59,6 +59,7 @@
 # write_misc: 15/15
 # telemetry: 10/10
 # field_usage: 1/1
+# session_state: 1/1
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
 # page_visibility: 3/3
@@ -669,6 +670,7 @@ readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
 logChatUsage	telemetry	yes	2	no	yes	yes	serves
 readChatUsage	telemetry	yes	2	no	yes	yes	serves
 readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
+upsertSessionState	session_state	yes	1	no	yes	yes	serves
 findPagesByTitles	alias_fanout_reads	yes	4	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves

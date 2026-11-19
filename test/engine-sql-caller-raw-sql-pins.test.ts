@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member sends Postgres exactly the statement text its caller ran through `executeRaw` before the
- *    move. Each expected text below is copied verbatim from the caller at 7470c703ed.
+ *    move. Each expected text below is copied verbatim from the caller at 7470c703ed, or at the commit its `from` names.
  *  - Regression: an edited statement changes what Postgres and PGLite answer while the parity cases may still pass on
  *    a small fixture.
  *  - Why existing coverage misses it: the sql-text goldens cover the W1 domains only (test/engine-sql-sql-text.test.ts),
@@ -15,7 +15,7 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 
 interface Pin {
-  /** The caller site the statement came from, at 7470c703ed. */
+  /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
   from: string;
   case: SqlCase;
   /** The statement texts, in order, as the caller sent them. */
@@ -56,6 +56,29 @@ const PINS: Pin[] = [
       `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
       UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`,
     ],
+  },
+  {
+    from: 'src/core/context/session-state.ts:201 upsertSessionContextState, at eb30f47b89',
+    case: { method: 'upsertSessionState', variant: 'default', run: e => e.upsertSessionState('default', 'local', 's', { standingEntities: ['people/alice-example'], surfacedSlugs: ['notes/a'], lastWakeAt: '2026-11-19T00:00:00Z', replaceStanding: true, replaceCursorSlug: true, factsCursorAt: null, factsCursorId: null, degradedWakes: 'increment' }) },
+    texts: [`INSERT INTO session_context_state
+         (source_id, client_id, session_id, standing_entities, surfaced_slugs, last_wake_at,
+          facts_cursor_at, facts_cursor_id, degraded_wakes, updated_at)
+       VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6::text::timestamptz, $9::text::timestamptz, $10::bigint,
+               CASE WHEN $11::text = 'increment' THEN 1 ELSE 0 END, now())
+       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
+         standing_entities = CASE WHEN $7::boolean THEN EXCLUDED.standing_entities
+                                  ELSE session_context_state.standing_entities END,
+         surfaced_slugs    = CASE WHEN $8::boolean THEN EXCLUDED.surfaced_slugs
+                                  ELSE session_context_state.surfaced_slugs END,
+         last_wake_at      = COALESCE(EXCLUDED.last_wake_at, session_context_state.last_wake_at),
+         facts_cursor_at   = COALESCE(EXCLUDED.facts_cursor_at, session_context_state.facts_cursor_at),
+         facts_cursor_id   = CASE WHEN EXCLUDED.facts_cursor_at IS NULL THEN session_context_state.facts_cursor_id
+                                  ELSE EXCLUDED.facts_cursor_id END,
+         degraded_wakes    = CASE $11::text WHEN 'increment' THEN session_context_state.degraded_wakes + 1
+                                            WHEN 'reset' THEN 0
+                                            ELSE session_context_state.degraded_wakes END,
+         updated_at        = now()
+       RETURNING degraded_wakes`],
   },
 ];
 

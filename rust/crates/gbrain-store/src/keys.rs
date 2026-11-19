@@ -96,6 +96,8 @@ pub const TELEMETRY_BUDGET_RESERVATION: u8 = 0x0A; // budget_reservations
 pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
+/// Family `session_state` (`session_state.rs`).
+pub const SESSION_STATE: u8 = b'y';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
