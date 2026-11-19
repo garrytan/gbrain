@@ -29,6 +29,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { hasPendingMigrations } from '../src/core/migrate-pending.ts';
 import { runDedupe } from '../src/commands/dedupe.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
@@ -52,6 +53,7 @@ beforeAll(async () => {
   const pglite = new PGLiteEngine();
   await pglite.connect({});
   await pglite.initSchema();
+  await hasPendingMigrations(pglite);
   engine = pglite;
 }, 120_000);
 afterAll(async () => {
@@ -63,6 +65,7 @@ beforeEach(async () => {
     await clone?.close();
     const c = await template!.clone();
     engine = c.engine; clone = c;
+    await hasPendingMigrations(engine);
   } else {
     await resetPgliteState(engine as PGLiteEngine);
   }
@@ -619,7 +622,7 @@ describe('with a repository', () => {
   });
 
   test('an owner-only source elsewhere in the brain does not stop a group outside it from being confirmed', async () => {
-    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('source-c', 'source-c', $1::jsonb) ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config", ['{"owner_only": true}']);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('source-c', 'source-c', '{"owner_only": true}'::jsonb) ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`);
     const alice = await groupOf('people/alice-example');
     expect(await cli(['confirm', alice])).toContain('Confirmed ' + alice + ' as one');
     expect((await rows()).identities.map(r => r.source_id)).toEqual(['default', 'source-b']);
@@ -627,7 +630,7 @@ describe('with a repository', () => {
   });
 
   test('a page derived from a page in an owner-only source is still refused while the confirm judges each page', async () => {
-    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('source-c', 'source-c', $1::jsonb) ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config", ['{"owner_only": true}']);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('source-c', 'source-c', '{"owner_only": true}'::jsonb) ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`);
     await page('notes/secret-example', 'Secret Example', {}, 'source-c');
     const id = async (slug: string, src: string) => String((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [slug, src]))[0]!.id);
     await engine.executeRaw("INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES ('pages', $1, 'pages', $2, 'source-b')",
