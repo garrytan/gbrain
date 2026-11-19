@@ -30,9 +30,10 @@ impl Brain {
         })
     }
 
-    /// `listHeldFenceCells({ keys, member })`: `[{ source_id, slug, row_num, claim }]`, the cells held
-    /// from a caller whose fact reads are world-only and who has no private-facts grant; `member` is a
-    /// member caller's page, principal and page policy, whose own private page facts are not held.
+    /// `listHeldFenceCells({ keys, member, grantSources })`: `[{ source_id, slug, row_num, claim }]`, the
+    /// cells held from a caller whose fact reads are world-only; `member` is a member caller's page,
+    /// principal and page policy, whose own private page facts are not held; `grantSources` are the
+    /// sources of a private-facts grant, whose admitted private facts are not held.
     #[napi]
     pub fn list_held_fence_cells<'env>(
         &self,
