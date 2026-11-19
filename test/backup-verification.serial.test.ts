@@ -52,10 +52,11 @@ function engine(roots: string[]): BrainEngine {
   const sources = () => roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} }));
   return {
     kind: 'pglite',
-    // loadAllSources reads the typed member; the page count is the typed countLivePages.
+    // loadAllSources reads the typed member; the page count is the typed countLivePages; maturity is the typed readBrainMaturity.
     listSourceRecords: async () => sources(),
     countLivePages: async () => 1,
-    executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }] : sources(),
+    readBrainMaturity: async () => ({ pages: 1, facts: 0, since: null }),
+    executeRaw: async () => sources(),
   } as unknown as BrainEngine;
 }
 

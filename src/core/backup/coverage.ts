@@ -109,11 +109,7 @@ function yieldLoop(): Promise<void> {
 /** E7: live pages + active facts, and the brain's first source/page timestamp. Null when unreadable. */
 async function brainMaturity(engine: BrainEngine): Promise<BackupStatus['maturity'] | undefined> {
   try {
-    const [row] = await engine.executeRaw<{ pages: number; facts: number; since: string | Date | null }>(
-      `SELECT (SELECT COUNT(*)::int FROM pages WHERE deleted_at IS NULL) AS pages,
-              (SELECT COUNT(*)::int FROM facts WHERE expired_at IS NULL) AS facts,
-              LEAST((SELECT MIN(created_at) FROM sources), (SELECT MIN(created_at) FROM pages)) AS since`,
-    );
+    const row = await engine.readBrainMaturity();
     const items = Number(row?.pages) + Number(row?.facts);
     if (!row || !Number.isFinite(items)) return undefined;
     const sinceMs = row.since ? new Date(row.since).getTime() : NaN;

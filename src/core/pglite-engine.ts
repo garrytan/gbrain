@@ -194,6 +194,7 @@ import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
+import * as doctorBrainImpl from './engine-sql/doctor-brain.ts';
 import * as doctorSyncImpl from './engine-sql/doctor-sync.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
@@ -1684,6 +1685,14 @@ export class PGLiteEngine implements BrainEngine {
   readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string) { return doctorCheckpointsImpl.readSyncAdmissionSettingRow(this.rawRead, key, op, fingerprint); }
   readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.rawRead); }
   listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.rawRead); }
+  listInterimStoredObjectCounts(type: string, shelfSourceId: string, prefix: string, adoptedTag: string) { return doctorBrainImpl.listInterimStoredObjectCounts(this.rawRead, type, shelfSourceId, prefix, adoptedTag); }
+  readOldestSourceCreatedAt() { return doctorBrainImpl.readOldestSourceCreatedAt(this.rawRead); }
+  readBrainMaturity() { return doctorBrainImpl.readBrainMaturity(this.rawRead); }
+  listVisibilityCandidatePages(sourceIds: readonly string[] | null) { return doctorBrainImpl.listVisibilityCandidatePages(this.rawRead, sourceIds); }
+  countVisibilityNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null) { return doctorBrainImpl.countVisibilityNoncanonicalHolds(this.rawRead, holdOp, sourceIds); }
+  listContentBlockedReceipts() { return doctorBrainImpl.listContentBlockedReceipts(this.rawRead); }
+  listPassAdmittedReceipts(sourceId: string, passId: string) { return doctorBrainImpl.listPassAdmittedReceipts(this.rawRead, sourceId, passId); }
+  listOrphanConnectorCheckpoints(query: doctorBrainImpl.OrphanConnectorCheckpointQuery) { return doctorBrainImpl.listOrphanConnectorCheckpoints(this.rawRead, query); }
   listManagedSyncCursorFailureRows(sourceIds: readonly string[] | null) { return doctorSyncImpl.listManagedSyncCursorFailureRows(this.rawRead, sourceIds); }
   listManagedSyncOrphanRowsets(sourceIds: readonly string[] | null, movedMessage: string) { return doctorSyncImpl.listManagedSyncOrphanRowsets(this.rawRead, sourceIds, movedMessage); }
   listDurableManagedSyncFailureKeys(keys: readonly string[]) { return doctorSyncImpl.listDurableManagedSyncFailureKeys(this.rawRead, keys); }

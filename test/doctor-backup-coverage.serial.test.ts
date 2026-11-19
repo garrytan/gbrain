@@ -408,17 +408,15 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
 
 // ── GBRA-585 item 7: the young-brain count and the full-backup fix per engine ─
 
-/** Engine stub answering the maturity count before the sources/pages listings (its SQL names both tables). */
+/** Engine stub answering the typed maturity member beside the sources/pages listings. */
 function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: string; local_path: string }>, pages: number, facts: number): BrainEngine {
   const listing = makeEngine(sources, pages);
   return {
     kind,
     listSourceRecords: listing.listSourceRecords,
     countLivePages: listing.countLivePages,
-    executeRaw: async (sql: string) => {
-      if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
-      return listing.executeRaw(sql);
-    },
+    readBrainMaturity: async () => ({ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }),
+    executeRaw: listing.executeRaw,
   } as unknown as BrainEngine;
 }
 

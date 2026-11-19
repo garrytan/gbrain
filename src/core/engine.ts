@@ -21,6 +21,7 @@ import type * as ProjectionBacklogSql from './engine-sql/projection-backlog.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
 import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
+import type * as DoctorBrainSql from './engine-sql/doctor-brain.ts';
 import type * as DoctorSyncSql from './engine-sql/doctor-sync.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
@@ -4482,6 +4483,23 @@ export interface BrainEngine {
   readLatestConnectorReceipt(): Promise<string | null>;
   /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
   listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
+  // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw
+  /** Live stored-object pages outside the shelf that no adoption tag marks, per source (the storage_manifest check's interim count). */
+  listInterimStoredObjectCounts(type: string, shelfSourceId: string, prefix: string, adoptedTag: string): Promise<DoctorBrainSql.InterimStoredObjectCount[]>;
+  /** The earliest `created_at` of any source row, or null for a brain with no source. */
+  readOldestSourceCreatedAt(): Promise<string | Date | null>;
+  /** Live pages, active facts and the first source or page timestamp (backup coaching's maturity read). */
+  readBrainMaturity(): Promise<DoctorBrainSql.BrainMaturityRow | null>;
+  /** Live pages of non-archived sources whose frontmatter has a `visibility` key (any letter case) that is not the text `private`. */
+  listVisibilityCandidatePages(sourceIds: readonly string[] | null): Promise<DoctorBrainSql.VisibilityCandidatePage[]>;
+  /** Held files of non-archived sources that a git hold of `holdOp` records as `visibility_noncanonical`. */
+  countVisibilityNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null): Promise<number>;
+  /** The failed, conflicted or cancelled receipts that unfinished managed-sync cursors wait on. */
+  listContentBlockedReceipts(): Promise<DoctorBrainSql.ContentBlockedReceipt[]>;
+  /** The failed, conflicted or cancelled receipts a source's sync pass admitted (the receipt intent carries the pass id). */
+  listPassAdmittedReceipts(sourceId: string, passId: string): Promise<DoctorBrainSql.ContentBlockedReceipt[]>;
+  /** Connector checkpoint and retry rows no source can load (`before` bounds `updated_at`; `minAgeDays` adds the age floor). */
+  listOrphanConnectorCheckpoints(query: DoctorBrainSql.OrphanConnectorCheckpointQuery): Promise<DoctorBrainSql.OrphanCheckpointRow[]>;
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
   /** The unfinished managed-sync cursors of live source incarnations with their pending receipt, failure row and manifest path (`sourceIds` null reads every source). */
   listManagedSyncCursorFailureRows(sourceIds: readonly string[] | null): Promise<DoctorSyncSql.ManagedSyncCursorFailureRow[]>;
