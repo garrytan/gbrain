@@ -7,6 +7,7 @@
  *   bun scripts/rust-census/census.ts [--only cli|mcp] [--filter <substring>] [--concurrency N] [--work-dir DIR]
  *        [--out docs/research/rust-census.md] [--json docs/research/rust-census.json] [--no-member] [--composition <text>]
  *   bun scripts/rust-census/census.ts --from-json docs/research/rust-census.json   (re-render the report and packages only)
+ *  The report also counts hidden refusals: equal rows that log a refusal a fail-soft path caught (see hiddenRefusals).
  *   GBRAIN_CENSUS_PG_URL=postgres://postgres:postgres@127.0.0.1:5439/postgres  (optional Postgres arm)
  *
  * How it works:
@@ -425,11 +426,14 @@ function mcpOut(r: Run & { response?: any }): { exit: number; out: unknown; text
   return { exit: res.isError ? 1 : 0, out: { isError: !!res.isError, body: parseOut(text) }, text };
 }
 
+/** The refusals the anonymous `serve` builds at startup (the anonymous pass's baseline; hiddenRefusals and --from-json read it). */
+const SERVE_BASELINE = new Set<string>();
+
 /** One MCP caller: its base brains, its serve arguments and the refusals its serve builds at startup (not counted per tool). */
 interface McpPass { tag: string; bases: Bases; serveArgs: readonly string[]; baseline: Set<string>; baselineRaw: Set<string> }
 
 async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, pass: McpPass): Promise<Row> {
-  const { bases, serveArgs, baseline: SERVE_BASELINE, baselineRaw: SERVE_BASELINE_RAW } = pass;
+  const { bases, serveArgs, baseline: startup, baselineRaw: startupRaw } = pass;
   const params = fillParams(tool);
   const caseDir = join(work, 'cases', `mcp${pass.tag}-${i}`);
   const arms = { ref: bases.ref, rust: bases.rust, ...(bases.pg ? { pg: bases.pg } : {}) } as Record<string, Brain>;
@@ -444,9 +448,9 @@ async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, 
   const refN = normalize(ref.out, pathsOf(clones.ref!)), rustN = normalize(rust.out, pathsOf(clones.rust!));
   const t = readTrace(trace);
   // Refusals every `serve` builds before the call (startup, notifier) are listed once in Setup, not per tool.
-  t.first = t.all.find((x) => !SERVE_BASELINE.has(`${x.member}@${x.site}`));
-  t.raw = t.raw.filter((x) => !SERVE_BASELINE_RAW.has(`${x.member}@${x.site}`));
-  t.refusals = t.all.filter((x) => !SERVE_BASELINE.has(`${x.member}@${x.site}`)).length;
+  t.first = t.all.find((x) => !startup.has(`${x.member}@${x.site}`));
+  t.raw = t.raw.filter((x) => !startupRaw.has(`${x.member}@${x.site}`));
+  t.refusals = t.all.filter((x) => !startup.has(`${x.member}@${x.site}`)).length;
   let status: Status; let note = ''; let decisive: string | undefined;
   const crash = crashed(runs.rust!, runs.ref!) ?? (rust.exit === -1 ? `no MCP response: ${rust.text.replace(/\s+/g, ' ').slice(-200)}` : null);
   if (crash) { status = 'crash'; note = crash; }
@@ -464,7 +468,7 @@ async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, 
   if (runs.pg) { const pg = mcpOut(runs.pg); pgStatus = pg.exit === -1 ? 'crash' : pg.exit === ref.exit && JSON.stringify(normalize(pg.out, pathsOf(clones.pg!))) === JSON.stringify(refN) ? 'equal' : 'differs'; }
   for (const b of Object.values(clones)) await dropBrain(b);
   rmSync(caseDir, { recursive: true, force: true });
-  const options = optionRefusals(t.all.filter((x) => !SERVE_BASELINE.has(`${x.member}@${x.site}`)).map((x) => `${x.member}@${x.site}`));
+  const options = optionRefusals(t.all.filter((x) => !startup.has(`${x.member}@${x.site}`)).map((x) => `${x.member}@${x.site}`));
   return { surface: 'mcp', name: tool.name, invocation: JSON.stringify(params).slice(0, 120), status, pgStatus, refExit: ref.exit, rustExit: rust.exit, decisive, endSite: endSiteOf(t, decisive, runs.rust!.censusRef), first: t.first, sites: t.all.slice(0, 40).map((x) => `${x.member}@${x.site}`), refusals: t.refusals, members: t.members, raw: t.raw, note, options,
     rustExcerpt: rust.text.slice(0, 600), refExcerpt: ref.text.slice(0, 600) };
 }
@@ -472,6 +476,32 @@ async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, 
 // ---- report ----------------------------------------------------------------------------------------------------
 
 const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+
+/**
+ * Hidden refusals: rows that show equal but log one or more refusal sites. A fail-soft path caught each refusal, so
+ * the answer matched, but the Rust arm took a fallback there. MCP rows leave out the refusals every `serve` builds at
+ * startup (Setup lists them once). Sites rank by impact as packages.ts scores a package (10 per hot case, 1 per other case).
+ */
+interface HiddenSite { site: string; score: number; rows: number; hot: string[]; cases: string[] }
+function hiddenRefusals(rows: Row[]): { rows: Row[]; sites: HiddenSite[] } {
+  const sitesOf = (r: Row) => [...new Set((r.sites ?? []).filter((x) => r.surface !== 'mcp' || !SERVE_BASELINE.has(x)))];
+  const hidden = rows.filter((r) => r.status === 'equal' && sitesOf(r).length > 0);
+  const bySite = new Map<string, Row[]>();
+  for (const r of hidden) for (const x of sitesOf(r)) bySite.set(x, [...(bySite.get(x) ?? []), r]);
+  const sites = [...bySite].map(([site, rs]): HiddenSite => {
+    const at = site.lastIndexOf('@');
+    const asRefused = rs.map((r) => ({ ...r, status: 'refused' as const, decisive: site.slice(0, at), endSite: site.slice(at + 1), sites: undefined }));
+    const pkg = buildPackages(asRefused, ROOT)[0]!;
+    return { site, score: pkg.score, rows: rs.length, hot: pkg.hot, cases: pkg.cases };
+  }).sort((a, b) => b.score - a.score || b.rows - a.rows || a.site.localeCompare(b.site));
+  return { rows: hidden, sites };
+}
+
+/** The one-line summary (also the line other lanes quote): rows, rows per surface, distinct sites. */
+function hiddenLine(h: { rows: Row[]; sites: HiddenSite[] }): string {
+  const by = (surface: string) => h.rows.filter((r) => r.surface === surface).length;
+  return `Hidden refusals: ${h.rows.length} equal rows (cli ${by('cli')}, mcp ${by('mcp')}) log ${h.sites.length} distinct refusal sites; serve startup refusals are not counted.`;
+}
 
 function report(rows: Row[], setup: string[], meta: Record<string, string>, tools: number, cliCommands: string[], memberSetup: string[] = []): string {
   const count = (surface: string, s: Status) => rows.filter((r) => r.surface === surface && r.status === s).length;
@@ -486,6 +516,8 @@ function report(rows: Row[], setup: string[], meta: Record<string, string>, tool
   lines.push('', `CLI commands covered: ${new Set(rows.filter((r) => r.surface === 'cli').map((r) => r.name)).size} of ${cliCommands.length}. MCP tools covered: ${rows.filter((r) => r.surface === 'mcp').length} of ${tools}.`, '');
   const uncovered = cliCommands.filter((c) => !rows.some((r) => r.surface === 'cli' && r.name === c));
   if (uncovered.length) lines.push(`CLI commands with no case: ${uncovered.join(', ')}`, '');
+  const hidden = hiddenRefusals(rows);
+  lines.push(hiddenLine(hidden), '');
 
   lines.push(renderPackages(buildPackages(rows, ROOT)));
 
@@ -500,6 +532,11 @@ function report(rows: Row[], setup: string[], meta: Record<string, string>, tool
     const sites = [...new Set(rs.map((r) => r.first?.site).filter(Boolean))].slice(0, 4).join(', ');
     lines.push(`| ${esc(k)} | ${rs.length} | ${caps} | ${esc(sites)} | ${esc(rs.map((r) => `${r.surface}:${r.name}`).filter((v, i, a) => a.indexOf(v) === i).join(', '))} |`);
   }
+  lines.push('');
+  lines.push('## Hidden refusals (equal rows that log a refusal site, by impact)', '',
+    'A fail-soft path caught the refusal, so the answer matched, but Rust took a fallback there. Score: 10 per hot case, 1 per other case.', '',
+    '| refusal site | score | equal rows | hot cases | cases (surface:name) |', '|---|---|---|---|---|');
+  for (const h of hidden.sites) lines.push(`| ${esc(h.site)} | ${h.score} | ${h.rows} | ${h.hot.length} | ${esc(h.cases.join(', '))} |`);
   lines.push('');
   for (const s of ['cli', 'mcp'] as const) {
     const memberCol = s === 'mcp' && rows.some((r) => r.member);
@@ -533,7 +570,9 @@ async function main(): Promise<void> {
   const from = flag('--from-json');
   if (from) {
     const d = JSON.parse(readFileSync(resolve(from), 'utf8'));
+    for (const x of d.serveBaseline ?? []) SERVE_BASELINE.add(x);
     d.packages = buildPackages(d.rows, ROOT);
+    d.hidden = hiddenRefusals(d.rows).sites;
     writeFileSync(OUT_JSON, JSON.stringify(d, null, 1) + '\n');
     writeReport(report(d.rows, d.setup, d.meta, d.tools.length, d.cliCommands, d.memberSetup ?? []));
     if (!flag('--work-dir')) rmSync(work, { recursive: true, force: true });
@@ -580,7 +619,7 @@ async function main(): Promise<void> {
   const list = await baselineOf(ref, 'ref');
   const tools: Array<{ name: string; inputSchema?: any }> = list.response?.result?.tools ?? [];
   if (!tools.length) throw new Error(`tools/list returned no tools: ${list.stderr.slice(-500)}`);
-  const anon: McpPass = { tag: '', bases, serveArgs: [], baseline: new Set(), baselineRaw: new Set() };
+  const anon: McpPass = { tag: '', bases, serveArgs: [], baseline: SERVE_BASELINE, baselineRaw: new Set() };
   const baseTrace = join(work, 'serve-baseline.jsonl');
   const rustList = await baselineOf(rust, 'rust', baseTrace);
   const bt = readTrace(baseTrace);
@@ -656,7 +695,7 @@ async function main(): Promise<void> {
     'filter': FILTER ?? 'none', 'only': ONLY ?? 'cli and mcp', 'member-caller pass': NO_MEMBER || !mcpTools.length ? 'off' : `on (serve ${MEMBER_SERVE_ARGS.join(' ')})`,
     ...(COMPOSITION ? { 'composition': COMPOSITION } : {}), 'wall time': `${Math.round((Date.now() - t0) / 1000)} s`,
   };
-  writeFileSync(OUT_JSON, JSON.stringify({ meta, setup, memberSetup, cliCommands, tools: tools.map((t) => t.name), packages: buildPackages(rows, ROOT), rows }, null, 1) + '\n');
+  writeFileSync(OUT_JSON, JSON.stringify({ meta, setup, memberSetup, cliCommands, tools: tools.map((t) => t.name), serveBaseline: [...SERVE_BASELINE], packages: buildPackages(rows, ROOT), hidden: hiddenRefusals(rows).sites, rows }, null, 1) + '\n');
   writeReport(report(rows, setup, meta, tools.length, cliCommands, memberSetup));
   for (const b of [pglite, rust, ...(pg ? [pg] : []), ...(useMirror ? [ref] : []), ...memberBrains]) await dropBrain(b);
   if (!flag('--work-dir')) rmSync(work, { recursive: true, force: true });
