@@ -52,7 +52,7 @@ describe('CANONICAL_PRICING — table integrity', () => {
 
   test('Sonnet 5 and 5.5 present at $2/$10 (launch price became the standard rate)', () => {
     expect(CANONICAL_PRICING['anthropic:claude-sonnet-5']).toMatchObject({ input: 2.0, output: 10.0 });
-    expect(CANONICAL_PRICING['anthropic:claude-sonnet-5-5']).toMatchObject({ input: 2.0, output: 10.0, cache_read: 0.2 });
+    expect(CANONICAL_PRICING['anthropic:claude-sonnet-5-5']).toMatchObject({ input: 2.0, output: 10.0, cache_read: 0.1 });
   });
 
   test('gpt-6.1-sol present at its $2/$10 list rate (the fence repair default meters exactly, #6188)', () => {
@@ -129,6 +129,10 @@ describe('CANONICAL_PRICING — table integrity', () => {
       expect(p).toBeDefined();
       expect(p!.cache_read).toBeCloseTo(p!.input * mult, 10);
     }
+  });
+
+  test('Sonnet 5.5 cache reads are billed at 0.05x input ($0.10/MTok)', () => {
+    expect(canonicalLookup('anthropic:claude-sonnet-5-5')!.cache_read).toBeCloseTo(0.1, 10);
   });
 
   test('cache fields, when present, are finite positive with read < input < write', () => {

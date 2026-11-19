@@ -130,6 +130,9 @@ export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
   // Opus 5.5 bills cache hits at 0.05x base input ($0.20/MTok on $4),
   // verified 2026-10-01 against the published Opus 5.5 price list.
   'anthropic:claude-opus-5-5': 0.05,
+  // Sonnet 5.5 bills cache hits at 0.05x base input ($0.10/MTok on $2),
+  // checked against the published pricing page.
+  'anthropic:claude-sonnet-5-5': 0.05,
 };
 
 /**
@@ -161,7 +164,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // price the standard rate — the scheduled 2026-09-01 increase to $3/$15
   // did not happen (pricing page footnote). Sonnet 5.5 (released
   // 2026-09-28) ships at the same rate.
-  'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00),
+  'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-sonnet-5-5']),
   'anthropic:claude-sonnet-5':            anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-4-6':          anthro( 3.00, 15.00),
   // Haiku 5.5: $0.10 in / $0.50 out for prompts up to 100,000 tokens
