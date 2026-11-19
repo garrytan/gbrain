@@ -561,9 +561,15 @@ describe('engine parity: search', () => {
       expect(got.code).toBe('engine_capability_missing');
       expect(got.message).toContain(Object.keys(extra)[0]!);
     }
-    // The other keyword members and the title arm keep refusing excludePrivate: only searchKeyword is served.
+    // The title arm answers excludePrivate too (its own parity case reads the rows); the other keyword members refuse it.
+    expect((await engine.searchTitles('refusal probe', { limit: 5, excludePrivate: true })).map((r) => r.slug)).toEqual(['notes/refusal-probe']);
+    expect((await engine.searchTitles('refusal', { limit: 5 })).map((r) => r.slug).sort()).toEqual(['notes/refusal-hidden', 'notes/refusal-probe']);
+    for (const extra of [{ minTrust: 'medium' }, { suppressFlagged: true }, { notAnOption: true }]) {
+      const got = await refusal(() => engine.searchTitles('refusal', { excludePrivate: true, ...extra } as never));
+      expect(got.code).toBe('engine_capability_missing');
+      expect(got.message).toContain(Object.keys(extra)[0]!);
+    }
     const others: Array<[string, () => Promise<unknown>]> = [
-      ['searchTitles', () => engine.searchTitles('periwinkle', { excludePrivate: true })],
       ['searchKeywordChunks', () => engine.searchKeywordChunks('periwinkle', { excludePrivate: true })],
       ['countKeywordPages', () => engine.countKeywordPages('periwinkle', { excludePrivate: true })],
       ['searchKeywordPages', () => engine.searchKeywordPages('periwinkle', { excludePrivate: true }, { limit: 5, offset: 0 })],
@@ -573,6 +579,67 @@ describe('engine parity: search', () => {
       expect({ member, code: got.code, message: got.message }).toMatchObject({ code: 'engine_capability_missing', message: expect.stringContaining('option excludePrivate') });
     }
   });
+
+  parityTest(
+    'searchTitles with excludePrivate hides the pages the private-page policy hides, matches titles only and counts only visible pages',
+    { methods: ['searchTitles'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const put = (slug: string, title: string, frontmatter?: Record<string, unknown>, sourceId?: string, type: 'note' | 'atom' = 'note', timeline = '') =>
+        seedPage(engine, {
+          slug,
+          input: { type, title, compiled_truth: `${title} body`, timeline, ...(frontmatter ? { frontmatter } : {}) },
+          chunks: [chunk(0, `${title} body`)],
+        }, sourceId ? { sourceId } : undefined);
+      // The hidden pages repeat the term in the title, so they outrank every visible page: a limit that counted them would
+      // return fewer visible pages than it asks for.
+      await put('notes/open-a', 'Pelican ledger');
+      await put('notes/open-b', 'Pelican ledger again and again');
+      await put('notes/visibility-private', 'Pelican pelican pelican ledger', { visibility: 'private' });
+      await put('notes/access-private', 'Pelican pelican pelican ledger access', { access: 'private' });
+      await put('notes/public-wins', 'Pelican public ledger', { visibility: 'public', access: 'private' });
+      await put('notes/named-readers', 'Pelican pelican named ledger', { readable_by: ['someone'] });
+      await put('atoms/derived-atom', 'Pelican pelican derived ledger', undefined, undefined, 'atom');
+      await put('notes/work-open', 'Pelican work ledger', undefined, 'work');
+      await put('notes/work-private', 'Pelican pelican work ledger', { visibility: 'private' }, 'work');
+      // The word is in the timeline only: the whole-vector match finds the page, the title-only match (the safe-chunks rule) does not.
+      await put('notes/sealed-timeline', 'Heron notes', undefined, undefined, 'note', 'kingfisher sighted');
+      await put('notes/sealed-timeline-private', 'Heron private notes', { visibility: 'private' }, undefined, 'note', 'kingfisher sighted');
+
+      const q = 'pelican ledger';
+      type Opts = Parameters<BrainEngine['searchTitles']>[1];
+      const slugs = async (query: string, opts?: Opts) =>
+        (await engine.searchTitles(query, opts)).map((r) => `${r.source_id}:${r.slug}`);
+      const out = {
+        omitted: await slugs(q, { limit: 20 }),
+        off: await slugs(q, { limit: 20, excludePrivate: false }),
+        on: await slugs(q, { limit: 20, excludePrivate: true }),
+        onOneRow: await slugs(q, { limit: 1, excludePrivate: true }),
+        onSecondRow: await slugs(q, { limit: 1, offset: 1, excludePrivate: true }),
+        onDefaultSource: await slugs(q, { limit: 20, excludePrivate: true, sourceId: 'default' }),
+        onWorkSource: await slugs(q, { limit: 20, excludePrivate: true, sourceIds: ['work'] }),
+        onTyped: await slugs(q, { limit: 20, excludePrivate: true, type: 'atom' }),
+        onRelaxed: await slugs('pelican ledger nonesuchword', { limit: 20, excludePrivate: true }),
+        timelineOff: await slugs('kingfisher', { limit: 20 }),
+        timelineOn: await slugs('kingfisher', { limit: 20, excludePrivate: true }),
+        timelineOnSafeOff: await slugs('kingfisher', { limit: 20, excludePrivate: true, requireSafeChunks: false }),
+      };
+      expect(out.omitted).toEqual(out.off);
+      expect(out.off.length).toBe(9);
+      expect(sorted(out.on)).toEqual(['default:notes/open-a', 'default:notes/open-b', 'default:notes/public-wins', 'work:notes/work-open']);
+      expect(out.onOneRow.length).toBe(1);
+      expect(out.onSecondRow.length).toBe(1);
+      expect(out.onOneRow).not.toEqual(out.onSecondRow);
+      expect(sorted(out.onWorkSource)).toEqual(['work:notes/work-open']);
+      expect(out.onTyped).toEqual([]);
+      expect(sorted(out.onRelaxed)).toEqual(sorted(out.on));
+      // excludePrivate turns the safe-chunks rule on, which matches titles alone; requireSafeChunks: false keeps the whole-vector match.
+      expect(sorted(out.timelineOff)).toEqual(['default:notes/sealed-timeline', 'default:notes/sealed-timeline-private']);
+      expect(out.timelineOn).toEqual([]);
+      expect(out.timelineOnSafeOff).toEqual(['default:notes/sealed-timeline']);
+      return out;
+    },
+  );
 
   parityTest(
     'searchTitles: sealed timelines, timeline entries, the candidate cut, the OR retry by rarity, identifiers and paging',

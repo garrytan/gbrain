@@ -35,6 +35,7 @@ A remote caller needs both:
 
 Otherwise the call fails with `secret_reveal_forbidden`. Every reveal, CLI or MCP, is appended to the `secrets` audit
 log (`~/.gbrain/audit/secrets-<year>-W<week>.jsonl`) with the entry, the caller and the pages, never the value.
+That file and the `secret-spans` audit log are mode 0600, and a looser existing file is tightened on its next write.
 
 ## A false positive
 
@@ -99,10 +100,12 @@ publish. The details, and what is held back instead, are in
 - `gbrain git redact-unpushed --source <id>` shows what a publish would redact, writing nothing; `--apply --expect
   <hash>` does it without pushing.
 
-<a id="secret_store_spooled"></a>A publish runs without the database, so it first writes each original to an encrypted
-spool on this machine, `~/.gbrain/secret-store/spool/` (directory 0700, one 0600 file per entry, the same key). The
-owner moves spooled entries into the store right after its push, and maintenance (the `bookkeeping_gc` phase) moves
-any that are left. `gbrain secrets reveal <id>` reads a spooled entry meanwhile, and `gbrain secrets list` (field `spooled` with
+<a id="secret_store_spooled"></a>A publish runs without the database, so it always first writes each original to an encrypted
+spool on this machine, `~/.gbrain/secret-store/spool/` (directory 0700, one 0600 file per entry, the same key), and
+says so with the info notice `secret_store_spooled`. The first publish that redacts creates the key. The
+owner moves spooled entries into the store right after its push (a page write's Git effect), and maintenance (the
+`bookkeeping_gc` phase) moves any that are left. `gbrain git commit-push` does not move them, so on a host where no
+owner push and no maintenance run they stay in the spool; doctor's `secret_store` check counts them. `gbrain secrets reveal <id>` reads a spooled entry meanwhile, and `gbrain secrets list` (field `spooled` with
 `--json`) shows how many wait. `gbrain secrets list` also counts entries and occurrences by rule (`by_rule`), and what
 the publish redactions on this machine replaced by rule (`publish_redactions`): spans, values, and how many sat in a
 presigned link's `X-Amz-Credential=` parameter as opposed to bare. An entry leaves the spool only once its store row reads back to the same original, so a
