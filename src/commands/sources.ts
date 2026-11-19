@@ -1301,6 +1301,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
   const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)])); const watermarkView = await import('../core/persistence/applied-watermark.ts'), watermarks = new Map(await Promise.all(sources.map(async source => [source.id, await watermarkView.readAppliedWatermark(engine, source.id).catch(() => null)] as const)));
   const publishOff = new Set(await (await import('../core/persistence/worktree-refresh.ts')).publishOptedOut(engine, sources.map(source => source.id)));
+  const pagesView = await import('../core/owned-folder/status.ts'), pagesIn = await pagesView.readPagesIn(engine, sources.map(source => source.id));
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
@@ -1308,7 +1309,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
       sync_running: syncRunning.has(m.source_id),
       sync_holder: syncRunning.get(m.source_id) ?? null,
       ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
-      ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}),
+      ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}), ...(pagesIn.get(m.source_id) ? { pages_in: pagesIn.get(m.source_id) } : {}),
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
       ...(movement.get(m.source_id) ? { data_moving: movement.get(m.source_id)!.data_moving, not_moving_since: movement.get(m.source_id)!.not_moving_since,
         movement_state: movement.get(m.source_id)!.movement_state, movement: movement.get(m.source_id) } : {}),
@@ -1353,6 +1354,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   }
   console.log('');
   for (const [sourceId, status] of connectors) for (const line of statusView.connectorStatusLines(sourceId, status)) console.log(line);
+  for (const [sourceId, p] of pagesIn) console.log(pagesView.pagesInLine(sourceId, p));
   for (const [sourceId, status] of gitHolds) for (const line of statusView.gitHoldStatusLines(sourceId, status)) console.log(line);
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
   for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); } for (const w of watermarks.values()) if (w) console.log(`  ${watermarkView.formatAppliedWatermark(w)}`);
@@ -1951,6 +1953,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
+    case 'rebind':     return (await import('./sources-rebind.ts')).runRebind(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'git-reconcile': return (await import('./sources-git-reconcile.ts')).runSourcesReconcile(engine, rest);
     case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
@@ -2061,6 +2064,7 @@ Subcommands:
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   set-sync <id> <on|off> [--dry-run] [--expect <on|off>]   Include or exclude the source from automatic sync (config.syncEnabled).
+  rebind <id> [--yes]                                     Record a changed push destination for an iMessage source's folder (preview first).
   host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                     Managed brains: host an empty source in a new bare repository with a gbrain-owned worktree; it becomes git-canonical.
   guard <id> [--install [--mode enforce] | --uninstall | --status] [--json]

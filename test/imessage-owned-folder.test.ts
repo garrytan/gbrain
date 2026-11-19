@@ -21,6 +21,8 @@ import { imessageChatKey, imessagePagePath } from '../src/core/imessage/render.t
 import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../src/core/connectors/db-cursor.ts';
 import { connectorIdentity } from '../src/core/persistence/connector-identity.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { readPagesIn, pagesInLine } from '../src/core/owned-folder/status.ts';
+import { rebindOwnedSource } from '../src/commands/sources-rebind.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 
 const DAY = 86_400_000;
@@ -112,6 +114,12 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect(Object.keys(state.owned!.files)).toContain(dayFile(ALICE, 2));
     expect(state.owned!.last_batch).toBe(git(repo, 'rev-parse', 'HEAD').stdout.trim());
     expect(await pageCount(id)).toBe(3);
+    const pending = (await readPagesIn(engine, [id])).get(id)!;
+    expect(pending).toMatchObject({ record: 'folder', folder: `.gbrain-owned/${id}`, files: 3, days_held: 0, pushed: 'pending' });
+    git(repo, 'push', '-q', '-u', 'origin', 'main');
+    const pushed = (await readPagesIn(engine, [id])).get(id)!;
+    expect(pushed.pushed).toBe('pushed');
+    expect(pagesInLine(id, pushed)).toContain(`pages in .gbrain-owned/${id}/ (3 day file(s)), last commit `);
   });
 
   test('a quiet run commits nothing; an edit commits one; an emptied day removes its file in one commit', async () => {
@@ -181,6 +189,16 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     await run(id, cfg, fake, { now: NOW + 60_000 });
     expect(commits(repo)).toBe(c1);
     expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'remote_changed' });
+    expect((await readPagesIn(engine, [id])).get(id)).toMatchObject({ record: 'database', reason: 'remote_changed', files: 3 });
+    const preview = await rebindOwnedSource(engine, { sourceId: id, yes: false });
+    expect(preview).toMatchObject({ applied: false, changed: true, current: [join(home, 'elsewhere')] });
+    expect(commits(repo)).toBe(c1);
+    await expect(rebindOwnedSource(engine, { sourceId: id, yes: true, expect: 'somewhere-else' })).rejects.toMatchObject({ code: 'preview_changed' });
+    expect((await rebindOwnedSource(engine, { sourceId: id, yes: true, expect: preview.current.join(',') })).applied).toBe(true);
+    expect(commits(repo)).toBe(c1);
+    await run(id, cfg, fake, { now: NOW + 120_000, full: true });
+    expect(commits(repo)).toBe(c1 + 1);
+    expect((await stateOf(id)).record_status?.record).toBe('folder');
   });
 
   test('a run that committed and stopped before the import: the next run commits nothing and imports the committed days', async () => {
