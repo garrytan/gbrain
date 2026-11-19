@@ -238,10 +238,7 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
  */
 export async function readCheckpointBlockerMap(engine: BrainEngine, sourceIds?: string[]): Promise<NonNullable<Parameters<typeof readTerminalFailureSummary>[1]>['checkpointBlockers'] & {}> {
   const { readCheckpointBlockers } = await import('./sync-status.ts');
-  const atCheckpoint = await engine.executeRaw<{ source_id: string }>(`SELECT DISTINCT o.completed_keys->0->>'sourceId' AS source_id FROM op_checkpoints o
-    JOIN sources s ON s.id=o.completed_keys->0->>'sourceId' AND s.archived IS NOT TRUE
-    WHERE o.op='managed-sync' AND o.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND COALESCE(o.completed_keys->0->>'done','false')<>'true'
-      AND ($1::text[] IS NULL OR o.completed_keys->0->>'sourceId'=ANY($1::text[]))`, [sourceIds ?? null]);
+  const atCheckpoint = (await engine.listCheckpointBlockedSources(sourceIds)).map(source_id => ({ source_id }));
   const blockers = new Map<string, Awaited<ReturnType<typeof readCheckpointBlockers>>>();
   for (const row of atCheckpoint) blockers.set(row.source_id, await readCheckpointBlockers(engine, row.source_id));
   const passes = await engine.executeRaw<{ source_id: string; worktree_id: string; checkpoint: string }>(`SELECT s.id AS source_id, b.worktree_id::text AS worktree_id, r.request_id::text AS checkpoint

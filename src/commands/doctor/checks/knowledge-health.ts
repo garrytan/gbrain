@@ -189,27 +189,11 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
     const parsed = parseInt(thresholdRaw ?? '', 10);
     const threshold = Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
 
-    // Single SQL grouping by (source_id, reason) over the last 24h. The
+    // Single read grouping by (source_id, reason) over the last 24h. On SQL engines the
     // composite index v50 added (idx_ingest_log_source_type_created on
     // source_id, source_type, created_at DESC) covers this query's
     // filter + sort path.
-    const rows = await engine.executeRaw<{
-      source_id: string;
-      reason: string;
-      n: string | number;
-      newest: string | Date;
-    }>(
-      `SELECT
-         source_id,
-         split_part(summary, ':', 1) AS reason,
-         COUNT(*)::text AS n,
-         MAX(created_at) AS newest
-       FROM ingest_log
-       WHERE source_type = 'facts:absorb'
-         AND created_at >= now() - INTERVAL '24 hours'
-       GROUP BY source_id, split_part(summary, ':', 1)
-       ORDER BY source_id, COUNT(*) DESC`,
-    );
+    const rows = await engine.listFactsAbsorbFailureGroups();
     // #6778: an accepted write still committing and a retry after writer contention before admission are not
     // failures, so they never count toward the threshold; contention that persists warns on its own.
     const { WRITE_PENDING_ACCEPTED, WRITE_DEFERRED_UNADMITTED } = await import('../../../core/facts/absorb-log.ts');

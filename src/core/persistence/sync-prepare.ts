@@ -636,7 +636,7 @@ function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktr
  * (`recordPassFenceTrend`), so every import is counted once, the stamp lands in bounded time and records its trend row in the
  * same transaction, as before.
  */
-export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; incarnation: string }): Promise<FenceTrendPrefix> {
+export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw' | 'readManagedSyncPassRow' | 'listLiveManagedSyncPassRows'>, scope: { worktreeId: string; sourceId: string; incarnation: string }): Promise<FenceTrendPrefix> {
   const since = (await readPassRow(engine, scope.sourceId, scope.incarnation))?.value.obligations.converged?.request_hwm ?? null;
   const [newest] = await engine.executeRaw<{ through: string | null }>('SELECT max(sequence)::text AS through FROM persistence_requests');
   const floor = BigInt(since ?? '0'), through = BigInt(newest?.through ?? '0');

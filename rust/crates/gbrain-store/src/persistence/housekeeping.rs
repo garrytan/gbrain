@@ -81,12 +81,12 @@ fn days_before(env: &dyn Env, days: f64) -> i64 {
 
 /// One housekeeping `op_checkpoints` row: `completed_keys` and `updated_at`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HousekeepingRow {
-    completed_keys: Value,
-    updated_at_us: i64,
+pub(crate) struct HousekeepingRow {
+    pub(crate) completed_keys: Value,
+    pub(crate) updated_at_us: i64,
 }
 
-fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
+pub(crate) fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     if op.contains('\0') || fingerprint.contains('\0') {
         return Err(StoreError::invalid(
             "a housekeeping checkpoint key cannot contain NUL",

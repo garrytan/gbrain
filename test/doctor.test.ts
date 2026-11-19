@@ -501,11 +501,14 @@ describe('doctor command', () => {
       doctorTs.indexOf('// 11a-2. effective_date_health'),
     );
     expect(block.length).toBeGreaterThan(0);
-    expect(block).toContain('GROUP BY source_id');
-    expect(block).toContain("source_type = 'facts:absorb'");
+    // The grouped read is the typed engine member (lane 14); its SQL lives in engine-sql/doctor-checkpoints.ts.
+    expect(block).toContain('listFactsAbsorbFailureGroups');
+    const sql = surfaceFileSource('pglite-engine', 'src/core/engine-sql/doctor-checkpoints.ts');
+    expect(sql).toContain('GROUP BY source_id');
+    expect(sql).toContain("source_type = 'facts:absorb'");
     expect(block).toContain('facts.absorb_warn_threshold');
     // 24h window
-    expect(block).toMatch(/INTERVAL\s+'24\s*hours?'/i);
+    expect(sql).toMatch(/INTERVAL\s+'24\s*hours?'/i);
     // Pre-v47 fallback (column missing) reports skipped not warn
     expect(block).toContain("Skipped (ingest_log.source_id unavailable");
     // RLS deny gives a useful message
