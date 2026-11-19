@@ -17,13 +17,13 @@
  * `lockFactForWithdrawal` locks the claim, `queueWithdrawalReview` queues its overnight review,
  * `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions` and `readPageRevisions` move the changed pages' revisions,
  * `appendFactForgetReason` notes the reason, and `readFactWithdrawnRow` / `readFactWithdrawnBacking` read the
- * withdrawal a refused save met.
+ * withdrawal a refused save met. The lock and the two refusal reads are whole static texts from
+ * facts/withdrawal-statements.ts, passed as they are, because the refusal reads reuse placeholders.
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
-import { factWithdrawalSubjectSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
-import { remoteProvenanceFloorSql } from '../search/private-visibility.ts';
+import { FACT_WITHDRAWN_BACKING_SQL, FACT_WITHDRAWN_ROW_SQL, LOCK_FACT_FOR_WITHDRAWAL_FLOOR_SQL, LOCK_FACT_FOR_WITHDRAWAL_SQL } from '../facts/withdrawal-statements.ts';
 
 /** One claim of a fence: its row number, its text and its visibility. */
 export interface WithdrawalClaimRow { row_num: number; claim: string; visibility: string }
@@ -153,19 +153,9 @@ export interface FactWithdrawnSpec { sourceId: string; visibility: string; fact:
 /** The withdrawal a refusal names: its subject, visibility and time (timestamptz text). */
 export interface FactWithdrawnRow { subject: string; withdrawn_at: string; visibility: 'world' | 'private' }
 
-/**
- * GST-359 D: the facts a withdrawal admits besides world facts for a remote caller: an attested person's own
- * member-page fact (`memberPage`, positional $4; the caller checked it). Positional $3 is worldOnly.
- */
-function withdrawalAdmitSql(excludePrivate?: boolean): string {
-  return `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${excludePrivate ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`;
-}
-
 export async function lockFactForWithdrawal(exec: SqlExecutor, spec: WithdrawalLockSpec): Promise<WithdrawalLockRow | null> {
-  const admit = withdrawalAdmitSql(spec.remoteFloor);
-  const [row] = await exec.executeRaw<WithdrawalLockRow>(
-    `SELECT visibility,fact,${factWithdrawalSubjectSql('facts')} AS subject FROM facts WHERE id=$1 AND source_id=$2
-        ${admit} FOR UPDATE`, [spec.id, spec.sourceId, spec.worldOnly, spec.memberPage ?? null]);
+  const [row] = await exec.executeRaw<WithdrawalLockRow>(spec.remoteFloor ? LOCK_FACT_FOR_WITHDRAWAL_FLOOR_SQL : LOCK_FACT_FOR_WITHDRAWAL_SQL,
+    [spec.id, spec.sourceId, spec.worldOnly, spec.memberPage ?? null]);
   return row ?? null;
 }
 
@@ -193,31 +183,14 @@ export async function appendFactForgetReason(exec: SqlExecutor, id: number, sour
         WHERE id=$1 AND source_id=$2`, [id, sourceId, note]);
 }
 
-// GST-359 D: a member writing to its own member page sees that page's withdrawn rows.
-const seen = (param: number) => `(${remoteProvenanceFloorSql('f')} OR COALESCE(f.source_markdown_slug = $${param}::text, false))`;
-
 export async function readFactWithdrawnBacking(exec: LegacyUnscopedRead, spec: FactWithdrawnSpec): Promise<{ visible: boolean; hidden: boolean }> {
-  const [backing] = await exec.executeRaw<{ visible: boolean; hidden: boolean }>(`SELECT
-        COALESCE(bool_or(${seen(5)}), false) AS visible,
-        COALESCE(bool_or(NOT ${seen(5)}), false) AS hidden
-      FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND ${withdrawalReachedFactSql('w', 'f')}
-      WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
-        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`,
-  [spec.sourceId, spec.visibility, spec.fact, spec.entitySlug, spec.ownedPage]);
+  const [backing] = await exec.executeRaw<{ visible: boolean; hidden: boolean }>(FACT_WITHDRAWN_BACKING_SQL,
+    [spec.sourceId, spec.visibility, spec.fact, spec.entitySlug, spec.ownedPage]);
   return { visible: backing?.visible === true, hidden: backing?.hidden === true };
 }
 
 export async function readFactWithdrawnRow(exec: LegacyUnscopedRead, spec: FactWithdrawnSpec): Promise<FactWithdrawnRow | null> {
-  const [row] = await exec.executeRaw<FactWithdrawnRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
-    FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
-      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalReachedFactSql('w', 'f')}
-    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
-      AND (w.subject='*' OR w.subject=$4::text OR w.subject=$6::text)
-    GROUP BY w.subject,w.visibility,w.withdrawn_at
-    HAVING $5::boolean=false OR COALESCE(bool_or(${seen(6)}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
-    ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`,
-  [spec.sourceId, spec.visibility, spec.fact, spec.entitySlug, spec.excludePrivate === true, spec.ownedPage]);
+  const [row] = await exec.executeRaw<FactWithdrawnRow>(FACT_WITHDRAWN_ROW_SQL,
+    [spec.sourceId, spec.visibility, spec.fact, spec.entitySlug, spec.excludePrivate === true, spec.ownedPage]);
   return row ?? null;
 }
