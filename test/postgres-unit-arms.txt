@@ -157,6 +157,7 @@ test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/facts-conversation-sites.test.ts
+test/engine-parity/facts-cycle-sites.test.ts
 test/engine-parity/facts-cycle.test.ts
 test/engine-parity/facts-doctor.test.ts
 test/engine-parity/facts-purge.test.ts

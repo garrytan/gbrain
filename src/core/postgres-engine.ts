@@ -1217,6 +1217,40 @@ export class PostgresEngine implements BrainEngine {
   readFenceRowOccupant(sourceId: string, slug: string, rowNum: number) { return factsCycleImpl.readFenceRowOccupant(this.executeRaw.bind(this), sourceId, slug, rowNum); }
   listStoredFenceFactRows(sourceId: string, slug: string) { return factsCycleImpl.listStoredFenceFactRows(this.executeRaw.bind(this), sourceId, slug); }
   countWorldFacts(opts: factsCycleImpl.EntityFactCountOpts) { return factsCycleImpl.countWorldFacts(this.executeRaw.bind(this), opts); }
+  listPhantomFactRows(sourceId: string, slug: string) { return factsCycleImpl.listPhantomFactRows(this.executeRaw.bind(this), sourceId, slug); }
+  listCanonicalFenceRowNums(sourceId: string, slug: string) { return factsCycleImpl.listCanonicalFenceRowNums(this.executeRaw.bind(this), sourceId, slug); }
+  moveFactToPage(sourceId: string, id: number, slug: string, rowNum: number | null) { return factsCycleImpl.moveFactToPage(this.executeRaw.bind(this), sourceId, id, slug, rowNum); }
+  repointInboundLinks(phantomId: number, canonicalId: number) { return factsCycleImpl.repointInboundLinks(this.executeRaw.bind(this), phantomId, canonicalId); }
+  repointOutboundLinks(phantomId: number, canonicalId: number) { return factsCycleImpl.repointOutboundLinks(this.executeRaw.bind(this), phantomId, canonicalId); }
+  pageHasTimelineEntries(pageId: number | string | null) { return factsCycleImpl.pageHasTimelineEntries(this.executeRaw.bind(this), pageId); }
+  maxFenceRowNumOfPage(sourceId: string, slug: string) { return factsCycleImpl.maxFenceRowNumOfPage(this.executeRaw.bind(this), sourceId, slug); }
+  listRootPageSlugsAfter(sourceId: string, take: number, held: string[], after: string) { return factsCycleImpl.listRootPageSlugsAfter(this.executeRaw.bind(this), sourceId, take, held, after); }
+  listOwnLinkIds(pageId: number | string) { return factsCycleImpl.listOwnLinkIds(this.executeRaw.bind(this), pageId); }
+  listActiveFactIdsOfPage(sourceId: string, slug: string) { return factsCycleImpl.listActiveFactIdsOfPage(this.executeRaw.bind(this), sourceId, slug); }
+  listFactIdsStillOnPage(ids: number[], slug: string) { return factsCycleImpl.listFactIdsStillOnPage(this.executeRaw.bind(this), ids, slug); }
+  listLinkIdsOnPage(ids: number[], pageId: number | string) { return factsCycleImpl.listLinkIdsOnPage(this.executeRaw.bind(this), ids, pageId); }
+  readPageFileOrigin(sourceId: string, slug: string) { return factsCycleImpl.readPageFileOrigin(this.executeRaw.bind(this), sourceId, slug); }
+  listFenceRowClaims(sourceId: string, slug: string) { return factsCycleImpl.listFenceRowClaims(this.executeRaw.bind(this), sourceId, slug); }
+  adoptFactIntoFence(sourceId: string, id: string, rowNum: number, slug: string, fact: string) { return factsCycleImpl.adoptFactIntoFence(this.executeRaw.bind(this), sourceId, id, rowNum, slug, fact); }
+  listFenceRowSupersession(sourceId: string, slug: string) { return factsCycleImpl.listFenceRowSupersession(this.executeRaw.bind(this), sourceId, slug); }
+  setFactSupersededBy(sourceId: string, id: number | string, supersededBy: number | null) { return factsCycleImpl.setFactSupersededBy(this.executeRaw.bind(this), sourceId, id, supersededBy); }
+  listHeldWideningFactIds(sourceId: string, ids: number[]) { return factsCycleImpl.listHeldWideningFactIds(this.executeRaw.bind(this), sourceId, ids); }
+  expireFactInPlace(sourceId: string, id: number | string) { return factsCycleImpl.expireFactInPlace(this.executeRaw.bind(this), sourceId, id); }
+  expireAndDetachFact(sourceId: string, id: number | string) { return factsCycleImpl.expireAndDetachFact(this.executeRaw.bind(this), sourceId, id); }
+  updateFenceFactCells(sourceId: string, id: number | string, cells: factsCycleImpl.FenceFactCells) { return factsCycleImpl.updateFenceFactCells(this.executeRaw.bind(this), sourceId, id, cells); }
+  listExpirableFactIdsOfDeletedPage(sourceId: string, slug: string, pageId: number | null) { return factsCycleImpl.listExpirableFactIdsOfDeletedPage(this.executeRaw.bind(this), sourceId, slug, pageId); }
+  readDeletedPageBody(sourceId: string, slug: string) { return factsCycleImpl.readDeletedPageBody(this.executeRaw.bind(this), sourceId, slug); }
+  expireFactsByIds(sourceId: string, ids: number[]) { return factsCycleImpl.expireFactsByIds(this.executeRaw.bind(this), sourceId, ids); }
+  listOntologyObservationSlugs(sourceId: string) { return factsCycleImpl.listOntologyObservationSlugs(this.executeRaw.bind(this), sourceId); }
+  listDeletedPageSlugsWithActiveFacts(sourceId: string) { return factsCycleImpl.listDeletedPageSlugsWithActiveFacts(this.executeRaw.bind(this), sourceId); }
+  scanUnfencedFactRows(sourceId: string) { return factsCycleImpl.scanUnfencedFactRows(this.executeRaw.bind(this), sourceId); }
+  listHeldFactRows(sourceId: string, days: string) { return factsCycleImpl.listHeldFactRows(this.executeRaw.bind(this), sourceId, days); }
+  listFencedFactsOfMissingPages(sourceId: string) { return factsCycleImpl.listFencedFactsOfMissingPages(this.executeRaw.bind(this), sourceId); }
+  readFenceRowNumHint(sourceId: string, slug: string) { return factsCycleImpl.readFenceRowNumHint(this.executeRaw.bind(this), sourceId, slug); }
+  readSourceCheckoutPath(sourceId: string) { return factsCycleImpl.readSourceCheckoutPath(this.executeRaw.bind(this), sourceId); }
+  readLiveStoredBody(sourceId: string, slug: string, lock = false) { return factsCycleImpl.readLiveStoredBody(this.executeRaw.bind(this), sourceId, slug, lock); }
+  listPageStates(sourceId: string, slug: string) { return factsCycleImpl.listPageStates(this.executeRaw.bind(this), sourceId, slug); }
+  countSegmentedVersionsOfPage(sourceId: string, slug: string) { return factsCycleImpl.countSegmentedVersionsOfPage(this.executeRaw.bind(this), sourceId, slug); }
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts), through executeRaw as before.
 

@@ -3426,6 +3426,75 @@ export interface BrainEngine {
   listStoredFenceFactRows(sourceId: string, slug: string): Promise<FactsCycleSql.StoredFenceFactRow[]>;
   /** The entity card's exact active-fact count under its visibility, privacy and read eligibility. */
   countWorldFacts(opts: FactsCycleSql.EntityFactCountOpts): Promise<number>;
+  // Facts cycle, phantom redirect, fence and file-guard statements (engine-sql/facts-cycle.ts). Each runs the statement its caller ran through executeRaw.
+  /** Every facts row of a page coordinate (the phantom's rows to move), with its row number, no set order. */
+  listPhantomFactRows(sourceId: string, slug: string): Promise<FactsCycleSql.PhantomFactRow[]>;
+  /** The fence row numbers a page coordinate's facts already hold (no set order). */
+  listCanonicalFenceRowNums(sourceId: string, slug: string): Promise<Array<{ row_num: number }>>;
+  /** Points fact `id` at page `slug` under `rowNum`; a null `rowNum` leaves no fence row and expires the fact if it was not already expired. */
+  moveFactToPage(sourceId: string, id: number, slug: string, rowNum: number | null): Promise<void>;
+  /** Moves the links that point at `phantomId` onto `canonicalId`, skipping any the canonical page already has. */
+  repointInboundLinks(phantomId: number, canonicalId: number): Promise<void>;
+  /** Moves the links that start at `phantomId` onto `canonicalId`, skipping any the canonical page already has. */
+  repointOutboundLinks(phantomId: number, canonicalId: number): Promise<void>;
+  /** Whether page `pageId` (null: no page) has at least one timeline entry. */
+  pageHasTimelineEntries(pageId: number | string | null): Promise<boolean>;
+  /** The largest fence `row_num` of a page coordinate's facts, 0 for none (the phantom redirect's canonical-page read). */
+  maxFenceRowNumOfPage(sourceId: string, slug: string): Promise<number>;
+  /** The source's live root-level slugs past `after`, in slug order, leaving out `held`: at most `take` rows (page size plus one). */
+  listRootPageSlugsAfter(sourceId: string, take: number, held: string[], after: string): Promise<Array<{ slug: string }>>;
+  /** The ids of the links `pageId` itself owns (not derived from another page). */
+  listOwnLinkIds(pageId: number | string): Promise<Array<{ id: number }>>;
+  /** The ids of a page coordinate's unexpired facts. */
+  listActiveFactIdsOfPage(sourceId: string, slug: string): Promise<Array<{ id: number }>>;
+  /** Which of facts `ids` are unexpired and now sit on page `slug`. */
+  listFactIdsStillOnPage(ids: number[], slug: string): Promise<Array<{ id: number }>>;
+  /** Which of links `ids` now start at page `pageId`. */
+  listLinkIdsOnPage(ids: number[], pageId: number | string): Promise<Array<{ id: number }>>;
+  /** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page. */
+  readPageFileOrigin(sourceId: string, slug: string): Promise<FactsCycleSql.PageFileOrigin | null>;
+  /** The facts of a page coordinate that hold a fence row number, with their claim text and source (no set order). */
+  listFenceRowClaims(sourceId: string, slug: string): Promise<FactsCycleSql.FenceRowClaim[]>;
+  /** Gives unfenced fact `id` fence row `rowNum` on page `slug` with claim text `fact`; only a row that still has no fence row changes. */
+  adoptFactIntoFence(sourceId: string, id: string, rowNum: number, slug: string, fact: string): Promise<void>;
+  /** The facts of a page coordinate that hold a fence row number, with their expiry and supersession (no set order). */
+  listFenceRowSupersession(sourceId: string, slug: string): Promise<FactsCycleSql.FenceRowSupersession[]>;
+  /** Sets (or, with null, clears) fact `id`'s `superseded_by`. */
+  setFactSupersededBy(sourceId: string, id: number | string, supersededBy: number | null): Promise<void>;
+  /** Which of facts `ids` have a pending, rejected or undone trust proposal that holds back a visibility change. */
+  listHeldWideningFactIds(sourceId: string, ids: number[]): Promise<Array<{ id: number }>>;
+  /** Expires fact `id` where it stands (the fence row keeps its number). An already expired fact keeps its expiry time. */
+  expireFactInPlace(sourceId: string, id: number | string): Promise<void>;
+  /** Expires fact `id` and drops its fence row number. An already expired fact keeps its expiry time. */
+  expireAndDetachFact(sourceId: string, id: number | string): Promise<void>;
+  /** Writes a fence row's cells onto fact `id`. */
+  updateFenceFactCells(sourceId: string, id: number | string, cells: FactsCycleSql.FenceFactCells): Promise<void>;
+  /** The unexpired fence rows of a page coordinate whose page is soft-deleted (and, when `pageId` is given, is that page id). */
+  listExpirableFactIdsOfDeletedPage(sourceId: string, slug: string, pageId: number | null): Promise<Array<{ id: number }>>;
+  /** The newest soft-deleted page of a coordinate's stored body, or null for none. */
+  readDeletedPageBody(sourceId: string, slug: string): Promise<FactsCycleSql.DeletedPageBodyRow | null>;
+  /** Expires the still-unexpired facts among `ids`; the ids it expired. */
+  expireFactsByIds(sourceId: string, ids: number[]): Promise<Array<{ id: number }>>;
+  /** The page slugs (no `/`) that still hold an unexpired ontology observation. */
+  listOntologyObservationSlugs(sourceId: string): Promise<Array<{ slug: string }>>;
+  /** The soft-deleted pages of the source that still have unexpired fence rows, in slug order. */
+  listDeletedPageSlugsWithActiveFacts(sourceId: string): Promise<Array<{ slug: string }>>;
+  /** The source's unexpired facts with no fence row, by entity slug (null first) then id, with page-existence flags. */
+  scanUnfencedFactRows(sourceId: string): Promise<FactsCycleSql.UnfencedScanRow[]>;
+  /** The source's unexpired fence rows on a holding page (any folder depth) that name another entity, by entity slug then id; `days` is the age cutoff as text. */
+  listHeldFactRows(sourceId: string, days: string): Promise<FactsCycleSql.HeldFactRow[]>;
+  /** The source's fenced, unexpired facts whose page is missing or soft-deleted, by id, with the page slug they sit on. */
+  listFencedFactsOfMissingPages(sourceId: string): Promise<Array<{ id: number; slug: string }>>;
+  /** The largest fence `row_num` of a page coordinate's facts, 0 for none (the fence writer's numbering hint; the caller handles a failed read). */
+  readFenceRowNumHint(sourceId: string, slug: string): Promise<number>;
+  /** The source's checkout path, or null when the source is unknown or has none. */
+  readSourceCheckoutPath(sourceId: string): Promise<string | null>;
+  /** The live page's stored body, or null for no live page. `lock` takes the row lock (inside a transaction). */
+  readLiveStoredBody(sourceId: string, slug: string, lock?: boolean): Promise<FactsCycleSql.StoredBodyRow | null>;
+  /** The live page's state, then its 20 newest page_versions rows that hold a body, newest first. */
+  listPageStates(sourceId: string, slug: string): Promise<FactsCycleSql.PageStateRow[]>;
+  /** How many of a page's versions keep their body in segments. */
+  countSegmentedVersionsOfPage(sourceId: string, slug: string): Promise<number>;
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
 

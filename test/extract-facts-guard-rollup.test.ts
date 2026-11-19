@@ -35,6 +35,9 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
     // The legacy-pending count and the unfenced-row read moved off executeRaw onto typed members; they answer what the executeRaw stub answered.
     async countLegacyFactsPending() { return [{ n: String(legacyCount) }]; },
     async listUnfencedFactRows() { return []; },
+    // The ontology-hold and deleted-page reads moved off executeRaw onto typed members; the raw stub answered both with no rows.
+    async listOntologyObservationSlugs() { return []; },
+    async listDeletedPageSlugsWithActiveFacts() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

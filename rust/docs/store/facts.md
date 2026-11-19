@@ -633,6 +633,80 @@ the store would need:
 | `factRelinkAttemptsTableExists`, `readReextractOutcomeRow` | The memo: whether the relink attempts table exists, and the outcome row of a page with its content hash. | The relink attempts table, which the store does not hold. |
 | `listUnbackedConversationRows`, `listUnlinkedConversationRows`, `listClearedRelinkedFacts`, `countEmbeddedFactsAmong` | Relink reads: active facts naming no page, active facts with no link, expired relinked facts whose entity page is live, and how many named facts hold an embedding. | Facts with visibility, attribution and embedding presence, and live pages by slug. |
 
+## Facts cycle, phantom redirect and fence-guard statements (`engine-sql/facts-cycle.ts`, item 4.2)
+
+Thirty-four members replace the 37 `executeRaw` sites of eight files. Each runs the statement its caller ran at base
+`5e22f0c134`, with the same text and parameters (`test/facts-cycle-sites-sql-pin.test.ts` pins both). The Rust engine refuses
+each of them with `engine_capability_missing` naming the member until the store serves it
+(`test/engine-parity/facts-cycle-sites.test.ts` is the parity arm). Three members serve two callers each, so 37 sites are
+34 members. Data the store needs, by caller:
+
+`cycle/phantom-redirect.ts`
+- `listPhantomFactRows(sourceId, slug)` (`movePhantomFacts`): `id` and `row_num` of every fact on the coordinate, no set order.
+- `listCanonicalFenceRowNums(sourceId, slug)` (`movePhantomFacts`): the `row_num` values the coordinate's facts hold, nulls left out.
+- `moveFactToPage(sourceId, id, slug, rowNum)` (`movePhantomFacts`): sets `entity_slug`, `source_markdown_slug` and `row_num`; a null
+  `rowNum` sets `expired_at` to now unless the fact already expired. The facts by-page index and the purge guard apply.
+- `repointInboundLinks(phantomId, canonicalId)` and `repointOutboundLinks(phantomId, canonicalId)` (`mergePhantomLinks`): move
+  `links.to_page_id` or `links.from_page_id`, skipping a row the canonical page already has with the same `link_type`,
+  `link_source` and `origin_page_id` (nulls equal) and a self link. Needs the links table and its identity key.
+- `pageHasTimelineEntries(pageId)` (`phantomHasResidue`, and `preparePhantomDelete` in `phantom-redirect-managed.ts`): whether the
+  page has one timeline entry; a null page id has none.
+- `maxFenceRowNumOfPage(sourceId, slug)` (`tryRedirectPhantom`, and `redirectManagedPhantom` in `phantom-redirect-managed.ts`):
+  the largest `row_num` of the coordinate's facts, 0 for none.
+- `listRootPageSlugsAfter(sourceId, take, held, after)` (`runPhantomRedirectPass`): live pages of the source with no `/` in the slug,
+  not in `held`, past `after`, in byte order of slug, at most `take`. Needs the pages slug index.
+
+`cycle/phantom-redirect-managed.ts` (`preparePhantomMerge`)
+- `listOwnLinkIds(pageId)`: ids of links the page starts and owns (`origin_page_id` null).
+- `listActiveFactIdsOfPage(sourceId, slug)`: ids of the coordinate's unexpired facts.
+- `listFactIdsStillOnPage(ids, slug)`: which of the ids are unexpired and sit on the slug.
+- `listLinkIdsOnPage(ids, pageId)`: which of the link ids start at the page.
+
+`facts/unfenced-facts.ts`
+- `readPageFileOrigin(sourceId, slug)` (`databaseOnlyPlacement`, and `heldUnmovable` in `facts-home.ts`): `source_path` and
+  `source_uri` of the live page, or none. Needs the page's file origin columns.
+- `listFenceRowClaims(sourceId, slug)` (`planFence`): `row_num`, `fact` and `source` of the coordinate's fenced facts, no set order.
+- `adoptFactIntoFence(sourceId, id, rowNum, slug, fact)` (`fenceFilePage`): sets `row_num`, `source_markdown_slug` and `fact` of one
+  fact that still has no `row_num`; any other fact is left alone. The id arrives as text.
+
+`cycle/extract-facts.ts`
+- `listFenceRowSupersession(sourceId, slug)` (`syncSupersession`): `id`, `row_num`, `expired_at` and `superseded_by` of the
+  coordinate's fenced facts, no set order.
+- `setFactSupersededBy(sourceId, id, supersededBy)` (`syncSupersession`): sets or clears `superseded_by`.
+- `listHeldWideningFactIds(sourceId, ids)` (`planFenceReconcile`): ids with a `pending`, `rejected` or `undone` `supersede_fact` or
+  `confirm` proposal on the facts table whose before state has a `visibility` key (the same rule as `held_narrower` above).
+- `expireFactInPlace`, `expireAndDetachFact`, `updateFenceFactCells` (`writeFenceReconcile`): expiry that keeps an existing
+  `expired_at`; the same and `row_num` cleared; and one row's cells written (`valid_from` kept when null, `valid_until` kept unless
+  `setValidUntil`, `expired_at` cleared when null, else kept if set).
+- `listExpirableFactIdsOfDeletedPage(sourceId, slug, pageId)`, `readDeletedPageBody(sourceId, slug)`,
+  `expireFactsByIds(sourceId, ids)` (`expireDeletedPageFacts`): unexpired fenced fact ids whose page is soft-deleted (and is the
+  given id when one is given); the newest soft-deleted page's `compiled_truth`, `timeline` and `body_storage`; and the ids it
+  expired among those still unexpired, at one `now()`.
+- `listOntologyObservationSlugs(sourceId)` (`runExtractFacts`): distinct slugs (no `/`) of unexpired facts with a `dimension`.
+- `listDeletedPageSlugsWithActiveFacts(sourceId)` (`deletedPagesWithActiveFacts`): distinct slugs of unexpired fenced facts whose
+  page is soft-deleted, in byte order.
+
+`facts/facts-home.ts` (`scanFactsHome`)
+- `scanUnfencedFactRows(sourceId)`: the unexpired facts with no `row_num`, in entity slug (null first) then id order, with the
+  columns the repair adopts, `dimension`, `page_exists` and `page_deleted`.
+- `listHeldFactRows(sourceId, days)`: unexpired fenced facts on a holding page (`memory/unattributed` at any depth) that name
+  another entity, with `from_slug`, `held_since` (`created_at` as UTC `YYYY-MM-DDTHH:MM:SSZ`) and `old` (older than `days`).
+- `listFencedFactsOfMissingPages(sourceId)`: unexpired fenced facts whose live page is missing, by id.
+
+`facts/fence-write.ts`
+- `readFenceRowNumHint(sourceId, slug)` (`writeFactsToFence`): the largest `row_num` of the coordinate, 0 for none. The caller keeps
+  its `try`/`catch` around it.
+- `readSourceCheckoutPath(sourceId)` (`lookupSourceLocalPath`): `sources.local_path`, none for an unknown source.
+
+`facts/file-body-guard.ts`
+- `readLiveStoredBody(sourceId, slug, lock)` (`readStoredBody`): the live page's `compiled_truth` and `timeline`; `lock` is the row
+  lock the engine's transaction holds. A segmented page reads null columns.
+- `listPageStates(sourceId, slug)` (`replaceableFile`): the page row's body, frontmatter, title, type and tags, then the 20 newest
+  `page_versions` rows that hold a body, newest first.
+
+`facts/fence-fact-append.ts`
+- `countSegmentedVersionsOfPage(sourceId, slug)` (`heldRowsInVersions`): how many of the page's versions are `segmented`.
+
 ## Not modeled
 
 The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
