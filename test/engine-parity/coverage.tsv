@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 653/653
+# covered: 654/654
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -53,7 +53,7 @@
 # eval_capture: 5/5
 # salience_enrich: 6/6
 # trust: 15/15
-# open_loops: 3/3
+# open_loops: 4/4
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 15/15
@@ -632,9 +632,10 @@ upsertWriteGateHold	trust	yes	3	no	yes	yes	serves
 listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	3	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	5	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	5	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	6	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	6	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
+readEntityOpenLoops	open_loops	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

@@ -3,7 +3,7 @@
  * typed `engine_capability_missing` refusal refuses the whole card. It never answers with that part of the card empty
  * (no aliases, no edges, no coverage), which would be a wrong answer. Other read errors keep their fail-soft fallback.
  *
- * The engine here is PGLite with one member or one raw statement swapped for the refusal, the way the Rust engine
+ * The engine here is PGLite with one member (or the one remaining raw statement) swapped for the refusal, the way the Rust engine
  * refuses a member it does not serve. Synthetic data only.
  */
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -32,6 +32,7 @@ beforeEach(async () => {
     { title: 'Alice Example', type: 'person', compiled_truth: 'Alice Example, a founder at acme-example.', frontmatter: { aliases: ['alice'] } });
   await engine.putPage('companies/acme-example', { title: 'Acme Example', type: 'company', compiled_truth: 'A company.' });
   await engine.addLink('people/alice-example', 'companies/acme-example', 'founder', 'works_at');
+  await engine.setPageAliases('people/alice-example', 'default', ['alice']);
 });
 
 /** `engine` with raw statements that match `sqlMatch`, or the member `member`, refused the way the Rust engine refuses. */
@@ -54,9 +55,9 @@ function refusing(opts: { sqlMatch?: RegExp; member?: keyof BrainEngine; error?:
 }
 
 const CASES: Array<[string, Parameters<typeof refusing>[0]]> = [
-  ['the alias read (readAka)', { sqlMatch: /FROM page_aliases WHERE source_id = \$1 AND slug = \$2/ }],
-  ['the inbound edge read', { sqlMatch: /SELECT f\.slug AS from_slug/ }],
-  ['the open-loop read', { sqlMatch: /FROM open_loops/ }],
+  ['the alias member (readEntityAliasRows)', { member: 'readEntityAliasRows' }],
+  ['the inbound edge member (readEntityInboundEdges)', { member: 'readEntityInboundEdges' }],
+  ['the open-loop member (readEntityOpenLoops)', { member: 'readEntityOpenLoops' }],
   ['the mention coverage read', { sqlMatch: /FROM mention_index_status/ }],
   ['the outbound link member (getLinks)', { member: 'getLinks' }],
   ['the timeline member (getTimeline)', { member: 'getTimeline' }],
@@ -68,6 +69,7 @@ describe('buildEntityCard refuses the whole card when a later read refuses', () 
     expect(res.found).toBe(true);
     expect(res.card!.edges.map(e => `${e.direction}:${e.type}:${e.slug}`)).toEqual(['out:works_at:companies/acme-example']);
     expect(res.card!.coverage).toBeDefined();
+    expect(res.card!.aka).toContain('alice');
   });
 
   for (const [what, opts] of CASES) {
@@ -79,7 +81,7 @@ describe('buildEntityCard refuses the whole card when a later read refuses', () 
   }
 
   test('an untyped read error keeps the fail-soft fallback: the card answers without aliases', async () => {
-    const res = await buildEntityCard(refusing({ sqlMatch: /FROM page_aliases WHERE source_id = \$1 AND slug = \$2/, error: new Error('relation "page_aliases" does not exist') }),
+    const res = await buildEntityCard(refusing({ member: 'readEntityAliasRows', error: new Error('relation "page_aliases" does not exist') }),
       'default', 'Alice Example', { remote: false, includeReferences: true });
     expect(res.found).toBe(true);
     expect(res.card!.aka).toEqual([]);

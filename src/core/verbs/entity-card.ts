@@ -675,22 +675,7 @@ async function assembleCard(
     // (summaries derive from private mail, often another source), so a
     // world-only card never reads them; open_loops serves remote callers
     // inside their grant.
-    const loopRows = remote ? [] : await engine.executeRaw<{
-      id: number;
-      loop_type: string;
-      summary: string;
-      due_at: string | null;
-      last_activity_at: string;
-      fact_id: number | null;
-    }>(
-      `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
-       FROM open_loops
-       WHERE status = 'open' AND counterparty_slug = $1
-         AND COALESCE(counterparty_source_id, source_id) = $2
-       ORDER BY last_activity_at DESC
-       LIMIT ${OPEN_THREADS_CAP}`,
-      [pageSlug, sourceId],
-    );
+    const loopRows = remote ? [] : await engine.readEntityOpenLoops(pageSlug, sourceId, OPEN_THREADS_CAP);
     for (const l of loopRows) {
       if (l.fact_id !== null) loopFactIds.add(Number(l.fact_id));
       const direction: EntityOpenThread['direction'] =

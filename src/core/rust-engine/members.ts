@@ -508,6 +508,7 @@ export const RUST_ENGINE_MEMBERS = {
   // open loops (engine-sql/open-loops.ts)
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',
+  readEntityOpenLoops: 'facts',
   closeOpenLoop: 'facts',
   // persistence_journal
   readManagedModeRows: 'persistence_journal',

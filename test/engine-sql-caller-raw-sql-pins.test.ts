@@ -139,6 +139,16 @@ const PINS: Pin[] = [
           ORDER BY l.id`],
   })),
   {
+    from: 'src/core/verbs/entity-card.ts:691 assembleCard open loops',
+    case: { method: 'readEntityOpenLoops', variant: 'default', run: e => e.readEntityOpenLoops('people/alice-example', 'default', 3) },
+    texts: [`SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+       FROM open_loops
+       WHERE status = 'open' AND counterparty_slug = $1
+         AND COALESCE(counterparty_source_id, source_id) = $2
+       ORDER BY last_activity_at DESC
+       LIMIT 3`],
+  },
+  {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
     texts: [`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true')) AS present`],

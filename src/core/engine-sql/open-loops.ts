@@ -106,6 +106,34 @@ export async function closeOpenLoop(
   return rows[0] ?? null;
 }
 
+/** An open loop on an entity card, as `readEntityOpenLoops` returns it (times are Dates on the SQL engines). */
+export interface EntityOpenLoopRow {
+  id: number;
+  loop_type: string;
+  summary: string;
+  due_at: Date | string | null;
+  last_activity_at: Date | string;
+  fact_id: number | null;
+}
+
+/**
+ * entity-card.ts assembleCard's open-loop read: the open loops whose counterparty page is (sourceId, slug), a row with
+ * no counterparty source counting as its own source's, newest activity first, at most `limit`. Same text and
+ * parameters the caller ran; `limit` is the integer literal it interpolated.
+ */
+export async function readEntityOpenLoops(exec: LegacyUnscopedRead, slug: string, sourceId: string, limit: number): Promise<EntityOpenLoopRow[]> {
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error(`readEntityOpenLoops: limit must be a positive integer, got ${limit}`);
+  return exec.executeRaw<EntityOpenLoopRow>(
+    `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+       FROM open_loops
+       WHERE status = 'open' AND counterparty_slug = $1
+         AND COALESCE(counterparty_source_id, source_id) = $2
+       ORDER BY last_activity_at DESC
+       LIMIT ${limit}`,
+    [slug, sourceId],
+  );
+}
+
 export async function listOpenLoops(exec: LegacyUnscopedRead, opts: ListLoopsOpts = {}): Promise<OpenLoopDbRow[]> {
   // The clamped limit binds as `$7`; a fraction rounds as the `LIMIT ${n}` literal it replaces did.
   const limit = Math.round(Math.min(Math.max(opts.limit ?? 200, 1), 1000));
