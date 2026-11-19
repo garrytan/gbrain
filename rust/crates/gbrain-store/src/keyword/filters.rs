@@ -114,6 +114,42 @@ pub(super) struct Bound {
     inclusive: bool,
 }
 
+/// A read's parsed `afterDate` and `beforeDate`. A page is dated by its `effective_date`, else its
+/// `updated_at` (the SQL's `created_at` arm is never reached: a page row always has `updated_at`).
+pub(crate) struct DateWindow {
+    after: Option<Bound>,
+    before: Option<Bound>,
+}
+
+impl DateWindow {
+    pub(crate) fn parse(after: Option<&DateBound>, before: Option<&DateBound>) -> Result<Self> {
+        Ok(Self {
+            after: Bound::parse(after, "afterDate")?,
+            before: Bound::parse(before, "beforeDate")?,
+        })
+    }
+
+    /// `dateBound('>' | '>=', afterDate)` and `dateBound('<' | '<=', beforeDate)`.
+    pub(crate) fn admits(&self, page: &PageRecord) -> bool {
+        let dated = page.effective_date_us.unwrap_or(page.updated_at_us);
+        let after = self.after.as_ref().is_none_or(|b| {
+            if b.inclusive {
+                dated >= b.micros
+            } else {
+                dated > b.micros
+            }
+        });
+        let before = self.before.as_ref().is_none_or(|b| {
+            if b.inclusive {
+                dated <= b.micros
+            } else {
+                dated < b.micros
+            }
+        });
+        after && before
+    }
+}
+
 impl Bound {
     pub(super) fn parse(bound: Option<&DateBound>, what: &str) -> Result<Option<Self>> {
         bound
@@ -151,8 +187,7 @@ fn trust_floor(o: &KeywordOptions) -> Result<Option<TrustTier>> {
 /// The page-level predicates, with the source table read once per source.
 pub(super) struct PageFilter<'a> {
     options: &'a KeywordOptions,
-    after: Option<Bound>,
-    before: Option<Bound>,
+    dates: DateWindow,
     live_sources: HashMap<String, bool>,
     /// The owner-only sources, read on the first page `exclude_private` judges.
     owner_only: Option<OwnerOnlySources>,
@@ -162,8 +197,7 @@ impl<'a> PageFilter<'a> {
     pub(super) fn new(options: &'a KeywordOptions) -> Result<Self> {
         Ok(Self {
             options,
-            after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
-            before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
+            dates: DateWindow::parse(options.after_date.as_ref(), options.before_date.as_ref())?,
             live_sources: HashMap::new(),
             owner_only: None,
         })
@@ -209,20 +243,7 @@ impl<'a> PageFilter<'a> {
         {
             return Ok(false);
         }
-        let dated = page.effective_date_us.unwrap_or(page.updated_at_us);
-        if self.after.as_ref().is_some_and(|b| {
-            if b.inclusive {
-                dated < b.micros
-            } else {
-                dated <= b.micros
-            }
-        }) || self.before.as_ref().is_some_and(|b| {
-            if b.inclusive {
-                dated > b.micros
-            } else {
-                dated >= b.micros
-            }
-        }) {
+        if !self.dates.admits(page) {
             return Ok(false);
         }
         // `JOIN sources s ... AND NOT s.archived`: a page whose source row is gone drops too.

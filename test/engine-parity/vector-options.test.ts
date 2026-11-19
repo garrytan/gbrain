@@ -1,16 +1,19 @@
 /**
  * BrainEngine parity — the page filters `searchVector` takes beside type, slug and source scope: the frontmatter
- * `where` filter.
+ * `where` filter and the `afterDate` / `beforeDate` bounds.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `searchVector` drops the pages a filter rejects inside its candidate scan, before it ranks and before
  *    LIMIT (`buildVectorSearchStatement`, search/vector-statement.ts): `where` keeps a page whose top-level frontmatter
  *    field equals one of a key's values or is a list holding one, with a numeric or boolean reading of a string value
- *    (`frontmatterWhereClauses`). Every engine arm returns the same rows and scores.
+ *    (`frontmatterWhereClauses`). A date bound compares the page's `effective_date`, else its `updated_at`, with the
+ *    bound read as `timestamptz`, strictly unless its `*Inclusive` flag is set. Every engine arm returns the same rows
+ *    and scores.
  *  - Regression: an engine that refuses the option, ignores it, applies it after LIMIT (a limited read comes back
- *    short), misses list containment or the numeric and boolean readings, or ORs two keys.
- *  - Why existing coverage misses it: search.test.ts passes `where` to the keyword members and to hybrid search only;
- *    no case passes it to `searchVector`, so the Rust arm's refusal of it never ran.
+ *    short), misses list containment or the numeric and boolean readings, ORs two keys, compares a bound off by its
+ *    inclusive flag or its zone, or drops an undated page instead of reading its `updated_at`.
+ *  - Why existing coverage misses it: search.test.ts passes `where` and the date bounds to the keyword members and to
+ *    hybrid search only; no case passes them to `searchVector`, so the Rust arm's refusal of them never ran.
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
@@ -93,6 +96,54 @@ describe('engine parity: searchVector page filters', () => {
       expect(slugs(out.bothKeys)).toEqual(['notes/ranked']);
       expect(out.noMatch).toEqual([]);
       expect(slugs(out.typed)).toEqual(['notes/draft']);
+      return out;
+    },
+  );
+
+  parityTest(
+    'searchVector applies the date bounds before it ranks and limits',
+    { methods: ['putPage', 'sealChunks', 'searchVector'] },
+    async (engine) => {
+      const on = (iso: string): Partial<PageInput> => ({ effective_date: new Date(iso), effective_date_source: 'date' });
+      // `undated` has no effective date, so its `updated_at` (the seed time) dates it.
+      await seedRanked(engine, [
+        ['late', on('2026-05-10T12:00:00Z')],
+        ['undated', {}],
+        ['edge', on('2026-02-01T00:00:00Z')],
+        ['early', on('2026-01-15T00:00:00.123Z')],
+        ['old', on('2019-07-04T00:00:00Z')],
+      ]);
+      const out = {
+        all: await search(engine, {}),
+        after: await search(engine, { afterDate: '2026-02-01' }),
+        afterInclusive: await search(engine, { afterDate: '2026-02-01', afterDateInclusive: true }),
+        afterZoned: await search(engine, { afterDate: '2026-02-01T08:00:00+08:00', afterDateInclusive: true }),
+        afterFirst: await search(engine, { limit: 1, afterDate: '2026-02-01', afterDateInclusive: true, exclude_slugs: ['notes/late', 'notes/undated'] }),
+        before: await search(engine, { beforeDate: '2026-02-01' }),
+        beforeInclusive: await search(engine, { beforeDate: '2026-02-01', beforeDateInclusive: true }),
+        beforeFraction: await search(engine, { beforeDate: '2026-01-15T00:00:00.123Z', beforeDateInclusive: true }),
+        beforeFractionStrict: await search(engine, { beforeDate: '2026-01-15T00:00:00.123Z' }),
+        window: await search(engine, { afterDate: '2020-01-01', beforeDate: '2026-03-01' }),
+        windowPaged: await search(engine, { limit: 1, offset: 1, afterDate: '2020-01-01', beforeDate: '2026-03-01' }),
+        undatedAfter: await search(engine, { afterDate: '2000-01-01', types: ['note'], where: {} }),
+        undatedBefore: await search(engine, { beforeDate: '2000-01-01' }),
+        inclusiveAlone: await search(engine, { afterDateInclusive: true, beforeDateInclusive: true }),
+      };
+      const slugs = (rows: string[]) => rows.map((r) => r.split(':')[0]);
+      expect(out.all.length).toBe(5);
+      expect(slugs(out.after)).toEqual(['notes/late', 'notes/undated']);
+      expect(slugs(out.afterInclusive)).toEqual(['notes/late', 'notes/undated', 'notes/edge']);
+      expect(out.afterZoned).toEqual(out.afterInclusive);
+      expect(slugs(out.afterFirst)).toEqual(['notes/edge']);
+      expect(slugs(out.before)).toEqual(['notes/early', 'notes/old']);
+      expect(slugs(out.beforeInclusive)).toEqual(['notes/edge', 'notes/early', 'notes/old']);
+      expect(slugs(out.beforeFraction)).toEqual(['notes/early', 'notes/old']);
+      expect(slugs(out.beforeFractionStrict)).toEqual(['notes/old']);
+      expect(slugs(out.window)).toEqual(['notes/edge', 'notes/early']);
+      expect(slugs(out.windowPaged)).toEqual(['notes/early']);
+      expect(out.undatedAfter).toEqual(out.all);
+      expect(out.undatedBefore).toEqual([]);
+      expect(out.inclusiveAlone).toEqual(out.all);
       return out;
     },
   );

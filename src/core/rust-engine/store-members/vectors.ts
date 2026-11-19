@@ -19,25 +19,24 @@ import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
-import { whereFields } from './search-filters.ts';
+import { dateMicros, whereFields } from './search-filters.ts';
 
 /** The `SearchOpts` keys the vector statement reads and the store applies. */
 const VECTOR_FILTERS = [
   'limit', 'offset', 'type', 'types', 'exclude_slugs', 'exclude_slug_prefixes', 'include_slug_prefixes', 'detail',
   'language', 'symbolKind', 'sourceId', 'sourceIds', 'source_boosts', 'embeddingColumn', 'requireSafeChunks', 'excludePrivate',
-  'where',
+  'where', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive',
 ] as const;
 
 /**
  * Keys the vector statement never reads, or reads only to steer its HNSW candidate pool (`vectorLegacyGuard`,
- * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. A date bound's `*Inclusive` flag does
- * nothing without the bound. `afterDate`, `beforeDate`, `minTrust` and `suppressFlagged` are absent: the store
- * applies none of them, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
+ * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. `minTrust` and `suppressFlagged` are
+ * absent: the store applies neither, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
  */
 const VECTOR_IGNORED = [
   'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
   'autocut', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'keywordPhrase',
-  'afterDateInclusive', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since', 'until', 'tokenBudget',
+  'recencyBoost', 'salience', 'recency', 'since', 'until', 'tokenBudget',
   'useCache', 'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals', 'relationalRetrieval',
   'relationalRetrievalDepth', 'relationalRerankPin', 'relationalPlanner', 'relationalOrientOneHop',
   'relationalChainSlots', 'takesHoldersAllowList',
@@ -47,7 +46,7 @@ const VECTOR_IGNORED = [
 const TAKES_IGNORED = [
   'minTrust', 'suppressFlagged', 'requireSafeChunks', 'offset', 'type', 'types', 'where', 'exclude_slugs',
   'exclude_slug_prefixes', 'source_boosts', 'include_slug_prefixes', 'detail', 'language', 'symbolKind',
-  'embeddingColumn', 'afterDate', 'beforeDate', ...VECTOR_IGNORED.filter((key) => key !== 'takesHoldersAllowList'),
+  'embeddingColumn', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', ...VECTOR_IGNORED.filter((key) => key !== 'takesHoldersAllowList'),
 ] as const;
 
 /** The SQL module's source filter: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope. */
@@ -104,6 +103,9 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     exclude_slugs: o.exclude_slugs?.length ? o.exclude_slugs : null,
     // `frontmatterWhereClauses`: an absent or empty `where` adds no clause.
     where: o.where ? whereFields('searchVector', o.where) : [],
+    // `dateBound`: a truthy bound read as `timestamptz`, strict unless its `*Inclusive` flag is set.
+    after_date: o.afterDate ? { micros: dateMicros('searchVector', o.afterDate), inclusive: Boolean(o.afterDateInclusive) } : null,
+    before_date: o.beforeDate ? { micros: dateMicros('searchVector', o.beforeDate), inclusive: Boolean(o.beforeDateInclusive) } : null,
     hard_excludes: resolveHardExcludes(o.exclude_slug_prefixes, o.include_slug_prefixes),
     detail: o.detail === 'low' ? 'low' : null,
     language: o.language || null,

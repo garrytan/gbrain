@@ -68,9 +68,13 @@ the shape `searchTakes` returns, with the cosine as `score`.
   values or is a list holding one (`frontmatterWhereClauses`). The TypeScript member sends a string's numeric and
   boolean readings beside it (`search-filters.ts` `whereFields`), as the keyword members do. The filter applies per
   page before ranking, so a limit counts only kept pages. An absent or empty `where` keeps every page.
-- **Refused options.** The store applies neither `afterDate`, `beforeDate`, `minTrust` nor
-  `suppressFlagged`, so a set one refuses with `engine_capability_missing` and nothing runs, even beside
-  `excludePrivate`. `searchTakesVector` refuses `excludePrivate`,
+- **`afterDate` / `beforeDate`.** A page is dated by its `effective_date`, else its `updated_at` (a store page
+  always has one, so the SQL's `created_at` arm never applies). A bound is strict unless its `*Inclusive` flag is
+  set. The TypeScript member reads the bound as `$n::text::timestamptz` does under UTC (`search-filters.ts`
+  `dateMicros`), for the ISO shapes; any other shape refuses with `engine_capability_missing`. The bounds apply per
+  page before ranking, as the keyword members' do (`keyword::DateWindow`).
+- **Refused options.** The store applies neither `minTrust` nor `suppressFlagged`, so a set one refuses with
+  `engine_capability_missing` and nothing runs, even beside `excludePrivate`. `searchTakesVector` refuses `excludePrivate`,
   `eligibility.floor` and `eligibility.suppressFlagged` the same way.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain

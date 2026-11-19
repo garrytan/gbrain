@@ -62,8 +62,8 @@ mod tsearch;
 mod vector_cache;
 mod walk;
 
-pub(crate) use filters::frontmatter_holds;
 pub use filters::{AfterKey, DateBound, KeywordOptions};
+pub(crate) use filters::{DateWindow, frontmatter_holds};
 pub(crate) use index::read_state as read_index_state;
 pub(crate) use index_build::{
     Builder, build_batch, open_index, reset as reset_index, seed_complete as seed_complete_index,

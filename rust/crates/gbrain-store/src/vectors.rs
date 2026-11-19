@@ -29,7 +29,7 @@ use crate::embeddings::{
 };
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::keyword::frontmatter_holds;
+use crate::keyword::{DateBound, DateWindow, frontmatter_holds};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
@@ -93,6 +93,10 @@ pub struct VectorSearchOptions {
     /// equals one of its values or is a list holding one (`keyword::frontmatter_holds`).
     #[serde(rename = "where")]
     pub where_fields: Vec<(String, Vec<Value>)>,
+    /// `afterDate` / `beforeDate` with their `*Inclusive` flags, the bound in UTC microseconds
+    /// (`search-filters.ts` `dateMicros`).
+    pub after_date: Option<DateBound>,
+    pub before_date: Option<DateBound>,
     /// `resolveHardExcludes(exclude_slug_prefixes, include_slug_prefixes)`. Absent: the defaults.
     pub hard_excludes: Option<Vec<String>>,
     pub detail: Option<String>,
@@ -381,12 +385,33 @@ fn source_factor(page: &PageRecord, factors: &[(String, f64)]) -> f64 {
         .map_or(1.0, |(_, factor)| *factor)
 }
 
+/// The page filters of a read parsed once before the scan.
+struct ScanBounds {
+    hard_excludes: Vec<String>,
+    dates: DateWindow,
+}
+
+impl ScanBounds {
+    fn parse(options: &VectorSearchOptions) -> Result<Self> {
+        let hard_excludes = options.hard_excludes.clone().unwrap_or_else(|| {
+            DEFAULT_HARD_EXCLUDES
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        });
+        Ok(Self {
+            hard_excludes,
+            dates: DateWindow::parse(options.after_date.as_ref(), options.before_date.as_ref())?,
+        })
+    }
+}
+
 /// The page-level filters of the scan; `archived` caches each source's archive flag.
 fn page_passes(
     read: &dyn KvRead,
     page: &PageRecord,
     options: &VectorSearchOptions,
-    hard_excludes: &[String],
+    bounds: &ScanBounds,
     archived: &mut HashMap<String, bool>,
     owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
@@ -409,7 +434,9 @@ fn page_passes(
             .exclude_slugs
             .as_ref()
             .is_some_and(|slugs| slugs.contains(&page.slug))
-        || hard_excludes
+        || !bounds.dates.admits(page)
+        || bounds
+            .hard_excludes
             .iter()
             .any(|p| !p.is_empty() && page.slug.starts_with(p.as_str()))
         || options
@@ -502,12 +529,7 @@ fn search_chunks(
     let limit = options.limit.unwrap_or(DEFAULT_VECTOR_LIMIT);
     let offset = resolve_offset(&options.offset, limit)?;
     let limit = limit as usize;
-    let hard_excludes: Vec<String> = options.hard_excludes.clone().unwrap_or_else(|| {
-        DEFAULT_HARD_EXCLUDES
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    });
+    let bounds = ScanBounds::parse(options)?;
     let query_norm_sq = dot(&query, &query);
     // Read once, and only when the guard needs it.
     let mut migrating: Option<bool> = None;
@@ -524,7 +546,7 @@ fn search_chunks(
             read,
             &page,
             options,
-            &hard_excludes,
+            &bounds,
             &mut archived,
             &mut owner_only,
         )? {
@@ -1233,6 +1255,78 @@ mod tests {
             top(json!({"where": [["missing", ["x"]]]})),
             Vec::<String>::new()
         );
+    }
+
+    /// `afterDate` / `beforeDate`: a page is dated by its effective date, else its `updated_at`;
+    /// a bound is strict unless inclusive, and applies before the limit.
+    #[test]
+    fn date_bounds_keep_the_pages_dated_inside_them() {
+        let s = corpus();
+        let on = |iso: &str| json!({ "effective_date": iso });
+        page(
+            &s,
+            "default",
+            "m-edge",
+            &[axis(0, 4)],
+            on("2026-02-01T00:00:00Z"),
+        );
+        page(
+            &s,
+            "default",
+            "n-late",
+            &[axis(0, 4)],
+            on("2026-05-10T00:00:00Z"),
+        );
+        page(
+            &s,
+            "default",
+            "o-old",
+            &[axis(0, 4)],
+            on("2019-07-04T00:00:00Z"),
+        );
+        // 2026-02-01T00:00:00Z in microseconds.
+        let edge = "1769904000000000";
+        let bound = |inclusive: bool| json!({ "micros": edge, "inclusive": inclusive });
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let exclude = json!(["a-exact", "b-tie1", "c-tie2", "d-multi", "e-opposite"]);
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "after_date": bound(false)})),
+            ["n-late"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "after_date": bound(true)})),
+            ["m-edge", "n-late"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "before_date": bound(false)})),
+            ["o-old"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "before_date": bound(true)})),
+            ["m-edge", "o-old"]
+        );
+        // The limit counts kept pages only.
+        assert_eq!(
+            top(json!({"limit": 1, "before_date": bound(false), "exclude_slugs": ["a-exact"]})),
+            ["o-old"]
+        );
+        // The corpus pages have no effective date: their `updated_at` (now) dates them.
+        assert_eq!(
+            top(json!({"limit": 3, "after_date": bound(true)})),
+            ["a-exact", "m-edge", "n-late"]
+        );
+        let err = s
+            .search_vector(
+                &q(&axis(0, 4)),
+                &opts(json!({"after_date": {"micros": "soon", "inclusive": false}})),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("afterDate"), "{err}");
     }
 
     /// The feeder's guard cases that edit `content_chunks` with SQL: a chunk's model label and its
