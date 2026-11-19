@@ -32,7 +32,6 @@ import { autoLinkCompanies } from '../src/core/entities/company-auto-link.ts';
 import { decisionId, IDENTITY_DIR, projectIdentityDecisions, identityHome, syncIdentityDecisions } from '../src/core/entities/identity-decisions.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
-import { run as runImportCli } from '../src/cli/commands/import.ts';
 
 for (const backend of testBackends()) describe(backend, () => {
 let engine: BrainEngine;
@@ -262,13 +261,46 @@ describe('without a repository', () => {
     expect(ranked).toEqual([['default', 'companies/acme-example', 1]]);
   });
 
-  test('gbrain import links the companies it brings in on a brain with no repository', async () => {
+  test('a carrier whose LinkedIn page ends in its own prefix and a slash keeps the pair unlinked on sync', async () => {
+    await company('default', { linkedin: 'linkedin.com/company/trident-company', website: 'trident-example.com' }, 'Trident Company', 'companies/trident');
+    await company('source-b', { linkedin: 'linkedin.com/company/trident-company', website: 'trident-example.com' }, 'Trident Company', 'companies/trident');
+    await company('source-c', { linkedin: 'https://www.linkedin.com/company/trident-company/', website: 'trident-holdings.example' }, 'Trident Holdings', 'companies/trident-holdings');
+    await sweepAfterSync('source-b', 'companies/trident');
+    expect(await identities()).toEqual([]);
+  });
+
+  test('a page synced later that carries the same id removes the automatic link, and deleting the main page relinks the rest with a new main page', async () => {
+    await company('default');
     await company('source-b');
-    const dir = mkdtempSync(join(tmpdir(), 'company-auto-link-import-'));
+    await sweepAfterSync('source-b', 'companies/acme-example');
+    expect(await identities()).toHaveLength(2);
+    await company('source-c', { website: 'acme-holdings.example' }, 'Acme Example Holdings', 'companies/acme-holdings');
+    await sweepAfterSync('source-c', 'companies/acme-holdings');
+    expect(await identities()).toEqual([]);
+    await engine.deletePage('companies/acme-holdings', { sourceId: 'source-c' });
+    await company('source-c');
+    await autoLinkCompanies(engine);
+    expect((await identities()).map(r => [r.source_id, r.canonical])).toEqual([['default', true], ['source-b', false], ['source-c', false]]);
+    await engine.deletePage('companies/acme-example', { sourceId: 'default' });
+    await sweepAfterSync('default', 'companies/acme-example');
+    const rows = await identities();
+    expect(rows.map(r => [r.source_id, r.established_by])).toEqual([['source-b', 'dedupe:auto'], ['source-c', 'dedupe:auto']]);
+    expect(rows.filter(r => r.canonical)).toHaveLength(1);
+  });
+
+  test('a folder source without git links the companies each sync brings in', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'company-auto-link-folder-'));
+    mkdirSync(join(dir, 'notes'), { recursive: true });
+    writeFileSync(join(dir, 'notes', 'start.md'), '---\ntype: note\ntitle: Start\n---\nStart.\n');
+    await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'source-c'", [dir]);
+    await company('source-b');
+    const sync = () => performSync(engine, { sourceId: 'source-c', noPull: true, noEmbed: true, concurrency: 1 });
+    await sync();
     mkdirSync(join(dir, 'companies'), { recursive: true });
     writeFileSync(join(dir, 'companies', 'acme-example.md'), '---\ntype: company\ntitle: Acme Example\nlinkedin: https://www.linkedin.com/company/acme-example/\nwebsite: https://acme-example.com\n---\nAcme Example.\n');
-    await runImportCli(engine, [dir, '--no-embed']);
-    expect((await identities()).map(r => [r.source_id, r.established_by])).toEqual([['default', 'dedupe:auto'], ['source-b', 'dedupe:auto']]);
+    const r = await sync();
+    expect(r.status).not.toBe('first_sync');
+    expect((await identities()).map(x => [x.source_id, x.established_by])).toEqual([['source-b', 'dedupe:auto'], ['source-c', 'dedupe:auto']]);
   });
 });
 

@@ -364,17 +364,12 @@ export async function syncIdentityDecisions(engine: BrainEngine, sourceId: strin
     log?.(`[dedupe] duplicate decisions were not reconciled after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
   }
   if (!changedSlugs?.length) return;
-  await linkCompaniesThatShareAnId(engine, changedSlugs === 'all' ? 'all' : changedSlugs.map(slug => ({ source_id: sourceId, slug })), log);
-}
-
-/** The company sweep after a sync or a `gbrain import`: from these pages, or over every company. Never throws. */
-export async function linkCompaniesThatShareAnId(engine: BrainEngine, near: Array<{ source_id: string; slug: string }> | 'all', log?: (line: string) => void): Promise<void> {
   try {
     const { autoLinkCompanies } = await import('./company-auto-link.ts');
-    const r = await autoLinkCompanies(engine, { ...(near === 'all' ? {} : { near }), log });
+    const r = await autoLinkCompanies(engine, { ...(changedSlugs === 'all' ? {} : { near: changedSlugs.map(slug => ({ source_id: sourceId, slug })) }), log });
     if (r.linked || r.unlinked) log?.(`[dedupe] linked ${r.linked} and unlinked ${r.unlinked} company group(s) that share an id`);
   } catch (e) {
-    log?.(`[dedupe] companies that share an id were not linked: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
+    log?.(`[dedupe] companies that share an id were not linked after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
   }
 }
 

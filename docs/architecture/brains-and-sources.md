@@ -321,9 +321,9 @@ the cross-source company groups its changed pages belong to when the group is
 and no two name different countries. Those rows carry `established_by:
 dedupe:auto`, live in the database only (sync and `gbrain dedupe reconcile`
 rebuild them from the pages and decisions), and count once like confirmed
-ones. `gbrain import` sweeps every company too, so a brain with no repository
-links them as it fills; a page written on its own (`put_page`, `capture`) links
-at the next sync, import or reconcile. A linked page can be moved into another
+ones. A folder source without git links on each sync too, so a brain with no
+repository links them as it syncs; pages written by `gbrain import`, `put_page` or
+`capture` link at the next sync or reconcile. A linked page can be moved into another
 group by hand but not unlinked by hand: reject it instead. `gbrain dedupe reject <identity>` removes one and keeps the pair apart;
 the decision keeps a fingerprint (a hash of each page's name and ids, never
 the values), so a renamed or moved page is still kept apart. People are

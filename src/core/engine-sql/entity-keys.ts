@@ -61,12 +61,13 @@ export async function listEntityKeyRows(exec: LegacyUnscopedRead, opts: EntityKe
                  WHEN 'array' THEN p.frontmatter -> f.key WHEN 'string' THEN jsonb_build_array(p.frontmatter -> f.key)
                  WHEN 'number' THEN jsonb_build_array((p.frontmatter -> f.key)::text) ELSE '[]'::jsonb END) AS v(value)
              CROSS JOIN LATERAL (SELECT lower(btrim(v.value)) AS raw) n
+             CROSS JOIN LATERAL (SELECT '/' || n.raw AS slashed) q
              CROSS JOIN LATERAL unnest(ARRAY[n.raw, ltrim(n.raw, '@'),
                  split_part(split_part(split_part(split_part(regexp_replace(n.raw, '^[a-z][a-z0-9+.-]*://(www[.])?', ''), '/', 1), '?', 1), '#', 1), ':', 1),
-                 split_part(split_part(split_part(split_part(split_part(n.raw, 'company/', 2), '/', 1), '?', 1), '#', 1), ' ', 1),
-                 split_part(split_part(split_part(split_part(split_part(n.raw, 'in/', 2), '/', 1), '?', 1), '#', 1), ' ', 1),
-                 split_part(split_part(split_part(split_part(split_part(n.raw, 'pub/', 2), '/', 1), '?', 1), '#', 1), ' ', 1),
-                 split_part(split_part(split_part(split_part(split_part(n.raw, 'github.com/', 2), '/', 1), '?', 1), '#', 1), ' ', 1)]) AS t(form)
+                 split_part(split_part(split_part(split_part(substr(q.slashed, NULLIF(strpos(q.slashed, '/company/'), 0) + 9), '/', 1), '?', 1), '#', 1), ' ', 1),
+                 split_part(split_part(split_part(split_part(substr(q.slashed, NULLIF(strpos(q.slashed, '/in/'), 0) + 4), '/', 1), '?', 1), '#', 1), ' ', 1),
+                 split_part(split_part(split_part(split_part(substr(q.slashed, NULLIF(strpos(q.slashed, '/pub/'), 0) + 5), '/', 1), '?', 1), '#', 1), ' ', 1),
+                 split_part(split_part(split_part(split_part(substr(n.raw, NULLIF(strpos(n.raw, 'github.com/'), 0) + 11), '/', 1), '?', 1), '#', 1), ' ', 1)]) AS t(form)
             WHERE t.form = ANY(${tokens?.values ?? []}::text[])))
        AND (p.source_id, p.slug) > (${opts.after?.source_id ?? ''}::text, ${opts.after?.slug ?? ''}::text)
      ORDER BY p.source_id, p.slug
