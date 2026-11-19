@@ -126,6 +126,19 @@ const PINS: Pin[] = [
     from: 'src/core/access/caller.ts:94 liveIdentity (OAuth client: :123)',
     case: { method: 'readLiveMember', variant: 'oauth-client', run: e => e.readLiveMember('oauth_client', 'client-1') },
     texts: [memberSql('SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL')],
+  },  {
+    from: 'src/core/access/members.ts:345 listGroups (every group)',
+    case: { method: 'readAccessGroups', variant: 'all', run: e => e.readAccessGroups(null) },
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+      GROUP BY g.id ORDER BY g.id`],
+  },
+  {
+    from: 'src/core/access/members.ts:345 listGroups (one group by id)',
+    case: { method: 'readAccessGroups', variant: 'by-id', run: e => e.readAccessGroups('team-a') },
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id`],
   },
 ];
 

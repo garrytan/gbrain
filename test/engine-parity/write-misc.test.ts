@@ -5,7 +5,7 @@
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
  *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
- *    listAudienceAccessMembers, readLiveMember, expireMemoryProposals,
+ *    listAudienceAccessMembers, readLiveMember, readAccessGroups, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -471,6 +471,44 @@ describe('engine parity: write misc', () => {
     };
     expect(byConfig).toEqual({ unset: null, trimmed: { id: 'alice-example', groups: ['team-a', 'team-b'] }, otherKey: { id: 'dave-example', groups: ['team-c'] }, unknownKey: null });
     return { byId, byBinding, byConfig };
+  });
+
+  parityTest('readAccessGroups lists no group, and finds none by id, on a brain with none', { methods: ['readAccessGroups'] }, async (engine) => {
+    const answers = { all: await engine.readAccessGroups(null), byId: await engine.readAccessGroups('team-a') };
+    expect(answers).toEqual({ all: [], byId: [] });
+    return answers;
+  });
+
+  // Leak case: a group carries only its own members, in id order; a group with no members carries none; an id matches
+  // exactly one group, never a member id, another case or an injected predicate. The Rust store keeps no groups (empty
+  // above), so the group write stops on the raw_sql refusal.
+  parityTest('readAccessGroups lists every group with only its own members, and finds one group by its exact id', { methods: ['readAccessGroups'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_members (id, kind) VALUES ('alice-example', 'person'), ('bob-example', 'person'), ('carol-example', 'person')`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readAccessGroups(null)).toEqual([]);
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-b'), ('team-a'), ('team-empty')`);
+    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
+      ('team-a', 'carol-example'), ('team-a', 'alice-example'), ('team-b', 'bob-example')`);
+    const answers = {
+      all: await engine.readAccessGroups(null),
+      byId: await engine.readAccessGroups('team-a'),
+      empty: await engine.readAccessGroups('team-empty'),
+      member: await engine.readAccessGroups('alice-example'),
+      otherCase: await engine.readAccessGroups('Team-A'),
+      injected: await engine.readAccessGroups("x' OR '1'='1"),
+      unknown: await engine.readAccessGroups('team-z'),
+    };
+    expect(answers).toEqual({
+      all: [{ id: 'team-a', members: ['alice-example', 'carol-example'] }, { id: 'team-b', members: ['bob-example'] }, { id: 'team-empty', members: [] }],
+      byId: [{ id: 'team-a', members: ['alice-example', 'carol-example'] }], empty: [{ id: 'team-empty', members: [] }],
+      member: [], otherCase: [], injected: [], unknown: [],
+    });
+    return answers;
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

@@ -333,11 +333,8 @@ export async function removeMember(engine: BrainEngine, rawId: unknown): Promise
 export interface GroupRecord { id: string; members: string[] }
 
 export async function listGroups(engine: BrainEngine, id?: string): Promise<GroupRecord[]> {
-  const rows = await engine.executeRaw<{ id: string; members: string[] }>(
-    `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
-     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-     ${id ? 'WHERE g.id = $1' : ''} GROUP BY g.id ORDER BY g.id`, id ? [id] : []);
-  return rows.map(r => ({ id: r.id, members: r.members ?? [] }));
+  // An empty id lists every group, as before.
+  return engine.readAccessGroups(id ? id : null);
 }
 
 async function existingGroup(engine: BrainEngine, raw: unknown): Promise<GroupRecord> {

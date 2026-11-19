@@ -552,6 +552,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readAccessCredentials': OOS.callerRawSql,
   'listAudienceAccessMembers': OOS.callerRawSql,
   'readLiveMember': OOS.callerRawSql,
+  'readAccessGroups': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1318,6 +1319,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['legacy-token', (e) => e.readLiveMember('legacy_token', 'tok-1')],
     ['oauth-client', (e) => e.readLiveMember('oauth_client', 'client-1')],
   ]),
+  ...variants('readAccessGroups', [['all', (e) => e.readAccessGroups(null)], ['by-id', (e) => e.readAccessGroups('team-a')]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

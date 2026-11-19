@@ -25,7 +25,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
+import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listGroups, listMembers, memberByEmail } from '../src/core/access/members.ts';
 import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 
 const TARGET = detectAddonTarget();
@@ -482,6 +482,22 @@ describe('access member reads on a Rust brain', () => {
       read: [['legacy_token', '00000000-0000-4000-8000-0000000000c1', null], ['oauth_client', 'client-alice', null],
         ['stdio_config', 'mcp.stdio_member', null], ['member', 'alice-example', null]],
     });
+  });
+
+  withAddon('listGroups reads no raw SQL and finds no group: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const read: unknown[][] = [];
+    const groups = engine.readAccessGroups.bind(engine);
+    (engine as unknown as { readAccessGroups: typeof groups }).readAccessGroups = async (id) => { const rows = await groups(id); read.push([id, rows]); return rows; };
+    const listed = { all: await listGroups(engine as never), byId: await listGroups(engine as never, 'team-a'), emptyId: await listGroups(engine as never, '') };
+    expect(listed).toEqual({ all: [], byId: [], emptyId: [] });
+    expect({ raw, read }).toEqual({ raw: [], read: [[null, []], ['team-a', []], [null, []]] });
   });
 });
 

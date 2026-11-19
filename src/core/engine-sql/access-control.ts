@@ -206,3 +206,21 @@ export async function readLiveMember(exec: MemberLookupRead, via: LiveMemberVia,
   const [row] = await exec.executeRaw<LiveMemberRow>(LIVE_MEMBER_SQL[via], [key]);
   return row ? { id: row.id, groups: row.groups ?? [] } : null;
 }
+
+/** A group and its member ids, by member id. */
+export interface AccessGroupRow { id: string; members: string[] }
+
+/** The statements access/members.ts listGroups ran through executeRaw: every group, or the one group `$1` names. */
+const accessGroupSql = (id: boolean) => `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+     ${id ? 'WHERE g.id = $1' : ''} GROUP BY g.id ORDER BY g.id`;
+export const ACCESS_GROUP_SQL = { all: accessGroupSql(false), by_id: accessGroupSql(true) } as const;
+
+/**
+ * Every access group with its member ids, by id; or, given an id, the one group with exactly that id (never a member
+ * id, another case or an injected predicate). A group with no members carries none.
+ */
+export async function readAccessGroups(exec: MemberLookupRead, id: string | null): Promise<AccessGroupRow[]> {
+  const rows = id === null ? await exec.executeRaw<AccessGroupRow>(ACCESS_GROUP_SQL.all) : await exec.executeRaw<AccessGroupRow>(ACCESS_GROUP_SQL.by_id, [id]);
+  return rows.map(r => ({ id: r.id, members: r.members ?? [] }));
+}
