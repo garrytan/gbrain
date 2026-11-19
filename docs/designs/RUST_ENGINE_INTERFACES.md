@@ -891,8 +891,10 @@ Facts and their supersession chains.
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and
     Postgres pinned by `test/fixtures/goldens/remote-reads/statements.json`). The store answers it in
-    `facts/held_cells.rs` for the caller with no member page and no private-facts grant; the TypeScript member refuses
-    any other caller, and `heldFenceLines` then holds every fence line (fail closed). Before the member existed the
+    `facts/held_cells.rs` for a caller with no private-facts grant. For a member caller the TypeScript member passes the
+    caller's member page, principal and page policy, and the store admits that page's private facts as
+    `memberFactAdmitSql` does; it refuses a grant, or a page policy the store does not render, and `heldFenceLines`
+    then holds every fence line (fail closed). Before the member existed the
     check ran through `executeRaw`, which the Rust engine refuses, so a Rust brain held every fence line. Parity:
     `held-fence-cells.test.ts`.
 - **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
@@ -951,7 +953,9 @@ itself, so that mapping can go.
   test hides. The store closes this in `access_flag.rs`: every store write handle (`Store::write`) sets the flag on
   the put of a page record that names readers, whatever path made the put, and the first open of a brain with no
   scan record reads every page record (soft-deleted ones too, as v282) and sets the flag if one names readers.
-  The scan runs once per brain, so a flag an operator unsets by hand stays unset, as on Postgres.
+  The scan runs once per brain, so a flag an operator unsets by hand stays unset, as on Postgres. When the scan
+  cannot write, the open goes on and that process reads the flag as `'1'` if a page names readers or the read
+  does not finish (`Store::flag_assumed`).
 - **The change.** `PrivacyPolicy` gains `restricted: bool` (default true). When false, the member-access part is
   `!names_readers(page)` (the folder test is always true) and `origin_restricted` is not read. The TypeScript members
   (`storePrivacyPolicy`, `storePagePolicy`) render their no-caller comparison texts with the caller's own `restricted`

@@ -165,3 +165,86 @@ fn the_scan_runs_once_so_a_flag_unset_by_hand_stays_unset() {
     let store = reopen(&kv);
     assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("0"));
 }
+
+// An open whose scan cannot write: a record file that takes no write after it opens (a full disk,
+// or a file that turned read-only under the process). The open goes on, and the process treats
+// the brain as flagged when the scan found a reader page or could not finish its read.
+
+/// Record access that reads `inner` and refuses every write, as a file that takes no writes does.
+struct NoWrites(Arc<dyn Kv>);
+
+impl Kv for NoWrites {
+    fn snapshot(&self) -> gbrain_store::Result<Box<dyn gbrain_store::KvRead>> {
+        self.0.snapshot()
+    }
+    fn begin_write(&self) -> gbrain_store::Result<Box<dyn gbrain_store::KvWrite>> {
+        Err(gbrain_store::StoreError::io(
+            "record store: the file takes no writes",
+        ))
+    }
+    fn version(&self) -> gbrain_store::Result<u64> {
+        self.0.version()
+    }
+}
+
+fn open_without_writes(kv: &Arc<dyn Kv>) -> gbrain_store::Result<Store> {
+    Store::open_kv(
+        Arc::new(NoWrites(kv.clone())),
+        Arc::new(SystemEnv),
+        OpenOptions::default(),
+    )
+}
+
+#[test]
+fn an_open_whose_scan_cannot_write_treats_a_reader_brain_as_flagged() {
+    let dir = TempDir::new("access-flag-nowrite");
+    let (kv, store) = raw_store(&dir);
+    put(
+        &store,
+        "notes/closed",
+        json!({"readable_by": ["alice-example"]}),
+    );
+    drop(store);
+    forget_flag(&kv);
+    let store = open_without_writes(&kv).expect("the open failed when its scan could not write");
+    assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+    let values = store.get_config_values(&[FLAG.to_string()]).unwrap();
+    assert_eq!(
+        serde_json::to_value(&values).unwrap(),
+        json!([{"key": FLAG, "value": "1"}])
+    );
+    assert_eq!(
+        store
+            .get_all_config()
+            .unwrap()
+            .get(FLAG)
+            .map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        store.list_config_keys("access.").unwrap(),
+        vec![FLAG.to_string()]
+    );
+    drop(store);
+    // Nothing was written: the next open that can write runs the scan and stores the flag.
+    assert!(
+        kv.snapshot()
+            .unwrap()
+            .get(&keys::meta(SCAN_DONE))
+            .unwrap()
+            .is_none()
+    );
+    let store = reopen(&kv);
+    assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+}
+
+#[test]
+fn an_open_whose_scan_cannot_write_leaves_a_brain_with_no_reader_page_unflagged() {
+    let dir = TempDir::new("access-flag-nowrite");
+    let (kv, store) = raw_store(&dir);
+    put(&store, "notes/open", json!({"tags": ["a"]}));
+    drop(store);
+    forget_flag(&kv);
+    let store = open_without_writes(&kv).expect("the open failed when its scan could not write");
+    assert_eq!(store.get_config(FLAG).unwrap(), None);
+}

@@ -132,6 +132,9 @@ pub struct Store {
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
+    /// True when the open-time scan could not store the member-access flag and this process reads
+    /// it as `'1'` (`access_flag::scan_at_open`).
+    pub(crate) flag_assumed: bool,
 }
 
 pub(crate) fn get_json<T: DeserializeOwned>(read: &dyn KvRead, key: &[u8]) -> Result<Option<T>> {
@@ -204,9 +207,7 @@ impl Store {
                 }
             }
         };
-        if !created {
-            access_flag::scan_at_open(&*kv)?;
-        }
+        let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
@@ -224,6 +225,7 @@ impl Store {
                 created,
             },
             bound: None,
+            flag_assumed,
         })
     }
 
@@ -243,6 +245,7 @@ impl Store {
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: Some(tx),
+            flag_assumed: self.flag_assumed,
         }
     }
 

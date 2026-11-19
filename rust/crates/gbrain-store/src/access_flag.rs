@@ -15,7 +15,9 @@
 //! - The open-time scan ([`scan_at_open`]): the first open of a brain that has no scan record
 //!   reads every page record and sets the flag if one has the key, as v282 does. It covers a
 //!   brain written by a build before the hook. It runs once per brain; a fresh brain records it
-//!   as done when it is created.
+//!   as done when it is created. When the scan cannot write (a full disk, a record file that
+//!   takes no writes), the open goes on and that process reads the flag as `'1'` if the brain
+//!   holds a reader page, or if the scan could not finish its read (`Store::flag_assumed`).
 //!
 //! The trigger fires only when an UPDATE names the frontmatter column. The store sets the flag
 //! on every write of a page that has `readable_by`. The flag is sticky, so the two differ only
@@ -84,27 +86,55 @@ pub(crate) fn record_scan_done(tx: &mut dyn KvWrite) -> Result<()> {
 /// The open-time scan: on a brain with no scan record, sets the flag when any page record
 /// (soft-deleted or not) has a top-level `readable_by` key, then writes the scan record, in one
 /// write. A brain that has the record is not read again.
-pub(crate) fn scan_at_open(kv: &dyn Kv) -> Result<()> {
+///
+/// Returns whether this process must treat the brain as flagged without a stored flag: the scan
+/// could not write (a full disk, a record file that takes no writes), and a read of the snapshot
+/// found a reader page or could not finish. The open goes on in both cases; nothing is stored, so
+/// the next open that can write runs the scan again.
+pub(crate) fn scan_at_open(kv: &dyn Kv) -> Result<bool> {
     let done = keys::meta(SCAN_DONE);
-    if kv.snapshot()?.get(&done)?.is_some() {
-        return Ok(());
+    let snapshot = kv.snapshot()?;
+    if snapshot.get(&done)?.is_some() {
+        return Ok(false);
     }
+    match scan_and_record(kv, &done) {
+        Ok(()) => Ok(false),
+        Err(_) => Ok(names_readers(&*snapshot).unwrap_or(true)),
+    }
+}
+
+fn scan_and_record(kv: &dyn Kv, done: &[u8]) -> Result<()> {
     let mut tx = kv.begin_write()?;
     // Another handle may have run the scan between the read and this write.
-    if tx.get(&done)?.is_some() {
+    if tx.get(done)?.is_some() {
         return Ok(());
     }
-    let mut names_readers = false;
-    scan_prefix(&*tx, &[keys::PAGE], false, &mut |_, value| {
-        names_readers = record_names_readers(value);
-        !names_readers
-    })?;
-    if names_readers {
+    if names_readers(&*tx)? {
         set_flag(&mut *tx)?;
     }
-    tx.put(&done, b"1")?;
+    tx.put(done, b"1")?;
     tx.commit()?;
     Ok(())
+}
+
+/// Whether any page record in `read` has a top-level `readable_by` key; stops at the first.
+fn names_readers(read: &dyn KvRead) -> Result<bool> {
+    let mut found = false;
+    scan_prefix(read, &[keys::PAGE], false, &mut |_, value| {
+        found = record_names_readers(value);
+        !found
+    })?;
+    Ok(found)
+}
+
+/// The flag value a config read returns for `key` when the open-time scan could not store the
+/// flag ([`scan_at_open`] returned true): `'1'` for the flag key, else the stored value.
+pub(crate) fn assumed_config(assumed: bool, key: &str, stored: Option<String>) -> Option<String> {
+    if assumed && key == RESTRICTIONS_PRESENT_KEY {
+        Some("1".to_string())
+    } else {
+        stored
+    }
 }
 
 /// A store write handle that sets the flag on every put of a page record with a top-level
