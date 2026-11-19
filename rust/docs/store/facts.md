@@ -359,7 +359,7 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 |---|---|---|---|
 | `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
 | `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
-| `matchSavedFacts` | `search/saved-facts-match.ts` | refused | Reads `trust_tier` (`trustRankSql`). |
+| `matchSavedFacts` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | The match columns, `need`, the cue flag, `trust_rank` and `pool_rank`, as below. The member refuses another correction cue, a non-`english` FTS language and a `worldOnly` read a private-facts grant widens. |
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | refused | `trust_tier` is hashed into the owner binding. |
 | `listStandingPreferences` | `trust/review.ts` | refused | Reads `trust_tier`, `write_gate_receipts` and the `sources` claim state. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |
@@ -381,6 +381,13 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
   `halfvec`) column and a non-`english` FTS language refuse in the member.
 - `countUncomparableFacts` keeps SQL's three-valued logic: with an undeclared column width a row counts
   only when a conjunct of the comparable test is false, so a vector with a NULL model is not counted.
+- `matchSavedFacts` reads its own candidates: active rows (a superseded row stays), no audit source,
+  `worldOnly`, the private-provenance policy, then `projectionEligibleSql` (a soft-deleted page, a live
+  quarantined provenance page, the trust floor). Each term is `plainto_tsquery` on the facts FTS document,
+  or a lowered `LIKE` for a CJK pattern; a term with no lexeme and no pattern is dropped. The cue is
+  `CORRECTION_CUE` written out as its 20 phrases, each matched case-insensitively between word boundaries
+  (the store has no regular-expression engine). `trust_rank` is 0 for a tier name it does not know, as
+  `trustRankSql` is.
 - `listFactsForRelevance` serves the pool reads only. Its caller `collectFactCandidates` still makes
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.

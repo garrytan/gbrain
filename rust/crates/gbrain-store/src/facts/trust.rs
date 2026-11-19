@@ -18,9 +18,10 @@
 //!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
 //!   (`trust::TrustPolicy`).
 //!
-//! Refused (no store member): `matchSavedFacts`, `readFactForOwnerAction`,
-//! `listStandingPreferences`, `listLexicalContestCandidates`, `listRestatedPrivateCopies` and
-//! `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`, `write_origin`,
+//! `matchSavedFacts` is served by `facts/saved_match.rs`.
+//!
+//! Refused (no store member): `readFactForOwnerAction`, `listStandingPreferences`,
+//! `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`, `write_origin`,
 //! the write-gate receipts), but no store read for them is built yet. The `entity_ended` history
 //! arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
 //!
