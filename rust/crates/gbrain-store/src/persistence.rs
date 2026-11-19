@@ -14,6 +14,8 @@
 //! | `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row (`housekeeping.rs`), JSON |
 //! | `d 0x03 <principal_id> 0x00 <request_id>` | one `persistence_topology_changes` row (`topology.rs`), JSON |
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
+//! | `d 0x05 <request id> 0x00 <kind>` | one `persistence_effects` row (`effects.rs`), JSON |
+//! | `d 0x06 <id, 8 bytes big-endian>` | the effect claim-order index (`effects.rs`), JSON |
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -45,10 +47,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod effect_scans;
+mod effects;
 mod housekeeping;
 mod projection_queue;
 mod topology;
 mod writer_versions;
+pub use effects::{PublicationEffectsSpec, QueuedEffect};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
@@ -303,9 +307,10 @@ fn text_bytes(value: Option<&Value>) -> i64 {
 
 /// A request's compacted receipt size (`COMPACTED_RECEIPT_BYTES_SQL`): its reservation, or less
 /// when the authority, outcome, error detail and client request id with the compaction headroom
-/// are smaller. This engine records no effect row, so no effect bytes are added.
-fn compacted_receipt_bytes(r: &RequestRecord) -> i64 {
+/// are smaller, with the bytes of the request's effect rows (`effect_bytes`).
+fn compacted_receipt_bytes(r: &RequestRecord, effect_bytes: i64) -> i64 {
     let kept = text_bytes(Some(&r.authority))
+        + effect_bytes
         + text_bytes(r.outcome.as_ref())
         + text_bytes(r.extra.get("error_detail"))
         + r.client_request_id.as_ref().map_or(0, |c| c.len() as i64)
@@ -336,13 +341,29 @@ pub(crate) fn read_admission_rate_in(
             json!(requests.iter().map(|r| f(r) as f64).sum::<f64>() / n as f64)
         }
     };
+    let mut effect_bytes = Vec::with_capacity(n);
+    for r in &requests {
+        effect_bytes.push(effects::effect_totals(read, &r.id)?.0);
+    }
+    let net = if n == 0 {
+        Value::Null
+    } else {
+        json!(
+            requests
+                .iter()
+                .zip(&effect_bytes)
+                .map(|(r, b)| compacted_receipt_bytes(r, *b) as f64)
+                .sum::<f64>()
+                / n as f64
+        )
+    };
     let oldest = requests.iter().map(|r| r.created_at_us).min();
     Ok(json!({
         "first_request_id": first,
         "admissions": n,
         "age_seconds": oldest.map(|t| (now_us - t) as f64 / 1_000_000.0),
         "gross": mean(&|r| extra_i64(r, "terminal_reservation")),
-        "net": mean(&compacted_receipt_bytes),
+        "net": net,
     }))
 }
 
@@ -726,8 +747,8 @@ pub struct WriteCompletion {
 }
 
 /// `COMPLETE_WRITE_SQL`: the terminal state, the counter release and the true-up clamp count.
-/// The request has no effect rows here (the effect journal is not stored), so the effect bytes are
-/// 0 and nothing is unfinished. `None`, with nothing changed, when the result does not fit the
+/// The request's effect rows (`effects.rs`) add their bytes to the result; while one is not
+/// committed the reservation is kept whole. `None`, with nothing changed, when the result does not fit the
 /// terminal reservation. A source has no fact or page purge rows here, so the purge probe answers
 /// false.
 pub(crate) fn complete_write_row_in(
@@ -743,10 +764,15 @@ pub(crate) fn complete_write_row_in(
         return Err(violation(format!("\"{}\" is not a request state", c.state)));
     }
     let reservation = extra_i64(&record, "terminal_reservation");
-    if c.result_bytes > reservation {
+    let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
+    if c.result_bytes + effect_bytes > reservation {
         return Ok(None);
     }
-    let kept = reservation.min(c.retained_bytes);
+    let kept = if unfinished {
+        reservation
+    } else {
+        reservation.min(c.retained_bytes + effect_bytes)
+    };
     let released = c.terminal_reservation - kept;
     let mut clamped = 0u64;
     for key in distinct_keys(&c.counter_keys) {
