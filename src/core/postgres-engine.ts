@@ -9,7 +9,7 @@ import { assertPageRevision } from './page-state/types.ts';
 import { assertOriginUnclaimed, assertRevivalUnclaimed, classifyOriginUniqueViolation } from './persistence/origin-guard.ts';
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
-import { readDeadline, readDeadlineSignal } from './read-deadline.ts';
+import { ReadDeadlineError, readDeadline, readDeadlineSignal } from './read-deadline.ts';
 import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
 import { createPageVersion, type VersionHistory } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
@@ -513,6 +513,19 @@ export class PostgresEngine implements BrainEngine {
   /** A typed read master ran through this engine's executeRaw (a statement fault a test injects reaches it): still so, or `preparationRead` under a read deadline. */
   private ownRawRead<T>(fn: (exec: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T> {
     return this._pageTransaction || readDeadline() === undefined ? fn(this) : this.preparationRead(fn);
+  }
+
+  /**
+   * A locking typed read (`FOR SHARE`) master issued through `executeRaw`. A read-only deadline transaction refuses a
+   * row lock, so under a read deadline it is master's bounded statement: a read-write `statement_timeout` of the time
+   * left, the deadline's signal, and a refusal before it is sent once the deadline has passed.
+   */
+  private lockingPreparationRead<T>(fn: (exec: Pick<SqlExecutor, 'executeRaw'>) => Promise<T>): Promise<T> {
+    const deadlineAt = this._pageTransaction ? undefined : readDeadline();
+    if (deadlineAt === undefined) return fn(this.autocommitSql);
+    const signal = readDeadlineSignal();
+    return fn({ executeRaw: <R>(sql: string, params?: unknown[]) => Date.now() >= deadlineAt ? Promise.reject(new ReadDeadlineError())
+      : this.executeRaw<R>(sql, params, { timeoutMs: Math.max(1, deadlineAt - Date.now()), ...(signal ? { signal } : {}) }) });
   }
 
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
@@ -2208,7 +2221,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Wanted-link writes (engine-sql/wanted-links.ts), on the current connection: the caller's transaction when there is
   // one. autocommitSql retries a statement a read-only session default refused, as the executeRaw calls they replace did.
-  lockRegisteredSourceIds(sourceIds: readonly string[]) { return wantedLinksImpl.lockRegisteredSourceIds(this.autocommitSql, sourceIds); }
+  lockRegisteredSourceIds(sourceIds: readonly string[]) { return this.lockingPreparationRead(exec => wantedLinksImpl.lockRegisteredSourceIds(exec, sourceIds)); }
   replaceWantedLinkRows(origin: { pageId: number; sourceId: string }, replacement: WantedLinkRowsReplacement) {
     return wantedLinksImpl.replaceWantedLinkRows(this.autocommitSql, origin, replacement);
   }

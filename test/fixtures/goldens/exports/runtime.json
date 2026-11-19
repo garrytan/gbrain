@@ -1095,6 +1095,7 @@
         "lockRegisteredSourceIds",
         "lockSourceRow",
         "lockWriteRequest",
+        "lockingPreparationRead",
         "logChatUsage",
         "logEvalCandidate",
         "logEvalCaptureFailure",
