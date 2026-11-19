@@ -4,8 +4,9 @@
  * `constraint_violation`; the PGLite and Postgres engines raise SQLSTATE 23514 / 23505 / 23503 with the constraint name,
  * so constraint-errors.ts gives the Rust refusal the same code and constraint, and a caller branches on one error shape.
  * The delete, the liveness check, the column probes, the scoped-client insert and its lifetime write are the credential
- * members of engine-sql/access-credentials.ts. The store keeps no grant audit (oauth_grant_audit): the scoped-client
- * insert writes the client only, and no client reads as lifetime-clamped.
+ * members of engine-sql/access-credentials.ts. The store keeps the grant audit (oauth_grant_audit, jobs-client-grants.ts):
+ * the scoped-client insert writes its register row. No client reads as lifetime-clamped: the upgrade migrations that
+ * clamp a lifetime do not run on a Rust brain.
  */
 import { normalizeOauthClientRow, type OauthClientInsert, type OauthClientPatch, type OauthClientPatchGuard, type OauthClientPatched, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
 import { OAUTH_CLIENT_PROBE_COLUMNS, type DeletedOAuthClient, type OauthClientGrantInsert, type OauthClientProbe } from '../../engine-sql/access-credentials.ts';
@@ -45,11 +46,12 @@ export const readOauthClientColumns: StoreMember<[probe: OauthClientProbe], stri
 export const setOauthClientTokenTtl: StoreMember<[clientId: string, ttlSeconds: number], boolean> = (brain, clientId, ttlSeconds) =>
   refusing('setOauthClientTokenTtl', () => brain.setOauthClientTokenTtl(clientId, ttlSeconds)) as Promise<boolean>;
 
-/** The client row through insertOauthClient; the register audit row is not kept (the store keeps no grant audit). */
+/** The client row and its register audit row, in one store write. */
 export const insertOauthClientGrant: StoreMember<[row: OauthClientGrantInsert], void> = async (brain, row) => {
-  const { audit: _audit, budget_usd_per_day, ...columns } = row;
-  await insertOauthClient(brain, { ...columns, budget_usd_per_day: budget_usd_per_day === null ? null : Number(budget_usd_per_day) });
+  const { audit, budget_usd_per_day, ...columns } = row;
+  const wire = { ...columns, budget_usd_per_day: budget_usd_per_day === null ? null : Number(budget_usd_per_day), deleted_at: null, created_at: null, reads_unscoped: null };
+  await refusing('insertOauthClientGrant', () => brain.insertOauthClientGrant(wire, audit));
 };
 
-/** The store keeps no grant audit, so no upgrade clamped a client's token lifetime. */
+/** The upgrade migrations that clamp a lifetime do not run on a Rust brain, so no client was clamped. */
 export const readTokenLifetimeClampedClients: StoreMember<[], string[]> = async () => [];

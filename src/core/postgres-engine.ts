@@ -220,6 +220,8 @@ import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
 import * as jobsChecks from './engine-sql/jobs-checks.ts';
 import * as jobsWake from './engine-sql/jobs-wake.ts';
 import * as accessCredentials from './engine-sql/access-credentials.ts';
+import * as clientGrants from './engine-sql/client-grants.ts';
+import type { OauthClientGrantPersist } from './engine-sql/client-grants.ts';
 import type { ActiveTokenGrantField, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
 import * as jobsInsight from './engine-sql/jobs-insight.ts';
@@ -1428,6 +1430,14 @@ export class PostgresEngine implements BrainEngine {
   insertOauthClientGrant(row: OauthClientGrantInsert) { return accessCredentials.insertOauthClientGrant(this, row); }
   readTokenLifetimeClampedClients() { return accessCredentials.readTokenLifetimeClampedClients(this); }
   readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock) { return accessCredentials.readScopeSourceConfigs(this, ids, lock); }
+  readOauthClientForUpdate(clientId: string) { return clientGrants.readOauthClientForUpdate(this, clientId); }
+  readLiveOauthClients() { return clientGrants.readLiveOauthClients(this); }
+  readLiveAccessTokenRows() { return clientGrants.readLiveAccessTokenRows(this); }
+  oauthClientHoldsAuthorization(clientId: string) { return clientGrants.oauthClientHoldsAuthorization(this, clientId); }
+  readSourceArchivedForShare(id: string) { return clientGrants.readSourceArchivedForShare(this, id); }
+  persistOauthClientGrant(grant: OauthClientGrantPersist) { return clientGrants.persistOauthClientGrant(this, grant); }
+  readLatestCatalogProvenanceAudit(clientId: string) { return clientGrants.readLatestCatalogProvenanceAudit(this, clientId); }
+  listOauthGrantAudit(clientId: string) { return clientGrants.listOauthGrantAudit(this, clientId); }
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung) { return accessCredentials.readOauthAccessTokenRows(this, hash, rung); }
   readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller) { return accessCredentials.readActiveAccessTokenByHash(this, hash, caller); }
   touchAccessTokenLastUsed(id: string, unified: boolean) { return accessCredentials.touchAccessTokenLastUsed(this, id, unified); }

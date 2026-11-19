@@ -9,6 +9,7 @@ import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
+import type { OauthClientGrantPersist, OauthGrantAuditRow } from './engine-sql/client-grants.ts';
 import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthCodeRow, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
@@ -3856,6 +3857,22 @@ export interface BrainEngine {
   readTokenLifetimeClampedClients(): Promise<string[]>;
   /** The id and config of each source among `ids`; `lock` takes the rows in id order FOR SHARE or FOR UPDATE (a single-writer store takes none). */
   readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock): Promise<{ id: string; config: unknown }[]>;
+  /** The client's whole row read FOR UPDATE inside the caller's transaction (a single-writer store takes no lock), or null. */
+  readOauthClientForUpdate(clientId: string): Promise<OauthClientRow | null>;
+  /** Every OAuth client not deleted, whole rows (the grant checks read every credential's grant). */
+  readLiveOauthClients(): Promise<OauthClientRow[]>;
+  /** Every access token not revoked, whole rows (a store that keeps no attest or private columns reads their defaults). */
+  readLiveAccessTokenRows(): Promise<Record<string, unknown>[]>;
+  /** Whether the client holds an OAuth token or an authorization code (a store that keeps neither answers false). */
+  oauthClientHoldsAuthorization(clientId: string): Promise<boolean>;
+  /** Whether the source is archived, read FOR SHARE inside the caller's transaction; null for no such source. */
+  readSourceArchivedForShare(id: string): Promise<boolean | null>;
+  /** Write a client's grant while it still holds the expected revision, rewrite its legacy open jobs and append the audit row; false (nothing written) when the revision moved. */
+  persistOauthClientGrant(grant: OauthClientGrantPersist): Promise<boolean>;
+  /** The `after_grant` document of the client's newest audit row that records a catalog provenance, or null; a brain with no audit table raises its error. */
+  readLatestCatalogProvenanceAudit(clientId: string): Promise<unknown | null>;
+  /** The client's grant audit rows, oldest first. */
+  listOauthGrantAudit(clientId: string): Promise<OauthGrantAuditRow[]>;
   /** The bearer check's OAuth token read at one rung of its degrade ladder. */
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]>;
   /** The bearer check's whole row (`SELECT *`) of the token not revoked with this hash, or null. */

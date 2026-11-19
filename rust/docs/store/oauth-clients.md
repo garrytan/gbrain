@@ -21,8 +21,22 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 
 TypeScript-only members (`src/core/rust-engine/store-members/jobs-oauth-clients.ts`): `readOauthClientColumns(probe)`
 names every column of the probe (the store keeps every column); `insertOauthClientGrant(row)` writes the client row through
-`insertOauthClient` and drops the register audit row (the store keeps no `oauth_grant_audit`);
-`readTokenLifetimeClampedClients()` is `[]` (no audit, so no upgrade clamped a client).
+`insertOauthClient` and the register audit row in one write (`brain.insertOauthClientGrant(row, audit)`);
+`readTokenLifetimeClampedClients()` is `[]` (the store runs no migrations, so none clamped a client).
+
+Grant members (`src/jobs/client_grants.rs`, NAPI `families/jobs/grants.rs`; the grant audit is `oauth_grant_audit`):
+
+| Member | What it does |
+| --- | --- |
+| `brain.persistOauthClientGrant(grant)` | one write: the client row's grant columns (every constraint above applies), the `__delegation_grant` of this client's open subagent jobs that have none, the audit row, and the private-pages and private-facts follow-ups. False, writing nothing, for no client or a revision other than the expected one |
+| `brain.listOauthGrantAudit(clientId)` | the client's audit rows by id, with the documents in `jsonb` key order |
+| `brain.readLatestCatalogProvenanceAudit(clientId)` | the newest audit row's `after_grant` that has a `catalogProvenance` key (a JSON null counts as present) |
+| `brain.readLiveOauthClients()` | every client not deleted, by id |
+| `brain.readSourceGrantState(id)` / `brain.replaceSourceConfig(id, config)` | a source's `{archived, config}` and a whole-config replace |
+
+`oauthClientHoldsAuthorization(clientId)` is TypeScript-only and is false here: the store keeps no OAuth tokens or codes
+for a client, so a client at revision 0 can take its first consent even when a token exists on a real brain (this holds
+until the `oauth_tokens` store lands).
 
 Defaults when a column is left out: `grant_types` `{client_credentials}` (an explicit null stays null), `federated_read`
 and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace` `prefixes`, `grant_revision` 0,
@@ -68,12 +82,13 @@ A complete agent grant (src/core/grants/schema.ts, `GRANT_CONSTRAINTS_SQL`) has 
 Postgres matches `(^|[[:space:]])agent([[:space:]]|$)`: a space, tab, newline, vertical tab, form feed or carriage
 return around it. A refused write leaves no row.
 
-Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds, the cap in hundredths of a dollar).
+Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds, the cap in hundredths of a dollar);
+`m 0x2E id -> audit row` (the sequence `oauth_grant_audit`).
 
 Differences from PGLite and PostgreSQL:
 
 - The error's `detail` (`Failing row contains ...`) is not produced; the message, code and constraint name are.
-- A registration writes no `oauth_grant_audit` row.
+- The audit table has no foreign key to the client: a client's audit rows stay when the client is deleted, as on SQL.
 - Not kept: the `trust_generation_update` trigger, the two secondary indexes (`idx_oauth_clients_source_id`,
   `idx_oauth_clients_federated_read`) and the `ON DELETE RESTRICT` of `sources` (the foreign key is checked on a client write
   only, so removing a source a client names is not refused here).

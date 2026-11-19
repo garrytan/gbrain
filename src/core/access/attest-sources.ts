@@ -94,10 +94,15 @@ export function sourcesOf(s: GrantSources): { reads: string[]; write: string | n
   return { reads: [], write: null };
 }
 
-/** Every live credential's read sources, write source and attest_sources, read through the canonical grant model. */
-async function credentialSources(sql: SqlQuery): Promise<CredentialSources[]> {
-  const clients = await sql`SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`;
-  const tokens = await sql`SELECT * FROM access_tokens WHERE revoked_at IS NULL`;
+/**
+ * Every live credential's read sources, write source and attest_sources, read through the canonical grant model. An engine
+ * reads the two tables through the typed `readLiveOauthClients` and `readLiveAccessTokenRows` members; a bare `SqlQuery`
+ * (a transaction handle the grant writes hold) keeps the two statements.
+ */
+async function credentialSources(db: Db): Promise<CredentialSources[]> {
+  const [clients, tokens]: [Record<string, unknown>[], Record<string, unknown>[]] = typeof db === 'function'
+    ? [await db`SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`, await db`SELECT * FROM access_tokens WHERE revoked_at IS NULL`]
+    : [await db.readLiveOauthClients() as unknown as Record<string, unknown>[], await db.readLiveAccessTokenRows()];
   return [
     ...clients.map(row => {
       const g = grantFromRow(row);
@@ -115,8 +120,7 @@ async function credentialSources(sql: SqlQuery): Promise<CredentialSources[]> {
  * source (applyAttestSources refuses it), so a default-only grant reads nothing.
  */
 export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null, reads: readonly string[], opts: { privatePages?: boolean; privateFacts?: boolean; writeSource?: string | null } = {}): Promise<void> {
-  const sql = sqlOf(db);
-  const attest = self && (opts.privatePages || opts.privateFacts || opts.writeSource) ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
+  const attest = self && (opts.privatePages || opts.privateFacts || opts.writeSource) ? (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [] : [];
   if (opts.privatePages && attest.length) {
     throw new GrantError('invalid_grant', 'This credential lists scope sources (--attest-sources), so it cannot hold the private-pages grant; nothing changed. '
       + 'A scope credential reads only shared memory: use a separate credential for private pages.');
@@ -133,7 +137,7 @@ export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null,
   if (!candidates.length) return;
   const marked = await markedScopeSources(db, candidates, 'share');
   if (!marked.size) return;
-  const own = self ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
+  const own = self ? (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [] : [];
   const reserved = [...marked].filter(s => !own.includes(s)).sort();
   if (!reserved.length) return;
   throw new GrantError('invalid_grant', `Source ${reserved.join(', ')} is a QM scope source, so only the scope credential may read it; nothing changed. `

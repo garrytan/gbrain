@@ -479,7 +479,7 @@ src/core/grants/migration.ts	execute_raw	1
 src/core/grants/migration.ts	sql_template	5
 src/core/grants/model.ts	execute_raw	1
 src/core/grants/rescope.ts	sql_template	7
-src/core/grants/service.ts	sql_template	11
+src/core/grants/service.ts	sql_template	10
 src/core/grants/shared-exposure.ts	execute_raw	1
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3

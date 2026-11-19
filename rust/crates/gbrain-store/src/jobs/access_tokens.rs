@@ -395,3 +395,34 @@ impl Store {
         })
     }
 }
+
+impl Store {
+    /// `readLiveAccessTokenRows()`: the whole row (`SELECT *`, no hash) of every token not revoked, by id, for the
+    /// grant checks that read every credential's source grant. Shaped as `read_active_access_token_by_hash` shapes it:
+    /// the columns not kept read as the table's defaults.
+    pub fn read_live_access_token_rows(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut tokens: Vec<TokenRecord> = all_tokens(&*read)?
+            .into_iter()
+            .filter(|t| t.revoked_at.is_none())
+            .collect();
+        tokens.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(Value::Array(
+            tokens
+                .into_iter()
+                .map(|t| {
+                    json!({
+                        "id": t.id, "name": t.name, "scopes": t.scopes, "created_at": iso(t.created_at),
+                        "last_used_at": Value::Null, "revoked_at": Value::Null, "permissions": t.permissions,
+                        "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
+                        "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
+                        "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
+                        "member_id": Value::Null, "may_act_for": Value::Null, "attest_actor": Value::Null,
+                        "attest_ops": Value::Null, "attest_sources": Value::Null, "attest_read": Value::Null,
+                        "reads_unscoped": Value::Null, "private_facts": "none",
+                    })
+                })
+                .collect(),
+        ))
+    }
+}

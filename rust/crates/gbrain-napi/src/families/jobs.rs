@@ -7,6 +7,7 @@
 mod access_tokens;
 mod checks;
 mod credentials;
+mod grants;
 mod health;
 mod insight;
 mod ops;

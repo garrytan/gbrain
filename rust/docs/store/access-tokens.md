@@ -20,6 +20,7 @@ same members. No store call returns a token hash, and the store never logs one. 
 | `brain.revokeAccessTokensNamed(name)` | the ids it revoked, by id: stamps `revoked_at` on every token not revoked with exactly this name, in one write |
 | `brain.revokeAccessToken(id)` | the name of the token not revoked with this id after stamping its `revoked_at`, or null |
 | `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and `last_used_at` as ISO text (null until a check stamps it), and the table defaults for the rest (the member and attest columns and `reads_unscoped` null, `private_pages` and `private_facts` `none`). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them |
+| `brain.readLiveAccessTokenRows()` | the same row shape for every token not revoked, by id, without `token_hash` (the grant checks that read every credential's source grant use no hash) |
 
 ## Callers
 
