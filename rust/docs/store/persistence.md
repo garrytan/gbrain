@@ -160,6 +160,22 @@ No effect is claimed or run on this engine yet: `selectClaimableEffect` answers 
 scans"), so every stored kind, embedding included, waits `queued` and nothing is lost. The receipt
 names a row that exists, and the write's reservation stays charged until the effect ends.
 
+## Owner scans
+
+The write owner's housekeeping reads on each scan tick (`persistence-owner-scans.ts`). Each one joins a
+write request to a worktree the host owns. This engine keeps no worktree (a request here always has a
+null `worktree_id`, and an insert that names a refresh hold refuses), so each list answers no row and no
+hold stands. An id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`; a hold
+kind other than `refresh` or `import` refuses.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listOverdueHeldWrites(hostId, hold)` | `[]`: no write here waits behind a refresh or a worktree import. The wait limit only narrows the rows, so it is not sent | `listOverdueHeldWrites` |
+| `brain.lockOverdueHold(hold, id)` | `false`: no refresh row or worktree import hold exists here. `id` is the refresh id (may be null) or the request id | `lockOverdueHold` |
+| `brain.listOwnerRecoveryHeads(hostId)` | `[]`: no write here carries a recovery record (those live only on worktree-owned writes). The excluded worktree ids only narrow the rows, so they are not sent | `listOwnerRecoveryHeads` |
+| `brain.listResumableRefreshes(hostId)` | `[]`: no refresh row exists here (refreshes live only on managed worktrees). The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
+| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` reads null because the store keeps none | `listSourceLastCommits` |
+
 ## Projection queue
 
 Every page write updates the queue in the same store transaction, as PGLite's

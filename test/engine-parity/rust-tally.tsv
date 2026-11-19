@@ -44,7 +44,7 @@ test/engine-parity/link-temporal.test.ts	13	0
 test/engine-parity/links.test.ts	30	0
 test/engine-parity/memory-mutation-reads.test.ts	5	0
 test/engine-parity/open-loops.test.ts	4	0
-test/engine-parity/owner-recovery-scans.test.ts	2	0
+test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/pages.test.ts	24	1
 test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	34	0

@@ -39,6 +39,7 @@ import type { DurablePersistenceSettings } from './engine-sql/persistence-declar
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
+import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owner-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
@@ -3452,6 +3453,31 @@ export interface BrainEngine {
    * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
    */
   readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
+
+  // Owner scans (engine-sql/persistence-owner-scans.ts): the reads the write owner's housekeeping sent through executeRaw.
+  /**
+   * Up to 100 deferred writes on worktrees `hostId` owns whose `hold` (a refresh barrier, or an import that has not
+   * landed) is past the wait limit `maxWaitMs`, in sequence order (`expireDeferredWrites`). A non-uuid host id refuses.
+   */
+  listOverdueHeldWrites<R = Record<string, unknown>>(hostId: string, maxWaitMs: number, hold: OverdueHoldKind, opts?: { signal?: AbortSignal }): Promise<R[]>;
+  /**
+   * Whether the hold an expiry scanned still stands, its row locked for the current transaction: the refresh still
+   * unreleased, or the write still deferred on the same pending import and past its limit (`expireDeferredWrites`).
+   */
+  lockOverdueHold(hold: OverdueHold): Promise<boolean>;
+  /**
+   * The oldest recovering write of each worktree `hostId` owns that is not in `excluded`, at most 16 (the consumer's
+   * recovery scan). `direct` takes the Postgres direct lane (the consumer passes `consumerOnDirectLane`). A non-uuid
+   * host id refuses.
+   */
+  listOwnerRecoveryHeads<R = Record<string, unknown>>(hostId: string, excluded: readonly string[], opts?: { signal?: AbortSignal; direct?: boolean }): Promise<R[]>;
+  /**
+   * The interrupted refreshes of worktrees `hostId` owns that the owner's topology scan converges, at most 16, a
+   * syncing row last; each carries `stale` (no move for `budgetMs`). A non-uuid host id refuses.
+   */
+  listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number): Promise<(R & { stale: boolean })[]>;
+  /** The last commit of each named source that exists (null before its first sync), in source id order (the refresh resume's lag check). */
+  listSourceLastCommits(sourceIds: readonly string[]): Promise<{ last_commit: string | null }[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null
