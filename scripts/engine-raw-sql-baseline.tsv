@@ -735,6 +735,7 @@ src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	4
 src/core/persistence/checkpoint-validation.ts	execute_raw	5
 src/core/persistence/compaction-pass.ts	execute_raw	2
+src/core/persistence/concept-revive.ts	execute_raw	17	#9653: the concept rebuild clears every store of the old body in the publication transaction, mirroring the purge scrubs it is classified against
 src/core/persistence/config-snapshot.ts	execute_raw	2
 src/core/persistence/connector-account-mismatch.ts	execute_raw	2
 src/core/persistence/connector-checkpoint-migration.ts	execute_raw	13

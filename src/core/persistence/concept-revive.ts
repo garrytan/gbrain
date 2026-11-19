@@ -189,6 +189,13 @@ export async function beginConceptRevive(tx: BrainEngine, sourceId: string, slug
   return null;
 }
 
+/** When a tombstone's recovery window ends: its own delete plus `hours` (UTC, to the second), and whether that has passed. */
+export async function tombstoneWindow(tx: Sql, pageId: number, hours: number): Promise<{ until: string; past: boolean } | null> {
+  const [window] = await tx.executeRaw<{ until: string; past: boolean }>(`SELECT to_char((deleted_at + ($2 || ' hours')::interval) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS until,
+    deleted_at + ($2 || ' hours')::interval <= now() AS past FROM pages WHERE id = $1 AND deleted_at IS NOT NULL`, [pageId, String(hours)]);
+  return window ?? null;
+}
+
 /** After the page write, in the same transaction: drops every version archived before the revive and closes the mark. */
 export async function finishConceptRevive(tx: Sql, revive: ConceptRevive): Promise<void> {
   await tx.executeRaw('DELETE FROM page_versions WHERE page_id = $1', [revive.page_id]);

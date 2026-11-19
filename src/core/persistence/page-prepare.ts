@@ -44,7 +44,7 @@ import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from '
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
 import { releaseHiddenMoment } from '../facts/derivation-inputs.ts';
-import { beginConceptRevive, finishConceptRevive, readConceptRevive } from './concept-revive.ts';
+import { beginConceptRevive, finishConceptRevive, readConceptRevive, tombstoneWindow, type ConceptRevive } from './concept-revive.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -829,8 +829,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
       if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }
       else await releaseHiddenMoment(tx, Number(snapshot.page.id));
       // #9653: a page already deleted keeps its tombstone's date, so its window runs from that date (a released hold included).
-      const [window] = noop ? await tx.executeRaw<{ until: string; past: boolean }>(`SELECT to_char((deleted_at + ($2 || ' hours')::interval) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS until,
-        deleted_at + ($2 || ' hours')::interval <= now() AS past FROM pages WHERE id = $1`, [Number(snapshot.page.id), String(retentionHours)]) : [];
+      const window = noop ? await tombstoneWindow(tx, Number(snapshot.page.id), retentionHours) : null;
       const until = !window ? `now + ${retentionHours}h` : window.past ? `the next purge (its ${retentionHours}h window ended ${window.until})` : window.until;
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
         recoverable_until: `${until} via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)` };
@@ -1067,11 +1066,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
   const activePack = pack?.manifest;
-  // #9653: a held concept's rebuild, a first publication over its tombstone (concept-revive.ts); trusted maintenance only.
-  const revive = p.kind === 'managed_maintenance_page' && !row.authority.remote ? readConceptRevive(p.concept_revive) : null;
-  if (revive && (snapshot?.page.deleted_at == null || Number(snapshot.page.id) !== revive.page_id)) throw pageRefusal('revision_conflict', 'The concept is no longer the tombstone the rebuild read.', row,
-    `Concept ${row.slug} changed while it was being rebuilt, so the rebuild published nothing; the next run builds it again.`);
-  const replacesTombstone = snapshot?.page.deleted_at != null && (row.operation === 'put_page' || row.operation === 'capture' || revive !== null);
+  const revive = preparedConceptRevive(row, snapshot), replacesTombstone = snapshot?.page.deleted_at != null && (row.operation === 'put_page' || row.operation === 'capture' || revive !== null);
   if (row.operation === 'put_page' && snapshot && !snapshot.page.deleted_at && typeof p.content === 'string'
     && `${snapshot.page.compiled_truth}\n${snapshot.page.timeline ?? ''}`.trim()) {
     const incoming = parseMarkdown(p.content, row.slug, { activePack });
@@ -1343,17 +1338,27 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       // DX-1: a guarded supersession reports contested (the first proposal; every one when the write contested several rows).
       ...(contested.length ? { contested: { proposal_ref: contested[0], ...(contested.length > 1 ? { proposal_refs: contested } : {}) } } : {}) };
   } };
-  if (revive) {
-    const apply = publication.apply;
-    publication.apply = async (tx, preimage) => {
-      const refused = await beginConceptRevive(tx, row.source_id, row.slug, revive, { journal: true });
-      if (refused) throw pageRefusal('revision_conflict', 'The concept is no longer held for a rebuild.', row, refused);
-      const outcome = await apply(tx, preimage);
-      await finishConceptRevive(tx, revive);
-      return outcome;
-    };
-  }
-  return guardGuestPublication(publication, row, guest, noop);
+  return guardGuestPublication(revive ? Object.assign(publication, { apply: revivingApply(publication.apply, row, revive) }) : publication, row, guest, noop);
+}
+
+/** #9653: a held concept's rebuild, a first publication over its tombstone (concept-revive.ts); trusted maintenance only. */
+function preparedConceptRevive(row: WriteRequest, snapshot: PageSnapshot | null): ConceptRevive | null {
+  const p = row.intent!;
+  const revive = p.kind === 'managed_maintenance_page' && !row.authority.remote ? readConceptRevive(p.concept_revive) : null;
+  if (revive && (snapshot?.page.deleted_at == null || Number(snapshot.page.id) !== revive.page_id)) throw pageRefusal('revision_conflict', 'The concept is no longer the tombstone the rebuild read.', row,
+    `Concept ${row.slug} changed while it was being rebuilt, so the rebuild published nothing; the next run builds it again.`);
+  return revive;
+}
+
+/** The rebuild's apply: under the publication's lock, re-check and clear, publish, then drop the old versions and the mark. */
+function revivingApply(apply: PreparedMutation['apply'], row: WriteRequest, revive: ConceptRevive): PreparedMutation['apply'] {
+  return async (tx, preimage) => {
+    const refused = await beginConceptRevive(tx, row.source_id, row.slug, revive, { journal: true });
+    if (refused) throw pageRefusal('revision_conflict', 'The concept is no longer held for a rebuild.', row, refused);
+    const outcome = await apply(tx, preimage);
+    await finishConceptRevive(tx, revive);
+    return outcome;
+  };
 }
 
 /** What a page's projections report back: removed timeline rows and the contested proposal refs (#5575 guarded supersession). */
