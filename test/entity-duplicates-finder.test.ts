@@ -24,7 +24,8 @@
  * writes nothing; a different exclusive key (LinkedIn, GitHub, declared id)
  * vetoes clean while a different handle or email only shows; two different
  * domains keep a group out of clean (a US firm and its UK namesake on one
- * LinkedIn page); a run of single letters folds as one word (L.L.C. = LLC); role and
+ * LinkedIn page); in a company name a run of single letters folds as one
+ * word (L.L.C. = LLC), while a person's initials stay apart; role and
  * household addresses are tagged; free-mail domains are never company keys;
  * a union of clean groups that share a page is checked as a whole; \`gbrain dedupe --preview --json\` keeps
  * an exact versioned key set; matchers are pluggable. PGLite, no repository,
@@ -186,12 +187,14 @@ describe('name folds', () => {
     for (const n of ['Dr. Ada Søndergaard III', 'Łukasz Ó Example-Sample']) expect(strictNameFold(n)).toBe(nameWords(n).join(' '));
   });
 
-  test('a run of single letters folds as one word, so a dotted legal suffix matches the plain one', async () => {
+  test('in a company name a run of single letters folds as one word, so a dotted legal suffix matches the plain one', async () => {
     for (const n of ['Iselwood, L.L.C.', 'Iselwood L L C', 'ISELWOOD LLC']) {
-      expect(strictNameFold(n)).toBe('iselwood llc');
+      expect(strictNameFold(n, 'company')).toBe('iselwood llc');
       expect(variantNameFold(n, 'company')).toBe('iselwood');
     }
-    expect(strictNameFold('J. R. Example')).toBe(strictNameFold('JR Example'));
+    expect(strictNameFold('D. R. Example')).toBe('d r example');
+    expect(strictNameFold('D. R. Example')).not.toBe(strictNameFold('Dr. Example'));
+    expect(variantNameFold('D. R. Example', 'person')).not.toBe(variantNameFold('Example', 'person'));
     expect(strictNameFold('Alice B Example')).toBe('alice b example');
     await page('companies/iselwood', 'company', 'Iselwood, L.L.C.', { linkedin: 'linkedin.com/company/iselwood' });
     await page('companies/iselwood', 'company', 'Iselwood LLC', { linkedin: 'https://www.linkedin.com/company/iselwood/' }, 'source-b');
