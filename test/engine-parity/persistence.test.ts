@@ -301,6 +301,40 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('a managed activation records, flips, gates, settles and lists its members', {
+    methods: ['transaction', 'putPage', 'activateGenerationRows', 'recordGenerationActivation', 'markGenerationActivated', 'readGenerationActivationState',
+      'settleGenerationMember', 'listPendingGenerationMembers', 'listGenerationOrphanCandidates'],
+  }, async (engine) => {
+    const key = { sourceId: 'default', kind: 'managed_parity', ownerKey: 'input:x' };
+    const first = '00000000-0000-8000-a000-00000000ac01';
+    const second = '00000000-0000-8000-a000-00000000ac02';
+    await engine.putPage('notes/made', { type: 'note', title: 'Made', compiled_truth: 'made body' });
+    const record = (activationId: string, slug: string, action: string) => engine.transaction(tx => tx.recordGenerationActivation(key,
+      { activationId, expectedGeneration: 0, inputPin: 'p', setHash: 'h', members: [{ slug, action, identity: `id-${slug}`, before: null }] }));
+    await record(first, 'notes/x', 'overwrite');
+    await record(first, 'notes/made', 'create');
+    const pendingState = await engine.readGenerationActivationState(first, 'notes/x', 'default');
+    const id = await engine.transaction(async tx => {
+      const made = await tx.activateGenerationRows(key, null, { generation: 1, runId: null, operationId: 'managed-parity', inputPin: 'p', inputSize: 1,
+        completeness: '{"managed":true}', setHash: 'h', restoreOf: null, activationId: first, locator: null },
+        [{ item_key: 'notes/x', identity_hash: 'id-notes/x', action: 'published', preimage: null, preimage_bytes: null, pending: true }]);
+      await tx.markGenerationActivated(first, made);
+      return made;
+    });
+    const liveState = await engine.readGenerationActivationState(first, 'notes/x', 'default');
+    const pending = (await engine.listPendingGenerationMembers(['default'], 'managed_parity')).map(row => ({ ...row, generation_id: Number(row.generation_id) === id ? 'G' : row.generation_id }));
+    await engine.transaction(tx => tx.settleGenerationMember(first, 'notes/x'));
+    const settled = await engine.readGenerationActivationState(first, 'notes/x', 'default');
+    await record(second, 'notes/made', 'create');
+    const orphans = (await engine.listGenerationOrphanCandidates(['default'], null)).filter(row => row.kind === 'managed_parity').map(({ created_at: _c, ...row }) => row);
+    const answers = { pendingState, liveState, pending, settled, orphans };
+    expect(answers).toEqual({ pendingState: { state: 'pending', generation_state: null, pending: null }, liveState: { state: 'activated', generation_state: 'live', pending: true },
+      pending: [{ source_id: 'default', kind: 'managed_parity', owner_key: 'input:x', generation_id: 'G', activation_id: first, slug: 'notes/x', item_action: 'published', identity: 'id-notes/x' }],
+      settled: { state: 'activated', generation_state: 'live', pending: false },
+      orphans: [{ source_id: 'default', kind: 'managed_parity', owner_key: 'input:x', activation_id: second, slug: 'notes/made' }] });
+    return answers;
+  });
+
   parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
     methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
   }, async (engine) => {

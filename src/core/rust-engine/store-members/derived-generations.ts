@@ -10,6 +10,9 @@ import type {
   HeldInputRow, LiveGenerationRow,
 } from '../../engine-sql/derived-generations.ts';
 import type { LedgerScrubCounts } from '../../engine-sql/generation-ledger.ts';
+import type {
+  GenerationActivationRecord, GenerationActivationState, GenerationOrphanRow, PendingGenerationMemberRow,
+} from '../../engine-sql/generation-activations.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The live generation of `key` with its owned items, or null. */
@@ -66,3 +69,35 @@ export const scrubGenerationPageRows: StoreMember<[sourceId: string, fenceKinds:
 /** The fact purge scrub: every preimage, held proposal, held context and fence block that carries a lowercase needle. */
 export const scrubGenerationTextRows: StoreMember<[sourceId: string, needles: readonly string[]], LedgerScrubCounts> = async (brain, sourceId, needles) =>
   storeCall({ member: 'scrubGenerationTextRows', sourceId }, () => brain.scrubGenerationTextRows(sourceId, [...needles]));
+
+/** Inserts the pending activation row of `key` unless a row with its id exists. `members` crosses as JSON text. */
+export const recordGenerationActivation: StoreMember<[key: GenerationRowKey, row: GenerationActivationRecord], void> = async (brain, key, row) => {
+  const members = JSON.stringify(row.members.map(member => ({ slug: member.slug, action: member.action, identity: member.identity, before: member.before })));
+  await storeCall({ member: 'recordGenerationActivation', sourceId: key.sourceId }, () => brain.recordGenerationActivation(key,
+    { activationId: row.activationId, expectedGeneration: row.expectedGeneration, inputPin: row.inputPin, setHash: row.setHash, members }));
+};
+
+/** Marks the activation `activationId` activated with the generation it made. */
+export const markGenerationActivated: StoreMember<[activationId: string, generationId: number], void> = async (brain, activationId, generationId) => {
+  await storeCall({ member: 'markGenerationActivated' }, () => brain.markGenerationActivated(activationId, generationId));
+};
+
+/** The activation `activationId` of `sourceId` with its generation's state and `slug`'s pending mark, or null. */
+export const readGenerationActivationState: StoreMember<[activationId: string, slug: string, sourceId: string], GenerationActivationState | null> =
+  async (brain, activationId, slug, sourceId) =>
+    storeCall({ member: 'readGenerationActivationState', sourceId }, () => brain.readGenerationActivationState(activationId, slug, sourceId));
+
+/** Clears `slug`'s pending mark on the generation the activation made. */
+export const settleGenerationMember: StoreMember<[activationId: string, slug: string], void> = async (brain, activationId, slug) => {
+  await storeCall({ member: 'settleGenerationMember' }, () => brain.settleGenerationMember(activationId, slug));
+};
+
+/** The pending items of the live generations of `sourceIds` (one kind when given). */
+export const listPendingGenerationMembers: StoreMember<[sourceIds: readonly string[], kind: string | null], PendingGenerationMemberRow[]> =
+  async (brain, sourceIds, kind) =>
+    storeCall({ member: 'listPendingGenerationMembers' }, () => brain.listPendingGenerationMembers([...sourceIds], kind));
+
+/** The orphan candidates of the pending activations of `sourceIds` (one kind when given). */
+export const listGenerationOrphanCandidates: StoreMember<[sourceIds: readonly string[], kind: string | null], GenerationOrphanRow[]> =
+  async (brain, sourceIds, kind) =>
+    storeCall({ member: 'listGenerationOrphanCandidates' }, () => brain.listGenerationOrphanCandidates([...sourceIds], kind));

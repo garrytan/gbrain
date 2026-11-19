@@ -24,6 +24,10 @@
 //!   (`liveGenerationForOperation`) reads one prefix instead of every row.
 //! - `h 0x07 source \0 kind \0 owner_key \0 hold_id -> []` for each attempt row: the index
 //!   `derived_generation_attempts_key`, so an activation deletes its key's counters by prefix.
+//! - `h 0x08` and `h 0x09`: the managed activation rows of `derived_generation_activations` and
+//!   their generation index (`generations/activations.rs`, members recordGenerationActivation,
+//!   markGenerationActivated, readGenerationActivationState, settleGenerationMember,
+//!   listPendingGenerationMembers and listGenerationOrphanCandidates).
 //!
 //! Time: `created_at` and `updated_at` are UTC microseconds from the store's clock; in a
 //! transaction that is the transaction's clock, as Postgres `now()` is the transaction's start.
@@ -32,7 +36,8 @@
 //! values, are refused where Postgres `jsonb` refuses them, and are stored in Postgres `jsonb` key
 //! order (`dream::jsonb`).
 //!
-//! A source delete removes the source's rows of all four tables (`remove_source_rows`).
+//! A source delete removes the source's rows of all five tables (`remove_source_rows`); a deleted
+//! generation row sets its activations' `generation_id` to null.
 //!
 //! Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`. This
 //! family writes no page record, so it never sets the member-access flag itself; a page write in the
@@ -47,6 +52,9 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+
+mod activations;
+pub use activations::ActivationRecordInput;
 
 const RECORD: u8 = 0x01;
 const POINTER: u8 = 0x02;
@@ -383,6 +391,7 @@ fn delete_row(tx: &mut dyn KvWrite, record: &GenerationRecord) -> Result<()> {
     for (k, _) in collect_prefix(&*tx, &item_prefix(record.id), false, usize::MAX)? {
         tx.delete(&k)?;
     }
+    activations::unlink_generation(tx, record.id)?;
     tx.delete(&record_key(record.id))
 }
 
@@ -1132,6 +1141,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for record in &doomed {
         delete_row(tx, record)?;
     }
+    activations::remove_source_activations(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;

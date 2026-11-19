@@ -10,7 +10,9 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::generations::{ActivationInput, GenerationKey, HeldInput, LedgerItemInput};
+use gbrain_store::generations::{
+    ActivationInput, ActivationRecordInput, GenerationKey, HeldInput, LedgerItemInput,
+};
 
 #[napi]
 impl Brain {
@@ -205,6 +207,88 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.scrub_generation_text_rows(&source_id, &needles)
+        })
+    }
+
+    /// `recordGenerationActivation(key, row)`: resolves null; `row.members` is JSON text.
+    #[napi]
+    pub fn record_generation_activation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "recordGenerationActivation key")?;
+            let row: ActivationRecordInput = required(row, "recordGenerationActivation row")?;
+            s.record_generation_activation(&key, &row)
+        })
+    }
+
+    /// `markGenerationActivated(activationId, generationId)`: resolves null.
+    #[napi]
+    pub fn mark_generation_activated<'env>(
+        &self,
+        env: &'env Env,
+        activation_id: String,
+        generation_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.mark_generation_activated(&activation_id, generation_id)
+        })
+    }
+
+    /// `readGenerationActivationState(activationId, slug, sourceId)`: resolves
+    /// `{ state, generation_state, pending }` or null.
+    #[napi]
+    pub fn read_generation_activation_state<'env>(
+        &self,
+        env: &'env Env,
+        activation_id: String,
+        slug: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_generation_activation_state(&activation_id, &slug, &source_id)
+        })
+    }
+
+    /// `settleGenerationMember(activationId, slug)`: resolves null.
+    #[napi]
+    pub fn settle_generation_member<'env>(
+        &self,
+        env: &'env Env,
+        activation_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.settle_generation_member(&activation_id, &slug)
+        })
+    }
+
+    /// `listPendingGenerationMembers(sourceIds, kind)`: resolves the pending member rows.
+    #[napi]
+    pub fn list_pending_generation_members<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        kind: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_pending_generation_members(&source_ids, kind.as_deref())
+        })
+    }
+
+    /// `listGenerationOrphanCandidates(sourceIds, kind)`: resolves the orphan candidate rows.
+    #[napi]
+    pub fn list_generation_orphan_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        kind: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_generation_orphan_candidates(&source_ids, kind.as_deref())
         })
     }
 }
