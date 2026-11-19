@@ -75,11 +75,11 @@ transaction	lifecycle	yes	52	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	80	yes	yes	yes	serves
+getPage	pages	yes	81	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	312	yes	yes	yes	serves
+putPage	pages	yes	313	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -202,7 +202,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	56	yes	yes	yes	serves
+addLink	links	yes	57	yes	yes	yes	serves
 addLinksBatch	links	yes	9	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	8	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -258,7 +258,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	34	yes	yes	yes	serves
+addTakesBatch	takes	yes	35	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 listTakes	takes	yes	14	no	yes	yes	serves
 searchTakes	takes	yes	4	no	yes	yes	serves
@@ -268,7 +268,7 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	1	no	yes	yes	serves
 supersedeTake	takes	yes	1	no	yes	yes	serves
-resolveTake	takes	yes	11	no	yes	yes	serves
+resolveTake	takes	yes	12	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
@@ -279,7 +279,7 @@ countOffGridTakeWeights	takes	yes	1	no	yes	yes	serves
 countTakes	takes	yes	1	no	yes	yes	serves
 planFactPurgeTakes	takes	yes	1	no	yes	yes	serves
 listTakeRowsForPage	takes	yes	1	no	yes	yes	serves
-countMcpResolvedTakes	takes	yes	3	no	yes	yes	serves
+countMcpResolvedTakes	takes	yes	4	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
