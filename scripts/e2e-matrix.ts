@@ -39,6 +39,8 @@ export const E2E_EXCLUSIONS = new Set([
   'test/e2e/sync-delegation-under-serve.serial.test.ts',
   'test/e2e/dream-synthesize-pglite.test.ts',
   'test/e2e/skills.test.ts',
+  // Needs the OpenClaw CLI: run by the openclaw-skill-resolver job.
+  'test/e2e/openclaw-skill-resolver-real.test.ts',
   'test/e2e/voyage-rerank-live.test.ts',
   'test/e2e/voyage-multimodal.test.ts',
   // Engine graduation: run once by the tier1-graduation job (direct Postgres + PgBouncer).

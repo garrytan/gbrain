@@ -65,6 +65,7 @@ import {
   SINK_DRAIN_TIMEOUT_MS,
 } from './background-work.ts';
 import { POOL_END_TIMEOUT_SECONDS } from './pool-end-timeout.ts';
+import { jsonDocumentDelegated } from './json-document-delegation.ts';
 import { parseGlobalFlags } from './cli-options.ts';
 import { setInterruptedDocumentWriter, slowReadElapsedMs, withReadMeta } from './read-heartbeat.ts';
 
@@ -844,7 +845,7 @@ export function noteRenderedErrorCode(code: string): void {
 }
 
 function writeJsonFallbackIfMissing(exitCode: number): void {
-  if (!jsonGuardMode || jsonDocumentWritten) return;
+  if (!jsonGuardMode || jsonDocumentWritten || jsonDocumentDelegated()) return;
   if (exitCode === 0) {
     // Exit 0 with no document is a bug in the command (D5 fails it); log it, never invent a result.
     // An NDJSON stream may legitimately be empty (e.g. `eval export` with no rows).

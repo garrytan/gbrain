@@ -476,7 +476,9 @@ the sibling pattern: row-level security on and no policy, so a role with only ta
 (Supabase's `anon` and `authenticated`) neither reads nor adds a mark. No migration grants
 anything. On a brain that has held owner-only data, every non-owner login that reads `sources`
 needs `SELECT` (to read owner-only lineage exactly) and, if it makes permanent deletes,
-`INSERT` on `owner_only_marks`, each with a permissive policy. Without them the login reads
+`INSERT` on `owner_only_marks`, each with a permissive policy in the shape below (`USING (true)`,
+and `WITH CHECK (true)` to add) and no restrictive policy that applies to it; any other policy
+counts as none. Without them the login reads
 owner-only lineage closed, never open and never an error, and its permanent deletes are
 refused with `owner_only_marks_unwritable`, which names the grant. Nobody but the owner
 removes a mark, and only the owner of `owner_only_marks` sets the flag, so the first
@@ -495,12 +497,33 @@ CREATE POLICY owner_only_marks_read_<reader-role> ON owner_only_marks FOR SELECT
 ```
 <!-- gbrain:owner-only-marks-recipe:end -->
 
-A login that cannot read `derivation_inputs`, `facts`, `links`, `takes` and `timeline_entries`
-(the reader role above reads none of them) cannot walk owner-only lineage, so on a brain that has
-held owner-only data it reads every row closed: it sees no page or fact as open, with no error,
-also after the last owner-only source is removed. Do not grant it `SELECT` on those tables
-without a policy that shows it every row: under row-level security it would miss derivation rows
-and read rows open that are owner-only.
+Owner-only lineage is read exactly only by a login whose reads of the lineage tables (`sources`,
+`facts`, `derivation_inputs`, `links`, `pages`, `takes`, `timeline_entries`) are complete: the
+table owner without `FORCE`, a `BYPASSRLS` login, or a login with a permissive `USING (true)`
+policy and no restrictive one on each. On a brain that has held owner-only data any other login
+reads it closed, never open and never an error: every row with a recorded derivation input,
+every synthesized concept or question, every row in an owner-only source and every page or
+fact whose source row the login cannot read counts as owner-only for it. So the scoped writer above, whose `pages` and `sources` policies read
+`app.scopes`, sees every derived row as owner-only. A login that cannot read `derivation_inputs`
+in full (the reader role above has no grant on it) sees every row as owner-only, also after the
+last owner-only source is removed.
+
+**Who must act.** Nobody has to: such a login reads closed, so owner-only data stays hidden
+from it and nothing errors. An operator who runs a scoped login (the writer or reader role
+above) on a brain that has held owner-only data, and wants that login to read derived rows
+exactly again, so that a row derived only from open rows reads as open, gives it complete reads
+of each lineage table `gbrain doctor` names for it (`owner_only_marks_triggers`, details
+`closed_logins` and `lineage_sql`). As the table owner, for each named table:
+
+```sql
+GRANT SELECT ON public.<table> TO <login>;
+DROP POLICY IF EXISTS gbrain_lineage_read_<login> ON public.<table>;
+CREATE POLICY gbrain_lineage_read_<login> ON public.<table> FOR SELECT TO <login> USING (true);
+```
+
+Then drop any restrictive policy on those tables that applies to the login. This gives the
+login every row of those tables, so it undoes the source scoping its own policies give it. That
+trade is the operator's to make: no migration grants anything or adds a policy.
 
 <a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
@@ -1675,7 +1698,8 @@ when the `rust` config value lands; no config value selects the Rust engine yet.
 addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
-  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags` and `schema`.
+  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags`, `schema`, `keyword_search`, `vector_search`, `embeddings`, `links`, `graph`,
+  `takes`, `salience` and `ingest_log`.
   Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
@@ -1712,11 +1736,28 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
 - Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
   `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
-- Versions, chunks, keyword search, links, graph and timeline: `createVersion`, `getVersions`, `upsertChunks`,
-  `sealChunks`, `getChunks`, `deleteChunks`, `searchKeyword`, `addLink`, `addLinksBatch`, `removeLink`, `getLinks`,
-  `getBacklinks`, `traverseGraph`, `traversePaths`, `traversePathsDetailed`, `addTimelineEntry`,
-  `addTimelineEntriesBatch`, `getTimeline`. These capabilities stay unreported, because other members of the same
-  capability (`revertToVersion`, `getChunkPage`, `searchTitles`, `getBacklinkCounts`, `getTimelineForDate`, ...) still refuse.
+- Versions, chunks and timeline: `createVersion`, `getVersions`, `upsertChunks`, `sealChunks`, `getChunks`,
+  `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
+  `deleteChunks`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`, `getTimelineForDate`, `getSince`,
+  `getOnThisDay`, `getLastSeen`. These capabilities stay unreported, because other members of the same capability
+  (`revertToVersion`, `setChunkerVersion`, `upsertEventProjection`, ...) still refuse. Chunk reads are in
+  `rust/docs/store/chunk_queries.md`.
+- Links and graph: `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
+  `traversePaths`, `traversePathsDetailed`, and the link reads in `rust/docs/store/link_queries.md` (`getBacklinkCounts`,
+  `getAdjacencyBoosts`, `relationalFanout`, `findOrphanPages`, `supersedingPageSlugs`, `pagesLinkingTo`, ...). Every
+  member of `links` and `graph` is served, so both capabilities are reported.
+- Vectors and embeddings: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as
+  pgvector scores them), the embedding state members (`getEmbeddingsByChunkIds`, `cosinesByChunkIds`, `listStaleChunks`,
+  `setPageEmbeddingSignature`, `updateTakeEmbeddings`, ...) and `upsertChunks` and `sealChunks` with the vector a chunk
+  carries (`rust/docs/store/vectors.md`, `rust/docs/store/embeddings.md`). The `vector_search` and `embeddings`
+  capabilities are reported. The store has one vector column, PGLite's `embedding`.
+- Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
+  `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
+  `salience` and `ingest_log` capabilities are reported.
+- Keyword and title search: `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
+  `searchTitles` and `findByTitleFuzzy`. They rank with a port of PostgreSQL's `ts_rank`, `ts_rank_cd` and
+  `websearch_to_tsquery` (english), so their answers match PGLite's (`rust/docs/store/keyword.md`). Every member of
+  `keyword_search` is served, so the capability is reported.
 - Segmented pages (a page over 1 MiB, stored in segments): `allocateBodyOccurrenceIds`, `stageSegmentTexts`,
   `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
@@ -1727,16 +1768,21 @@ that is not connected refuses `engine_closed`. These members run on the store (`
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
 way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
 
-- a chunk that carries a vector or an image vector, and a Rust brain whose config sets `search_embedding_column` or
-  `embedding_columns` (the store keeps no vectors yet, so a Rust brain has no vector search and no embeddings until it
-  does; this arrives later);
+- a chunk that carries an image vector, and a Rust brain whose config sets `search_embedding_column` or
+  `embedding_columns` to another column (the store keeps PGLite's `embedding` column only; every member that reads the
+  active column refuses, `rust/docs/store/embeddings.md`);
 - a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
   (only the files on disk can say whether another page already holds that file, and the store cannot read them);
 - `listPages` with `listColumnsOnly`;
 - `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
   not have, so an empty answer would be wrong to give;
-- a `getChunks` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;
-- a keyword search with an offset, `where` or a date window, and a link batch that sets a link kind or resolution.
+- a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
+- a vector search with `where`, a date bound, `minTrust` or `suppressFlagged` (`rust/docs/store/vectors.md`);
+- a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy
+  `requireSafeChunks`, `minTrust` or `suppressFlagged`, a date bound that is not an ISO date, a malformed `where`, or a
+  truthy `excludePrivate` on `searchKeywordChunks`, `countKeywordPages` or `searchKeywordPages` (`searchKeyword` and
+  `searchTitles` serve it; `rust/docs/store/keyword.md`, "Refusals"), and a link
+  batch that sets a link kind or resolution.
 
 A `putPage` that carries a `source_path` keeps it, and refuses `page_identity_changed` (detail
 `origin_already_claimed`) when another live page of the same source already records that path, as PGLite does.
@@ -1754,9 +1800,9 @@ A scope that names no source (an empty string `sourceId` or `sourceIds` entry) i
 
 Keyword search hides what PGLite hides: soft-deleted pages, archived sources, pages that carry a `quarantine` or
 `pinned_question` frontmatter key, whatever its value, and the slug prefixes `test/`, `attachments/` and `.raw/` plus any
-that `GBRAIN_SEARCH_EXCLUDE` names (`include_slug_prefixes` opts back in). Ranking-only options of `searchKeyword` are accepted and
-ignored, because Rust ranks with BM25 and this is not parity with PGLite (design D5). Its scores and tie order differ
-from PGLite's. The expected difference is listed in `test/rust-expected-divergence/` (one file per family).
+that `GBRAIN_SEARCH_EXCLUDE` names (`include_slug_prefixes` opts back in). Keyword and title search rank with a port of `ts_rank` and
+`ts_rank_cd` over a port of PostgreSQL's english text search, and match PGLite's scores and order. No keyword case is
+listed in `test/rust-expected-divergence/` (`search.tsv` is empty).
 
 The parity suite checks this: with `GBRAIN_TEST_RUST_ARM=1` each `test/engine-parity/` file adds a Rust arm. A case that
 reaches a member or an option Rust refuses must end on that typed refusal (a refusal the case caught on the way to

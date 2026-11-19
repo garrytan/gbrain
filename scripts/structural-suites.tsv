@@ -335,7 +335,7 @@ test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run
 test/scripts/ci-manifest-diff.test.ts	test.yml dependency-audit scope	2	readFileSync
 test/scripts/ci-pr-scope.test.ts	pull-request CI scope	14	readFileSync
 test/scripts/ci-runner-routing.test.ts	CI runner routing	7	readFileSync
-test/scripts/ci-ubicloud-list.test.ts	ci-ubicloud.ts --list	4	readFileSync
+test/scripts/ci-ubicloud-list.test.ts	ci-ubicloud.ts --list	5	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	23	bun-file,doctor-source-helper,exec-scan,readFileSync,source-surface-helper
 test/scripts/classify-tests.test.ts	structural-suites manifest	1	readFileSync
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
@@ -441,6 +441,7 @@ test/skillpack-scaffold.test.ts	runScaffold — IRON-RULE regressions (R1, R2)	3
 test/skillpack-scaffold.test.ts	runScaffold — happy path	3	readFileSync
 test/skillpack-scrub-legacy.test.ts	runScrubLegacy	8	readFileSync
 test/skillpack-writer-guard.test.ts	(file-level)	6	readFileSync
+test/slug-move-keeps-trust-9735.test.ts	#9735 slug move census	2	readFileSync
 test/snapshot-shape-guard.test.ts	(file-level)	10	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	source-surface-helper
 test/spec-drain-lease-constants.test.ts	the TLA+ workflow runs when anything a mutant names changes	1	readFileSync

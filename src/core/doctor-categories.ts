@@ -118,6 +118,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_members_read_lineage',
   // GBRA-108 design 1: labelled-only members (doctor/checks/access-labelled-only.ts).
   'access_labelled_only_members',
+  // GBRA-582 item 9: pages no enabled member reads (doctor/checks/access-pages-read-by-nobody.ts).
+  'access_pages_read_by_nobody',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   // GBRA-504: guest sources, their writers and the owner credentials that read them (doctor/checks/guest-source.ts).
@@ -290,6 +292,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'timeline_history',
   // #6147: imported conversation pages that may still carry a typed credential (cached audit).
   'transcript_secret_exposure',
+  // GST-2988 PR 3: the secret store's entries, backups, keys, spool and held-back commits (doctor/checks/secret-store.ts).
+  'secret_store',
   // GST-2768: the conversation archive keeping up with the harness sessions (doctor/checks/transcript-archive.ts).
   'transcript_archive_freshness',
   // GST-2731: facts pages with undated fact lines (doctor/checks/facts-pages.ts).

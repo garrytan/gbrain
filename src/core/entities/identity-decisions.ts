@@ -20,6 +20,7 @@
  * dedupe_decision_store_mismatch instead of writing a decision only the database would hold.
  */
 import { createHash } from 'node:crypto';
+import { pageBodyBytes } from '../page-body/page-shape.ts';
 import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
@@ -142,7 +143,20 @@ export interface ProjectionResult { source_id: string; upserted: number; removed
  * (a changed blob is re-read, a file removed in git removes its row), then reconciles the identity rows; one transaction.
  */
 export async function projectIdentityDecisions(engine: BrainEngine, home: IdentityHome, rev = 'HEAD'): Promise<ProjectionResult> {
-  const { decisions, pending } = await engine.listIdentityDecisions();
+  for (let attempt = 1; ; attempt++) {
+    const r = await applyIdentityProjection(engine, await planIdentityProjection(engine, home, rev));
+    if (!r.stale) return r;
+    if (attempt === PROJECTION_ATTEMPTS) throw new Error(`the duplicate decisions changed while they were being projected, ${PROJECTION_ATTEMPTS} times in a row; nothing was applied (gbrain dedupe reconcile retries)`);
+  }
+}
+
+const PROJECTION_ATTEMPTS = 5;
+
+export interface IdentityProjectionPlan { home: IdentityHome; upsert: IdentityDecision[]; remove: string[]; invalid: string[]; pending: number; revision: string }
+
+/** What a projection of the files committed at `rev` would write, read against the current rows. Writes nothing. */
+export async function planIdentityProjection(engine: BrainEngine, home: IdentityHome, rev = 'HEAD'): Promise<IdentityProjectionPlan> {
+  const { decisions, pending, revision } = await engine.listIdentityDecisions();
   const mine = new Map(decisions.filter(d => d.origin === 'git' && d.home_source_id === home.sourceId).map(d => [d.decision_id, d]));
   const files = await committedDecisionFiles(home.root, rev);
   const upsert: IdentityDecision[] = [];
@@ -155,8 +169,15 @@ export async function projectIdentityDecisions(engine: BrainEngine, home: Identi
   }
   const present = new Set(files.map(f => f.id));
   const remove = [...mine.keys()].filter(id => !present.has(id));
-  if (!upsert.length && !remove.length && !pending.length) return { source_id: home.sourceId, upserted: 0, removed: 0, invalid, linked: 0, unlinked: 0 };
-  const r = await engine.applyIdentityDecisions({ upsert, remove });
+  return { home, upsert, remove, invalid, pending: pending.length, revision };
+}
+
+/** Applies a projection plan in one transaction, unless the rows changed since the plan read them: then it writes nothing and is stale. */
+export async function applyIdentityProjection(engine: BrainEngine, plan: IdentityProjectionPlan): Promise<ProjectionResult & { stale?: true }> {
+  const { home, upsert, remove, invalid } = plan;
+  if (!upsert.length && !remove.length && !plan.pending) return { source_id: home.sourceId, upserted: 0, removed: 0, invalid, linked: 0, unlinked: 0 };
+  const r = await engine.applyIdentityDecisions({ upsert, remove, expectRevision: plan.revision });
+  if (r.stale) return { source_id: home.sourceId, upserted: 0, removed: 0, invalid, linked: 0, unlinked: 0, stale: true };
   return { source_id: home.sourceId, upserted: upsert.length, removed: remove.length, invalid, linked: r.linked, unlinked: r.unlinked };
 }
 
@@ -340,8 +361,10 @@ export interface IdentityDrift {
   store_mismatch: boolean;
   /** Decisions the database holds alone on a brain that has a home repository. */
   database_only: number;
-  /** Committed decision files that have no row, or whose row was read from another blob (not synced yet). */
+  /** Committed decision files that validate but have no row, or whose row was read from another blob (not synced yet). */
   unsynced_files: number;
+  /** Committed decision files that do not validate: a projection skips them, so only an edit to the file clears them. */
+  invalid_files: string[];
   /** Rows projected from git whose file is no longer committed. */
   rows_without_file: number;
   pending: PendingIdentityMember[];
@@ -352,18 +375,39 @@ export async function identityDrift(engine: BrainEngine, read?: IdentityDecision
   const r = read ?? await engine.listIdentityDecisions();
   const home = await identityHome(engine);
   const gitRows = r.decisions.filter(d => d.origin === 'git');
-  if (!home) return { home: null, store_mismatch: gitRows.length > 0, database_only: 0, unsynced_files: 0, rows_without_file: 0, pending: r.pending };
+  if (!home) return { home: null, store_mismatch: gitRows.length > 0, database_only: 0, unsynced_files: 0, invalid_files: [], rows_without_file: 0, pending: r.pending };
   const files = await committedDecisionFiles(home.root);
   const { dbOnly } = await databaseOnly(engine, home, r.decisions);
   const rows = new Map(gitRows.filter(d => d.home_source_id === home.sourceId).map(d => [d.decision_id, d.git_blob]));
   const fileIds = new Set(files.map(f => f.id));
+  const invalid: string[] = [];
+  let unsynced = 0;
+  for (const f of files.filter(x => rows.get(x.id) !== x.blob)) {
+    if (parseDecisionFile(await git(home.root, ['cat-file', 'blob', f.blob]), f.id)) unsynced++;
+    else invalid.push(f.path);
+  }
   return {
     home: home.sourceId, store_mismatch: false,
     database_only: dbOnly.length,
-    unsynced_files: files.filter(f => rows.get(f.id) !== f.blob).length,
+    unsynced_files: unsynced,
+    invalid_files: invalid,
     rows_without_file: [...rows.keys()].filter(id => !fileIds.has(id)).length,
     pending: r.pending,
   };
+}
+
+/** The canonical member: the page in the brain's home source when one is, else the page with the most text, else the first. */
+export async function canonicalOf(engine: BrainEngine, members: IdentityMemberRef[], homeSource: string | null): Promise<IdentityMemberRef> {
+  const home = members.find(m => m.source_id === homeSource);
+  if (home) return home;
+  let best = members[0]!;
+  let size = -1;
+  for (const m of members) {
+    const p = await engine.getPage(m.slug, { sourceId: m.source_id });
+    const n = p ? pageBodyBytes(p) : 0;
+    if (n > size) { best = m; size = n; }
+  }
+  return best;
 }
 
 /** The finder's view of the decisions: pairs kept apart, and member sets already decided as one. */

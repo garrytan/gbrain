@@ -207,7 +207,7 @@
           "details": {
             "audience": "personal",
             "audience_reasons": [
-              "no shared declaration; 0 non-automation client(s) active in 30d"
+              "no shared declaration; 0 non-automation client(s) active in 30d, 0 people (0 member(s), 0 unbound client(s))"
             ],
             "backstop_visibility": "private",
             "capture_lanes": {
@@ -1206,6 +1206,15 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "Not applicable: this brain has no members (gbrain access member add <id>).",
+          "name": "access_pages_read_by_nobody",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
           "name": "attest_read_shared_scope",
           "readiness_state": "not_applicable",
@@ -1224,7 +1233,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 189/189 public tables",
+          "message": "RLS enabled on 190/190 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -1283,7 +1292,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 189 table(s) the applied migrations create exist.",
+          "message": "All 190 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -3968,6 +3977,36 @@
           "elapsed_ms": "<volatile>",
           "message": "Every fact line on 0 facts page(s) carries a date.",
           "name": "facts_undated_lines",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "backup": {
+              "backend": false,
+              "carried_by": "database_backup",
+              "last_failure": null,
+              "last_success": null
+            },
+            "by_rule": {},
+            "checkouts": [],
+            "docs": "docs/guides/secret-store.md#health-and-backups",
+            "entries": 0,
+            "keys": {
+              "current": null,
+              "escrow_exported": [],
+              "in_use": [],
+              "missing": [],
+              "origin": "none",
+              "present": []
+            },
+            "occurrences": 0,
+            "spooled": 0,
+            "unreferenced": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "The secret store holds no entries.",
+          "name": "secret_store",
           "status": "ok"
         },
         {

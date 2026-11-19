@@ -61,7 +61,7 @@ connection may widen, and otherwise asks the user, because only the operator wid
 a pinned client. `STARTER_CALLABLE_PARAMS` in `src/mcp/surface.ts` lists the few
 hidden parameters a starter caller may still pass, each with its reason (page
 windows, the shared-skill follower, the thin client's source binding, the
-connection check, a delegating client's `submit_agent` `queue`, `model` and
+connection check, `remember` `valid_from` (already accepted inside `items`), a delegating client's `submit_agent` `queue`, `model` and
 `allowed_slug_prefixes`, `list_pages` paging with `offset`). An agent job (`submit_agent`)
 records the surface of the connection that submitted it, and its tool calls are refused
 the same way; a job queued before the surface was recorded keeps the full surface until
@@ -283,10 +283,12 @@ them `takes_list`, `takes_search`, `takes_scorecard`, `takes_calibration`,
 `synthesize` reads world takes only for a non-owner with no list. Known
 limits: agent jobs and group chats (a declared room) read as before this PR
 until GST-3066, as do stdio, on-behalf-of audiences and attested actors; an
-agent job reads its client's stored takes holders list, else world takes. The
-owner's `put_page`, inline or streamed, still restores the private rows as
-stored for every remote writer, so editing or deleting one does not stick yet;
-use the local CLI for that until GST-3064 lands. With a room declared, a
+agent job reads its client's stored takes holders list, else world takes. A
+remote `put_page`, the owner's included, restores the stored private rows its
+content leaves out and keeps a reworded one beside the new text (a cleanly
+parsed fence only); the owner withdraws or replaces a claim with
+`forget_fact` and a new row with a different statement (GST-3064;
+[remote writes and private fact rows](../guides/memory-boundaries.md#remote-writes-private-facts)). With a room declared, a
 `get_page` whole-body read or `view: 'markdown'` whose returned body carries
 rows a world-only read strips (private rows, held rows, takes) is marked
 `room_access: {readable: false, reason: 'private_label'}`; the mark is per

@@ -4,7 +4,7 @@
  * one without), and a confirmed group counts once.
  *
  * 1. Protects: gbrain dedupe confirm writes the decision and every identity row in one transaction (a failure on the
- *    second member writes nothing); a bulk confirm covers only clean groups and is bound to the hash it printed; a
+ *    second member writes nothing); a bulk confirm covers only clean company groups and is bound to the hash it printed; a
  *    contact-only group is confirmed alone, with a hint line; conflicts are never confirmed; a page already in another
  *    group refuses unless --join names it; reject keeps the pair out of every later preview and undoes a confirm; the
  *    hand-link ops never move a confirmed member; the preview of groups nobody decided is unchanged; rank_entities and
@@ -34,7 +34,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { linkEntityIdentity } from '../src/core/entity-identity.ts';
 import { enrichEntity } from '../src/core/enrichment-service.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { decisionId, IDENTITY_DIR, identityHome, projectIdentityDecisions } from '../src/core/entities/identity-decisions.ts';
+import { applyIdentityProjection, decisionId, IDENTITY_DIR, identityHome, planIdentityProjection, projectIdentityDecisions } from '../src/core/entities/identity-decisions.ts';
 import { entityDuplicatesEntry } from '../src/commands/doctor/checks/entity-duplicates.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -107,11 +107,11 @@ const opCtx = (overrides: Partial<OperationContext> = {}) => ({
 const op = (name: string) => operations.find(o => o.name === name)!;
 
 describe('without a repository', () => {
-  test('the confirm list writes nothing, puts clean groups first and gives a contact-only group its hint line', async () => {
+  test('the confirm list writes nothing, lists a person group that shares an id first, to confirm on its own, and gives it and a contact-only group a hint line', async () => {
     await seed();
     const list = await cliJson(['confirm']);
-    expect(list.entries.map((e: { id: string; bulk: boolean; contact_key_only: boolean }) => [e.bulk, e.contact_key_only]))
-      .toEqual([[true, false], [false, false], [false, true]]);
+    expect(list.entries.map((e: { id: string; bulk: boolean; contact_key_only: boolean; confirm_alone: boolean }) => [e.bulk, e.contact_key_only, e.confirm_alone]))
+      .toEqual([[false, false, true], [false, false, false], [false, true, true]]);
     const alice = list.entries[0];
     expect(alice.members.map((m: { source_id: string }) => m.source_id)).toEqual(['default', 'source-b']);
     expect(alice.differing_fields).toEqual(['city']);
@@ -120,6 +120,8 @@ describe('without a repository', () => {
     const text = await cli(['confirm']);
     expect(text).toContain('differs:  city: Springfield | Shelbyville');
     expect(text).toContain('hint:     shared email, also on 0 same-name and 0 other-name page(s); differing keys none');
+    expect(text).toContain('clean person, shares an id: confirm on its own');
+    expect(text).toContain('hint:     shared linkedin (account or registry id); differing keys none');
     expect(await rows()).toEqual({ decisions: [], identities: [] });
   });
 
@@ -154,14 +156,15 @@ describe('without a repository', () => {
     }
   });
 
-  test('refusals: unknown id, a conflict, a contact-only group with others, a page in another group (and --join)', async () => {
+  test('refusals: unknown id, a conflict, a contact-only or id-sharing person group with others, a page in another group (and --join)', async () => {
     await seed();
     const groups = await preview();
     const id = (slug: string) => groups.find(g => g.members.every(m => m.slug === slug))!;
     expect(id('people/carol-example').class).toBe('conflict');
     await expect(cli(['confirm', 'dedupe/0000000000000000'])).rejects.toMatchObject({ code: 'dedupe_group_unknown' });
     await expect(cli(['confirm', id('people/carol-example').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'conflict' });
-    await expect(cli(['confirm', id('people/alice-example').id, id('people/bob-sample').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'contact_key_only_batch' });
+    await expect(cli(['confirm', id('people/bob-sample').id, id('people/dan-sample').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'contact_key_only_batch' });
+    await expect(cli(['confirm', id('people/alice-example').id, id('people/dan-sample').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'person_id_batch' });
     await linkEntityIdentity(engine, { entityId: 'alice-by-hand', slug: 'people/alice-example', sourceId: 'default', canonical: true });
     await expect(cli(['confirm', id('people/alice-example').id])).rejects.toMatchObject({ code: 'identity_member_in_other_group' });
     expect((await rows()).decisions).toEqual([]);
@@ -174,14 +177,18 @@ describe('without a repository', () => {
     expect((await rows()).decisions.map(d => d.verdict)).toEqual(['same', 'same']);
   });
 
-  test('a bulk confirm covers only clean groups and is bound to the hash it printed', async () => {
+  test('a bulk confirm covers only clean company groups, never a person group, and is bound to the hash it printed', async () => {
     await seed();
+    const company = (sourceId: string) => engine.putPage('companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'Acme Example.', timeline: '',
+      frontmatter: { github: 'acme-example' } } as never, { sourceId });
+    await company('default');
+    await company('source-b');
     const listed = await cliJson(['confirm', '--clean']);
-    expect(listed.groups.map((g: { id: string }) => g.id)).toEqual([await groupOf('people/alice-example')]);
+    expect(listed.groups.map((g: { id: string }) => g.id)).toEqual([await groupOf('companies/acme-example')]);
     await expect(cli(['confirm', '--clean', '--expect', '0000000000000000'])).rejects.toMatchObject({ code: 'preview_changed' });
     expect((await rows()).decisions).toEqual([]);
     await cli(['confirm', '--clean', '--expect', listed.preview_hash]);
-    expect((await rows()).identities.map(r => r.slug)).toEqual(['people/alice-example', 'people/alice-example']);
+    expect((await rows()).identities.map(r => r.slug)).toEqual(['companies/acme-example', 'companies/acme-example']);
     expect((await cliJson(['confirm', '--clean'])).groups).toEqual([]);
   });
 
@@ -290,6 +297,22 @@ describe('without a repository', () => {
     expect((await rows()).identities.map(r => [r.source_id, r.established_by])).toEqual([['default', 'manual'], ['source-c', 'manual']]);
   });
 
+  test('confirm of an already-confirmed group with --join writes nothing and does not throw when the joined identity holds a rejected pair', async () => {
+    await seed();
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await linkEntityIdentity(engine, { entityId: 'bob-by-hand', slug: 'people/bob-sample', sourceId: 'default', canonical: true });
+    await linkEntityIdentity(engine, { entityId: 'bob-by-hand', slug: 'people/bob-sample', sourceId: 'source-b', canonical: false });
+    const bob = [{ source_id: 'default', slug: 'people/bob-sample' }, { source_id: 'source-b', slug: 'people/bob-sample' }];
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId(bob), verdict: 'different', members: bob, group_id: null, entity_id: null, canonical: null,
+      decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] } as never);
+    const before = await rows();
+    const out = await cli(['confirm', alice, '--join', 'bob-by-hand']);
+    expect(out).toContain(`${alice} is already confirmed.`);
+    expect(out).toContain('Nothing to confirm.');
+    expect(await rows()).toEqual(before);
+  });
+
   test('a brain with no repository records a group with a page in an owner-only source in the database', async () => {
     await seed();
     await engine.executeRaw("UPDATE sources SET config = $1::jsonb WHERE id = 'source-b'", ['{"owner_only": true}']);
@@ -362,7 +385,7 @@ describe('with a repository', () => {
   });
   const syncHome = () => performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true, concurrency: 1 });
   const committed = (id: string) => git(root, 'show', `HEAD:${IDENTITY_DIR}/${id}.md`);
-  const doctor = async () => (await entityDuplicatesEntry.run({ engine, orphanRatioSourceId: undefined, progress: { heartbeat() {} } } as unknown as DoctorContext) as Check[])[0] as { status: string; message: string; details: any };
+  const doctor = async () => (await entityDuplicatesEntry.run({ engine, orphanRatioSourceId: undefined, progress: { heartbeat() {} } } as unknown as DoctorContext) as Check[])[0] as { status: string; message: string; details: any; fix: any };
 
   test('decisions are committed before any row; a database rebuilt from git keeps them; a page imported later links on the next sync', async () => {
     const alice = await groupOf('people/alice-example');
@@ -407,6 +430,78 @@ describe('with a repository', () => {
     await cli(['reconcile']);
     expect((await rows()).decisions.map(d => d.origin)).toEqual(['git']);
     expect((await doctor()).message).not.toContain('drift');
+  });
+
+  test('a projection read before a newer decision was committed never writes its older verdict back', async () => {
+    const members = [{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }];
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.applyIdentityDecisions({ remove: [decisionId(members)] });
+    const home = (await identityHome(engine))!;
+    const stale = await planIdentityProjection(engine, home);
+    expect(stale.upsert.map(d => d.verdict)).toEqual(['same']);
+    await cli(['reject', alice]);
+    expect(committed(decisionId(members))).toContain('verdict: different');
+    await applyIdentityProjection(engine, stale);
+    expect((await rows()).decisions.map(d => [d.decision_id, d.verdict])).toEqual([[decisionId(members), 'different']]);
+    expect((await rows()).identities).toEqual([]);
+  });
+
+  test('doctor offers reconcile only for drift reconcile can clear; a missing page or an invalid file gets its own remedy', async () => {
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.deletePage('people/alice-example', { sourceId: 'source-b' });
+    await engine.applyIdentityDecisions({});
+    const missing = await doctor();
+    expect(missing.status).toBe('warn');
+    expect(missing.message).toContain('1 page(s) of confirmed groups are not linked (source-b:people/alice-example page_missing)');
+    expect(missing.fix.argv).not.toEqual(['gbrain', 'dedupe', 'reconcile']);
+    expect(missing.fix.user_message).toContain(`gbrain dedupe reject ${alice}`);
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
+    await engine.applyIdentityDecisions({});
+    const bad = [{ source_id: 'default', slug: 'people/dan-sample' }, { source_id: 'source-b', slug: 'people/dan-sample' }];
+    mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+    writeFileSync(join(root, IDENTITY_DIR, `${decisionId(bad)}.md`), '---\nverdict: maybe\n---\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'a decision file that does not validate');
+    await syncHome();
+    const invalid = await doctor();
+    expect(invalid.status).toBe('warn');
+    expect(invalid.message).toContain(`1 committed decision file(s) do not validate: ${IDENTITY_DIR}/${decisionId(bad)}.md`);
+    expect(invalid.message).not.toContain('not read into the database');
+    expect(invalid.fix.argv).not.toEqual(['gbrain', 'dedupe', 'reconcile']);
+    expect(invalid.details.drift.invalid_files).toEqual([`${IDENTITY_DIR}/${decisionId(bad)}.md`]);
+  });
+
+  test('doctor keeps offering reconcile for a confirmed page restored outside sync, which reconcile links', async () => {
+    const alice = await groupOf('people/alice-example');
+    await cli(['confirm', alice]);
+    await engine.deletePage('people/alice-example', { sourceId: 'source-b' });
+    await engine.applyIdentityDecisions({});
+    await page('people/alice-example', 'Alice Example', { linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
+    expect((await engine.listIdentityDecisions()).pending.map(p => p.reason)).toEqual(['unlinked']);
+    expect((await doctor()).fix.argv).toEqual(['gbrain', 'dedupe', 'reconcile']);
+    await cli(['reconcile']);
+    expect((await engine.listIdentityDecisions()).pending).toEqual([]);
+  });
+
+  test('a projection whose apply goes stale reads again; five stale applies in a row throw and write nothing', async () => {
+    const members = [{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }];
+    await cli(['confirm', await groupOf('people/alice-example')]);
+    await engine.applyIdentityDecisions({ remove: [decisionId(members)] });
+    const home = (await identityHome(engine))!;
+    const real = engine.applyIdentityDecisions.bind(engine);
+    let staleLeft = 1;
+    const spy = spyOn(engine, 'applyIdentityDecisions').mockImplementation(async (input) =>
+      input.expectRevision !== undefined && staleLeft-- > 0 ? { upserted: 0, removed: 0, linked: 0, unlinked: 0, stale: true } : real(input));
+    try {
+      expect((await projectIdentityDecisions(engine, home)).upserted).toBe(1);
+      expect((await rows()).decisions.map(d => d.verdict)).toEqual(['same']);
+      await real({ remove: [decisionId(members)] });
+      staleLeft = 5;
+      await expect(projectIdentityDecisions(engine, home)).rejects.toThrow('changed while they were being projected, 5 times in a row');
+      expect((await rows()).decisions).toEqual([]);
+    } finally { spy.mockRestore(); }
   });
 
   test('a failed read of the committed decisions removes nothing', async () => {

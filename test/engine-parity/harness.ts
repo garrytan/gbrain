@@ -38,7 +38,7 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import {
-  createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -162,7 +162,7 @@ async function resetPostgres(engine: BrainEngine): Promise<void> {
 }
 
 /** Return the arm to an empty brain (default source only). Harness-only SQL: cases never use it. */
-async function resetArm(arm: ParityArm): Promise<void> {
+export async function resetArm(arm: ParityArm): Promise<void> {
   switch (arm.backend) {
     case 'rust':
       await resetRustArm(arm);
@@ -194,6 +194,21 @@ export async function createSource(engine: BrainEngine, backend: ParityBackend, 
         `INSERT INTO sources (id, name, config, local_path) VALUES ($1, $1, $2::text::jsonb, $3) ON CONFLICT (id) DO NOTHING`,
         [id, JSON.stringify(config), localPath ?? null],
       );
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
+export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await archiveRustSource(engine, id);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = $1`, [id]);
       return;
     default:
       return assertNever(backend);

@@ -128,7 +128,7 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 |---|---|---|---|---|---|---|
 | A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, or a declared member email is invalid, taken or ambiguous, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
 
-Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`.
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`, `leaver`, `audience_target`.
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
@@ -1522,9 +1522,9 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys given together with other groups, or a --join that would put two pages recorded as different people in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`.
+Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`.
 
 ### dedupe_group_unknown
 
@@ -2837,6 +2837,58 @@ More: [docs/guides/write-refusals.md#guest_readers_invalid](../../docs/guides/wr
 | A guest source is database-only: it takes no local path or repository, and a source with one cannot become a guest source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#guest_source_database_only](../../docs/guides/write-refusals.md#guest_source_database_only)
+
+### handover_member_enabled
+
+<a id="handover_member_enabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain access member handover was asked for a member that is still enabled, so nothing was previewed or written. | A handover moves pages away from the member; while it still reads, it would lose its own pages. | Switch the member off first with gbrain access member disable <id>, then preview the handover. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_owner_unset
+
+<a id="handover_owner_unset"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A handover group goes to the owner (the default for kept pages and folder rules), but this brain names no owner, so nothing was previewed. | Without an owner the default would leave the pages readable by no member. | Name the owner with gbrain access owner set <member>, or give the group to a member with --set kept=<member>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_partial
+
+<a id="handover_partial"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A handover apply wrote some of its items and skipped or failed others (a page changed since the preview, or a write failed); the written items stay in place and the handover row records each outcome. | Each item is written through its own door and rechecked first, so one changed page never blocks the rest; rerunning the same apply resumes from the recorded items. | Read the skipped items in detail, then rerun the same apply command (same --expect); items already written count as done. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_rules_held
+
+<a id="handover_rules_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source the handover changes folder rules on already has a widening change waiting for approval, so the handover wrote nothing. | Approving a rule change installs every change waiting for that source, and a handover approves only what its preview showed. | Preview and approve or drop the waiting change with gbrain access apply --source <id>, then preview the handover again. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_undo_member_disabled
+
+<a id="handover_undo_member_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An undo of a handover was asked for while its member is disabled or removed, so nothing was written. | Undo restores the readers the member had; while it is off, that would leave its pages readable by no member again. Removed ids are never reused, so a removed member's handover cannot be undone. | Enable the member again with gbrain access member enable <id>, then preview the undo. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `disabled`, `removed`.
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
 
 ### harness_hook_duplicates
 
@@ -5144,7 +5196,7 @@ More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The secret store key an entry was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here. | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
+| The secret store key an entry or a backup was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here; or this host has no store key at all, so gbrain secrets backup uploads nothing (a backup is sealed under an existing key and never makes one). | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
 

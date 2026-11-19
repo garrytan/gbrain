@@ -463,6 +463,10 @@
       },
       {
         "category": "brain",
+        "name": "access_pages_read_by_nobody"
+      },
+      {
+        "category": "brain",
         "name": "attest_read_shared_scope"
       },
       {
@@ -1248,6 +1252,10 @@
       {
         "category": "brain",
         "name": "facts_undated_lines"
+      },
+      {
+        "category": "brain",
+        "name": "secret_store"
       },
       {
         "category": "brain",
