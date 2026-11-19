@@ -303,6 +303,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readLivePageBody': OOS.writeGuards,
   'readPageHiddenFromCaller': OOS.pageVisibility,
   'readCallerPageAccess': OOS.pageVisibility,
+  'readWriteVisibilityProbe': OOS.pageVisibility,
   'readWriterSlugFence': OOS.pageVisibility,
   'readStoredBodyBytes': OOS.largePage,
   'hasSegmentStorage': OOS.writeGuards,

@@ -1,7 +1,8 @@
 /**
- * The page visibility guards (BrainEngine readPageHiddenFromCaller, readCallerPageAccess, readWriterSlugFence): the
- * reads a remote page write runs to learn whether the caller may see a page, which of a list of pages the caller reads,
- * and whether a stored writer carries a slug fence (engine-sql/page-visibility.ts on the SQL engines).
+ * The page visibility guards (BrainEngine readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe,
+ * readWriterSlugFence): the reads a remote page write runs to learn whether the caller may see a page, which of a list
+ * of pages the caller reads, what its visibility check opens with, and whether a stored writer carries a slug fence
+ * (engine-sql/page-visibility.ts on the SQL engines).
  *
  * PGLite renders the caller's page policy in its access record. The store implements the no-caller rendering and a
  * fresh record of only a reader identity and a private-readable grant (`page_hidden` in facts/privacy.rs). The member
@@ -13,8 +14,8 @@
  * The store keeps no OAuth clients, so an OAuth client's fence refuses; a local writer's fence is its stored grant
  * ceiling's `slugPrefixes`. What each member answers and why: rust/docs/store/page-visibility.md.
  */
-import type { CallerPageAccessRow, PagePolicyPart } from '../../engine-sql/page-visibility.ts';
-import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
+import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
+import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
@@ -56,6 +57,21 @@ export const readCallerPageAccess: StoreMember<[pages: readonly { source_id: str
     if (pages.length === 0) return [];
     return storeCall({ member: 'readCallerPageAccess' }, () =>
       brain.readCallerPageAccess(pages.map(p => ({ sourceId: p.source_id, slug: p.slug })), policy));
+  };
+
+/**
+ * The probe's page policy is the empty-identity policy with privacy (`readPolicyFragment(p, [], true)`), whoever the
+ * caller is. It is rendered in the current record with the identity and grant emptied, and served when it equals the
+ * no-caller rendering or a fresh record's rendering for the empty identity (storePageTextPolicy with callerReaders).
+ * On a brain whose config holds no member-access restriction it is judged under the restricted rendering, for the
+ * reason callerPolicy gives.
+ */
+export const readWriteVisibilityProbe: StoreMember<[sourceId: string, slug: string], WriteVisibilityProbe | undefined> =
+  async (brain, sourceId, slug) => {
+    const policy = withCallerAccess({ restricted: true, identity: [], privateReadableSources: [] }, () =>
+      storePageTextPolicy('readWriteVisibilityProbe', () => readPolicyFragment('p', [], true), { callerReaders: true }));
+    return await storeCall({ member: 'readWriteVisibilityProbe', slug, sourceId }, () =>
+      brain.readWriteVisibilityProbe(sourceId, slug, policy)) as WriteVisibilityProbe;
   };
 
 /** A local writer's fence comes from the stored registration; an OAuth client's refuses (the store keeps no OAuth clients). */

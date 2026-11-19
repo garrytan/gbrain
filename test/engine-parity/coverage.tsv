@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 647/647
+# covered: 648/648
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -61,7 +61,7 @@
 # field_usage: 1/1
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
-# page_visibility: 3/3
+# page_visibility: 4/4
 # large_page: 1/1
 # trust_fence: 1/1
 # trust_proposals: 6/6
@@ -81,13 +81,13 @@ getPage	pages	yes	76	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	310	yes	yes	yes	serves
+putPage	pages	yes	312	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	98	yes	yes	yes	serves
+softDeletePage	pages	yes	100	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -681,8 +681,9 @@ bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	yes	1	no	yes	yes	serves
 readLivePageBody	write_guards	yes	1	no	yes	yes	serves
-readPageHiddenFromCaller	page_visibility	yes	1	no	yes	yes	serves
-readCallerPageAccess	page_visibility	yes	1	no	yes	yes	serves
+readPageHiddenFromCaller	page_visibility	yes	2	no	yes	yes	serves
+readCallerPageAccess	page_visibility	yes	2	no	yes	yes	serves
+readWriteVisibilityProbe	page_visibility	yes	1	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves

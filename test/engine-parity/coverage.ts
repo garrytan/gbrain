@@ -211,7 +211,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
     'hasSegmentStorage'],
   // page_visibility: the remote page-write visibility guards (engine-sql/page-visibility.ts)
-  page_visibility: ['readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriterSlugFence'],
+  page_visibility: ['readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence'],
   // large_page: the remote put_page large-page guard's stored body size read (engine-sql/large-page.ts)
   large_page: ['readStoredBodyBytes'],
   trust_fence: ['listFenceFactRows'],

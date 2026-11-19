@@ -1,9 +1,10 @@
 /**
  * BrainEngine parity — the page visibility guards (engine-sql/page-visibility.ts): whether the caller sees one page,
- * which of a list of pages the caller reads, and the slug fence a stored writer carries.
+ * which of a list of pages the caller reads, the opening probe of a remote write's visibility check, and the slug fence
+ * a stored writer carries.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readPageHiddenFromCaller, readCallerPageAccess and readWriterSlugFence return the same observable result
+ *  - Contract: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe and readWriterSlugFence return the same observable result
  *    on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts),
  *    under the no-caller rendering and under a caller with a reader identity and a private-readable grant.
  *  - Regression: an engine that answers one of these differently lets a remote write touch a page its caller may not
@@ -16,7 +17,7 @@
  *    the SQL sets none.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
@@ -125,6 +126,43 @@ describe('engine parity: page visibility guards', () => {
       accessRows: ['notes/vis-gone:false', 'notes/vis-open:true', 'notes/vis-private:true'],
     });
     return answers;
+  });
+
+  parityTest('readWriteVisibilityProbe says what a reader identity could open and which sources are owner-only', {
+    methods: ['putPage', 'softDeletePage', 'readWriteVisibilityProbe'],
+  }, async (engine, backend) => {
+    await seed(engine);
+    await engine.putPage('notes/vis-gone-private', { ...NOTE, frontmatter: { visibility: 'private' } });
+    await engine.softDeletePage('notes/vis-gone-private');
+    const probe = async (sourceId: string, slug: string) => {
+      const row = await engine.readWriteVisibilityProbe(sourceId, slug);
+      return row && { any_labelled: row.any_labelled, identity_may_open: row.identity_may_open, owner_only_source: row.owner_only_source, owner_only_any: row.owner_only_any };
+    };
+    const pages = async () => {
+      const out: Record<string, unknown> = {};
+      for (const slug of [...SLUGS, 'notes/vis-gone-private', 'notes/vis-missing']) out[slug] = (await probe('default', slug))?.identity_may_open;
+      return out;
+    };
+    const before = { pages: await pages(), unrestricted: await withCallerAccess(UNRESTRICTED, pages), owner: await probe('default', 'notes/vis-open') };
+    await createSource(engine, backend, 'vis-chat', { kind: 'imessage' });
+    await createSource(engine, backend, 'vis-flagged', { owner_only: true });
+    await createSource(engine, backend, 'vis-plain', { owner_only: false });
+    const after = {
+      default: await probe('default', 'notes/vis-open'),
+      chat: await probe('vis-chat', 'notes/vis-open'),
+      flagged: await withCallerAccess(UNRESTRICTED, () => probe('vis-flagged', 'notes/vis-open')),
+      plain: await probe('vis-plain', 'notes/vis-open'),
+    };
+    const expectedPages = { 'notes/vis-open': null, 'notes/vis-private': false, 'notes/vis-alice': true, 'notes/vis-gone': null, 'notes/vis-gone-private': false, 'notes/vis-missing': null };
+    const row = (ownerOnlySource: boolean, ownerOnlyAny: boolean) =>
+      ({ any_labelled: false, identity_may_open: null, owner_only_source: ownerOnlySource, owner_only_any: ownerOnlyAny });
+    expect({ before, after }).toEqual({
+      before: { pages: expectedPages, unrestricted: expectedPages, owner: row(false, false) },
+      // The harness brain records no schema version, so the owner-only test takes its closed form: while any source is
+      // owner-only, every page counts as owner-only and the empty identity opens none of them.
+      after: { default: { ...row(false, true), identity_may_open: false }, chat: row(true, true), flagged: row(true, true), plain: row(false, true) },
+    });
+    return { before, after };
   });
 
   parityTest('readWriterSlugFence reads a local writer\'s stored slug prefixes, and null for no writer or no fence', {
