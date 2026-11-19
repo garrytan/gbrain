@@ -650,6 +650,36 @@ describe('engine parity: backlink and page signal reads', () => {
     },
   );
 
+  // Hybrid search hands its whole option object (limit, offset, detail, type...) to the two stamp reads as the read
+  // policy; the read filter reads only the policy keys, and any object turns on the live filter.
+  parityTest(
+    'getContentFlagsByPageIds and getUnverifiedExtractionPageIds read only the policy keys of a search option object',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'putPage', 'softDeletePage'] },
+    async (engine) => {
+      const ids = new Map<string, number>();
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      for (const [slug, frontmatter] of [['so/open', {}], ['so/private', { visibility: 'private' }], ['so/gone', {}]] as const) {
+        ids.set(slug, (await engine.putPage(slug, page(slug, { frontmatter: { ...frontmatter, ...marks } }))).id);
+      }
+      await engine.softDeletePage('so/gone');
+      const all = [...ids.values()];
+      const search = { limit: 10, offset: 0, detail: 'low' as const, type: 'concept' as PageType, exclude_slugs: ['x/y'], walkDepth: 0 };
+      const read = async (opts?: Record<string, unknown>) => ({
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, opts)).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, opts)).map(([slug]) => slug),
+      });
+      const bare = await read();
+      const paged = await read(search);
+      const hidden = await read({ ...search, excludePrivate: true, sourceId: 'default' });
+      const holders = await read({ ...search, takesHoldersAllowList: [] });
+      expect(sorted(bare.flags)).toEqual(['so/gone', 'so/open', 'so/private']);
+      expect(sorted(paged.flags)).toEqual(['so/open', 'so/private']);
+      expect(hidden.unverified).toEqual(['so/open']);
+      expect(holders).toEqual(paged);
+      return { bare, paged, hidden, holders };
+    },
+  );
+
   parityTest(
     'getContentFlagsByPageIds, getUnverifiedExtractionPageIds and getEffectiveDates under excludePrivate hide every page while a source is owner-only, then only the owner-only source and its concepts',
     { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'getEffectiveDates', 'putPage', 'addLink'] },
