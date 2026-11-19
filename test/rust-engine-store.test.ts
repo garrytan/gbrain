@@ -525,6 +525,47 @@ describe('access member reads on a Rust brain', () => {
     });
     expect(raw).toEqual([]);
   });
+
+  withAddon('forgetting a removed member writes its Wakeshift forget on the store, not through raw SQL', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const wakeUser = 'a'.repeat(32);
+    const id = await engine.openWakeWatch({
+      event: 'gbrain.job.finished', target: '1', targetRef: null, principalKind: 'oauth_client', principalId: 'client-a',
+      memberId: 'alice-example', wakeUser, wsSubscriptionId: 'ws-1', expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    const version = 'b'.repeat(16);
+    await engine.recordWakeTermsAcceptance('member:alice-example', version);
+    const errors: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    let result: unknown;
+    try {
+      const { forgetWakeMember } = await import('../src/core/wakeshift/forget.ts') as Record<string, unknown> as {
+        forgetWakeMember: (e: typeof engine, memberId: string) => Promise<{ ended: number; queued: number }>;
+      };
+      result = await forgetWakeMember(engine, 'alice-example');
+    } finally {
+      console.error = error;
+    }
+    const [watch] = await engine.listWakeWatches({
+      principalKind: 'oauth_client', principalId: 'client-a', memberId: 'alice-example', scope: 'open_or_recent', id,
+    });
+    expect({
+      result, errors, raw,
+      watch: [watch?.state, watch?.last_error],
+      forgets: (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(c => c.wake_user),
+      terms: await engine.hasWakeTermsAcceptance('member:alice-example', version),
+    }).toEqual({
+      result: { ended: 1, queued: 1 }, errors: [], raw: [],
+      watch: ['ended', 'principal_revoked'], forgets: [wakeUser], terms: false,
+    });
+  });
 });
 
 describe('Rust store page codec', () => {

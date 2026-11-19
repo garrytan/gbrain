@@ -77,6 +77,9 @@ export const queueWakeForget: StoreMember<[wakeUser: string, memberId: string | 
   await call('queueWakeForget', () => brain.queueWakeForget(wakeUser, memberId));
 };
 
+export const forgetWakeMember: StoreMember<[memberId: string], { ended: number; queued: number }> = (brain, memberId) =>
+  call('forgetWakeMember', () => brain.forgetWakeMember(memberId));
+
 export const claimWakeForgets: StoreMember<[spec: { leaseSeconds: number; limit: number }], WakeForgetClaim[]> = (brain, spec) =>
   call('claimWakeForgets', () => brain.claimWakeForgets(spec));
 

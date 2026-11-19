@@ -146,6 +146,17 @@ const PINS: Pin[] = [
     texts: [`SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
      ORDER BY source_id, slug LIMIT 51`],
   },
+  {
+    from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
+    case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
+    texts: [
+      `INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions WHERE member_id = $1
+        ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`,
+      `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+        WHERE member_id = $1 AND state = 'open' RETURNING id`,
+      'DELETE FROM wake_terms_acceptances WHERE principal_key = $1',
+    ],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

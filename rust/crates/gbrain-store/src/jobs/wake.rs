@@ -1042,6 +1042,69 @@ impl Store {
         })
     }
 
+    /// `forgetWakeMember`: a removed member's Wakeshift state, in one write. Queue a forget of
+    /// each distinct `wake_user` the member watched under (any state; bytewise, one sequence value
+    /// per user as the SQL `INSERT ... SELECT DISTINCT` spends, and none queued while one is
+    /// pending), end the member's open watches (`principal_revoked`, lease dropped) and delete the
+    /// terms acceptances of exactly `member:<id>`. Returns `{ ended, queued }`.
+    pub fn forget_wake_member(&self, member_id: &str) -> Result<Value> {
+        if member_id.contains('\0') {
+            return Ok(json!({ "ended": 0, "queued": 0 }));
+        }
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let mine: Vec<WatchRecord> = all_watches(tx)?
+                .into_iter()
+                .filter(|w| w.member_id.as_deref() == Some(member_id))
+                .collect();
+            let users: BTreeSet<String> = mine.iter().map(|w| w.wake_user.clone()).collect();
+            let mut queued = 0i64;
+            for wake_user in users {
+                let id = next_seq(tx, "wake_forget")?;
+                if tx.get(&pending_key(&wake_user))?.is_some() {
+                    continue;
+                }
+                let row = ForgetRecord {
+                    id,
+                    wake_user,
+                    state: "pending".into(),
+                    attempts: 0,
+                    next_attempt_at: now,
+                    lease_until: None,
+                    last_error: None,
+                    created_at: now,
+                    updated_at: now,
+                };
+                save_forget(tx, None, &row)?;
+                queued += 1;
+            }
+            let mut ended = 0i64;
+            for old in mine.into_iter().filter(|w| w.state == "open") {
+                let mut row = old.clone();
+                row.state = "ended".into();
+                row.last_error = Some("principal_revoked".into());
+                row.lease_until = None;
+                row.updated_at = now;
+                save_watch(tx, Some(&old), &row)?;
+                ended += 1;
+            }
+            let principal_key = format!("member:{member_id}");
+            let under = terms_key(&principal_key, "");
+            let exact = under.len() + 16;
+            let mut gone = Vec::new();
+            scan_prefix(tx, &under, false, &mut |k, _| {
+                if k.len() == exact {
+                    gone.push(k.to_vec());
+                }
+                true
+            })?;
+            for k in gone {
+                tx.delete(&k)?;
+            }
+            Ok(json!({ "ended": ended, "queued": queued }))
+        })
+    }
+
     /// `claimWakeForgets`: lease up to `limit` due pending forgets (by due time, then id) for
     /// `leaseSeconds`; the rows come back in id order, each with its lease token.
     pub fn claim_wake_forgets(&self, spec: &ForgetClaimSpec) -> Result<Vec<Value>> {

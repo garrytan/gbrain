@@ -886,6 +886,17 @@
         ],
         "flagOnScopes": []
       },
+      "forgetWakeMember#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "getAllSlugs#default": {
         "flagOffLanes": [
           "pool"
@@ -4929,6 +4940,7 @@
         "findTopologyChanges": "none",
         "findTrajectory": "none",
         "flipBodyGeneration": "none",
+        "forgetWakeMember": "none",
         "generatedPagesIn": "none",
         "getAdjacencyBoosts": "none",
         "getAllConfig": "none",

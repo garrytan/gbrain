@@ -9,8 +9,8 @@
  * statement is built from data. Where a read had no ORDER BY the caller never depended on one, an order is added so the
  * engines agree on it.
  *
- * Left raw on purpose (the Rust engine refuses them loudly): `wakeshift/forget.ts`, which runs inside the OAuth and
- * access-token transactions over a scalar-only query, and `principalLive` in `wakeshift/drain.ts`, which reads
+ * Left raw on purpose (the Rust engine refuses them loudly): the credential half of `wakeshift/forget.ts`, which runs
+ * inside the OAuth and access-token transactions over a scalar-only query (its member half is `forgetWakeMember`), and `principalLive` in `wakeshift/drain.ts`, which reads
  * `oauth_clients`, `access_tokens` and the access members the Rust store does not keep.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -356,6 +356,31 @@ export async function queueWakeForget(tx: Raw, wakeUser: string, memberId: strin
     `INSERT INTO wake_forgets (wake_user) SELECT $1
       WHERE $2::text IS NULL OR NOT EXISTS (SELECT 1 FROM access_members WHERE id = $2 AND tombstoned_at IS NULL)
       ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING`, [wakeUser, memberId]);
+}
+
+/**
+ * The three statements of `forgetWakeMember`, each one literal: queue a forget of every user the member watched under
+ * (any state, once while one is pending), end the member's open watches, and drop its terms acceptances. The text is
+ * what `wakeshift/forget.ts` sent through `executeRaw` before it was a typed member.
+ */
+export const FORGET_WAKE_MEMBER_SQL = {
+  queue: `INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions WHERE member_id = $1
+        ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`,
+  end: `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+        WHERE member_id = $1 AND state = 'open' RETURNING id`,
+  terms: 'DELETE FROM wake_terms_acceptances WHERE principal_key = $1',
+} as const;
+
+/**
+ * A removed member's Wakeshift state (plan D6): queue a forget of each user it watched under, end its open watches
+ * (`principal_revoked`, lease dropped) and delete the acceptances of `member:<id>`. Returns how many forgets were
+ * queued and how many watches ended.
+ */
+export async function forgetWakeMember(tx: Raw, memberId: string): Promise<{ ended: number; queued: number }> {
+  const queued = await tx.executeRaw(FORGET_WAKE_MEMBER_SQL.queue, [memberId]);
+  const ended = await tx.executeRaw(FORGET_WAKE_MEMBER_SQL.end, [memberId]);
+  await tx.executeRaw(FORGET_WAKE_MEMBER_SQL.terms, [`member:${memberId}`]);
+  return { ended: ended.length, queued: queued.length };
 }
 
 export interface WakeForgetClaim { id: number; wake_user: string; attempts: number; lease: string }
