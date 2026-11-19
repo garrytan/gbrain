@@ -27,6 +27,7 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readDatabaseClock', 'clock_timestamp()', e => e.readDatabaseClock()],
   ['listStoredTimelineRowsOrdered', 'FROM timeline_entries WHERE page_id=$1 AND event_page_id IS NULL', e => e.listStoredTimelineRowsOrdered(1)],
   ['matchTakeRows', 'FROM takes k', e => e.matchTakeRows(1, [{ row_num: 1, claim: 'a claim', kind: 'take', holder: 'self' }], 10)],
+  ['listFactWithdrawalDates', 'JOIN fact_withdrawals w', e => e.listFactWithdrawalDates('default', [{ row_num: 1, claim: 'a claim', visibility: 'world' }], null)],
 ];
 const views = [['managed sync (engineReads)', { engineReads: true }], ['page/maintenance preparer', {}]] as const;
 const never = () => new Promise<never>(() => {});
