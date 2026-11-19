@@ -42,7 +42,7 @@ src/commands/doctor/checks/content-quality.ts	execute_raw	8
 src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
 src/commands/doctor/checks/core-health.ts	execute_raw	8
 src/commands/doctor/checks/core-memory.ts	execute_raw	1
-src/commands/doctor/checks/data-integrity.ts	execute_raw	4
+src/commands/doctor/checks/data-integrity.ts	execute_raw	3
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1
 src/commands/doctor/checks/db-connection.ts	execute_raw	1
 src/commands/doctor/checks/default-source-path.ts	execute_raw	4

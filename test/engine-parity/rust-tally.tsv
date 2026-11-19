@@ -12,7 +12,7 @@ test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/effect-scans.test.ts	3	0
-test/engine-parity/embedding-catalog.test.ts	5	0
+test/engine-parity/embedding-catalog.test.ts	7	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-reads.test.ts	9	0
 test/engine-parity/extraction.test.ts	6	0
@@ -59,7 +59,7 @@ test/engine-parity/search-reads.test.ts	15	1
 test/engine-parity/search.test.ts	17	2
 test/engine-parity/segmented-body.test.ts	15	0
 test/engine-parity/source-resolver-reads.test.ts	11	0
-test/engine-parity/stats-vectors.test.ts	2	0
+test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	7	0
 test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/takes.test.ts	24	2

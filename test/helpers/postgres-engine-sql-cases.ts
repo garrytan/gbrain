@@ -132,6 +132,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readEmbeddingIdentity': OOS.embeddingCatalog,
   'listEmbeddingStores': OOS.embeddingCatalog,
   'hasStoredVectors': OOS.embeddingCatalog,
+  'countChunkVectorCoverage': OOS.embeddingCatalog,
   'countFactFingerprintLeftovers': OOS.factsPurge,
   'countFactRelinkOutcomes': OOS.factsDoctor,
   'countLabelFacts': OOS.factsRepair,
