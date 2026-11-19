@@ -417,7 +417,7 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	102	no	yes	yes	serves
+admitJob	minion_jobs	yes	103	no	yes	yes	serves
 getJob	minion_jobs	yes	35	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
 claimNextJob	minion_jobs	yes	73	no	yes	yes	serves
@@ -475,7 +475,7 @@ listQueueWedgeCounts	minion_queue	yes	1	no	yes	yes	serves
 listPrivateQueueHealth	minion_queue	yes	1	no	yes	yes	serves
 readWedgeSignals	minion_queue	yes	1	no	yes	yes	serves
 readOldestWaitingAge	minion_queue	yes	1	no	yes	yes	serves
-countWaitingJobs	minion_queue	yes	2	no	yes	yes	serves
+countWaitingJobs	minion_queue	yes	3	no	yes	yes	serves
 listStuckActiveJobsByName	minion_queue	yes	1	no	yes	yes	serves
 listStalledEmbedBackfillSources	minion_queue	yes	1	no	yes	yes	serves
 readGlobalMaintenanceDeaths	minion_queue	yes	1	no	yes	yes	serves

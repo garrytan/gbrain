@@ -15,6 +15,9 @@
  *    behavior before the typed members (dce5ed58a8); this file fails there on the Rust arm.
  *  - Why existing coverage misses it: test/engine-parity/*.test.ts pin the members, and test/backup-*.test.ts and
  *    test/readiness*.test.ts drive the callers on PGLite or Postgres only; nothing drove the callers on a Rust brain.
+ *  - Contract (worker fix): with one job waiting and no worker, PGLite's fix runs `gbrain jobs work`; Postgres and Rust
+ *    start the supervisor, whose why text says "this Postgres brain" on Postgres and "this brain" on Rust.
+ *  - Regression (worker fix): before the Rust wording, a Rust brain read "this Postgres brain"; that case fails there.
  *  - Seam: none. Real engines and real callers; GBRAIN_HOME points at an empty directory so no bootstrap receipt,
  *    harness skill dir or job worker registry leaks in, and backup git probes are off.
  */
@@ -24,6 +27,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
+import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { computeBackupCoverage } from '../../src/core/backup/coverage.ts';
 import { createReadinessCache, probedReadiness } from '../../src/core/readiness.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
@@ -54,6 +59,35 @@ const PROBES: Record<ParityBackend, ProbeSeen[]> = {
   pglite: [{ capability: 'worker', state: 'ok', reason: 'no_pending_jobs' }, { capability: 'sync', state: 'ok', reason: 'git_sources', why: '1 source(s) are bound to local repositories that `gbrain sync` reads.' }],
   rust: [{ capability: 'worker', state: 'ok', reason: 'no_pending_jobs' }, { capability: 'sync', state: 'ok', reason: 'git_sources', why: '1 source(s) are bound to local repositories that `gbrain sync` reads.' }],
   postgres: [{ capability: 'worker', state: 'ok', reason: 'no_pending_jobs' }, { capability: 'sync', state: 'ok', reason: 'git_sources', why: '1 source(s) are bound to local repositories that `gbrain sync` reads.' }],
+};
+
+/** One waiting job, as the queue inserts it. */
+function waitingJob(name: string): JobInsertValues {
+  return {
+    name, queue: 'default', status: 'waiting', priority: 0, data: {}, max_attempts: 3, backoff_type: 'exponential',
+    backoff_delay: 1000, backoff_jitter: 0.2, delay_until: null, parent_job_id: null, on_child_fail: 'fail_parent',
+    max_children: null, timeout_ms: null, lock_duration_ms: null, remove_on_complete: false, remove_on_fail: false,
+    idempotency_key: null, quiet_hours: null, stagger_key: null, private_queue_owner_job_id: null,
+    private_queue_owner_token: null, private_queue_lease_until: null, submission_authority: APPLICATION_AUTHORITY,
+    spend_authorization: null, max_stalled: null,
+  };
+}
+
+/**
+ * What each arm's worker probe must report with one job waiting and no worker. PGLite runs the job in this process;
+ * Postgres and Rust start the supervisor. The why text names "this Postgres brain" on Postgres only (byte-identical to
+ * before) and "this brain" on Rust.
+ */
+interface WorkerFixSeen { state: string | null; reason: string | null; why: string | null; fix_argv: string[] | null; fix_why: string | null }
+const SUPERVISOR = ['gbrain', 'jobs', 'supervisor', 'start'];
+const WORKER_FIX: Record<ParityBackend, WorkerFixSeen> = {
+  pglite: { state: 'missing', reason: 'no_worker',
+    why: '1 job(s) are waiting and no worker is running (PGLite has no background worker; jobs run with --follow or while a worker holds the brain).',
+    fix_argv: ['gbrain', 'jobs', 'work'], fix_why: 'Runs the waiting jobs in this process; stop it once the queue drains.' },
+  postgres: { state: 'missing', reason: 'no_worker', why: '1 job(s) are waiting and no worker is running.',
+    fix_argv: SUPERVISOR, fix_why: 'Starts the job supervisor, which keeps a worker running for this Postgres brain.' },
+  rust: { state: 'missing', reason: 'no_worker', why: '1 job(s) are waiting and no worker is running.',
+    fix_argv: SUPERVISOR, fix_why: 'Starts the job supervisor, which keeps a worker running for this brain.' },
 };
 
 describe('engine parity: backup coverage and readiness probes, driven through their callers', () => {
@@ -88,5 +122,21 @@ describe('engine parity: backup coverage and readiness probes, driven through th
         expect({ arm: backend, observed }).toEqual({ arm: backend, observed: PROBES[backend] });
         return observed;
       } finally { rmSync(repo, { recursive: true, force: true }); }
+    });
+
+  parityTest('the readiness worker fix names the job supervisor, in the arm\'s own words, when a job waits and no worker runs',
+    { methods: ['admitJob', 'countWaitingJobs'] },
+    async (engine: BrainEngine, backend) => {
+      await engine.admitJob({ maxSpawnDepth: 5, insert: waitingJob('work') }, {
+        decide: async (_tx, row) => coalesceDecision(row, APPLICATION_AUTHORITY),
+        parentAuthorityKind: raw => parseSubmissionAuthority(raw)?.kind ?? null,
+      });
+      const entries = await inEmptyHome(() => probedReadiness(engine, { cache: createReadinessCache() }));
+      const worker = entries.find(e => e.capability === 'worker');
+      const observed: WorkerFixSeen = { state: worker?.state ?? null, reason: worker?.reason ?? null, why: worker?.why ?? null,
+        fix_argv: worker?.fix?.argv ?? null, fix_why: worker?.fix?.why ?? null };
+      expect({ arm: backend, observed }).toEqual({ arm: backend, observed: WORKER_FIX[backend] });
+      // The words differ by design (see WORKER_FIX); the arms agree on the state and the waiting count.
+      return { state: observed.state, reason: observed.reason, waiting: await engine.countWaitingJobs(false) };
     });
 });
