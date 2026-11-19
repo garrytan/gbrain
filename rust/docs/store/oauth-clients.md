@@ -12,12 +12,24 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | --- | --- |
 | `brain.insertOauthClient(row)` | null. `row` is any of the table's columns; `client_id` and `client_name` are required. A column left out takes the table's default |
 | `brain.readOauthClient(clientId)` | the row as `SELECT * FROM oauth_clients WHERE client_id = $1` returns it, or null |
+| `brain.patchOauthClient(clientId, patch, guard)` | `{ row, before }` or null. `patch.set` names the columns to set (`client_secret_hash`, `token_ttl`, `min_trust`, `surface`, `surface_set_by`) and the field of that name is the value, absent meaning NULL; `row` is the whole row after (checked again), `before` the five columns before. Null when the client is missing or the guard excludes it: `live` skips a deleted client, `unless_surface_set_by` skips a client with that pin (a NULL pin is not equal to it). The write is one store write, so on this store it is the lock |
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
 
 Defaults when a column is left out: `grant_types` `{client_credentials}` (an explicit null stays null), `federated_read`
 and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace` `prefixes`, `grant_revision` 0,
 `private_pages` and `private_facts` `none`, `created_at` the store clock, every other column null. `created_at`,
 `deleted_at` and `reads_unscoped` come back as `Date` on the TypeScript side and travel as ISO text.
+
+## Callers
+
+`readOauthClient` serves the by-client-id reads of `access.ts` (`access check --client`), `harness/client-setup.ts`,
+`agent-register.ts` (reissue), `minions/submission-authority.ts` (two reads), `shared-skills/policy.ts`,
+`access/requester-scope.ts`, `persistence/effect-facts.ts` and `persistence/authority.ts` (the takes-holders read). It
+returns every column, so a caller that named columns checks the ones it needs with `requireOauthClientColumns`, which
+raises the undefined-column error (42703) a SELECT of a missing column raises. `patchOauthClient` serves the writers
+`min-trust.ts` (`setMinTrust`), `request-tools.ts` (the surface persist) and `agent-register.ts` (`rotateClientSecret`).
+A function that also runs a raw statement keeps refusing on a Rust brain at that statement (the advisory lock in
+`rotateClientSecret`, the access-token statements in `setMinTrust`, the audit write after the surface persist).
 
 ## Constraints
 

@@ -8,10 +8,10 @@ src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/commands/access.ts	execute_raw	6
+src/commands/access.ts	execute_raw	5
 src/commands/agent-logs.ts	execute_raw	1
-src/commands/agent-register.ts	execute_raw	4
-src/commands/agent-register.ts	sql_template	8
+src/commands/agent-register.ts	execute_raw	3
+src/commands/agent-register.ts	sql_template	7
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-client-rows.ts	execute_raw	6
 src/commands/auth.ts	execute_raw	1
@@ -242,7 +242,7 @@ src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
 src/core/access/policy.ts	execute_raw	31
-src/core/access/requester-scope.ts	execute_raw	4
+src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	1
 src/core/access/token-member-status.ts	sql_template	1
@@ -504,7 +504,6 @@ src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
 src/core/guests/sources.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
-src/core/harness/client-setup.ts	execute_raw	1
 src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/health-memo.ts	execute_raw	1
@@ -548,7 +547,7 @@ src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
-src/core/minions/submission-authority.ts	execute_raw	4
+src/core/minions/submission-authority.ts	execute_raw	2
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
@@ -584,7 +583,6 @@ src/core/ops/page-upload.ts	execute_raw	3
 src/core/ops/persistence.ts	execute_raw	4
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
-src/core/ops/request-tools.ts	execute_raw	2
 src/core/ops/search-exact.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/search-type-filter.ts	execute_raw	1
 src/core/ops/search.ts	execute_raw	2
@@ -634,7 +632,7 @@ src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/applied-watermark.ts	execute_raw	4
 src/core/persistence/atom-maintenance.ts	execute_raw	21
-src/core/persistence/authority.ts	execute_raw	9
+src/core/persistence/authority.ts	execute_raw	8
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	11
@@ -666,7 +664,7 @@ src/core/persistence/detached-pages.ts	execute_raw	4
 src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
-src/core/persistence/effect-facts.ts	execute_raw	8
+src/core/persistence/effect-facts.ts	execute_raw	7
 src/core/persistence/effect-journal.ts	execute_raw	23
 src/core/persistence/effect-links.ts	execute_raw	8
 src/core/persistence/effect-recovery.ts	execute_raw	18
@@ -999,7 +997,7 @@ src/core/shared-skills/migration-members.ts	execute_raw	1
 src/core/shared-skills/migration-projection.ts	execute_raw	2
 src/core/shared-skills/migration.ts	execute_raw	4
 src/core/shared-skills/optimizer.ts	execute_raw	1
-src/core/shared-skills/policy.ts	execute_raw	11
+src/core/shared-skills/policy.ts	execute_raw	10
 src/core/shared-skills/publication.ts	execute_raw	14
 src/core/shared-skills/receipt-root.ts	execute_raw	2
 src/core/shared-skills/restore.ts	execute_raw	27
@@ -1064,7 +1062,7 @@ src/core/trust/fence-guard.ts	execute_raw	8
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
-src/core/trust/min-trust.ts	execute_raw	3
+src/core/trust/min-trust.ts	execute_raw	2
 src/core/trust/owner-actions.ts	execute_raw	6
 src/core/trust/page-handlers.ts	execute_raw	7
 src/core/trust/page-write.ts	execute_raw	9

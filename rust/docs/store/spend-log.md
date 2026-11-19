@@ -74,5 +74,5 @@ Not served (still raw SQL, so refused on a Rust brain): every other statement on
 `updateOauthClientBudget` is switched, because each existing writer also writes one of those tables or goes through the
 provider's own connection: `grants/service.ts`, `grants/lifecycle.ts`, `grants/rescope.ts`, `grants/migration.ts`,
 `oauth-grants.ts`, `oauth-provider.ts` (client registration, the token TTL update), `agent-register.ts`, `commands/auth.ts`,
-`trust/min-trust.ts`, `ops/request-tools.ts`, `shared-skills/restore.ts` and the migrations that backfill it. The existing
+`trust/min-trust.ts` (its client update is now the typed `patchOauthClient`, see [oauth-clients.md](oauth-clients.md)), `ops/request-tools.ts` (likewise), `shared-skills/restore.ts` and the migrations that backfill it. The existing
 `lockOAuthClient` on a Rust brain still resolves without locking.

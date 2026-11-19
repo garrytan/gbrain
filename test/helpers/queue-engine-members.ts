@@ -52,7 +52,7 @@ const SPEND_LOG_MEMBERS = [
 ] as const satisfies ReadonlyArray<keyof typeof spendLog>;
 
 /** The `oauth_clients` rows (engine-sql/oauth-clients.ts), added the same way. */
-const OAUTH_CLIENT_MEMBERS = ['readOauthClient'] as const satisfies ReadonlyArray<keyof typeof oauthClients>;
+const OAUTH_CLIENT_MEMBERS = ['readOauthClient', 'patchOauthClient'] as const satisfies ReadonlyArray<keyof typeof oauthClients>;
 
 /** `fake` with every queue member it lacks, each running the shared statement on `fake`. */
 export function withQueueMembers<T extends object>(fake: T): T {

@@ -82,7 +82,7 @@ pub use checks::{
 pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
 pub use mutations::{DelayOpts, TokenDelta};
-pub use oauth_clients::ClientInsert;
+pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};

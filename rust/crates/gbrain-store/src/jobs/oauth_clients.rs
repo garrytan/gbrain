@@ -408,7 +408,86 @@ fn iso_micros(text: &Option<String>, what: &str) -> Result<Option<i64>> {
         .transpose()
 }
 
+/// `patchOauthClient(clientId, patch, guard)`: the columns to set are the names in `set`; the value of each is the field
+/// of that name, `None` clearing it. The five columns are the ones the client-admin writers change in place.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ClientPatch {
+    #[serde(default)]
+    pub set: Vec<String>,
+    #[serde(default)]
+    pub client_secret_hash: Option<String>,
+    #[serde(default)]
+    pub token_ttl: Option<i32>,
+    #[serde(default)]
+    pub min_trust: Option<String>,
+    #[serde(default)]
+    pub surface: Option<String>,
+    #[serde(default)]
+    pub surface_set_by: Option<String>,
+}
+
+/// The rows a patch may touch: `live` skips a deleted client, `unless_surface_set_by` skips a client whose
+/// `surface_set_by` is that value (a NULL `surface_set_by` is not equal to it, as `IS DISTINCT FROM`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ClientPatchGuard {
+    #[serde(default)]
+    pub live: bool,
+    #[serde(default)]
+    pub unless_surface_set_by: Option<String>,
+}
+
 impl Store {
+    /// `patchOauthClient(clientId, patch, guard)`: sets the named columns of one client in one write and returns
+    /// `{ row, before }` (the row after, with its constraints checked, and the five patchable columns before), or None
+    /// when the client does not exist or the guard excludes it. `constraint_violation` for a value a CHECK refuses.
+    pub fn patch_oauth_client(
+        &self,
+        client_id: &str,
+        patch: &ClientPatch,
+        guard: &ClientPatchGuard,
+    ) -> Result<Option<Value>> {
+        self.write(|tx| {
+            let Some(mut record) = load_client(tx, client_id)? else {
+                return Ok(None);
+            };
+            if guard.live && record.deleted_at.is_some() {
+                return Ok(None);
+            }
+            if let Some(held) = &guard.unless_surface_set_by
+                && record.surface_set_by.as_deref() == Some(held.as_str())
+            {
+                return Ok(None);
+            }
+            let before = serde_json::json!({
+                "client_secret_hash": record.client_secret_hash,
+                "token_ttl": record.token_ttl,
+                "min_trust": record.min_trust,
+                "surface": record.surface,
+                "surface_set_by": record.surface_set_by,
+            });
+            for column in &patch.set {
+                match column.as_str() {
+                    "client_secret_hash" => {
+                        record.client_secret_hash = patch.client_secret_hash.clone()
+                    }
+                    "token_ttl" => record.token_ttl = patch.token_ttl,
+                    "min_trust" => record.min_trust = patch.min_trust.clone(),
+                    "surface" => record.surface = patch.surface.clone(),
+                    "surface_set_by" => record.surface_set_by = patch.surface_set_by.clone(),
+                    other => {
+                        return Err(StoreError::invalid(format!(
+                            "patchOauthClient: \"{other}\" is not a patchable column"
+                        )));
+                    }
+                }
+            }
+            put_client(tx, &record)?;
+            Ok(Some(
+                serde_json::json!({ "row": record.to_row(), "before": before }),
+            ))
+        })
+    }
+
     /// `insertOauthClient(row)`. `constraint_violation` for a client id already taken, a budget that overflows
     /// `NUMERIC(10,2)`, a row that breaks a CHECK of the table (the agent-grant check first among them) and a
     /// `source_id` no source has; `invalid_argument` for a time that is not ISO text.

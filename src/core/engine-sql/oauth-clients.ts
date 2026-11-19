@@ -173,6 +173,70 @@ export async function readOauthClient(tx: Raw, clientId: string): Promise<OauthC
   return rows[0] ? normalizeOauthClientRow(rows[0]) : null;
 }
 
+/** The columns `patchOauthClient` sets: a key left out (or `undefined`) is untouched, `null` clears the column. */
+export interface OauthClientPatch {
+  client_secret_hash?: string | null;
+  token_ttl?: number | null;
+  min_trust?: string | null;
+  surface?: string | null;
+  surface_set_by?: string | null;
+}
+
+/** Which client rows a patch may touch: `live` skips a deleted client; `unless_surface_set_by` skips a client whose `surface_set_by` is that value (NULL is not equal to it). */
+export interface OauthClientPatchGuard {
+  live?: boolean;
+  unless_surface_set_by?: string;
+}
+
+/** The five patchable columns, as they were before the patch. */
+export type OauthClientPatchBefore = Required<OauthClientPatch>;
+
+/** The patched client: its whole row after the patch, and the patchable columns before it. */
+export interface OauthClientPatched {
+  row: OauthClientRow;
+  before: OauthClientPatchBefore;
+}
+
+/**
+ * Set the named columns of one client in one statement, under a row lock on the client (the Rust store's single writer
+ * is the lock there). Returns the row after and the five columns before, or null when no client matches `client_id`
+ * and the guard. A value a CHECK of the table refuses raises that constraint's error (23514).
+ */
+export async function patchOauthClient(
+  tx: Raw, clientId: string, patch: OauthClientPatch, guard: OauthClientPatchGuard = {},
+): Promise<OauthClientPatched | null> {
+  const has = (k: keyof OauthClientPatch) => patch[k] !== undefined;
+  const rows = await tx.executeRaw<Record<string, unknown>>(
+    `WITH prior AS (
+       SELECT * FROM oauth_clients WHERE client_id = $1 AND ($2::boolean IS NOT TRUE OR deleted_at IS NULL) FOR UPDATE)
+     UPDATE oauth_clients c SET
+       client_secret_hash = CASE WHEN $3::boolean THEN $4::text ELSE c.client_secret_hash END,
+       token_ttl = CASE WHEN $5::boolean THEN $6::int ELSE c.token_ttl END,
+       min_trust = CASE WHEN $7::boolean THEN $8::text ELSE c.min_trust END,
+       surface = CASE WHEN $9::boolean THEN $10::text ELSE c.surface END,
+       surface_set_by = CASE WHEN $11::boolean THEN $12::text ELSE c.surface_set_by END
+     FROM prior
+     WHERE c.client_id = prior.client_id AND ($13::text IS NULL OR prior.surface_set_by IS DISTINCT FROM $13::text)
+     RETURNING c.*, prior.client_secret_hash AS prior_client_secret_hash, prior.token_ttl AS prior_token_ttl,
+       prior.min_trust AS prior_min_trust, prior.surface AS prior_surface, prior.surface_set_by AS prior_surface_set_by`,
+    [clientId, guard.live === true,
+      has('client_secret_hash'), patch.client_secret_hash ?? null, has('token_ttl'), patch.token_ttl ?? null,
+      has('min_trust'), patch.min_trust ?? null, has('surface'), patch.surface ?? null,
+      has('surface_set_by'), patch.surface_set_by ?? null, guard.unless_surface_set_by ?? null]);
+  const found = rows[0];
+  if (!found) return null;
+  const row: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(found)) if (!k.startsWith('prior_')) row[k] = v;
+  return {
+    row: normalizeOauthClientRow(row),
+    before: {
+      client_secret_hash: found.prior_client_secret_hash as string | null, token_ttl: found.prior_token_ttl as number | null,
+      min_trust: found.prior_min_trust as string | null, surface: found.prior_surface as string | null,
+      surface_set_by: found.prior_surface_set_by as string | null,
+    },
+  };
+}
+
 /** The row with each engine's `timestamptz` and `bigint` spelling brought to one: a `Date` and a number. */
 export function normalizeOauthClientRow(raw: Record<string, unknown>): OauthClientRow {
   const row = { ...raw };
@@ -181,5 +245,17 @@ export function normalizeOauthClientRow(raw: Record<string, unknown>): OauthClie
   return row as unknown as OauthClientRow;
 }
 
+/**
+ * A caller that names columns in a SELECT gets Postgres's undefined-column error (42703) from a brain that lacks one;
+ * `readOauthClient` returns the whole row, so that caller checks the columns it relies on here and gets the same error.
+ */
+export function requireOauthClientColumns<T extends object>(row: T, columns: readonly string[]): T {
+  for (const column of columns) {
+    if (column in row) continue;
+    throw Object.assign(new Error(`column "${column}" does not exist`), { code: '42703', column_name: column, column: column });
+  }
+  return row;
+}
+
 /** The members of this file a fake engine takes (test/helpers/queue-engine-members.ts). */
-export const OAUTH_CLIENT_MEMBER_NAMES = ['insertOauthClient', 'readOauthClient'] as const;
+export const OAUTH_CLIENT_MEMBER_NAMES = ['insertOauthClient', 'readOauthClient', 'patchOauthClient'] as const;

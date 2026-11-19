@@ -4,7 +4,7 @@
  * `constraint_violation`; the PGLite and Postgres engines raise SQLSTATE 23514 / 23505 / 23503 with the constraint name,
  * so this file gives the Rust refusal the same code and constraint, and a caller branches on one error shape.
  */
-import { normalizeOauthClientRow, type OauthClientInsert, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
+import { normalizeOauthClientRow, type OauthClientInsert, type OauthClientPatch, type OauthClientPatchGuard, type OauthClientPatched, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** Which Postgres error a store message is: `new row for relation "t" violates check constraint "c"` and its siblings. */
@@ -42,4 +42,10 @@ export const insertOauthClient: StoreMember<[row: OauthClientInsert], void> = as
 export const readOauthClient: StoreMember<[clientId: string], OauthClientRow | null> = async (brain, clientId) => {
   const raw = await storeCall({ member: 'readOauthClient' }, () => brain.readOauthClient(clientId)) as Record<string, unknown> | null;
   return raw ? normalizeOauthClientRow(raw) : null;
+};
+
+export const patchOauthClient: StoreMember<[clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard], OauthClientPatched | null> = async (brain, clientId, patch, guard) => {
+  const set = (Object.keys(patch) as Array<keyof OauthClientPatch>).filter(k => patch[k] !== undefined);
+  const raw = await refusing('patchOauthClient', () => brain.patchOauthClient(clientId, { ...patch, set }, guard ?? {})) as { row: Record<string, unknown>; before: OauthClientPatched['before'] } | null;
+  return raw ? { row: normalizeOauthClientRow(raw.row), before: raw.before } : null;
 };

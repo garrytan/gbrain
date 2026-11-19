@@ -1,6 +1,8 @@
 //! Jobs: `oauth_clients` (every column) and `mcp_spend_log` (rust/docs/store/spend-log.md). Same shape as `spend.rs`.
 
-use gbrain_store::jobs::{ClientInsert, ClientReserve, GroupReserve, LogInsert};
+use gbrain_store::jobs::{
+    ClientInsert, ClientPatch, ClientPatchGuard, ClientReserve, GroupReserve, LogInsert,
+};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -113,6 +115,22 @@ impl Brain {
         client_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_oauth_client(&client_id))
+    }
+
+    /// `patchOauthClient(clientId, patch, guard)`: `{ row, before }` of the patched client, or null.
+    #[napi]
+    pub fn patch_oauth_client<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+        patch: Value,
+        guard: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let patch: ClientPatch = required(patch, "patchOauthClient patch")?;
+            let guard: ClientPatchGuard = required(guard, "patchOauthClient guard")?;
+            s.patch_oauth_client(&client_id, &patch, &guard)
+        })
     }
 
     /// `updateOauthClientBudget(clientId, usd)`: whether the client exists.

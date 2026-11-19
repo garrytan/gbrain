@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity: the whole `oauth_clients` row and the constraints a write to it meets (engine-sql/oauth-clients.ts):
- * `insertOauthClient`, `readOauthClient`, `updateOauthClientBudget`.
+ * `insertOauthClient`, `readOauthClient`, `updateOauthClientBudget`, `patchOauthClient`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the same calls return the same rows and the same refusals on every engine arm (PGLite always; Postgres with
@@ -12,6 +12,10 @@
  *    CHECKs (min_trust, private_pages, private_facts, registered_via, source_grant), a repeated id (23505) and a source
  *    the table does not know (23503) are refused the same way. A complete agent client, with the job namespace or the
  *    prefixes namespace, and a client of any other scope, are kept.
+ *  - `patchOauthClient` sets only the named columns of one client (a named `null` clears one), returns the whole row after
+ *    and the five patchable columns before, returns null for no client or one the guard excludes (a deleted client under
+ *    `live`; a client pinned by the operator under `unless_surface_set_by`, where a NULL pin is not that value) and
+ *    leaves that row as it was, and refuses a value a CHECK refuses (23514) with the row unchanged.
  *  - Regression: a store that keeps six columns, takes an incomplete agent grant, matches `agent` inside another word,
  *    reads the namespace rules the wrong way round, or raises an error a caller cannot tell from a store failure -- a
  *    client that can spend and write on a brain with no source or tool bound, or an error handler that misses the
@@ -150,6 +154,37 @@ describe('engine parity: oauth_clients rows and constraints', () => {
         refusals,
         left: await Promise.all(['x1', 'x2', 'x3', 'x4', 'x5', 'x6'].map(id => stored(engine, id))),
       };
+    });
+
+  parityTest('patchOauthClient sets the named columns and returns the row before and after, and the guards leave an excluded client alone',
+    { methods: ['insertOauthClient', 'readOauthClient', 'patchOauthClient'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      const day = (r: Awaited<ReturnType<BrainEngine['readOauthClient']>>) => r && { ...r, created_at: r.created_at instanceof Date };
+      const seen = async (id: string) => day(await engine.readOauthClient(id));
+      const shown = <T extends { row: Parameters<typeof day>[0] } | null>(p: T) => p && { ...p, row: day(p.row) };
+      await engine.insertOauthClient(agent('a', { client_secret_hash: 'old', token_ttl: 60, min_trust: 'tool_observed', surface: 'full' }));
+      await engine.insertOauthClient({ client_id: 'pinned', client_name: 'pinned', surface: 'minimal', surface_set_by: 'operator' });
+      await engine.insertOauthClient({ client_id: 'self', client_name: 'self', surface: 'minimal', surface_set_by: 'self' });
+      await engine.insertOauthClient({ client_id: 'unpinned', client_name: 'unpinned' });
+      await engine.insertOauthClient({ client_id: 'gone', client_name: 'gone', min_trust: 'tool_observed', deleted_at: new Date('2025-01-01T00:00:00.000Z') });
+      const out: Record<string, unknown> = {};
+      out.secret = shown(await engine.patchOauthClient('a', { client_secret_hash: 'new' }));
+      out.minTrustSet = shown(await engine.patchOauthClient('a', { min_trust: 'agent_written' }));
+      out.minTrustCleared = shown(await engine.patchOauthClient('a', { min_trust: null }, { live: true }));
+      out.ttlAndSurface = shown(await engine.patchOauthClient('a', { token_ttl: 3600, surface: 'minimal', surface_set_by: 'self' }));
+      out.ttlCleared = shown(await engine.patchOauthClient('a', { token_ttl: null }));
+      out.empty = shown(await engine.patchOauthClient('a', {}));
+      out.liveSkipsDeleted = shown(await engine.patchOauthClient('gone', { min_trust: null }, { live: true }));
+      out.deletedStays = await seen('gone');
+      out.deletedWithoutGuard = shown(await engine.patchOauthClient('gone', { min_trust: null }));
+      out.pinnedSkipped = shown(await engine.patchOauthClient('pinned', { surface: 'full', surface_set_by: 'self' }, { unless_surface_set_by: 'operator' }));
+      out.pinnedStays = await seen('pinned');
+      out.selfPatched = shown(await engine.patchOauthClient('self', { surface: 'full', surface_set_by: 'self' }, { unless_surface_set_by: 'operator' }));
+      out.nullPinPatched = shown(await engine.patchOauthClient('unpinned', { surface: 'full', surface_set_by: 'self' }, { unless_surface_set_by: 'operator' }));
+      out.missing = await engine.patchOauthClient('nope', { min_trust: null });
+      out.badTrust = await refusal(() => engine.patchOauthClient('a', { min_trust: 'bogus' }));
+      out.afterBad = await seen('a');
+      return out;
     });
 });
 

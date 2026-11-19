@@ -5,7 +5,7 @@
 
 mod memory_env;
 
-use gbrain_store::jobs::ClientInsert;
+use gbrain_store::jobs::{ClientInsert, ClientPatch, ClientPatchGuard};
 use memory_env::{Brain, brain};
 use serde_json::{Map, Value, json};
 
@@ -180,4 +180,107 @@ fn the_other_checks_the_key_and_the_source_are_refused_with_their_own_messages()
         "insert or update on table \"oauth_clients\" violates foreign key constraint \"oauth_clients_source_id_fkey\""
     );
     assert!(b.read_oauth_client("fk").unwrap().is_none());
+}
+
+fn patch(set: &[&str], v: Value) -> ClientPatch {
+    let mut p: ClientPatch = serde_json::from_value(v).unwrap();
+    p.set = set.iter().map(|s| s.to_string()).collect();
+    p
+}
+
+#[test]
+fn a_patch_sets_only_the_named_columns_and_reports_the_row_before_and_after() {
+    let b = brain("oauth-patch");
+    sources(&b);
+    insert(&b, agent("a", json!({ "client_secret_hash": "old", "token_ttl": 60, "min_trust": "tool_observed", "surface": "full" }))).unwrap();
+    let none = ClientPatchGuard::default();
+    // A column named in `set` with no value clears it; a column not named is left alone.
+    let out = b
+        .patch_oauth_client("a", &patch(&["min_trust"], json!({})), &none)
+        .unwrap()
+        .unwrap();
+    assert_eq!(out["before"]["min_trust"], "tool_observed");
+    assert_eq!(out["row"]["min_trust"], Value::Null);
+    assert_eq!(out["row"]["client_secret_hash"], "old");
+    assert_eq!(out["row"]["token_ttl"], 60);
+    // The value in the patch is not applied unless its column is named.
+    let out = b
+        .patch_oauth_client("a", &patch(&[], json!({ "token_ttl": 5 })), &none)
+        .unwrap()
+        .unwrap();
+    assert_eq!(out["row"]["token_ttl"], 60);
+    assert_eq!(b.read_oauth_client("a").unwrap().unwrap()["token_ttl"], 60);
+    // A name that is not a patchable column is refused and writes nothing.
+    let e = b
+        .patch_oauth_client(
+            "a",
+            &patch(&["scope", "token_ttl"], json!({ "token_ttl": 5 })),
+            &none,
+        )
+        .unwrap_err();
+    assert_eq!(e.code, "invalid_argument");
+    assert_eq!(b.read_oauth_client("a").unwrap().unwrap()["token_ttl"], 60);
+    // No such client.
+    assert!(
+        b.patch_oauth_client("nope", &patch(&["min_trust"], json!({})), &none)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_patch_guard_leaves_an_excluded_client_alone_and_a_refused_value_leaves_the_row() {
+    let b = brain("oauth-patch-guard");
+    sources(&b);
+    insert(&b, json!({ "client_id": "pinned", "client_name": "p", "surface_set_by": "operator", "surface": "minimal" })).unwrap();
+    insert(&b, json!({ "client_id": "unpinned", "client_name": "u" })).unwrap();
+    insert(&b, json!({ "client_id": "gone", "client_name": "g", "deleted_at": "2025-01-01T00:00:00.000Z" })).unwrap();
+    let set = patch(
+        &["surface", "surface_set_by"],
+        json!({ "surface": "full", "surface_set_by": "self" }),
+    );
+    let unless = ClientPatchGuard {
+        live: false,
+        unless_surface_set_by: Some("operator".into()),
+    };
+    assert!(
+        b.patch_oauth_client("pinned", &set, &unless)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        b.read_oauth_client("pinned").unwrap().unwrap()["surface"],
+        "minimal"
+    );
+    // A NULL pin is not the operator's.
+    assert!(
+        b.patch_oauth_client("unpinned", &set, &unless)
+            .unwrap()
+            .is_some()
+    );
+    let live = ClientPatchGuard {
+        live: true,
+        unless_surface_set_by: None,
+    };
+    assert!(b.patch_oauth_client("gone", &set, &live).unwrap().is_none());
+    assert!(
+        b.patch_oauth_client("gone", &set, &ClientPatchGuard::default())
+            .unwrap()
+            .is_some()
+    );
+    // A value a CHECK refuses is refused with that check's message, and the row is as it was.
+    let bad = patch(&["min_trust"], json!({ "min_trust": "bogus" }));
+    let e = b
+        .patch_oauth_client("unpinned", &bad, &ClientPatchGuard::default())
+        .unwrap_err();
+    assert_eq!(e.code, "constraint_violation");
+    assert!(
+        e.message.contains("oauth_clients_min_trust"),
+        "{}",
+        e.message
+    );
+    assert_eq!(
+        b.read_oauth_client("unpinned").unwrap().unwrap()["min_trust"],
+        Value::Null
+    );
 }
