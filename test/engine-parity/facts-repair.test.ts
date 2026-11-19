@@ -14,15 +14,15 @@
  *    countPurgedPageFacts over its `page_purges` ledger; the other two refuse (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: recordPagePurge (harness.ts) writes a page_purges row with SQL, as the page purge sweep does; the Rust arm
- *    stops there on the typed raw_sql refusal, because no member writes the ledger on Rust. Every fact, page, loop and
- *    withdrawal is seeded through the typed members. The tables behind the two refused members (persistence_requests,
- *    derived_generations) have no typed writer on the engine, so those cases seed the facts the statement joins from
- *    and assert the answer an empty table gives; the Rust arm counts each as a typed refusal. Generated values (ids)
- *    are compared by relation, never by value.
+ *  - Seam: recordPagePurge and recordFenceRetirement (harness.ts) write a page_purges row and a facts-fence generation
+ *    with SQL, as the page purge sweep and the fence writer do; the Rust arm stops there on the typed raw_sql refusal,
+ *    because no member writes either ledger on Rust. Every fact, page, loop and withdrawal is seeded through the typed
+ *    members. The table behind the refused member (persistence_requests, the write journal) has no typed writer on the
+ *    engine, so its case seeds the facts the statement joins from and asserts the answer an empty table gives; the Rust
+ *    arm counts it as a typed refusal. Generated values (ids) are compared by relation, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, recordPagePurge } from './harness.ts';
+import { createSource, parityArms, recordFenceRetirement, recordPagePurge } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { METADATA_LABELS } from '../../src/core/conversation-parser/builtins.ts';
@@ -448,6 +448,67 @@ describe('engine parity: group 5 facts repair statements', () => {
     const one = await engine.listUnwithdrawnFacts(['default'], 'notes/open', 'fact_fence');
     expect({ all, one }).toEqual({ all: [], one: [] });
     return { all, one };
+  });
+
+  parityTest('listUnwithdrawnFacts lists the expired facts a fence generation retired, by source and page in C order, with withdrawal and duplicate', {
+    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'listUnwithdrawnFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/bb', note('BB', 'a page'));
+    await engine.putPage('notes/b-c', note('BC', 'a page'));
+    await engine.putPage('notes/gone', note('Gone', 'a page'));
+    await engine.softDeletePage('notes/gone');
+    const retire = async (slug: string, text: string, opts: { visibility?: string; extra?: Record<string, unknown>; expire?: boolean; sourceId?: string;
+      state?: 'live' | 'held' | 'superseded'; preimage?: Record<string, unknown> } = {}) => {
+      const visibility = opts.visibility ?? 'world';
+      const sourceId = opts.sourceId ?? 'default';
+      const id = await fact(engine, text, { visibility, source_markdown_slug: slug, ...opts.extra }, sourceId);
+      if (opts.expire !== false) expect(await engine.expireFact(id)).toBe(true);
+      await recordFenceRetirement(engine, backend, sourceId, slug, id, { fact: text, visibility, state: opts.state, preimage: opts.preimage });
+      return id;
+    };
+    await retire('notes/bb', 'retired on bb');
+    await retire('notes/b-c', 'retired on b-c');
+    await retire('notes/b-c', 'withdrawn on b-c', { visibility: 'private' });
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn on b-c', '*', null)).toBe(true);
+    await retire('notes/bb', 'still active', { expire: false });
+    await retire('notes/bb', 'held generation', { state: 'held' });
+    await retire('notes/bb', 'expired in the preimage', { preimage: { expired_at: '2026-01-01T00:00:00Z' } });
+    await retire('notes/bb', 'no row number in the preimage', { preimage: { row_num: null } });
+    await retire('notes/bb', 'changed text', { preimage: { fact: 'other text' } });
+    await retire('notes/bb', 'a conversation fact', { extra: { source: EXTRACTOR } });
+    await retire('notes/gone', 'on a deleted page');
+    await retire('notes/none', 'on no page');
+    await retire('notes/bb', 'in another source', { sourceId: 'other' });
+    const twin = await retire('notes/bb', 'has an active twin');
+    await fenced(engine, 'has an active twin', { source_markdown_slug: 'notes/bb' });
+    const newer = await retire('notes/b-c', 'retired twice');
+    await recordFenceRetirement(engine, backend, 'default', 'notes/b-c', newer, { fact: 'retired twice', visibility: 'world', generation: 7, state: 'live' });
+    const view = (rows: Awaited<ReturnType<BrainEngine['listUnwithdrawnFacts']>>) => rows.map(r => ({
+      source: r.source_id, slug: r.slug, fact: r.fact, visibility: r.visibility, superseded: r.superseded, generation: Number(r.generation),
+      same_id: Number(r.preimage.id) === Number(r.id), withdrawn: r.withdrawn, active_duplicate: r.active_duplicate, history_gap: r.history_gap,
+      page: r.page_id === null ? (r.page_deleted === false ? 'none' : 'bad') : r.page_deleted ? 'deleted' : 'live', dated: typeof r.retired_at === 'string' && typeof r.expired_at === 'string',
+    }));
+    const all = view(await engine.listUnwithdrawnFacts(['default', 'other'], null, 'fact_fence'));
+    const one = view(await engine.listUnwithdrawnFacts(['default'], 'notes/b-c', 'fact_fence'));
+    const takes = await engine.listUnwithdrawnFacts(['default'], null, 'take_fence');
+    const row = (source: string, slug: string, text: string, more: Record<string, unknown> = {}) => ({
+      source, slug, fact: text, visibility: 'world', superseded: false, generation: 1, same_id: true, withdrawn: false, active_duplicate: false,
+      history_gap: false, page: 'live', dated: true, ...more,
+    });
+    expect(all).toEqual([
+      row('default', 'notes/b-c', 'retired on b-c'),
+      row('default', 'notes/b-c', 'withdrawn on b-c', { visibility: 'private', withdrawn: true }),
+      row('default', 'notes/b-c', 'retired twice', { generation: 7 }),
+      row('default', 'notes/bb', 'retired on bb'),
+      row('default', 'notes/bb', 'has an active twin', { active_duplicate: true }),
+      row('default', 'notes/gone', 'on a deleted page', { page: 'deleted' }),
+      row('default', 'notes/none', 'on no page', { page: 'none' }),
+      row('other', 'notes/bb', 'in another source', { page: 'none' }),
+    ]);
+    expect(one).toEqual(all.filter(r => r.source === 'default' && r.slug === 'notes/b-c'));
+    expect({ twin: twin > 0, takes }).toEqual({ twin: true, takes: [] });
+    return { all, one, takes };
   });
 
   parityTest('listWorldFactsFromPrivateSources follows the holding page and the page a fact was extracted from', {

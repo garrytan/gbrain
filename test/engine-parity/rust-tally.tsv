@@ -18,7 +18,7 @@ test/engine-parity/fact-relink-writes.test.ts	4	0
 test/engine-parity/facts-cycle.test.ts	14	0
 test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge.test.ts	17	2
-test/engine-parity/facts-repair.test.ts	12	3
+test/engine-parity/facts-repair.test.ts	13	3
 test/engine-parity/facts-trust.test.ts	4	6
 test/engine-parity/facts.test.ts	35	0
 test/engine-parity/field-usage.test.ts	3	0

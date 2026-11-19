@@ -1,9 +1,10 @@
 //! Group 5 facts members, repair classifiers and loop retirement: one `#[napi] impl Brain` block over `gbrain_store::facts::repair`.
 //!
-//! Six members are served, countLabelFacts with the label line the TypeScript member reads into its
-//! literal labels and countPurgedPageFacts over the `page_purges` ledger (read only). The two that read
-//! `persistence_requests` or the derived-generation tables are left to the TypeScript member table, which
-//! refuses them; the two loop reads live in `facts_loops.rs`.
+//! Seven members are served, countLabelFacts with the label line the TypeScript member reads into its
+//! literal labels, countPurgedPageFacts over the `page_purges` ledger and listUnwithdrawnFacts over the
+//! derived generation ledger (`gbrain_store::facts::generations`, both read only). The one that reads
+//! `persistence_requests` is left to the TypeScript member table, which refuses it; the two loop reads
+//! live in `facts_loops.rs`.
 
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -11,6 +12,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::facts::generations::UnwithdrawnArgs;
 use gbrain_store::facts::repair::{
     ClassifyArgs, LabelCountArgs, PurgedCountArgs, TwinArgs, WorldFactArgs,
 };
@@ -96,6 +98,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: PurgedCountArgs = required(args, "countPurgedPageFacts args")?;
             s.count_purged_page_facts(&a)
+        })
+    }
+
+    /// `listUnwithdrawnFacts({ sourceIds, slug, fenceKind })`: resolves the rows of the SQL.
+    #[napi]
+    pub fn list_unwithdrawn_facts<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: UnwithdrawnArgs = required(args, "listUnwithdrawnFacts args")?;
+            s.list_unwithdrawn_facts(&a)
         })
     }
 }

@@ -13,10 +13,11 @@
 //!
 //! The two loop reads, `closedLoopWithActiveFact` and `loopFactDrift`, are served from
 //! `facts/loops.rs`. `countPurgedPageFacts` (doctor's gone-page check) also reads the store's
-//! `page_purges` ledger (`facts/page_purges.rs`), which no member writes on Rust. The other two
-//! members of the file refuse with `engine_capability_missing`: `listExtractorFactsForClassification`
-//! joins the persistence journal, and `listUnwithdrawnFacts` reads tables the store does not hold
-//! (`derived_generations` and `derived_generation_items`). rust/docs/store/facts.md names each one.
+//! `page_purges` ledger (`facts/page_purges.rs`), which no member writes on Rust, and
+//! `listUnwithdrawnFacts` is served from the derived generation ledger in `facts/generations.rs`.
+//! The last member of the file refuses with `engine_capability_missing`:
+//! `listExtractorFactsForClassification` joins the persistence journal. rust/docs/store/facts.md
+//! names each one.
 //!
 //! Shared reading rules. A source's rows come back in id order ([`source_rows`]); the sources are
 //! visited in byte order of their id, which is `ORDER BY f.source_id, f.id` under the C collation

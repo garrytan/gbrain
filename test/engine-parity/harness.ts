@@ -300,6 +300,34 @@ export async function recordFactsReconcile(
   }
 }
 
+/**
+ * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, as `publishFenceGeneration`
+ * (generations/fence.ts) writes it. The fence writer has no typed member, so this is harness-only SQL behind the
+ * backend switch; the Rust store reads the ledger but no member writes it, and the same SQL stops on the engine's typed
+ * raw_sql refusal. `preimage` overrides the item's preimage fields (the retired row as it stood); the preimage binds as
+ * text and the cast parses it. The state defaults to `superseded`, since a page holds one live and one held generation
+ * at most. Returns the generation id.
+ */
+export async function recordFenceRetirement(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, factId: number,
+  opts: { fact: string; visibility: string; state?: 'live' | 'held' | 'superseded'; generation?: number; preimage?: Record<string, unknown> },
+): Promise<number> {
+  switch (backend) {
+    case 'rust':
+    case 'pglite':
+    case 'postgres': {
+      const preimage = { id: factId, fact: opts.fact, visibility: opts.visibility, row_num: 1, expired_at: null, ...opts.preimage };
+      const [g] = await engine.executeRaw<{ id: number | string }>(`INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, operation_id, item_set_hash)
+        VALUES ($1, 'fact_fence', 'page:' || $2, $3, $4, 'parity', 'h') RETURNING id`, [sourceId, slug, opts.generation ?? 1, opts.state ?? 'superseded']);
+      await engine.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage)
+        VALUES ($1, $2, 'i', 'retired', $3::text::jsonb)`, [g!.id, `fact:${factId}`, JSON.stringify(preimage)]);
+      return Number(g!.id);
+    }
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Wrap an engine so every direct method call on the handle is recorded. */
 function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
   return new Proxy(engine, {

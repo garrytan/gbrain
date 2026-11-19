@@ -612,7 +612,11 @@ impl Store {
 
 /// A withdrawal under `subject` reaches `row`: every subject, the row's entity, an unbacked name
 /// key (unless the subject is an owned memory page), or the owned memory page the row sits on.
-fn withdrawal_covers(read: &dyn KvRead, row: &FactRecord, subject: &str) -> Result<bool> {
+pub(super) fn withdrawal_covers(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    subject: &str,
+) -> Result<bool> {
     Ok(subject == "*"
         || row.entity_slug.as_deref() == Some(subject)
         || (unbacked(read, row)? && !owned_memory_subject(subject))
