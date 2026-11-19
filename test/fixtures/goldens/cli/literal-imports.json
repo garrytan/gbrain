@@ -106,6 +106,9 @@
       "guests": [
         "./commands/guests.ts"
       ],
+      "identity": [
+        "./commands/identity.ts"
+      ],
       "import": [
         "./commands/import.ts",
         "./core/agent-output.ts",

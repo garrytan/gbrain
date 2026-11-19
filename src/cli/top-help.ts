@@ -40,6 +40,7 @@ MEMORY (facts agents recall; MEMORY_VERBS v1)
                                      facts are pushed into new agent sessions (private: recall only)
   recall [<entity>] [--query <q>]    Find saved facts
   forget <fact-id>                   Withdraw a fact
+  identity [--member <id>] [--json]  Who gbrain takes the owner to be, and the signals behind it
 
 PAGES
   get <slug>                         Read a page

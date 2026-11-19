@@ -1263,6 +1263,10 @@
       },
       {
         "category": "ops",
+        "name": "owner_identity"
+      },
+      {
+        "category": "ops",
         "name": "search_mode"
       },
       {
