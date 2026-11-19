@@ -138,7 +138,7 @@ fn filename_of(key: &str) -> Option<&str> {
 fn facts_absorb_json(row: &JobRecord) -> Value {
     json!({
         "id": row.id,
-        "idempotency_key": row.idempotency_key,
+        "idempotency_key": row.idempotency_key.clone(),
         "status": row.status,
         "error_text": row.error_text,
         "slug": row.data.get("slug").and_then(jsonb_field_text),
