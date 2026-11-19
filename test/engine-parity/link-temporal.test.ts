@@ -29,6 +29,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { LinkBatchInput } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
+import type { EdgeTemporalOpts } from '../../src/core/link-validity.ts';
 import { DerivedLinkSettingsChangedError } from '../../src/core/derived-links.ts';
 import { relationshipKeysForPages, refreshRelationships, staleRelationshipKeys, type RelationshipKey } from '../../src/core/link-relationships.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin, removeManualTransitions, temporalBodyOf, writeManualTransitions } from '../../src/core/link-temporal-apply.ts';
@@ -378,6 +379,46 @@ describe('engine parity: link temporal state', () => {
           resetFtsLanguageCache();
         }
       });
+    },
+  );
+
+  parityTest(
+    'relationalFanout with a temporal option walks only the edges whose relationship matches the status, day or window',
+    { methods: ['putPage', 'readPageSnapshot', 'replaceDerivedLinks', 'relationalFanout'] },
+    async (engine) => {
+      await publishAlice(engine);
+      const walk = async (seed: string, temporal?: EdgeTemporalOpts, excludePrivate = false) =>
+        (await engine.relationalFanout([seed], { direction: 'in', ...(temporal ? { temporal } : {}), ...(excludePrivate ? { excludePrivate } : {}) }))
+          .map(r => `${r.slug}:${r.via_link_types.join(',')}`);
+      const out: Record<string, unknown> = {};
+      const cases: Array<[string, EdgeTemporalOpts | undefined]> = [
+        ['none', undefined],
+        ['live', { status: 'live' }],
+        ['ended', { status: 'ended' }],
+        ['all', { status: 'all' }],
+        ['disabled', { status: 'live', disabled: true }],
+        ['asOf2020', { status: 'live', asOf: '2020-06-01' }],
+        ['endedAsOf2020', { status: 'ended', asOf: '2020-06-01' }],
+        ['endedAsOf2018', { status: 'ended', asOf: '2018-06-01' }],
+        ['during2022', { during: { from: '2022-01-01', until: '2023-01-01' } }],
+        ['during2026', { status: 'all', during: { from: '2026-01-01', until: '2027-01-01' } }],
+      ];
+      for (const seed of [ACME, WIDGET]) {
+        for (const [name, temporal] of cases) {
+          for (const excludePrivate of [false, true]) out[`${seed}:${name}:${excludePrivate}`] = await walk(seed, temporal, excludePrivate);
+        }
+      }
+      expect(out[`${ACME}:none:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:live:false`]).toEqual([]);
+      expect(out[`${ACME}:ended:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:asOf2020:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:endedAsOf2018:false`]).toEqual([]);
+      expect(out[`${ACME}:during2022:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:during2026:false`]).toEqual([]);
+      expect(out[`${WIDGET}:live:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${WIDGET}:ended:false`]).toEqual([]);
+      expect(out[`${WIDGET}:during2022:false`]).toEqual([]);
+      return out;
     },
   );
 });

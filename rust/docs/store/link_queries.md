@@ -40,7 +40,7 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 ### Refusals (`engine_capability_missing`)
 
-- The temporal read option (`temporal`). `minTrust` and `suppressFlagged` are served wherever `pageReadFilter` reads
+- The temporal read option (`temporal`) on every member but `relationalFanout`. `minTrust` and `suppressFlagged` are served wherever `pageReadFilter` reads
   them (`getBacklinkCounts`, `getAdjacencyBoosts`, `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`,
   `listLivePageSummaries`, `listPagesTitledIn`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
   and its write-gate receipts. `findOrphanPages` and `listLinkSources` still refuse them: their SQL does not read
@@ -113,6 +113,10 @@ error rolls back the whole batch.
 - `getAdjacencyBoosts`: in-set linkers per page over the subgraph the ids induce, with the cross-source subset.
 - `relationalFanout`: every simple path from the seeds up to `depth` hops, grouped per reached page; the best path is
   the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the page's lowest-index chunk.
+  With `temporal`, a step keeps an edge only while `relationshipFilterSql` would: the edge's relationship row in the
+  `world` scope with `excludePrivate`, else `all`, matches the status (`live`, `ended`, `all`) on `asOf` (today, UTC,
+  from the store clock, when absent) or overlaps `during`. An edge with no relationship row passes, and an `amends`
+  edge passes outside `ended` reads (`edge_filter.rs`).
 - `relationalChainHop`: one oriented step from the frontier, collapsed per neighbor, ordered by frontier id and lowest
   link id; the degree saturates at 300 (`CHAIN_DEGREE_SATURATION`).
 - `hasSupersedeEdges`: true when any `supersedes` link exists, in any source, to any page.
