@@ -17,9 +17,9 @@ import { pageBodyBytes } from '../core/page-body/page-shape.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { DUPLICATE_KINDS, findDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult } from '../core/entities/duplicates.ts';
-import { decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
+import { decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
-import { identityIdsForPages, validateEntityId } from '../core/entity-identity.ts';
+import { identityIdsForPages, listEntityIdentities, validateEntityId } from '../core/entity-identity.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { parseSourceConfig } from '../core/sources-load.ts';
 
@@ -140,9 +140,16 @@ function parseFlags(cmd: string, args: string[], allowed: Set<string>): Flags | 
   return f;
 }
 
-/** Groups a bulk confirm covers: clean cross-source groups that are not contact-only and whose pages are in no identity group. */
-function bulkGroups(groups: DuplicateGroup[], inIdentity: Map<string, string>): DuplicateGroup[] {
-  return groups.filter(g => g.kind === 'cross_source' && g.class === 'clean' && !contactOnly(g) && !g.members.some(m => inIdentity.has(memberText(m))));
+/**
+ * Groups a bulk confirm covers: clean cross-source groups that are not contact-only, whose pages are in no identity group
+ * and, on a brain whose decisions go to git, whose pages may all be named in its repository.
+ */
+async function bulkGroups(engine: BrainEngine, groups: DuplicateGroup[], inIdentity: Map<string, string>): Promise<DuplicateGroup[]> {
+  const candidates = groups.filter(g => g.kind === 'cross_source' && g.class === 'clean' && !contactOnly(g) && !g.members.some(m => inIdentity.has(memberText(m))));
+  const home = await identityHome(engine);
+  if (!home) return candidates;
+  const blocked = await unpublishableMembers(engine, home.sourceId, candidates);
+  return candidates.filter((_, i) => blocked[i] === null);
 }
 
 export function previewHash(groups: DuplicateGroup[]): string {
@@ -180,7 +187,7 @@ function hintLine(g: DuplicateGroup): string {
 async function confirmList(engine: BrainEngine, result: DuplicateResult, json: boolean): Promise<void> {
   const entries = result.groups.filter(g => g.kind === 'cross_source' && CONFIRMABLE.has(g.class));
   const inIdentity = await identitiesOf(engine, entries);
-  const bulk = new Set(bulkGroups(entries, inIdentity).map(g => g.id));
+  const bulk = new Set((await bulkGroups(engine, entries, inIdentity)).map(g => g.id));
   const rank = (g: DuplicateGroup) => (bulk.has(g.id) ? 0 : !contactOnly(g) ? (g.class === 'weak' ? 2 : 1) : otherNamePages(g) > 0 ? 4 : 3);
   entries.sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : 1));
   const rows = [];
@@ -257,7 +264,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
   let entityFor = (g: DuplicateGroup) => g.id;
   if (f.clean) {
     const eligible = result.groups.filter(g => g.kind === 'cross_source');
-    chosen = bulkGroups(eligible, await identitiesOf(engine, eligible));
+    chosen = await bulkGroups(engine, eligible, await identitiesOf(engine, eligible));
     const hash = previewHash(chosen);
     if (!f.expect) {
       if (f.json) { console.log(JSON.stringify({ preview_hash: hash, groups: chosen.map(g => ({ id: g.id, members: g.members })) }, null, 2)); return; }
@@ -299,7 +306,15 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
           { fix: { argv: ['gbrain', 'entity-identity-list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists identity groups and their members; changes nothing.' } });
       }
     }
-    if (f.join) entityFor = () => f.join!;
+    if (f.join && chosen.length) {
+      const joined = [...(await listEntityIdentities(engine, { entityId: f.join })).map(m => memberText(m)), ...chosen.flatMap(g => g.members.map(memberText))];
+      const rejected = read.decisions.find(d => d.verdict === 'different' && d.members.filter(m => joined.includes(memberText(m))).length > 1);
+      if (rejected) {
+        const pair = rejected.members.filter(m => joined.includes(memberText(m))).slice(0, 2).map(memberText);
+        throw notConfirmable(chosen[0]!, 'rejected_pair', `with --join ${f.join} would put ${pair.join(' and ')} in one identity, but they are recorded as different people (decision ${rejected.decision_id})`);
+      }
+      entityFor = () => f.join!;
+    }
   }
   if (!chosen.length) { if (f.json) console.log(JSON.stringify({ confirmed: [] })); else console.log('Nothing to confirm.'); return; }
   const decisions: DecisionInput[] = [];
@@ -400,5 +415,6 @@ async function runReconcile(engine: BrainEngine, args: string[]): Promise<void> 
   if (r.store === 'database') console.log(`Duplicate decisions are kept in the database (no repository). Linked ${r.applied?.linked ?? 0} page(s), unlinked ${r.applied?.unlinked ?? 0}.`);
   else console.log(`Wrote ${r.written} decision(s) into git and re-read the committed decisions of source ${r.projection?.source_id} (${r.projection?.upserted ?? 0} updated, ${r.projection?.removed ?? 0} removed, ${r.projection?.linked ?? 0} page(s) linked).`
     + (r.projection?.invalid.length ? ` ${r.projection.invalid.length} file(s) did not validate: ${r.projection.invalid.join(', ')}.` : ''));
+  if (r.git_kept?.length) console.log(`${r.git_kept.length} decision(s) the database held differently are already committed; git wins, so the database now has the committed verdict: ${r.git_kept.join(', ')}.`);
   if (r.pending.length) console.log(`${r.pending.length} member page(s) are still not linked: ${r.pending.slice(0, 10).map(p => `${p.source_id}:${p.slug} (${p.reason})`).join(', ')}.`);
 }

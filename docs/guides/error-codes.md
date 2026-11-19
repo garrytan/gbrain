@@ -1522,9 +1522,9 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, or a group whose only shared keys are contact or handle keys given together with other groups; confirm and reject also refuse a group with a page in an owner-only source on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys given together with other groups, or a --join that would put two pages recorded as different people in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`.
+Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`.
 
 ### dedupe_group_unknown
 
@@ -5044,6 +5044,24 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 
 Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
 
+### rust_store_locked
+
+<a id="rust_store_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine could not open this brain because another gbrain process, or another engine in this process, has its store open, so nothing was opened or written. | A Rust brain has one owner at a time: the process that opened it holds the store until it disconnects. A second open does not wait. | Stop the other gbrain process that is using this brain, or disconnect the other engine, then try again. | user | `gbrain doctor --json` | 1 | yes |
+
+### rust_store_unreadable
+
+<a id="rust_store_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine could not read or write this brain's store directory (its format is one this gbrain does not read, its records failed their integrity check, or the disk failed), so the call did not complete and nothing past the last committed write changed. | The store checks its FORMAT file before it opens its records, and it verifies its records as it reads them. It stops rather than guess. | Check that the brain directory is the one you meant and that the disk is healthy. For a format from a newer gbrain, upgrade gbrain. For damaged records, restore the brain from a backup. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `format_unknown`, `store_corrupt`, `store_io`.
+
 ### schedule_install_failed
 
 <a id="schedule_install_failed"></a>
@@ -5178,7 +5196,7 @@ More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The secret store key an entry was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here. | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
+| The secret store key an entry or a backup was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here; or this host has no store key at all, so gbrain secrets backup uploads nothing (a backup is sealed under an existing key and never makes one). | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
 

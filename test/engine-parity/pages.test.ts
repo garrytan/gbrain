@@ -195,6 +195,44 @@ describe('engine parity: pages', () => {
     return { code, body: read?.page.compiled_truth };
   });
 
+  parityTest('putPage records source_path and refuses a second live page of the same file',
+    { methods: ['putPage', 'getPage', 'softDeletePage', 'restorePage', 'deletePage'] }, async (engine, backend) => {
+      const attempt = async (run: () => Promise<unknown>) => {
+        try {
+          await run();
+          return 'ok';
+        } catch (error) {
+          const e = error as { code?: string; detail?: string; message?: string };
+          return { code: e.code ?? 'threw', detail: e.detail ?? null, message: e.message ?? null };
+        }
+      };
+      await engine.putPage('notes/a', { ...NOTE, source_path: 'notes/a.md' });
+      const recorded = (await engine.getPage('notes/a'))?.source_path ?? null;
+      const second = await attempt(() => engine.putPage('notes/b', { ...NOTE, source_path: 'notes/a.md' }));
+      const secondStored = await engine.getPage('notes/b');
+      // Writing the page again without a path keeps its path.
+      await engine.putPage('notes/a', { ...NOTE, compiled_truth: 'Edited.' });
+      const kept = (await engine.getPage('notes/a'))?.source_path ?? null;
+      // Another source may record the same path.
+      await createSource(engine, backend, 'work');
+      const otherSource = await attempt(() => engine.putPage('notes/b', { ...NOTE, source_path: 'notes/a.md' }, { sourceId: 'work' }));
+      // A soft-deleted page frees the path; reviving it while another page holds the path is refused.
+      await engine.softDeletePage('notes/a');
+      const afterDelete = await attempt(() => engine.putPage('notes/b', { ...NOTE, source_path: 'notes/a.md' }));
+      const restore = await attempt(() => engine.restorePage('notes/a'));
+      const revive = await attempt(() => engine.putPage('notes/a', NOTE));
+      const tombstone = (await engine.getPage('notes/a', { includeDeleted: true }))?.deleted_at != null;
+      await engine.deletePage('notes/b');
+      const restoredOnceFree = await attempt(() => engine.restorePage('notes/a'));
+      const final = (await engine.getPage('notes/a'))?.source_path ?? null;
+      expect(recorded).toBe('notes/a.md');
+      expect(second).toMatchObject({ code: 'page_identity_changed', detail: 'origin_already_claimed' });
+      expect(secondStored).toBeNull();
+      expect(restore).toMatchObject({ code: 'page_identity_changed' });
+      expect(final).toBe('notes/a.md');
+      return { recorded, second, secondStored, kept, otherSource, afterDelete, restore, revive, tombstone, restoredOnceFree, final };
+    });
+
   parityTest('lockPageKeys holds keys inside a transaction', { methods: ['lockPageKeys', 'transaction'] }, async (engine) => {
     await seed(engine, [['people/alice-example', ALICE]]);
     const result = await engine.transaction(async (tx) => {
@@ -379,7 +417,7 @@ describe('engine parity: pages', () => {
   );
   parityTest(
     'listIdentityDecisions / applyIdentityDecisions: decisions by (source, slug), confirmed members linked, missing pages pending',
-    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions'] },
+    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions', 'listRestrictedIdentityMembers'] },
     async (engine) => {
       await seed(engine, [['people/alice-example', ALICE], ['people/bob-example', { type: 'person', title: 'Bob Example', compiled_truth: 'Bob.', frontmatter: {} }]]);
       const ref = (slug: string) => ({ source_id: 'default', slug });
@@ -398,6 +436,8 @@ describe('engine parity: pages', () => {
       expect(read.decisions.map(d => [d.decision_id, d.verdict, d.members.length, d.canonical?.slug ?? null]))
         .toEqual([['0000000000000001', 'same', 2, 'people/alice-example'], ['0000000000000002', 'same', 2, 'people/carol-example'], ['0000000000000003', 'different', 2, null]]);
       expect(read.pending.map(p => [p.decision_id, p.slug, p.reason])).toEqual([['0000000000000002', 'people/carol-example', 'page_missing'], ['0000000000000002', 'people/dan-example', 'page_missing']]);
+      expect(await engine.listRestrictedIdentityMembers([])).toEqual([]);
+      expect(await engine.listRestrictedIdentityMembers([ref('people/alice-example'), ref('people/carol-example')])).toEqual([]);
       const removed = await engine.applyIdentityDecisions({ remove: ['0000000000000001'] });
       expect(removed).toEqual({ upserted: 0, removed: 1, linked: 0, unlinked: 2 });
       return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };

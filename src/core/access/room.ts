@@ -18,7 +18,7 @@ import { logAudienceAssertion, normalizePrincipals, type AudiencePrincipal } fro
 import { audienceCallerAccess, resolveAudienceIdentities } from './caller.ts';
 import { ownerMemberId } from './owner.ts';
 export { keepRoomEvidence, type RoomEvidence } from './page-items.ts';
-import { arr, factSlot, linkSlot, listOf, pageIdSlot, pageSlot, refKey, refOut, thinkSlot, timelineSlot, walk, type FactRef, type Ref, type Slot } from './page-items.ts';
+import { arr, bodyPageSlot, factSlot, linkSlot, listOf, pageIdSlot, pageSlot, refKey, refOut, thinkSlot, timelineSlot, walk, type FactRef, type Ref, type Slot } from './page-items.ts';
 import { factVisibilitySql } from './member-facts.ts';
 import { hiddenPersonalSources } from './member-sources.ts';
 import {
@@ -102,7 +102,7 @@ export function readRoomDeclaration(channels: RoomChannels | undefined, args: Re
  * kept off the response). Every other op answers op_not_covered.
  */
 const EXTRACTORS: Record<string, (result: unknown, src: string, original: unknown) => Array<Slot | null>> = {
-  get_page: (r, src) => [pageSlot(r, src)],
+  get_page: (r, src, original) => [bodyPageSlot(r, src, original)],
   search: (r, src) => listOf(r).map(i => pageSlot(i, src)),
   query: (r, src) => listOf(r).map(i => pageSlot(i, src)),
   list_pages: (r, src) => listOf(r).map(i => pageSlot(i, src)),
@@ -314,6 +314,8 @@ async function assessRoomUnguarded(engine: BrainEngine | null, input: RoomInput)
     : input.unavailable ? new RoomUnavailable(input.unavailable.reason, input.unavailable.detail)
     : !engine ? new RoomUnavailable('not_supported') : null;
   let decisions = new Map<string, RoomAccess>();
+  // GST-3058: results whose body holds text the room's own (world-only) read strips; the mark is per page.
+  const bodyStrips = new Set<Slot>();
   const refs = new Map<string, Ref>();
   for (const s of slots) for (const r of s.ref ? [s.ref, ...(s.also ?? [])] : []) if (refs.size < ROOM_MAX_REFS) refs.set(refKey(r), r);
   if (!unavailable && slots.length) {
@@ -322,7 +324,10 @@ async function assessRoomUnguarded(engine: BrainEngine | null, input: RoomInput)
       decisions = await withDeadline((async () => {
         await deadlineForTests?.delay();
         const access = late ? null : await roomAccessFor(engine!, caller, d.principals);
-        return access && !late ? decide(engine!, access, d.principals, [...refs.values()]) : new Map<string, RoomAccess>();
+        if (!access || late) return new Map<string, RoomAccess>();
+        const out = await decide(engine!, access, d.principals, [...refs.values()]);
+        if (access.owner !== true) for (const s of slots) if (s.bodyStrips && await s.bodyStrips()) bodyStrips.add(s);
+        return out;
       })(), deadlineForTests?.ms ?? input.deadlineMs ?? ROOM_DEADLINE_MS, () => { late = true; });
     } catch (e) {
       unavailable = e instanceof RoomUnavailable ? e : new RoomUnavailable('mark_failed');
@@ -336,7 +341,7 @@ async function assessRoomUnguarded(engine: BrainEngine | null, input: RoomInput)
     const gates = s.ref ? [s.ref, ...(s.also ?? [])].map(judge) : [];
     const access: RoomAccess = unavailable ? { readable: 'unknown', reason: unavailable.reason }
       : !s.ref ? { readable: 'unknown', reason: 'not_identified' }
-      : gates.find(a => a.readable === false) ?? (s.unknown ? { readable: 'unknown', reason: s.unknown } : undefined) ?? gates.find(a => a.readable === 'unknown') ?? { readable: true };
+      : gates.find(a => a.readable === false) ?? (bodyStrips.has(s) ? { readable: false, reason: 'private_label' } as RoomAccess : undefined) ?? (s.unknown ? { readable: 'unknown', reason: s.unknown } : undefined) ?? gates.find(a => a.readable === 'unknown') ?? { readable: true };
     s.holder[ROOM_ACCESS_KEY] = access;
     meta.counts.items++;
     if (access.readable === true) { meta.counts.readable++; continue; }

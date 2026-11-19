@@ -211,7 +211,7 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     const chat = await pageId('imessage/chat/2026-06-14', CHATS);
     const [fromChat, plain, fromPlain] = [await pageId('notes/from-chat'), await pageId('notes/plain'), await pageId('notes/from-plain')];
     // The writer's pages and sources policies read by app.scopes (the maintainer recipe), so its reads of the lineage are
-    // not complete: every derived row reads closed for it (v327), while the owner reads the exact lineage.
+    // not complete: every derived row reads closed for it (v328), while the owner reads the exact lineage.
     expect(await readMode(writer)).toBe('closed');
     expect(await openTo(writer, [chat, fromChat, plain, fromPlain])).toEqual([plain]);
     expect(await openTo(admin, [chat, fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
@@ -345,7 +345,7 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     await admin.executeRaw(`CREATE POLICY ${HIDER}_read ON config FOR SELECT TO ${HIDER} USING (true)`);
     for (const table of LINEAGE_TABLES.filter(t => t !== 'sources')) await admin.executeRaw(`CREATE POLICY ${HIDER}_read ON ${table} FOR SELECT TO ${HIDER} USING (true)`);
     await admin.executeRaw(`CREATE POLICY ${HIDER}_read ON sources FOR SELECT TO ${HIDER} USING (id <> '${CHATS}')`);
-    const facts = (engine: BrainEngine) => engine.executeRaw<{ owner_only: boolean }>(`SELECT ${ownerOnlyFactSql('f', ownerOnlyForm(327))} AS owner_only FROM facts f WHERE f.id = $1`, [secretFact]);
+    const facts = (engine: BrainEngine) => engine.executeRaw<{ owner_only: boolean }>(`SELECT ${ownerOnlyFactSql('f', ownerOnlyForm(328))} AS owner_only FROM facts f WHERE f.id = $1`, [secretFact]);
 
     const hider = await connectAs(HIDER);
     expect(await readMode(hider)).toBe('source');

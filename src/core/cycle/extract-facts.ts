@@ -102,6 +102,7 @@ import {
   type PhantomPassResult,
 } from './phantom-redirect.ts';
 import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
+import { embeddingSendBlocked } from '../embedding-disabled.ts';
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
@@ -1052,7 +1053,7 @@ export async function runExtractFacts(
     // them. Rows updated in place keep their vectors: the claim text is
     // unchanged. Falls open without an embedding provider, with a warning.
     if (toInsert.length > 0 && !opts.deferEmbedding) {
-      if (isAvailable('embedding')) {
+      if (isAvailable('embedding') && !await embeddingSendBlocked(engine)) {
         try {
           const texts = toInsert.map(e => e.fact);
           const embeddingModel = getEmbeddingModel();

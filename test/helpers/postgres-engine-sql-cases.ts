@@ -93,6 +93,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'holdSchemaMigrationLock': OOS.lifecycle,
   'ownerOnlyMarkTriggers': OOS.ownerOnly,
   'listIdentityDecisions': OOS.identityDecisions,
+  'listRestrictedIdentityMembers': OOS.identityDecisions,
   'applyIdentityDecisions': OOS.identityDecisions,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
@@ -155,7 +156,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'invalidateContentDriftEmbeddings': 'chunks', 'listStaleChunks': 'chunks',
   'countChunklessPagesWithContent': 'chunks', 'listChunklessPagesWithContent': 'chunks', 'deleteChunks': 'chunks',
   'readEmbeddingStateCounts': 'chunks', 'listEmbeddingStateRows': 'chunks',
-  'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
+  'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'sealSegmentedPage': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
   'readSegmentDerivations': OOS.pageBody, 'upsertSegmentDerivations': OOS.pageBody, 'retireSegmentDerivations': OOS.pageBody,
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)

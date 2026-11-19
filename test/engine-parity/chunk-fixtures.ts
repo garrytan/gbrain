@@ -21,7 +21,7 @@ export async function seedPage(engine: BrainEngine, page: SeedPage, opts?: { sou
   if (page.chunks) await installChunks(engine, page.slug, page.chunks, opts);
 }
 
-/** Replace a page's chunks with a sealed projection. */
+/** Replace a page's chunks, vectors included, with a sealed projection. Every arm gets the same chunks. */
 export async function installChunks(engine: BrainEngine, slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
   await engine.sealChunks(slug, chunks, opts);
 }

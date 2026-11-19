@@ -1,0 +1,18 @@
+[package]
+name = "gbrain-store"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Record store for the gbrain Rust engine: redb behind a narrow key-value trait, pages, chunks, keyword search and the write journal. No JavaScript types."
+
+[dependencies]
+redb = "4.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+getrandom = "0.3"
+sha2 = "0.10"
+
+[dev-dependencies]
+gbrain-sim = { path = "../gbrain-sim" }

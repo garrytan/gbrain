@@ -4609,7 +4609,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
-- [Rust engine plan](docs/designs/RUST_ENGINE.md) — proposed design for a third storage engine, not built yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
+- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes and salience, but nothing selects it yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
@@ -6339,10 +6339,13 @@ addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'
 when the `rust` config value lands; no config value selects the Rust engine yet. Finding, checking and loading the
 addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
-- **Capabilities.** The shell declares no capabilities. Each `BrainEngine` member it does not implement refuses
-  `engine_capability_missing` with the capability as `reason` (`raw_sql`, `pages`, `search`, ...), the member in
-  `detail`, and `written=nothing`, before any work. `src/core/rust-engine/members.ts` maps every member to its
-  capability; the type fails when a new `BrainEngine` member is not classified.
+- **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
+  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags`, `schema`, `keyword_search`, `vector_search`, `embeddings`, `links`, `graph`,
+  `takes`, `salience` and `ingest_log`.
+  Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
+  `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
+  `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
+  member is not classified. What each capability still lacks is under "What a Rust brain serves now".
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
@@ -6358,6 +6361,108 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 - **Shared memory.** The addon refuses a typed array whose buffer the runtime (`napi_is_arraybuffer`) does not call a
   plain `ArrayBuffer`, so a `SharedArrayBuffer` view is refused with `InvalidArg` however JavaScript globals or
   prototypes have been changed (`rust/README.md`).
+
+### What a Rust brain serves now
+
+`connect()` opens the brain directory through the addon's store (`rust/README.md`, "The brain store") and
+`disconnect()` closes it. A second engine on a directory that is open refuses `rust_store_locked`; a directory the
+store cannot read refuses `rust_store_unreadable` with its reason (`gbrain errors <code>`). A served member on an engine
+that is not connected refuses `engine_closed`. These members run on the store (`src/core/rust-engine/store-members/`):
+
+- Config, sources and tags: `getConfig`, `setConfig`, `unsetConfig`, `listConfigKeys`, `getAllConfig`,
+  `getConfigValues`, `listAllSources`, `updateSourceConfig`, `getSource`, `listSourceLocalPaths`,
+  `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
+  members that make the `config`, `sources`, `tags` and `schema` capabilities complete. The store keeps each tag's
+  claim (`added` or `frontmatter`) as PGLite's `tags.tag_source` does, so an import prune removes only the tags the
+  import claimed. `getSource` reads `last_commit`, `contextual_retrieval_mode` and `trust_frontmatter_overrides` as
+  null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
+- Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
+  `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
+- Versions, chunks and timeline: `createVersion`, `getVersions`, `upsertChunks`, `sealChunks`, `getChunks`,
+  `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
+  `deleteChunks`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`, `getTimelineForDate`, `getSince`,
+  `getOnThisDay`, `getLastSeen`. These capabilities stay unreported, because other members of the same capability
+  (`revertToVersion`, `setChunkerVersion`, `upsertEventProjection`, ...) still refuse. Chunk reads are in
+  `rust/docs/store/chunk_queries.md`.
+- Links and graph: `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
+  `traversePaths`, `traversePathsDetailed`, and the link reads in `rust/docs/store/link_queries.md` (`getBacklinkCounts`,
+  `getAdjacencyBoosts`, `relationalFanout`, `findOrphanPages`, `supersedingPageSlugs`, `pagesLinkingTo`, ...). Every
+  member of `links` and `graph` is served, so both capabilities are reported.
+- Vectors and embeddings: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as
+  pgvector scores them), the embedding state members (`getEmbeddingsByChunkIds`, `cosinesByChunkIds`, `listStaleChunks`,
+  `setPageEmbeddingSignature`, `updateTakeEmbeddings`, ...) and `upsertChunks` and `sealChunks` with the vector a chunk
+  carries (`rust/docs/store/vectors.md`, `rust/docs/store/embeddings.md`). The `vector_search` and `embeddings`
+  capabilities are reported. The store has one vector column, PGLite's `embedding`.
+- Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
+  `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
+  `salience` and `ingest_log` capabilities are reported.
+- Keyword and title search: `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
+  `searchTitles` and `findByTitleFuzzy`. They rank with a port of PostgreSQL's `ts_rank`, `ts_rank_cd` and
+  `websearch_to_tsquery` (english), so their answers match PGLite's (`rust/docs/store/keyword.md`). Every member of
+  `keyword_search` is served, so the capability is reported.
+- Segmented pages (a page over 1 MiB, stored in segments): `allocateBodyOccurrenceIds`, `stageSegmentTexts`,
+  `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
+  `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
+  `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
+  a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
+  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`).
+
+A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
+way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
+
+- a chunk that carries an image vector, and a Rust brain whose config sets `search_embedding_column` or
+  `embedding_columns` to another column (the store keeps PGLite's `embedding` column only; every member that reads the
+  active column refuses, `rust/docs/store/embeddings.md`);
+- a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
+  (only the files on disk can say whether another page already holds that file, and the store cannot read them);
+- `listPages` with `listColumnsOnly`;
+- `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
+  not have, so an empty answer would be wrong to give;
+- a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
+- a vector search with `where`, a date bound, `minTrust` or `suppressFlagged` (`rust/docs/store/vectors.md`);
+- a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy
+  `requireSafeChunks`, `minTrust` or `suppressFlagged`, a date bound that is not an ISO date, a malformed `where`, or a
+  truthy `excludePrivate` on `searchKeywordChunks`, `countKeywordPages` or `searchKeywordPages` (`searchKeyword` and
+  `searchTitles` serve it; `rust/docs/store/keyword.md`, "Refusals"), and a link
+  batch that sets a link kind or resolution.
+
+A `putPage` that carries a `source_path` keeps it, and refuses `page_identity_changed` (detail
+`origin_already_claimed`) when another live page of the same source already records that path, as PGLite does.
+
+What the Rust members do the way PGLite does: `putPage` writes the page alone. It does not chunk and does not seal,
+and `upsertChunks` does not seal either; only `sealChunks` replaces the chunks outright and seals them to the page's
+revision, so a page is searchable only after `sealChunks`. `getChunks` returns `[]` for a page that is not sealed at its
+current revision. `deletePage` hard-deletes from the default source. `softDeletePage` and `restorePage` with no
+`sourceId` act on every source. Slugs are matched as written. A cancelled `AbortSignal` stops `upsertChunks`,
+`addLinksBatch` and `addTimelineEntriesBatch` before anything is written, but a write already running in the native
+store cannot be cancelled, which is a difference from PGLite. Overlapping `connect()` calls share one open, and a
+`disconnect()` during a connect wins: the connect rejects `engine_closed` and the store it opened is closed.
+
+A scope that names no source (an empty string `sourceId` or `sourceIds` entry) is never widened: `getChunks` and `getTags` answer it as PGLite does, with nothing, instead of reading every source. A keyword hit always carries `effective_date` and `effective_date_source`, null when the page has no date.
+
+Keyword search hides what PGLite hides: soft-deleted pages, archived sources, pages that carry a `quarantine` or
+`pinned_question` frontmatter key, whatever its value, and the slug prefixes `test/`, `attachments/` and `.raw/` plus any
+that `GBRAIN_SEARCH_EXCLUDE` names (`include_slug_prefixes` opts back in). Keyword and title search rank with a port of `ts_rank` and
+`ts_rank_cd` over a port of PostgreSQL's english text search, and match PGLite's scores and order. No keyword case is
+listed in `test/rust-expected-divergence/` (`search.tsv` is empty).
+
+The parity suite checks this: with `GBRAIN_TEST_RUST_ARM=1` each `test/engine-parity/` file adds a Rust arm. A case that
+reaches a member or an option Rust refuses must end on that typed refusal (a refusal the case caught on the way to
+another outcome does not count); any other case must return what PGLite returns, or differ only as its row in
+`test/rust-expected-divergence/` (one file per family) names with a normaliser, and Rust must still return a value (a thrown error never
+passes, and a row that stops being true fails the run). The suite
+runs on PGLite alone without the flag.
+
+**Transactions and the belief ledger.** Both stay refused on the Rust engine, on purpose.
+
+- `transaction`, `transactionDirect` and `lockPageKeys` refuse `transactions`. The store makes each write atomic on
+  its own, but it has no handle that spans several calls, and `lockPageKeys` throws outside a transaction on PGLite, so
+  there is nothing for it to hold. Code that passes settings into a transaction (the write attribution, trust and
+  maintenance settings in `src/core/persistence/context.ts`) does it with `set_config` and `current_setting` through
+  `tx.executeRaw`, which needs SQL. A Rust transaction would carry those values on a typed context instead.
+- `belief_ledger` is a subsystem, not a `BrainEngine` member: `src/core/belief/` appends and reads belief events through
+  `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
+  have typed members. Nothing in the Rust engine writes belief events today.
 
 ## Adding a new engine
 
@@ -7089,6 +7194,26 @@ vars — incident-time escape hatches, not everyday knobs.
    consumer claims) is reported in `sync_blocked` as
    [`refresh_sync_timeout`](write-refusals.md#refresh_sync_timeout) and
    catches up on its next sync.
+   While it holds the refresh lock, a member's sync derives links only for the
+   pages that refresh imported. Once every lock is released, the same run spends
+   the rest of the sync's link budget (1,000 pages and 5 minutes, less what the
+   imports used) on the source's stale-link backlog. So an uncontended run drains
+   as much backlog as a plain `gbrain sync` does, but other refreshes of the
+   checkout no longer wait on it. Refreshes drain a source's backlog one at a time:
+   a refresh that finds another refresh's drain running skips its own (a plain
+   `gbrain sync` derives its own share without that lock). `--json` lists each
+   member's drain in `link_backlog`: `outcome` is `drained` (with `pages`
+   derived and `remaining`), `skipped` or `failed` (with `message`). A failed
+   drain never fails the refresh, and `gbrain extract --stale --source-id <id>`
+   runs the backlog on demand (`--dry-run --json` reports its size as
+   `stale_pages`).
+   `--json` also reports where the run's time went. `phase_ms` holds whole
+   milliseconds for each phase the run reached: `fetch`, `precheck` (which
+   includes `fetch`), `drain` (waiting for queued writes), `merge` (the fence
+   and fast-forward), `sync` (the member imports), `tail` (their post-import
+   step) and `backlog` (the drain after the lock). `lock_held_ms` is how long
+   the run held the refresh lock, and is absent when the run never took it.
+   `GBRAIN_DEBUG=1` prints the same line on stderr.
    A refresh whose process died (a crash, a replaced container) does not
    wedge the checkout: the owner finishes what it can on its own, and the next
    `gbrain sources refresh <source-id>` on the owner host finishes the rest

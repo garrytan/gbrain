@@ -1255,6 +1255,10 @@
       },
       {
         "category": "brain",
+        "name": "secret_store"
+      },
+      {
+        "category": "brain",
         "name": "fence_integrity"
       },
       {

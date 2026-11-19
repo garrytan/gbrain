@@ -134,6 +134,18 @@ export function exportKeyEscrow(id: string, passphrase: string): KeyEscrow {
   return { kind: ESCROW_KIND, version: 1, key_id: id, salt: salt.toString('base64'), iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64') };
 }
 
+/** Records that a key's escrow copy was exported (a stamp file beside the keyring), so doctor stops warning about it. */
+export function markEscrowExported(id: string): void {
+  if (!KEY_ID.test(id)) return;
+  mkdirSync(keyringDir(), { recursive: true, mode: 0o700 });
+  atomicWriteFileSync(join(keyringDir(), `${id}.escrowed`), `${new Date().toISOString()}\n`);
+}
+
+/** Key ids whose escrow copy this host exported. */
+export function escrowExported(): Set<string> {
+  try { return new Set(readdirSync(keyringDir()).filter(name => /^[0-9a-f]{16}\.escrowed$/.test(name)).map(name => name.slice(0, 16))); } catch { return new Set(); }
+}
+
 /** Adds an escrowed key to the keyring (never over an existing file) and returns its id; it becomes current only when none is. */
 export function importKeyEscrow(escrow: KeyEscrow, passphrase: string): string {
   if (escrow?.kind !== ESCROW_KIND || escrow.version !== 1 || !KEY_ID.test(escrow.key_id)) {

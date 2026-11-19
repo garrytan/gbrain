@@ -10,6 +10,10 @@ public struct Problem: Error, Equatable {
     public let retryable: Bool
     public let retryAfter: Int?
     public let fix: String?
+    public var sideEffects: String?
+    public var outcome: String?
+    public var replayed: Bool?
+    public var serverTime: Int?
 
     public init(code: String, status: Int, title: String, detail: String, retryable: Bool = false, retryAfter: Int? = nil, fix: String? = nil) {
         self.code = code
@@ -48,7 +52,8 @@ public struct Problem: Error, Equatable {
 
     public static func sourceDisabled(_ id: String) -> Problem {
         Problem(code: "source_disabled", status: 403, title: "Source turned off",
-                detail: "The \(id) source is turned off in the helper's config.", fix: "Run: gbrain apple enable \(id)")
+                detail: "The \(id) source is turned off in the helper's config.",
+                fix: "Set sources.\(id).enabled to true in the helper's config.json, then run: launchctl kickstart -k gui/\(getuid())/\(HelperIdentity.bundleId)")
     }
 
     public static func insufficientScope(_ scope: String) -> Problem {
@@ -69,8 +74,12 @@ public struct Problem: Error, Equatable {
     public static let overloaded = Problem(code: "overloaded", status: 503, title: "Too many requests at once",
                                            detail: "The helper handles a few requests at a time.", retryable: true, retryAfter: 1)
     public static let notFound = Problem(code: "not_found", status: 404, title: "Not found", detail: "No route or chat matches the request.")
-    public static let tooLarge = Problem(code: "too_large", status: 413, title: "Request too large", detail: "Requests are limited to 8 KB.")
-    public static let methodNotAllowed = Problem(code: "method_not_allowed", status: 405, title: "Method not allowed", detail: "Only GET is supported.")
+    public static let tooLarge = Problem(code: "too_large", status: 413, title: "Request too large",
+                                         detail: "Requests are limited to 8 KB, and a send's body to 32 KB.")
+    public static let methodNotAllowed = Problem(code: "method_not_allowed", status: 405, title: "Method not allowed",
+                                                 detail: "Read routes take GET; the send and admin routes take POST.")
+    public static let lengthRequired = Problem(code: "bad_param", status: 411, title: "Content-Length required",
+                                               detail: "A POST needs a Content-Length header; chunked bodies and Expect: 100-continue are refused.")
     public static let internalError = Problem(code: "internal", status: 500, title: "Internal error",
                                               detail: "The helper hit an unexpected error; the request id is in the helper's log.", retryable: true, retryAfter: 5)
 
@@ -95,4 +104,8 @@ struct ProblemBody: Encodable {
     let retryable: Bool
     let fix: String?
     let requestId: String
+    let sideEffects: String?
+    let outcome: String?
+    let replayed: Bool?
+    let serverTime: Int?
 }
