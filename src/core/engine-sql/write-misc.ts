@@ -163,6 +163,13 @@ export function listAwaitingMemoryProposals(exec: LegacyUnscopedRead, limit: num
     ORDER BY created_at LIMIT $1`, [limit]);
 }
 
+/** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
+export async function readMemoryProposal(exec: LegacyUnscopedRead, principalKind: string, principalId: string, requestId: string): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(
+    'SELECT * FROM memory_proposals WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid', [principalKind, principalId, requestId]);
+  return row ?? null;
+}
+
 /** Deletes every closed memory proposal decided (or last updated) at least `retentionDays` days ago; returns how many. */
 export async function purgeMemoryProposals(exec: SqlExecutor, retentionDays: number): Promise<number> {
   const rows = await exec.executeRaw(`DELETE FROM memory_proposals WHERE state<>'awaiting_owner'

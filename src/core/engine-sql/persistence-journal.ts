@@ -151,6 +151,39 @@ export async function readWriteRequest(exec: LegacyUnscopedRead, principalKind: 
   return row ?? null;
 }
 
+/**
+ * `listWriteRequestRows` filters. `before` is a sequence as decimal text; a null list skips its fence and an empty
+ * list matches nothing. `slugPrefixes` are lower-case (one ending in `/` matches under it, any other matches the slug
+ * or under it); `operations` match `authority.attestedOp`, else `operation`; `slugAllowList` holds exact slugs or
+ * `<prefix>/*`.
+ */
+export interface WriteRequestListFilter {
+  before: string | null; limit: number; slugPrefixes: string[] | null; operations: string[] | null; slugAllowList: string[] | null;
+}
+
+/**
+ * One candidate page of `list_write_requests` (persistence/control.ts): a principal's requests in one live source
+ * (the source has the request's incarnation and is not archived), newest sequence first, through the filter. The
+ * caller authorizes each row and pages.
+ */
+export function listWriteRequestRows(exec: LegacyUnscopedRead, principalKind: string, principalId: string, sourceId: string,
+  filter: WriteRequestListFilter): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+      JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation AND NOT s.archived
+      WHERE r.principal_kind=$1 AND r.principal_id=$2 AND r.source_id=$3
+      AND ($4::bigint IS NULL OR r.sequence<$4::bigint)
+      AND ($6::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($6::text[]) AS p(prefix)
+        WHERE length(p.prefix)>0 AND (CASE WHEN right(p.prefix,1)='/'
+          THEN left(lower(r.slug),length(p.prefix))=p.prefix
+          ELSE lower(r.slug)=p.prefix OR left(lower(r.slug),length(p.prefix)+1)=p.prefix||'/' END)))
+      AND ($7::text[] IS NULL OR COALESCE(r.authority->>'attestedOp', r.operation)=ANY($7::text[]))
+      AND ($8::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($8::text[]) AS a(pattern)
+        WHERE CASE WHEN right(a.pattern,2)='/*' THEN left(r.slug,length(a.pattern)-1)=left(a.pattern,length(a.pattern)-1)
+          ELSE r.slug=a.pattern END))
+      ORDER BY r.sequence DESC LIMIT $5`,
+  [principalKind, principalId, sourceId, filter.before, filter.limit, filter.slugPrefixes, filter.operations, filter.slugAllowList]);
+}
+
 /** The request with journal id `id`, or null. */
 export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequest | null> {
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], opts);

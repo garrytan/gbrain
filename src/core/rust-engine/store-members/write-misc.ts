@@ -1,6 +1,6 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts), and the folder access read beside the
+ * purgeMemoryProposals, readMemoryProposal, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts), and the folder access read beside the
  * access members (isFolderRestricted; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
@@ -75,6 +75,9 @@ export const expireMemoryProposals: StoreMember<[reason: string], number> = asyn
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so none awaits its owner. */
 export const listAwaitingMemoryProposals: StoreMember<[limit: number], Array<Record<string, unknown>>> = async () => [];
+
+/** No memory proposals exist on this engine (see expireMemoryProposals), so a principal holds none under any request id. */
+export const readMemoryProposal: StoreMember<[principalKind: string, principalId: string, requestId: string], Record<string, unknown> | null> = async () => null;
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so upkeep purges nothing. */
 export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> = async () => 0;
