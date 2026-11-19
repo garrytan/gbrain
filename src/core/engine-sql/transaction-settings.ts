@@ -4,7 +4,9 @@
  * both engines. Both statements run on the executor they are given, so a transaction engine
  * reads and sets them inside its own transaction. The names are code constants, never user
  * input; they are still bound as parameters and checked against the setting-name alphabet.
+ * `beginSnapshotRead` sets the isolation of a read transaction.
  */
+import type { BrainEngine } from '../engine.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 import { sqlFragment } from './fragment.ts';
@@ -28,4 +30,12 @@ export async function applyTransactionSettings(exec: SqlExecutor, names: readonl
   assertSettingNames(names);
   if (names.length === 0) return;
   await exec.run(sqlFragment`SELECT set_config(t.name, t.value, true) FROM unnest(${[...names]}::text[], ${[...values]}::text[]) AS t(name, value)`);
+}
+
+/**
+ * Starts the current transaction as one snapshot: `REPEATABLE READ`, and `READ ONLY` with `readOnly`. Runs on the
+ * transaction engine as its first statement, so every later read sees the state as of that statement.
+ */
+export async function beginSnapshotRead(tx: Pick<BrainEngine, 'executeRaw'>, opts: { readOnly?: boolean } = {}): Promise<void> {
+  await tx.executeRaw(opts.readOnly ? 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
 }

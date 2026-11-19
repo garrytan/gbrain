@@ -371,7 +371,6 @@ src/core/ops/pages.ts	stripPrivacyFencesForRemoteReader	field	STREAM	segmented p
 src/core/ops/valid-time-read.ts	editionView	call:pageDocument	INLINE	inline editions only; a segmented edition is windowed through openSegmentedBody / segmentedReadDocument
 src/core/ops/valid-time-read.ts	editionView	field	INLINE	inline editions only; a segmented edition is windowed through openSegmentedBody / segmentedReadDocument
 src/core/ops/valid-time-read.ts	loadEdition	field	INLINE	the text branch runs only for an inline current page (isSegmentedPage); a segmented edition carries its generation for the segment reader
-src/core/ops/valid-time-read.ts	loadEdition	sql	INLINE	a segmented version's body columns are NULL; it is read by generation through the segment reader in editionView
 src/core/ops/valid-time-read.ts	validFromEdit	call:serializePageToMarkdown	NONE	not the page body: renders only the frontmatter head of an object built from slug, type, title and frontmatter with empty body fields, so a segmented page's getters are never read
 src/core/output/post-write.ts	runPostWriteLint	field	INLINE	
 src/core/output/validators/link.ts	linkValidator	field	INLINE	
@@ -720,6 +719,8 @@ src/core/engine-sql/trust-tier-reads.ts	P_BODY_KEY	sql	META	moved from valid-tim
 src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	field	INLINE	moved from core-memory.ts listCorePages: passes an inline row's compiled_truth through and flags segmented rows, which core-memory.ts listCorePages materialises
 src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	sql	INLINE	moved from core-memory.ts listCorePages: a segmented row's body column is NULL and its segmented flag sends it to the segment reader
 src/core/engine-sql/trust-tier-reads.ts	pickValidTimeEdition	sql	META	moved from valid-time-read.ts pick: octet_length of an inline version's body columns (segmented versions are counted by body_storage); no text leaves the database
+src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	field	INLINE	moved from valid-time-read.ts loadEdition: passes an inline version's body columns through; a segmented version's are NULL and its generation goes to the segment reader in editionView
+src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	sql	INLINE	moved from valid-time-read.ts loadEdition: a segmented version's body columns are NULL; it is read by generation through the segment reader in editionView
 src/core/engine-sql/trust-tier-reads.ts	scanFrom	sql	STREAM	moved from eligibility/scan.ts SELECT: the scan assesses inline text; a segmented page's body columns are NULL
 src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
 src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before the body is read

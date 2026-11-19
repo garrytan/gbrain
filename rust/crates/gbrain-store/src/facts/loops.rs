@@ -3,9 +3,9 @@
 //!
 //! Members: `upsertOpenLoop`, `listOpenLoops` and `closeOpenLoop` (src/core/loops/loops-store.ts,
 //! SQL in src/core/engine-sql/open-loops.ts), and `closedLoopWithActiveFact` (the `loops_close`
-//! retry read, SQL in src/core/engine-sql/facts-repair.ts). The other loop statements (thread auto-close, the
-//! staleness pass, mutes and the loop-fact reads) still run through `executeRaw` and refuse on
-//! this engine.
+//! retry read) and `loopFactDrift` (the loop-fact retirement scan), SQL in
+//! src/core/engine-sql/facts-repair.ts. The other loop statements (thread auto-close, the
+//! staleness pass and mutes) still run through `executeRaw` and refuse on this engine.
 //!
 //! Keys (after `keys::FACT`; a text part ends with a NUL byte, and no text column may hold one):
 //! - `F 0x08 id -> LoopRecord`: one row, the `id` primary key (8 big-endian bytes).
@@ -473,11 +473,99 @@ impl Store {
         let active = super::read_fact(&*read, fid)?.is_some_and(|f| f.expired_at_us.is_none());
         Ok(active.then(|| json!({ "id": uid, "status": r.status, "fact_id": fact_id })))
     }
+
+    /// `loopFactDrift(sourceIds, loopId)`: the closed (`done` or `dropped`) loops of the sources
+    /// (only `loop_id` when given) whose commitment fact, in the loop's own source, has no
+    /// `expired_at` and no `open` loop referencing it, as `{ loop_id, source_id, fact_id, status,
+    /// slug }` in id order. `slug` is the fact's `source_markdown_slug`.
+    pub fn loop_fact_drift(
+        &self,
+        source_ids: &[String],
+        loop_id: Option<i64>,
+    ) -> Result<Vec<Value>> {
+        let op = "loopFactDrift";
+        for source in source_ids {
+            no_nul(op, &[("sourceIds", source)])?;
+        }
+        let read = self.read()?;
+        let rows = all_rows(&*read, op)?;
+        let held: std::collections::BTreeSet<i64> = rows
+            .iter()
+            .filter(|(_, r)| r.status == "open")
+            .filter_map(|(_, r)| r.fact_id)
+            .collect();
+        let mut out = Vec::new();
+        for (id, r) in &rows {
+            if !source_ids.contains(&r.source_id)
+                || !matches!(r.status.as_str(), "done" | "dropped")
+                || loop_id.is_some_and(|l| l != *id as i64)
+            {
+                continue;
+            }
+            let Some(fact_id) = r.fact_id else { continue };
+            if held.contains(&fact_id) {
+                continue;
+            }
+            let Ok(fid) = u64::try_from(fact_id) else {
+                continue;
+            };
+            let Some(f) = super::read_fact(&*read, fid)? else {
+                continue;
+            };
+            if f.source_id != r.source_id || f.expired_at_us.is_some() {
+                continue;
+            }
+            out.push(json!({
+                "loop_id": id,
+                "source_id": r.source_id,
+                "fact_id": fact_id,
+                "status": r.status,
+                "slug": f.source_markdown_slug,
+            }));
+        }
+        Ok(out)
+    }
+}
+
+/// The fact ids every loop of every source names (`EXISTS (SELECT 1 FROM open_loops l WHERE
+/// l.fact_id = f.id)`), whatever its status.
+pub(crate) fn loop_fact_ids(
+    read: &dyn KvRead,
+    op: &str,
+) -> Result<std::collections::BTreeSet<u64>> {
+    Ok(all_rows(read, op)?
+        .into_iter()
+        .filter_map(|(_, r)| r.fact_id.and_then(|id| u64::try_from(id).ok()))
+        .collect())
+}
+
+/// Every loop row, in id order (the key order of `F 0x08 id`).
+fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &[keys::FACT, ROW], false, &mut |k, v| {
+        let Some(id) = k.get(2..).and_then(keys::be8) else {
+            return true;
+        };
+        match serde_json::from_slice::<LoopRecord>(v) {
+            Ok(r) => rows.push((id, r)),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = failed {
+        return Err(StoreError::invalid(format!("{op}: corrupt record: {e}")));
+    }
+    Ok(rows)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::INVALID_ARGUMENT;
     use crate::sources::SourceInput;
     use crate::test_support::store;
 
@@ -606,6 +694,87 @@ mod tests {
                 .is_none()
         );
         assert!(s.closed_loop_with_active_fact(None, -1).unwrap().is_none());
+    }
+
+    #[test]
+    fn loop_fact_drift_lists_closed_loops_whose_fact_no_open_loop_holds() {
+        use crate::facts::{ExpireFactArgs, InsertFactArgs, NewFactInput};
+        let s = store();
+        source(&s, "src");
+        let fact = |text: &str| -> i64 {
+            let args = InsertFactArgs {
+                input: NewFactInput {
+                    fact: Some(text.into()),
+                    source: Some("test".into()),
+                    ..NewFactInput::default()
+                },
+                source_id: "src".into(),
+                supersede_id: None,
+            };
+            s.insert_fact(&args).unwrap()["id"].as_i64().unwrap()
+        };
+        let (live, held, gone) = (fact("send the deck"), fact("call back"), fact("old"));
+        let with_fact = |key: &str, fact_id: Option<i64>| {
+            let mut i = input("src", key, T1);
+            i.fact_id = fact_id;
+            s.upsert_open_loop(&i).unwrap().id
+        };
+        let done = with_fact("done", Some(live));
+        let closed_held = with_fact("held-closed", Some(held));
+        let _open_held = with_fact("held-open", Some(held));
+        let expired = with_fact("expired", Some(gone));
+        let no_fact = with_fact("none", None);
+        let dropped = with_fact("dropped", Some(live));
+        s.close_open_loop(None, done, "done", "manual")
+            .unwrap()
+            .unwrap();
+        s.close_open_loop(None, dropped, "dropped", "manual")
+            .unwrap()
+            .unwrap();
+        for id in [closed_held, expired, no_fact] {
+            s.close_open_loop(None, id, "done", "manual")
+                .unwrap()
+                .unwrap();
+        }
+        s.expire_fact(&ExpireFactArgs {
+            id: gone as f64,
+            ..Default::default()
+        })
+        .unwrap();
+        let ids = |rows: Vec<Value>| -> Vec<i64> {
+            rows.iter()
+                .map(|r| r["loop_id"].as_i64().unwrap())
+                .collect()
+        };
+        let src = vec!["src".to_string()];
+        assert_eq!(
+            ids(s.loop_fact_drift(&src, None).unwrap()),
+            vec![done, dropped]
+        );
+        assert_eq!(
+            s.loop_fact_drift(&src, Some(dropped)).unwrap(),
+            vec![
+                json!({ "loop_id": dropped, "source_id": "src", "fact_id": live,
+                "status": "dropped", "slug": null })
+            ]
+        );
+        assert!(
+            s.loop_fact_drift(&src, Some(closed_held))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            s.loop_fact_drift(&["other".to_string()], None)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(s.loop_fact_drift(&[], None).unwrap().is_empty());
+        assert_eq!(
+            s.loop_fact_drift(&["a\0b".to_string()], None)
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
+        );
     }
 
     #[test]

@@ -159,7 +159,7 @@ const get_page: Operation = {
 
     if (!page && fuzzy) {
       const fallback = await ctx.engine.transaction(async tx => {
-        await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        await tx.beginSnapshotRead();
         let candidates = await tx.resolveSlugs(slug, { ...fuzzyScope, excludePrivate });
         if (excludePrivate && candidates.length > 0) {
           candidates = await dropPrivateSlugs(tx, candidates, fuzzyScope, includeDeleted);
