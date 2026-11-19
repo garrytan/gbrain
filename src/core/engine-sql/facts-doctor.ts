@@ -193,3 +193,16 @@ export async function countFactEmbeddingCoverage(raw: EngineRawRead, opts: { sou
         GROUP BY f.source_id`);
   return raw<FactEmbeddingCoverageRow>(text, [opts.sourceId ?? null, [...AUDIT_ROW_SOURCES], opts.model, opts.dims]);
 }
+
+/**
+ * The embeddable facts whose vector is not current for `model` and `dims` or the fact text (the `stale` rows of
+ * countFactEmbeddingCoverage), over every source or `sourceId`, with the sum of their lengths in characters. Numbered as
+ * the shared fragments number them: `$1` source, `$2` audit sources, `$3` model, `$4` width.
+ */
+export async function countStaleFactEmbeddings(raw: EngineRawRead, opts: { model: string; dims: number; sourceId?: string | null }): Promise<{ count: number; chars: number }> {
+  const { text } = renderFragment(sqlFragment`SELECT count(*)::int AS count,
+    COALESCE(sum(length(f.fact)),0)::text AS chars FROM facts f
+    WHERE ${trustedSql(factSourceScopeSql())} AND ${trustedSql(eligibleFactEmbeddingSql())} AND ${trustedSql(staleFactEmbeddingSql())}`);
+  const [row] = await raw<{ count: number; chars: string }>(text, [opts.sourceId ?? null, [...AUDIT_ROW_SOURCES], opts.model, opts.dims]);
+  return { count: Number(row.count), chars: Number(row.chars) };
+}

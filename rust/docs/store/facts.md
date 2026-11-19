@@ -237,6 +237,7 @@ reads refuse their `hasAttempts: true` form.
 | `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
 | `listUnlinkedConversationSlugs` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countFactEmbeddingCoverage` | served | |
+| `countStaleFactEmbeddings` | served | the same eligibility as `countFactEmbeddingCoverage`; `chars` counts code points |
 
 - With no attempts table nothing was tried or paid, so the served unlinked reads return
   `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,

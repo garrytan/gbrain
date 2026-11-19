@@ -12,6 +12,8 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     executeRaw: async (sql: string) => sql.startsWith('SELECT count(*)::int AS n FROM pages p')
       && sql.includes('p.text_projection_revision IS DISTINCT FROM p.knowledge_revision') ? [{ n: 0 }] : [],
     getConfigKeys: async () => [],
+    // No vector column, as the empty raw catalog read above answered before the typed member existed.
+    readChunkVectorColumn: async () => ({ exists: false, dims: null }),
     // One well-formed unmanaged mode row (#6482), read through the typed import guard method.
     readManagedModeRows: async () => [{ enabled: false }],
     // The cycle lock (src/core/db-lock.ts) is always free and always held by us in this single-process mock.

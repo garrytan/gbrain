@@ -2,16 +2,13 @@
  * The embeddings fix a keyless Rust brain prints (readiness.ts `enableArgv`, carried by every `[gbrain degraded:
  * embed_unavailable]` notice, so MCP `think`, `query` and `search` print it too).
  *
- * `enableArgv` treats every engine that is not Postgres as PGLite: on a Rust brain it names `gbrain init --force
- * --embedding-model <m> --embedding-dimensions <n> --path <the Rust store directory>`. `gbrain init` has no Rust form,
- * so that command rewrites config.json to `engine: pglite` and creates a PGLite cluster inside the Rust store
- * directory: the brain's pages stop being read (records.redb stays on disk, unread). While a stdio `serve` holds the
- * store, the same command times out on the data-dir lock instead, and the notice has no stop-the-server step
- * (`lockOwnerFor` reads the lock only for `engine: pglite`), which PGLite's notice has.
+ * A Rust brain gets `gbrain embeddings enable --embedding-model <m> --embedding-dimensions <n>`, which keeps the Rust
+ * engine and turns vectors on in place. `gbrain init` has no Rust form: the PGLite-shaped `init --force ... --path <dir>`
+ * would rewrite config.json to `engine: pglite` and create a PGLite cluster inside the Rust store directory, so the brain's
+ * pages would stop being read. While this process's own `gbrain serve` owns the Rust store, `lockOwnerFor` names it, so
+ * the notice carries the same stop-the-server step PGLite's has.
  *
- * Owner: src/core/readiness.ts (`enableArgv`, `datastoreLabel`, `lockOwnerFor`) and src/commands/init.ts (no Rust
- * engine form). Not a search, query or ranking read, so the Rust engine lane does not fix it here; the case fails
- * until the owner gives the Rust brain a fix that keeps its engine.
+ * Owner: src/core/readiness.ts (`enableArgv`, `datastoreLabel`, `lockOwnerFor`).
  */
 import { describe, expect, test } from 'bun:test';
 import { enableArgv } from '../src/core/readiness.ts';
@@ -20,10 +17,11 @@ import type { GBrainConfig } from '../src/core/config.ts';
 describe('the embeddings fix a Rust brain prints', () => {
   const rust = { engine: 'rust', database_path: '/brains/rust-example' } as unknown as GBrainConfig;
 
-  test.failing('never names a command that re-initializes the Rust store directory as PGLite (fails until readiness.ts gives Rust its own fix)', () => {
+  test('never names a command that re-initializes the Rust store directory as PGLite', () => {
     const argv = enableArgv(rust, 'voyage:voyage-4', 1024);
     const reinit = argv[0] === 'gbrain' && argv[1] === 'init' && argv.includes('--force');
     expect(reinit).toBe(false);
+    expect(argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
   });
 
   test('a PGLite brain keeps its re-init fix, aimed at its own data directory', () => {

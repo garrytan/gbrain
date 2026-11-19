@@ -81,6 +81,20 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
 stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 
+## Vector catalog
+
+`embedding_catalog.rs` answers what the embedding commands ask Postgres's catalog (TS
+`engine-sql/embedding-catalog.ts`). The store has no column types, so:
+
+| Brain method | Returns | Members |
+|---|---|---|
+| `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, or for any other column, `{ exists: false, dims: null }` | `readChunkVectorColumn` |
+| `brain.readEmbeddingIdentity()` | `{ model, dimensions }` with the same width; the model is the first chunk vector's, else the config `embedding_model`; null with no width | `readEmbeddingIdentity` |
+| `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
+
+`listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
+`embedding_image` and `embedding_multimodal` read as absent: the store keeps no such vectors.
+
 ## Known edges
 
 - The page-embedding budget (`budgetLimited`) is not kept: no page leaves the stale queue for it.
