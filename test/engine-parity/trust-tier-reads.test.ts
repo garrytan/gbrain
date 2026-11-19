@@ -367,7 +367,7 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'pickValidTimeEdition reads the reason a version was replaced for; the Rust store keeps none and refuses the write',
+    'pickValidTimeEdition reads the reason a version was replaced for and the reason the next edition was introduced for',
     { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
     async (engine) => {
       const write = (validFrom: string) => engine.putPage('vt/reason', { type: 'note', title: 'VT', compiled_truth: `body ${validFrom}`, timeline: '', frontmatter: { valid_from: validFrom } });

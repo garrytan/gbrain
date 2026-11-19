@@ -2883,6 +2883,10 @@ export interface BrainEngine {
    * (pre-v0.31.8 behavior; preserved via two-branch query).
    */
   getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>>;
+  /** The page's newest version id (`max(page_versions.id)`), or null when it keeps none (engine-sql/version-reasons.ts). */
+  readLatestVersionId(pageId: number): Promise<number | null>;
+  /** Sets `change_reason` on the page's versions with an id over `afterVersionId`; answers how many took it. */
+  stampVersionChangeReason(spec: { pageId: number; afterVersionId: number; reason: string }): Promise<number>;
   /**
    * v0.31.8 (D12): `opts.sourceId` source-scopes both the version lookup
    * and the page revert. Without it, multi-source brains can revert the

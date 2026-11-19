@@ -393,6 +393,10 @@ pub(crate) struct VersionRecord {
     /// The page's write origin when the snapshot was taken.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_origin: Option<Value>,
+    /// The reason given for the write that replaced the snapshot (`page_versions.change_reason`),
+    /// set by `stamp_version_change_reason`; none when no reason was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_reason: Option<String>,
 }
 
 impl VersionRecord {
@@ -403,6 +407,7 @@ impl VersionRecord {
         v["trust_tier"] =
             json!(crate::trust::TrustTier::stored(self.trust_tier.as_deref()).as_str());
         v["write_origin"] = json!(self.write_origin);
+        v["change_reason"] = json!(self.change_reason);
         v
     }
 
@@ -1539,6 +1544,20 @@ impl Store {
 
     /// `createVersion(slug, {sourceId})`: snapshots the page as it is.
     pub fn create_version(&self, slug: &str, source_id: Option<&str>) -> Result<Value> {
+        self.create_version_with(slug, source_id, None)
+    }
+
+    /// `createVersion(slug, { sourceId, reason })`: as `create_version`, with the snapshot's change
+    /// reason (`page_versions.change_reason`) when one is given.
+    pub fn create_version_with(
+        &self,
+        slug: &str,
+        source_id: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<Value> {
+        if let Some(reason) = reason {
+            crate::links::no_nul("createVersion", &[("reason", reason)])?;
+        }
         self.write(|tx| {
             let source = source_id.unwrap_or(DEFAULT_SOURCE);
             let Some(page) = read_page(&*tx, source, &slug.to_lowercase())? else {
@@ -1547,7 +1566,12 @@ impl Store {
                     format!("createVersion failed: page \"{slug}\" (source={source}) not found"),
                 ));
             };
-            Ok(snapshot_in(tx, &*self.env, &page)?.to_created_json())
+            let mut row = snapshot_in(tx, &*self.env, &page)?;
+            if let Some(reason) = reason {
+                row.change_reason = Some(reason.to_owned());
+                put_json(tx, &keys::version(page.id, row.id), &row)?;
+            }
+            Ok(row.to_created_json())
         })
     }
 
@@ -1577,8 +1601,79 @@ impl Store {
         if let Some(limit) = options.limit {
             rows.truncate(limit);
         }
-        Ok(rows.iter().map(|r| r.to_json(include_body)).collect())
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let mut v = r.to_json(include_body);
+                // The trusted read's `replaced_because` is the stored reason (`replacedBecauseSql`).
+                v["replaced_because"] = json!(r.change_reason);
+                v
+            })
+            .collect())
     }
+
+    /// `readLatestVersionId(pageId)`: the page's newest version id, or none when it keeps no
+    /// version (`SELECT max(id) FROM page_versions WHERE page_id = $1`).
+    pub fn read_latest_version_id(&self, page_id: i64) -> Result<Option<u64>> {
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        Ok(versions_of(&*read, page_id)?.iter().map(|v| v.id).max())
+    }
+
+    /// `stampVersionChangeReason({ pageId, afterVersionId, reason })`: sets the reason on every
+    /// version of the page with an id over `afterVersionId` (the snapshots one write archived), and
+    /// answers how many it set.
+    pub fn stamp_version_change_reason(&self, q: &VersionReasonStamp) -> Result<u64> {
+        crate::links::no_nul("stampVersionChangeReason", &[("reason", &q.reason)])?;
+        self.write(|tx| {
+            let Ok(page_id) = u64::try_from(q.page_id) else {
+                return Ok(0);
+            };
+            let mut stamped = 0;
+            for mut row in versions_of(&*tx, page_id)? {
+                if i64::try_from(row.id).is_ok_and(|id| id > q.after_version_id) {
+                    row.change_reason = Some(q.reason.clone());
+                    put_json(tx, &keys::version(page_id, row.id), &row)?;
+                    stamped += 1;
+                }
+            }
+            Ok(stamped)
+        })
+    }
+}
+
+/// `createVersion`'s options: the page's source and the snapshot's change reason.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CreateVersionOptions {
+    pub source_id: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// `stampVersionChangeReason`'s argument.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionReasonStamp {
+    pub page_id: i64,
+    /// Versions with an id over this one take the reason.
+    pub after_version_id: i64,
+    pub reason: String,
+}
+
+/// The version records of one page, in id order.
+fn versions_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<VersionRecord>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &keys::version_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<VersionRecord>(v) {
+            Ok(row) => out.push(row),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
 }
 
 /// The body generations the page's segmented snapshots reference (`page_versions.body_generation`):
@@ -1632,6 +1727,7 @@ pub(crate) fn snapshot_in(
         body_bytes: segmented.and_then(|(_, bytes)| bytes),
         trust_tier: (tier != crate::trust::TrustTier::Unknown).then(|| tier.as_str().to_owned()),
         write_origin,
+        change_reason: None,
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     Ok(row)

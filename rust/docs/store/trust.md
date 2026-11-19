@@ -188,6 +188,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   policy other than the no-caller one. A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
   (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
-  kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
-  `introduced_because` read null (TODOS.md `rust-version-change-reason`), and no gap or pruned successor.
+  kept count; TODOS.md `rust-version-prune`). `reason` is a version's stored change reason and
+  `introduced_because` the reason of the edition before; under `excludePrivate` a reason reads only when the version
+  that replaced it is visible, as on PGLite. The store records no gap or pruned successor.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.

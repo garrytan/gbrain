@@ -193,7 +193,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listFactsSince', 'listFactsKeyset', 'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts',
   'findCandidateDuplicates', 'consolidateFact', 'findTrajectory', 'getFactsHealth',
   // Versions
-  'createVersion', 'getVersions', 'revertToVersion',
+  'createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'stampVersionChangeReason',
   // Stats + health + ingest log
   'getStats', 'getHealth', 'logIngest', 'getIngestLog',
   // Sync + aliases + narrow updates

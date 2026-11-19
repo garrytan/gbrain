@@ -26,8 +26,10 @@ secondary indexes yet.
 | `brain.getTags(slug, { sourceId?, sourceIds? }?)` | sorted `string[]` | `getTags` |
 | `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
-| `brain.createVersion(slug, { sourceId? }?)` | the version row, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
-| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)` | version rows, newest first; `includeBody: false` leaves out `compiled_truth` and `timeline` | `getVersions` |
+| `brain.createVersion(slug, { sourceId?, reason? }?)` | the version row, with `reason` as its `change_reason` when given, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
+| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)` | version rows, newest first, each with its change reason as `replaced_because`; `includeBody: false` leaves out `compiled_truth` and `timeline` | `getVersions` |
+| `brain.readLatestVersionId(pageId)` | the page's newest version id, or `null` when it has none or the id is not a page's | `readLatestVersionId` |
+| `brain.stampVersionChangeReason({ pageId, afterVersionId, reason })` | how many versions took the reason: it sets `change_reason` on each of the page's versions with an id over `afterVersionId`, in one write; `invalid_argument` for a NUL byte | `stampVersionChangeReason` |
 
 `putPage` follows PGLite:
 

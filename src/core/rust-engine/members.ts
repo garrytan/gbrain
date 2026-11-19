@@ -141,6 +141,8 @@ export const RUST_ENGINE_MEMBERS = {
   // page_versions
   createVersion: 'page_versions',
   getVersions: 'page_versions',
+  readLatestVersionId: 'page_versions',
+  stampVersionChangeReason: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body
   refreshPageBody: 'page_body',

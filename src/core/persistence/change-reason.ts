@@ -114,10 +114,9 @@ export function withChangeReason(row: WriteRequest, prepared: PreparedMutation):
   const apply = prepared.apply.bind(prepared);
   prepared.apply = async (tx, preimage) => {
     const pageId = preimage?.page.id ?? null;
-    const [before] = pageId === null ? [] : await tx.executeRaw<{ last: number | string | null }>('SELECT max(id) AS last FROM page_versions WHERE page_id = $1', [pageId]);
+    const before = pageId === null ? null : await tx.readLatestVersionId(pageId);
     const outcome = await apply(tx, preimage);
-    const stamped = pageId === null || prepared.noop ? [] : await tx.executeRaw<{ id: number }>(
-      'UPDATE page_versions SET change_reason = $2 WHERE page_id = $1 AND id > $3 RETURNING id', [pageId, reason, Number(before?.last ?? 0)]);
+    const stamped = pageId === null || prepared.noop ? 0 : await tx.stampVersionChangeReason({ pageId, afterVersionId: before ?? 0, reason });
     const world = await pageWorldVisible(tx, row.source_id, row.slug);
     let git: ReasonGit;
     if (!prepared.file) git = row.authority.databaseOnlyReason === 'no_repo_configured' ? 'no_repository' : world ? 'not_file_backed' : 'private';
@@ -127,8 +126,8 @@ export function withChangeReason(row: WriteRequest, prepared: PreparedMutation):
       prepared.file.commit = withReasonNote(relative(prepared.file.root, prepared.file.path).split(sep).join('/'), reason, prepared.file.commit);
       git = await sourceCanonicalGit(tx, row.source_id) ? 'committed' : 'queued';
     }
-    const recorded: ReasonRecorded = { reason, version: stamped.length > 0, git,
-      ...(stamped.length ? {} : { version_why: prepared.observedRevision === null ? 'page_created' : 'no_change' }) };
+    const recorded: ReasonRecorded = { reason, version: stamped > 0, git,
+      ...(stamped ? {} : { version_why: prepared.observedRevision === null ? 'page_created' : 'no_change' }) };
     return { ...outcome, reason_recorded: recorded };
   };
   return prepared;
