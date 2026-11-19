@@ -66,6 +66,19 @@ export function requireManagedPersistence(engine: object, step: string, why: str
  * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.
  */
 export function managesWorktrees(engine: object): boolean {
+  return reports(engine, 'managed_persistence');
+}
+
+/**
+ * Whether `engine` serves raw SQL. The owner's idle probe asks it before its one raw statement, so an engine without
+ * `raw_sql` (the Rust engine) answers from typed members. PGLite, Postgres and transaction handles answer true.
+ */
+export function servesRawSql(engine: object): boolean {
+  return reports(engine, 'raw_sql');
+}
+
+/** True unless `engine` carries a capability set without `capability`; an object with no set (a handle, a fake) passes. */
+function reports(engine: object, capability: Capability): boolean {
   const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
-  return !caps || caps.has('managed_persistence');
+  return typeof caps?.has !== 'function' || caps.has(capability);
 }
