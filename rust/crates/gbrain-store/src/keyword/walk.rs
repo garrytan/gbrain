@@ -185,3 +185,28 @@ pub(super) fn walk_chunks(
     }
     Ok(())
 }
+
+/// Every admitted chunk of every admitted page, in `P` key order, without reading a vector: the CJK
+/// members (`keyword/cjk.rs`) match the chunk text itself (`LIKE` / `ILIKE`), so a chunk whose
+/// vector cannot be built still matches, and the keyword index, which holds lexemes, cannot narrow
+/// them. A page with no admitted chunk is visited with an empty list; `visit` returns false to stop.
+pub(super) fn walk_text_chunks(
+    read: &dyn KvRead,
+    admit: &mut Admit<'_, '_>,
+    visit: &mut dyn FnMut(PageRecord, Vec<ChunkRecord>) -> Result<bool>,
+) -> Result<()> {
+    for page in all_pages(read)? {
+        if !admit.page(read, &page)? {
+            continue;
+        }
+        let generation = read_segment_view(read, page.id)?.generation;
+        let chunks = read_chunks(read, page.id)?
+            .into_iter()
+            .filter(|c| admit.chunk(c, generation))
+            .collect();
+        if !visit(page, chunks)? {
+            break;
+        }
+    }
+    Ok(())
+}

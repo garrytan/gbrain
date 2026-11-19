@@ -232,6 +232,7 @@ test/engine-parity/remote-policy.test.ts
 test/engine-parity/request-tools-persist.test.ts
 test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
+test/engine-parity/search-cjk.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
@@ -263,6 +264,7 @@ test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/unrestricted-fact-list-reads.test.ts
 test/engine-parity/unrestricted-member-page-reads.test.ts
 test/engine-parity/valid-time-member-reads.test.ts
+test/engine-parity/vector-options.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts

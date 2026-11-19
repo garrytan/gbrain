@@ -85,7 +85,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	107	no	yes	yes	serves
+transaction	lifecycle	yes	109	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -93,7 +93,7 @@ getPage	pages	yes	123	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	519	yes	yes	yes	serves
+putPage	pages	yes	523	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -133,13 +133,13 @@ listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
-searchKeyword	search	yes	36	yes	yes	yes	serves
-countKeywordPages	search	yes	11	no	yes	yes	serves
-searchKeywordPages	search	yes	16	no	yes	yes	serves
-searchTitles	search	yes	19	yes	yes	yes	serves
-searchVector	search	yes	10	yes	yes	yes	serves
+searchKeyword	search	yes	40	yes	yes	yes	serves
+countKeywordPages	search	yes	12	no	yes	yes	serves
+searchKeywordPages	search	yes	17	no	yes	yes	serves
+searchTitles	search	yes	20	yes	yes	yes	serves
+searchVector	search	yes	14	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
-searchKeywordChunks	search	yes	15	yes	yes	yes	serves
+searchKeywordChunks	search	yes	16	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
 supersedingPageSlugs	search_reads	yes	11	no	yes	yes	serves
@@ -200,7 +200,7 @@ deleteChunksForPages	chunks	yes	2	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	37	yes	yes	yes	serves
-sealChunks	chunks	yes	63	no	yes	yes	serves
+sealChunks	chunks	yes	67	no	yes	yes	serves
 getChunks	chunks	yes	39	yes	yes	yes	serves
 getChunkPage	chunks	yes	13	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
@@ -391,7 +391,7 @@ readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	60	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	62	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -798,7 +798,7 @@ appendFactForgetReason	trust	yes	1	no	yes	yes	serves
 readFactWithdrawnRow	trust	yes	2	no	yes	yes	serves
 readFactWithdrawnBacking	trust	yes	1	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	13	no	yes	yes	serves
-upsertPageWriteGateReceipt	trust	yes	14	no	yes	yes	serves
+upsertPageWriteGateReceipt	trust	yes	16	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves

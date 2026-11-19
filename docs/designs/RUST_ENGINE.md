@@ -726,7 +726,22 @@ Review findings on the Rust store that block selecting `rust` as an engine, but 
 
 | # | Code | Class | State |
 |---|---|---|---|
+| 4 | Keyword search (`keyword/arm.rs`, `chunk_search.rs`, `page_search.rs`, `titles.rs`, `title_fuzzy.rs`) | Resource use: measure on a large brain | Fixed by the keyword index (store format 4, `rust/docs/store/keyword.md`), and measured. Without the index each keyword member read every page and every chunk of the brain on every call, and took 7 to 8 s at the bake-off size (50,000 pages, 200,000 chunks). With the index every member meets the bound for an interactive search, warm p50 under 100 ms and p99 under 500 ms; the numbers are in the table below this one. Correctness: `keyword_scale verify` ran every query through the index and through the forced scan (`GBRAIN_RUST_KEYWORD_SCAN=1`) on the same store, 512 cases (544 with the private-page fixtures, on a copy), with 0 mismatches in the full result bytes, and `index-check` found 0 missing, 0 changed and 0 orphan postings. Still open: NOT-only queries (`-word`) have no candidate bound and scan (p50 2.3 to 10.3 s at this size), and the build leaves about 0.86 GB of free pages until a compact (`TODOS.md`). Tool: `rust/crates/gbrain-store/examples/keyword_scale.rs`; its header is the rerun recipe. |
 | 7 | Downgrade path for a format-2 or format-3 store (`rust/docs/store/format.md`, "Older builds") | Recovery: a way back before selection | Export path built; selection review open. An older build refuses a newer store with `format_unknown` and changes no record, so nothing is lost, but it cannot open the brain. The way back is `gbrain export --dir <dir>` on the Rust brain, then `gbrain import <dir>` into a brain the older build opens. Export reads through typed engine members on every engine and writes the same file tree, byte for byte, as PGLite for the same pages, including private pages, withdrawn facts, raw-data sidecars and segmented pages (`test/rust-export.serial.test.ts`). An import at 4fe3c2e075 reads those pages back the same as from a PGLite export; it does not read the `.raw/` sidecars back from either. Still open: `export --source` and `--restore-only` refuse on Rust (coverage and folder-rule reads), and a Rust store keeps no folder rules or purge records to export. |
+
+Row 4, keyword search at the bake-off size: 50,000 pages and 200,000 chunks, release build, the store opened with `Store::open_dir`, one fresh process per member, 30 queries (35 for `fuzzy`), every query measured, warm pass 2 of 2, times in milliseconds. "Scan" is the same member with the index forced off. The bound is p50 under 100 ms and p99 under 500 ms.
+
+| Member | p50, index (scan) | p99, index (scan) | Peak RSS MiB, index (scan) | Meets the bound |
+|---|---|---|---|---|
+| chunk keyword arm (`arm`) | 5.4 (8,121) | 203 (8,868) | 405 (650) | yes |
+| `search_keyword_chunks` (`chunks`) | 5.8 (7,764) | 157 (8,182) | 396 (667) | yes |
+| `count_keyword_pages` (`pages_count`) | 6.2 (7,649) | 127 (7,738) | 361 (648) | yes |
+| `search_keyword_pages` (`pages_search`) | 5.8 (7,774) | 162 (8,145) | 402 (648) | yes |
+| title attempts, whole then title (`titles`) | 0.1 (540) | 2.5 (663) | 24 (454) | yes |
+| title attempts, complete (`titles_complete`) | 0.1 (497) | 2.2 (508) | 23 (435) | yes |
+| title fuzzy (`fuzzy`) | 3.4 (393) | 10.8 (469) | 30 (359) | yes |
+
+The first query after open takes 45 to 58 ms on the four body members. The build from a format 2 store took 505 s (peak 1.04 GiB RSS). To run it again, follow the recipe in the header of `keyword_scale.rs`. Its `verify`, `index-check` and `sizes` modes open the store read-only (`Store::open_dir_read_only`), so the record file keeps every byte.
 
 ## Open questions
 

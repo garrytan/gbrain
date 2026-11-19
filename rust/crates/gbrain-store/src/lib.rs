@@ -254,6 +254,34 @@ impl Store {
         Ok(store)
     }
 
+    /// Opens an existing brain in `dir` only to read: no byte of the record file or of `FORMAT`
+    /// changes, and the keyword index builder does not run. A write through the store is refused
+    /// with `read_only_transaction`, and so is an open that would have to write: a brain with no
+    /// records yet, one on an older format (a plain open upgrades it) or one whose keyword index
+    /// must be reset. An incomplete keyword index stays incomplete; the members scan for it.
+    ///
+    /// Errors: those of `open_dir`, `store_io` when `dir` holds no record file or the file was not
+    /// closed cleanly (redb repairs only on a writable open), and `store_locked` while a writable
+    /// handle has the brain open.
+    pub fn open_dir_read_only(dir: &Path) -> Result<Store> {
+        let existing = format::read_in(dir, FORMAT_VERSIONS)?;
+        let kv = Arc::new(redb_kv::RedbReadOnlyKv::open_path(
+            &dir.join(format::RECORDS_FILE),
+        )?);
+        let options = OpenOptions {
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        };
+        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
+        if existing.is_some_and(|on_disk| on_disk.brain_id != store.info.brain_id) {
+            return Err(StoreError::new(
+                error::STORE_CORRUPT,
+                "FORMAT names a different brain than the record file",
+            ));
+        }
+        Ok(store)
+    }
+
     /// Opens a brain on any `Kv`: the entry point for the simulation and for tests that run the
     /// store on a fault-injecting disk. Creates the brain's records when the store is empty.
     pub fn open_kv(kv: Arc<dyn Kv>, env: Arc<dyn Env>, options: OpenOptions) -> Result<Store> {
