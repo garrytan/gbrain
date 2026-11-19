@@ -10,6 +10,76 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.747.0] - 2026-11-19
+
+**A person's pages are never linked without you: a person pair that shares an id is confirmed on its own, after you read why it was proposed.**
+
+### Changed
+- A person pair that shares a LinkedIn profile, GitHub login or declared id and exactly the same name stays on the `gbrain dedupe confirm` list with a hint line naming the shared id, to be confirmed on its own, and `gbrain dedupe confirm --clean` now covers company groups only.
+
+### Fixed
+- `gbrain doctor`'s reject suggestion for a confirmed decision with no group id now names its identity, which `gbrain dedupe reject` accepts, instead of a decision id it refused.
+- The remedy for a duplicate decision file that does not validate says the last valid version stays applied.
+- `gbrain dedupe` no longer lists `--body` among its flags; it never took one.
+
+**A remote put_page now tells the brain owner when it kept private fact rows the content left out or reworded, and points at forget_fact.**
+
+<!-- behavior-change: owner_private_fact_edits_gst3064 -->
+
+### Changed
+- A remote put_page still never deletes a page's private Facts rows or rewords their claims, the brain owner's included: a stored private row the content leaves out comes back, and a reworded one is kept beside the new text. When the writer is the owner's own credential, the receipt now carries `private_rows_kept: {count, renumbered, message, fix}` (counts of active rows only), whose `fix` is a read-only `recall` lookup of the facts filed under the page. Members, unbound tokens and any read of the receipt with a room declared get no advisory and no count.
+- The owner withdraws or replaces a private claim remotely by naming it: `forget_fact` withdraws it, along with every row of that entity stating the same claim, and a put_page that adds a new `private` row with a different statement adds its replacement. Where `forget_fact` refuses, the local CLI's `gbrain forget <id>` does it. The docs say so under "Remote writes and private fact rows".
+
+**The brain owner's remote credential now reads an inline page's private fact rows in get_page `as_of` the same way get_page and fetch show them.**
+
+<!-- behavior-change: owner_private_fact_reads_gst3064 -->
+
+### Fixed
+- A direct remote call from a credential bound to the brain owner, speaking for itself with no room declared, now gets the Facts fence as stored from get_page `as_of` on an inline page, and the Takes fence too when it carries no holders list. Before, that read dropped the private rows that get_page and fetch show the same caller, while returning the same revision.
+- get_page, fetch, the segmented markdown view and `as_of` on inline pages now share one rule for what the owner reads in a page body. Members, unbound tokens, agent jobs and room-declared reads read as before.
+- Known limit: `known_as_of` (on get_page and get_versions) still reads the stored markdown without the owner's private rows and without the withdrawal overlay, as before; a segmented `as_of` edition still pages through the read view.
+- Known limit, unchanged: an owner's edit or delete of a private Facts row through remote put_page does not stick yet (the stored row is kept beside the edit); use the local CLI until the follow-up lands.
+
+**The company-brain tutorial explains how imported calls are kept to the people on them, and the `--propose` preview no longer lists a partly matched call as "nothing is proposed".**
+
+### Changed
+- `gbrain repair visibility --propose` lists a call that was proposed with some names left out under its own heading, "Proposed with names left out", instead of under "Unmatched: nothing is proposed for these". It also reads only the first 8,192 characters of each call, which holds the header, so a brain with many long calls previews faster.
+- The meeting-ingestion skill writes no `readable_by` on a brain shared by several people.
+
+### Fixed
+- The changelog entry for `gbrain repair visibility --propose` covering imported calls said names are matched exactly as `gbrain import --calls` matches them. That is not quite true: `--propose` reads the call header as it was stored, so an address that import redaction blanked cannot be matched, and that name is listed instead of matched.
+
+### Docs
+- docs/tutorials/company-brain.md: "Calls are kept to the people on them" covers how `gbrain import --calls` picks readers, the `calls_not_scoped` notice, how to label calls imported before, and that agent-written meeting pages are labelled by hand or with a folder rule.
+
+**`gbrain repair visibility --readers` now edits pages whose `readable_by` lists one reader per line, the way `put_page` writes it, instead of refusing them.**
+
+### Fixed
+- On a Git-backed brain, the label-only write refused every page whose `readable_by` was a block list (`readable_by:` followed by `  - alice-example` lines) with `label_edit_refused`. It now replaces the key line and its item lines with one `readable_by: [...]` line and keeps every other byte of the file. A list holding a comment, an item on its own indented line, or a block scalar (`readable_by: >-`) is still refused and left byte for byte.
+
+<!-- behavior-change: label_edit_block_list_gbra593 -->
+
+**When someone leaves a company brain, `gbrain access member handover <member>` gives the pages they kept to themselves to the owner, and `--undo` puts them back.**
+
+### Added
+- `gbrain access member handover <member>` previews, then with `--yes --expect <plan_hash>` applies, giving a disabled or removed member's pages to someone who still reads them. Pages only they read and folder rules naming only them go to the owner by default; pages others read stay as they are; nothing opens to every reader unless asked. `--set kept=<member>`, `--set folder=everyone`, `--set shared=drop` and `--set source=<member>` change a group's target.
+- A stopped or partial apply resumes when you run the same command again; `--status <id>` reports when Git has committed the page files; `--undo <id>` restores each page's and rule's recorded readers once the member is enabled again.
+- `gbrain doctor` checks `access_pages_read_by_nobody`: pages no enabled member reads remotely, with the handover command when they name a disabled member.
+- `gbrain access member disable` and `rm` now print the handover command.
+
+**GBrain Helper can now be installed on a Mac with one script, `apple/helper/scripts/install.sh`, which builds, signs and starts it and keeps its macOS permissions across reinstalls.**
+
+### Added
+- `apple/helper/scripts/install.sh` builds the helper, signs it with a certificate made on the Mac, installs `~/Applications/GBrain Helper.app` and registers its background agent, with no dialog. Every later run, and `--repair`, signs with the same certificate, so Full Disk Access, Automation and keychain access carry over. If the app is installed but its signing keychain is gone, it stops and changes nothing.
+- `gbrain-apple-helper register` registers the app's background agent with macOS and says whether it is on or waiting to be switched on in Login Items.
+- The helper's macOS CI job now runs the script: install, reinstall, repair and the refusal without a keychain, checking the signature stays the same and the helper answers `/health`.
+
+**Nightly CI now runs gbrain's skill-resolver plugin inside a real OpenClaw gateway, and a new bench measures how well it picks skills.**
+
+### Added
+- A test that starts a real OpenClaw gateway with a fake model and a fake Telegram Bot API, installs the plugin with `gbrain setup openclaw`, and checks what reaches the model. It covers one relevant-skills block per turn, the 750-skill case, direct messages, group messages with a mention, `--owner-sender` (other senders get only the pinned skills), cron turns (skipped) and model-error retries. It needs no API key and runs nightly on OpenClaw 2026.11.5, 2026.11.4 and 2026.10.33.
+- `scripts/bench/openclaw-skill-resolver-real.ts`, which sends 320 labelled requests through a real gateway with 750 skills installed and reports how often the right skill is in the block, how often a block appears when no skill fits, and the plugin's time per turn, with and without CPU load. It runs on demand, by hand after a resolver change.
+
 ## [0.60.746.0] - 2026-11-19
 
 **Turning GBrain Helper's sending off now cancels a text that was still on its way, and `send-setup --off` only reports success when it can show the helper is stopped or has confirmed.**

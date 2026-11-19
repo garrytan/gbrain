@@ -18,7 +18,7 @@ import type { McpCall } from '../agent-output.ts';
 import { opTransport, paramUse, readFix } from './op-fix.ts';
 import { readHolders, readPolicyOpts } from './context.ts';
 import { storedTrustTier, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
-import { privateFactFilterForReader, worldOnlyFacts } from '../search/private-visibility.ts';
+import { ownerOnlyTakeAllowedSql, ownerOnlyTimelineAllowedSql, privateFactFilterForReader, worldOnlyFacts } from '../search/private-visibility.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#write-attribution';
 
@@ -227,12 +227,12 @@ function rowTarget(ctx: OperationContext, pageId: number, slug: string, sourceId
   if (ids.take !== undefined) {
     const holders = readHolders(ctx);
     return { kind: 'take', label: `take at row ${ids.take}`, list: { tool: 'takes_list', arguments: { page_slug: slug } },
-      sql: `SELECT id, ${cols} FROM takes WHERE page_id = $1 AND row_num = $2 ${holders ? 'AND holder = ANY($3::text[])' : ''}`,
+      sql: `SELECT id, ${cols} FROM takes WHERE page_id = $1 AND row_num = $2 ${holders ? 'AND holder = ANY($3::text[])' : ''}${excludePrivate ? ownerOnlyTakeAllowedSql('takes') : ''}`,
       params: holders ? [pageId, ids.take, holders] : [pageId, ids.take] };
   }
   if (ids.timeline !== undefined) {
     return { kind: 'timeline_entry', label: `timeline entry #${ids.timeline}`, list: { tool: 'get_timeline', arguments: { slug } },
-      sql: `SELECT id, ${cols} FROM timeline_entries WHERE id = $1 AND page_id = $2`, params: [ids.timeline, pageId] };
+      sql: `SELECT id, ${cols} FROM timeline_entries WHERE id = $1 AND page_id = $2${excludePrivate ? ownerOnlyTimelineAllowedSql('timeline_entries') : ''}`, params: [ids.timeline, pageId] };
   }
   return undefined;
 }

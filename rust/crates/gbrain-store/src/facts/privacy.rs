@@ -22,11 +22,11 @@
 //!
 //! The owner-only rule is the one part of the member-access test the store can answer for a page: a page of an
 //! owner-only source, and a concept or question synthesized from one, is hidden (`OwnerOnly::Lineage`), or every page
-//! is while the brain holds an owner-only source (`OwnerOnly::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
-//! page hidden after its owner-only input is deleted for good, as SQL's delete trigger does. A fact read applies the rule
-//! to the provenance page, the entity and holding pages, and the fact row itself (`ownerOnlyFactSql`: a fact of an
-//! owner-only source). The store keeps no `derivation_inputs`, so a row derived from an owner-only row by that table alone
-//! is not hidden here.
+//! is while the brain holds an owner-only source or has held owner-only data (`OwnerOnly::Closed`). `owner_only_marks`
+//! (`owner_only_marks.rs`) keeps a page hidden after its owner-only input is deleted for good, as SQL's delete trigger
+//! does. A fact read applies the rule to the provenance page, the entity and holding pages, and the fact row itself
+//! (`ownerOnlyFactSql`: a fact of an owner-only source). The store keeps no `derivation_inputs`, so a row derived from an
+//! owner-only row by that table alone is not hidden here.
 //!
 //! The owner-only sources are read once per read, on the first page it judges ([`OwnerOnlyCache`]): the page reads
 //! (`searchVector`, the link, alias, salience and page-read members) each keep one, so a read of many pages does not
@@ -83,14 +83,16 @@ pub struct PrivacyPolicy {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OwnerOnly {
-    /// `gbrain_owner_only_lineage('pages', id)` behind its guard (schema v320 and above): a page held in an owner-only
+    /// `gbrain_owner_only_lineage('pages', id)` behind its guard (schema v320 and above), or its v328 form with the login's
+    /// read mode, which is always the exact lineage here (the store has no logins whose reads row security narrows): a page held in an owner-only
     /// source is hidden, and so is a concept or question with a `concept-provenance` input page in one, and a page
     /// `owner_only_marks` names (`owner_only_marks.rs`). The rows `derivation_inputs` names are not here: this store
     /// keeps no such table.
     #[default]
     Lineage,
-    /// `ANY_OWNER_ONLY_SQL` (a brain below v320, or a call outside an engine scope): any owner-only source in the
-    /// brain hides every page.
+    /// The closed form (a brain below v320, or a call outside an engine scope): any owner-only source in the brain, or
+    /// SQL's held flag (the brain has held owner-only data), hides every page. The store's held flag is a mark
+    /// (`any_marked`), as for the lineage guard.
     Closed,
 }
 
@@ -145,10 +147,13 @@ impl OwnerOnlySources {
     }
 
     /// `ownerOnlyFactSql(facts, form)` for the no-caller baseline: a fact held in an owner-only source is hidden, or
-    /// every fact is while the brain holds an owner-only source (the closed form). The rows `derivation_inputs` and
+    /// every fact is while the brain holds an owner-only source or a mark (the closed form). The rows `derivation_inputs` and
     /// `owner_only_marks` name are not here: this store keeps no `derivation_inputs`, and its marks name pages only.
     fn fact_hidden(&self, form: OwnerOnly, source_id: &str) -> bool {
-        !self.ids.is_empty() && (form == OwnerOnly::Closed || self.holds(source_id))
+        match form {
+            OwnerOnly::Closed => self.guarded(),
+            OwnerOnly::Lineage => self.holds(source_id),
+        }
     }
 }
 
@@ -336,8 +341,8 @@ fn owner_only_hidden(
     sources: &OwnerOnlySources,
 ) -> Result<bool> {
     if form == OwnerOnly::Closed {
-        // `ANY_OWNER_ONLY_SQL` reads sources only: no mark is read in a brain below v320.
-        return Ok(!sources.ids.is_empty());
+        // The closed form reads the sources and the held flag, which a mark stands for here.
+        return Ok(sources.guarded());
     }
     Ok(sources.guarded() && sources.lineage_strict(read, page)?)
 }
@@ -807,5 +812,11 @@ mod tests {
         assert!(!hidden(OwnerOnly::Lineage, &open) && !hidden(OwnerOnly::Lineage, &bare));
         // The closed form hides every fact while the brain holds an owner-only source.
         assert!(hidden(OwnerOnly::Closed, &open) && hidden(OwnerOnly::Closed, &bare));
+        // Once the brain has held owner-only data (a mark), the closed form keeps hiding every fact after the source
+        // stops being owner-only, as SQL's held flag does; the lineage form hides only the marked rows.
+        store.delete_page("notes/vault", Some("vault")).unwrap();
+        source("vault", json!({}));
+        assert!(hidden(OwnerOnly::Closed, &open) && hidden(OwnerOnly::Closed, &bare));
+        assert!(!hidden(OwnerOnly::Lineage, &open) && !hidden(OwnerOnly::Lineage, &in_vault));
     }
 }
