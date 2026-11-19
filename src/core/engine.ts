@@ -4,7 +4,7 @@ import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
-import type { DeletedOAuthClient } from './engine-sql/access-credentials.ts';
+import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, OauthClientGrantInsert, OauthClientProbe } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -3515,6 +3515,22 @@ export interface BrainEngine {
   revokeAccessToken(id: string): Promise<string | null>;
   /** Delete an OAuth client, its tokens and codes cascading; the deleted client, or null when none has this id. */
   deleteOAuthClient(clientId: string): Promise<DeletedOAuthClient | null>;
+  /** Every access token, newest first, without its hash. */
+  listAccessTokens(): Promise<AccessTokenListRow[]>;
+  /** One grant column (`private_pages` or `permissions`) of the active token with this id (a UUID): `{ value }`, or null. */
+  readActiveAccessTokenGrant(id: string, field: ActiveTokenGrantField): Promise<{ value: unknown } | null>;
+  /** Whether an active access token has this id (compared as text). */
+  accessTokenLive(id: string): Promise<boolean>;
+  /** Whether an OAuth client not deleted has this id. */
+  oauthClientLive(clientId: string): Promise<boolean>;
+  /** Which of the probe's optional `oauth_clients` columns this brain has (a store that keeps them all names them all). */
+  readOauthClientColumns(probe: OauthClientProbe): Promise<string[]>;
+  /** Set one OAuth client's access-token lifetime in seconds; false when no client has this id. */
+  setOauthClientTokenTtl(clientId: string, ttlSeconds: number): Promise<boolean>;
+  /** Insert a scoped OAuth client with its register audit row (a store that keeps no grant audit writes the client only). */
+  insertOauthClientGrant(row: OauthClientGrantInsert): Promise<void>;
+  /** The clients an upgrade migration clamped the token lifetime of; a brain with no grant audit table raises its error. */
+  readTokenLifetimeClampedClients(): Promise<string[]>;
 
   /** The ids of the enabled, untombstoned audience-kind members, by id. */
   listAudienceAccessMembers(): Promise<string[]>;

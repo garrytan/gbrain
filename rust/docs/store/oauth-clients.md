@@ -15,6 +15,14 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | `brain.listOauthClients()` | every client's whole row, as `SELECT * FROM oauth_clients ORDER BY client_name COLLATE "C", client_id COLLATE "C"` returns them (byte order on every engine; the store sorts the bytes of the name, then of the id) |
 | `brain.patchOauthClient(clientId, patch, guard)` | `{ row, before }` or null. `patch.set` names the columns to set (`client_secret_hash`, `token_ttl`, `min_trust`, `surface`, `surface_set_by`) and the field of that name is the value, absent meaning NULL; `row` is the whole row after (checked again), `before` the five columns before. Null when the client is missing or the guard excludes it: `live` skips a deleted client, `unless_surface_set_by` skips a client with that pin (a NULL pin is not equal to it), `client_secret_hash_is` skips a client whose secret hash is not that value (compare-and-set, so of two callers that read the same hash exactly one writes). The write is one store write, so on this store it is the lock |
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
+| `brain.deleteOauthClient(clientId)` | `{ client_id, client_name }` of the row it removed in one write, or null (the engine member is `deleteOAuthClient`). The store keeps no tokens or codes per client, so nothing cascades |
+| `brain.oauthClientLive(clientId)` | whether a client not deleted (`deleted_at IS NULL`) has this id |
+| `brain.setOauthClientTokenTtl(clientId, ttl)` | whether the client exists after setting its `token_ttl`; the row is checked again |
+
+TypeScript-only members (`src/core/rust-engine/store-members/jobs-oauth-clients.ts`): `readOauthClientColumns(probe)`
+names every column of the probe (the store keeps every column); `insertOauthClientGrant(row)` writes the client row through
+`insertOauthClient` and drops the register audit row (the store keeps no `oauth_grant_audit`);
+`readTokenLifetimeClampedClients()` is `[]` (no audit, so no upgrade clamped a client).
 
 Defaults when a column is left out: `grant_types` `{client_credentials}` (an explicit null stays null), `federated_read`
 and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace` `prefixes`, `grant_revision` 0,
@@ -36,7 +44,10 @@ raises the undefined-column error (42703) a SELECT of a missing column raises. `
 `rotateClientSecret` names the hash it read in `client_secret_hash_is`, so it needs no advisory lock (rotation changes no
 name) and two concurrent reissues end with one winner and one `reissue_conflict` on every engine. `setMinTrust` on a
 token target goes through the `access_tokens` members ([access-tokens.md](access-tokens.md)). A function that also runs a
-raw statement keeps refusing on a Rust brain at that statement.
+raw statement keeps refusing on a Rust brain at that statement. `gbrain auth register-client` registers through `planManualClient` (`oauth-provider.ts`) and
+`insertOauthClientGrant` when the engine has every grant column (`registerScopedClient` in `src/commands/auth.ts`), then
+`setOauthClientTokenTtl`; a grant that reads a named source still runs the raw scope-source check (`assertScopeSourceGrant`)
+and stops on Rust. `auth revoke-client` calls `deleteOAuthClient`, and the Wakeshift drain calls `oauthClientLive`.
 
 ## Constraints
 
@@ -62,6 +73,7 @@ Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds
 Differences from PGLite and PostgreSQL:
 
 - The error's `detail` (`Failing row contains ...`) is not produced; the message, code and constraint name are.
+- A registration writes no `oauth_grant_audit` row.
 - Not kept: the `trust_generation_update` trigger, the two secondary indexes (`idx_oauth_clients_source_id`,
   `idx_oauth_clients_federated_read`) and the `ON DELETE RESTRICT` of `sources` (the foreign key is checked on a client write
   only, so removing a source a client names is not refused here).

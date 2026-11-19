@@ -29,6 +29,8 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OauthClientInsert } from '../../src/core/engine-sql/oauth-clients.ts';
 import { rotateClientSecret } from '../../src/commands/agent-register.ts';
+import { parseRegisterClientArgs, preflightOauthClientColumns, registerScopedClient } from '../../src/commands/auth.ts';
+import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { listClientRows } from '../../src/commands/auth-client-rows.ts';
 import { hashToken } from '../../src/core/utils.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
@@ -230,6 +232,65 @@ describe('engine parity: oauth_clients rows and constraints', () => {
         losers: lost.map(e => ({ reason: e.reason, message: e.message })),
         keptIsWinners: won.length === 1 && kept === hashToken(won[0]!),
         stale, absent, freshIsKept: (await engine.readOauthClient('rot'))?.client_secret_hash === hashToken(fresh),
+      };
+    });
+
+  /** Registers one client through the scoped registration core, as `gbrain auth register-client` does. */
+  const registerThroughCli = async (engine: BrainEngine, argv: string[]) => {
+    const columns = await preflightOauthClientColumns(engine);
+    const grantColumns = await engine.readOauthClientColumns('grant');
+    const registered = await registerScopedClient(sqlQueryForEngine(engine), 'census-like', parseRegisterClientArgs(argv),
+      { columns, engine, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+    const row = await engine.readOauthClient(registered.clientId);
+    return {
+      columns: [...columns].sort(), grantColumns: grantColumns.length,
+      registered: { idShape: /^gbrain_cl_[0-9a-f]{64}$/.test(registered.clientId), secretShape: /^gbrain_cs_[0-9a-f]{64}$/.test(registered.clientSecret ?? ''),
+        tokenTtl: registered.tokenTtl, scopes: registered.scopes, sourceId: registered.sourceId },
+      row: row && {
+        client_name: row.client_name, secretMatches: row.client_secret_hash === hashToken(registered.clientSecret!), grant_types: row.grant_types,
+        redirect_uris: row.redirect_uris, scope: row.scope, token_endpoint_auth_method: row.token_endpoint_auth_method, source_id: row.source_id,
+        federated_read: row.federated_read, token_ttl: row.token_ttl, grant_revision: row.grant_revision, grant_profile: row.grant_profile,
+        allowed_operations: row.allowed_operations, bound_tools: row.bound_tools, deleted: row.deleted_at != null,
+      },
+      live: await engine.oauthClientLive(registered.clientId),
+      ttlOnNobody: await engine.setOauthClientTokenTtl('gbrain_cl_nobody', 60),
+    };
+  };
+
+  parityTest('register a client: the scoped registration stores the planned grant, its secret hash and its token ttl, and the client is live',
+    { methods: ['readOauthClientColumns', 'insertOauthClientGrant', 'setOauthClientTokenTtl', 'readOauthClient', 'oauthClientLive'] }, async (engine) =>
+      registerThroughCli(engine, ['--grant-types', 'client_credentials', '--scopes', 'read write', '--token-ttl', '7200']));
+
+  // A grant that reads a named source first checks it is not a QM scope source (attest-sources.ts markedScopeSources),
+  // a raw sources read the Rust arm refuses; the SQL arms still compare.
+  parityTest('register a client that reads named sources: the same row, after the scope-source check',
+    { methods: ['readOauthClientColumns', 'insertOauthClientGrant', 'setOauthClientTokenTtl', 'readOauthClient', 'oauthClientLive'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      return registerThroughCli(engine, ['--grant-types', 'client_credentials', '--scopes', 'read write', '--source', 'src-a', '--federated-read', 'src-a,src-b', '--token-ttl', '7200']);
+    });
+
+  // The audit rows a lifetime migration writes exist only on a brain that had clients before it; a fresh brain has none,
+  // and the Rust store keeps no grant audit table, so this pins the empty answer on every arm.
+  parityTest('lifetime clamp: a fresh brain names no client its migrations clamped, before and after a registration',
+    { methods: ['readTokenLifetimeClampedClients'] }, async (engine) => {
+      const before = await engine.readTokenLifetimeClampedClients();
+      await registerThroughCli(engine, ['--grant-types', 'client_credentials', '--scopes', 'read', '--token-ttl', '600']);
+      return { before, after: await engine.readTokenLifetimeClampedClients() };
+    });
+
+  parityTest('revoke a client: the delete returns the client once, it is no longer live, and its ttl write finds no row',
+    { methods: ['insertOauthClient', 'deleteOAuthClient', 'oauthClientLive', 'setOauthClientTokenTtl', 'readOauthClient'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'gone', client_name: 'to revoke', grant_types: ['client_credentials'] });
+      await engine.insertOauthClient({ client_id: 'kept', client_name: 'to keep', grant_types: ['client_credentials'] });
+      await engine.insertOauthClient({ client_id: 'soft', client_name: 'soft deleted', grant_types: ['client_credentials'], deleted_at: new Date('2026-01-02T03:04:05Z') });
+      const before = { gone: await engine.oauthClientLive('gone'), kept: await engine.oauthClientLive('kept'), soft: await engine.oauthClientLive('soft') };
+      const first = await engine.deleteOAuthClient('gone');
+      const again = await engine.deleteOAuthClient('gone');
+      return {
+        before, first, again,
+        after: { gone: await engine.oauthClientLive('gone'), kept: await engine.oauthClientLive('kept') },
+        ttl: { gone: await engine.setOauthClientTokenTtl('gone', 120), kept: await engine.setOauthClientTokenTtl('kept', 120) },
+        keptTtl: (await engine.readOauthClient('kept'))?.token_ttl, row: await engine.readOauthClient('gone'),
       };
     });
 });

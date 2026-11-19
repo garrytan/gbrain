@@ -177,7 +177,7 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       // front with the CLI lane's brain_too_old contract. Passing {columns}
       // through also makes the ttl write SKIP (rather than throw) on brains
       // without token_ttl.
-      const columns = await preflightOauthClientColumns(sql);
+      const columns = await preflightOauthClientColumns(engine);
       if (!columns.has('source_id') || !columns.has('federated_read')) {
         res.status(400).json({
           error: 'brain_too_old',

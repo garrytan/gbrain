@@ -28,6 +28,10 @@ import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues } from
 import type { WakeRow, WakeWatchInsert, WakeWatchRow } from '../../src/core/engine-sql/jobs-wake.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED } from '../../src/core/wakeshift/events.ts';
+import { principalLive } from '../../src/core/wakeshift/drain.ts';
+import { forgetWakePrincipal } from '../../src/core/wakeshift/forget.ts';
+import { revokeLegacyTokenById } from '../../src/core/token-mint.ts';
+import { hashToken } from '../../src/core/utils.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -764,5 +768,33 @@ describe('engine parity: wake watch and forget leases', () => {
       expect(answers.watches).toEqual({ bare: revoked, bound: revoked, otherToken: ['open', null], sameIdClient: ['open', null] });
       expect(answers.terms).toEqual({ [`legacy_token:${id}`]: false, [`legacy_token:${id.toUpperCase()}`]: true, [`oauth_client:${id}`]: true });
       return answers;
+    });
+
+  parityTest('after revoke: a revoked token and a deleted client end their watches and are no longer live principals',
+    { methods: ['insertAccessToken', 'insertOauthClient', 'openWakeWatch', 'listWakeWatches', 'accessTokenLive', 'oauthClientLive', 'revokeAccessToken', 'deleteOAuthClient', 'forgetWakeCredential'] }, async (engine) => {
+      const grant = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+      const token = await engine.insertAccessToken({ name: 'watcher', token_hash: hashToken('h-watcher'), scopes: ['read'], permissions: {}, ...grant });
+      const other = await engine.insertAccessToken({ name: 'bystander', token_hash: hashToken('h-bystander'), scopes: ['read'], permissions: {}, ...grant });
+      await engine.insertOauthClient({ client_id: 'client-watch', client_name: 'watching client', grant_types: ['client_credentials'] });
+      const principal = (kind: 'legacy_token' | 'oauth_client', id: string) => ({ principal_kind: kind, principal_id: id, member_id: null });
+      const tokenWatch = await engine.openWakeWatch(watch({ principalKind: 'legacy_token', principalId: token.id, wakeUser: user(1) }));
+      const otherWatch = await engine.openWakeWatch(watch({ principalKind: 'legacy_token', principalId: other.id, wakeUser: user(2) }));
+      const clientWatch = await engine.openWakeWatch(watch({ principalKind: 'oauth_client', principalId: 'client-watch', wakeUser: user(3) }));
+      const liveNow = async () => ({
+        token: await principalLive(engine, principal('legacy_token', token.id)), other: await principalLive(engine, principal('legacy_token', other.id)),
+        client: await principalLive(engine, principal('oauth_client', 'client-watch')), nobody: await principalLive(engine, principal('oauth_client', 'client-none')),
+      });
+      const before = await liveNow();
+      const revokedToken = await revokeLegacyTokenById(engine, token.id);
+      const deleted = await engine.deleteOAuthClient('client-watch');
+      if (deleted) await forgetWakePrincipal(engine, { kind: 'oauth_client', id: 'client-watch' });
+      const stateOf = async (kind: WakeWatchInsert['principalKind'], id: string, watchId: number) => {
+        const [row] = await engine.listWakeWatches({ principalKind: kind, principalId: id, memberId: null, scope: 'open_or_recent', id: watchId });
+        return row ? [row.state, row.last_error] : null;
+      };
+      return {
+        before, revokedToken, deleted, after: await liveNow(),
+        watches: { token: await stateOf('legacy_token', token.id, tokenWatch), other: await stateOf('legacy_token', other.id, otherWatch), client: await stateOf('oauth_client', 'client-watch', clientWatch) },
+      };
     });
 });

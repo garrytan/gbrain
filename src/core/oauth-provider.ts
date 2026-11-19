@@ -37,10 +37,12 @@ import {
   dcrScopeViolation,
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromClient, grantFromRow, normalizeGrantBrain, intersectGrantedScopes, privatePagesAuth, type GrantPatch } from './grants/model.ts';
+import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromClient, grantFromRow, intersectGrantedScopes, privatePagesAuth, type GrantPatch } from './grants/model.ts';
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
-import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
+import { grantValidationContext, insertClientGrant, type GrantClientMetadata } from './grants/service.ts';
+import { manualClientGrant } from './grants/register-grant.ts';
+import type { ClientGrant, GrantValidationContext } from './grants/model.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from './grants/legacy-token.ts';
 import { NO_SOURCES } from './source-id.ts';
 
@@ -568,6 +570,86 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
 // OAuth Provider
 // ---------------------------------------------------------------------------
 
+/**
+ * The registration-time checks, the minted id and secret, and the grant of a manual client registration: everything
+ * registerClientManual decides before its SQL. `grant(context)` builds and validates the scoped grant (the up-to-date
+ * schema branch). auth.ts registerScopedClient shares it on the engine path.
+ */
+export function planManualClient(
+  name: string,
+  grantTypes: string[],
+  scopes: string,
+  redirectUris: string[] = [],
+  sourceId: string = 'default',
+  federatedRead?: string[],
+  tokenEndpointAuthMethod?: string,
+  agentBindings?: AgentClientBindings,
+  grantPatch?: GrantPatch,
+): ManualClientPlan {
+  // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
+  // at registration so meaningless scope strings can't pile up in the DB.
+  // Pre-allowlist clients keep working (allowlist is registration-time;
+  // existing rows aren't re-validated).
+  assertAllowedScopes(parseScopeString(scopes));
+
+  // A bound_slug_prefixes entry that is empty or whitespace-only makes
+  // `startsWith` true for every slug — a binding that looks set in
+  // `auth list` and the admin UI while fencing nothing. Reject at
+  // registration, the same way source ids are validated.
+  if (agentBindings?.boundTools && (agentBindings.boundTools.length === 0 || agentBindings.boundTools.some(tool => typeof tool !== 'string' || !tool.trim()))) {
+    throw new Error('--bound-tools requires at least one non-empty tool name');
+  }
+  if (agentBindings?.boundSlugPrefixes) {
+    // Same rule as rescopeClient: an empty list is ambiguous. It registers
+    // as deny-all for every direct write while printing an empty binding
+    // line, so an operator cannot tell it from an unbound client.
+    if (agentBindings.boundSlugPrefixes.length === 0) {
+      throw new Error('--bound-slug-prefixes cannot be an empty list (pass prefixes, or omit the flag for full-source write authority)');
+    }
+    assertValidSlugPrefixes(agentBindings.boundSlugPrefixes);
+  }
+
+  // v0.41.3 (T1+T2): validate token_endpoint_auth_method at the registration
+  // boundary. Throws InvalidTokenEndpointAuthMethodError on bad input.
+  // Default is `client_secret_post` (RFC 7591 §2).
+  const authMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+
+  const clientId = generateToken('gbrain_cl_');
+  // v0.41.3 (T2): atomic public-client INSERT. When the caller declares
+  // `tokenEndpointAuthMethod: 'none'` we mint NO secret and INSERT with
+  // client_secret_hash = NULL in a single statement. Pre-fix, the admin
+  // endpoint did INSERT-then-UPDATE which left a confidential row stranded
+  // if the UPDATE failed mid-flight (codex F4). Confidential clients
+  // (`client_secret_post` / `client_secret_basic`) get the secret minted
+  // and hashed as before.
+  const isPublicClient = authMethod === 'none';
+  const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
+  const secretHash = clientSecret ? hashToken(clientSecret) : null;
+  const now = Math.floor(Date.now() / 1000);
+
+  // v0.34.1 (#861 + #876): persist source_id AND federated_read so
+  // verifyAccessToken can populate both AuthInfo fields. Defaults:
+  //   source_id = 'default' (matches v60 backfill)
+  //   federated_read = [source_id] when omitted (a non-federated client
+  //                    has read scope == write scope, the v0.33 default)
+  const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+  const metadata: GrantClientMetadata = { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now };
+  const grant = (context: GrantValidationContext): ClientGrant => manualClientGrant({ clientId, name, scopes, sourceId, federated, agentBindings, grantPatch }, context);
+  return { clientId, clientSecret, secretHash, authMethod, now, federated, metadata, grant };
+}
+
+/** What planManualClient decided. */
+export interface ManualClientPlan {
+  clientId: string;
+  clientSecret?: string;
+  secretHash: string | null;
+  authMethod: TokenEndpointAuthMethod;
+  now: number;
+  federated: string[];
+  metadata: GrantClientMetadata;
+  grant(context: GrantValidationContext): ClientGrant;
+}
+
 export class GBrainOAuthProvider implements OAuthServerProvider {
   // The SDK otherwise consumes the verifier and calls our exchange with
   // undefined. This provider validates S256 itself before consuming the code,
@@ -1062,76 +1144,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     agentBindings?: AgentClientBindings,
     grantPatch?: GrantPatch,
   ): Promise<{ clientId: string; clientSecret?: string }> {
-    // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
-    // at registration so meaningless scope strings can't pile up in the DB.
-    // Pre-allowlist clients keep working (allowlist is registration-time;
-    // existing rows aren't re-validated).
-    assertAllowedScopes(parseScopeString(scopes));
-
-    // A bound_slug_prefixes entry that is empty or whitespace-only makes
-    // `startsWith` true for every slug — a binding that looks set in
-    // `auth list` and the admin UI while fencing nothing. Reject at
-    // registration, the same way source ids are validated.
-    if (agentBindings?.boundTools && (agentBindings.boundTools.length === 0 || agentBindings.boundTools.some(tool => typeof tool !== 'string' || !tool.trim()))) {
-      throw new Error('--bound-tools requires at least one non-empty tool name');
-    }
-    if (agentBindings?.boundSlugPrefixes) {
-      // Same rule as rescopeClient: an empty list is ambiguous. It registers
-      // as deny-all for every direct write while printing an empty binding
-      // line, so an operator cannot tell it from an unbound client.
-      if (agentBindings.boundSlugPrefixes.length === 0) {
-        throw new Error('--bound-slug-prefixes cannot be an empty list (pass prefixes, or omit the flag for full-source write authority)');
-      }
-      assertValidSlugPrefixes(agentBindings.boundSlugPrefixes);
-    }
-
-    // v0.41.3 (T1+T2): validate token_endpoint_auth_method at the registration
-    // boundary. Throws InvalidTokenEndpointAuthMethodError on bad input.
-    // Default is `client_secret_post` (RFC 7591 §2).
-    const authMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
-
-    const clientId = generateToken('gbrain_cl_');
-    // v0.41.3 (T2): atomic public-client INSERT. When the caller declares
-    // `tokenEndpointAuthMethod: 'none'` we mint NO secret and INSERT with
-    // client_secret_hash = NULL in a single statement. Pre-fix, the admin
-    // endpoint did INSERT-then-UPDATE which left a confidential row stranded
-    // if the UPDATE failed mid-flight (codex F4). Confidential clients
-    // (`client_secret_post` / `client_secret_basic`) get the secret minted
-    // and hashed as before.
-    const isPublicClient = authMethod === 'none';
-    const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
-    const secretHash = clientSecret ? hashToken(clientSecret) : null;
-    const now = Math.floor(Date.now() / 1000);
-
-    // v0.34.1 (#861 + #876): persist source_id AND federated_read so
-    // verifyAccessToken can populate both AuthInfo fields. Defaults:
-    //   source_id = 'default' (matches v60 backfill)
-    //   federated_read = [source_id] when omitted (a non-federated client
-    //                    has read scope == write scope, the v0.33 default)
-    const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+    const { clientId, clientSecret, secretHash, authMethod, now, federated, metadata, grant } = planManualClient(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, grantPatch);
     const schema = await this.sql`SELECT column_name FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
         AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`;
     if (schema.length === 17) {
-      const initial = grantFromRow({
-        client_id: clientId, client_name: name, scope: scopes, source_id: sourceId,
-        federated_read: federated, bound_slug_prefixes: agentBindings?.boundSlugPrefixes ?? null,
-        allowed_operations: agentBindings?.allowedOperations ?? null,
-        bound_tools: agentBindings?.boundTools ?? null,
-        bound_source_id: agentBindings?.boundSourceId ?? null, bound_brain_id: agentBindings?.boundBrainId ?? null,
-        delegated_slug_prefixes: agentBindings?.delegatedSlugPrefixes ?? agentBindings?.boundSlugPrefixes ?? null,
-        delegated_namespace: agentBindings?.delegatedNamespace ?? (agentBindings?.boundSlugPrefixes || agentBindings?.delegatedSlugPrefixes ? 'prefixes' : 'job'),
-        bound_max_concurrent: agentBindings?.boundMaxConcurrent ?? 1,
-        budget_usd_per_day: agentBindings?.budgetUsdPerDay ?? null,
-      });
-      if (grantPatch) assertGrantPatch(grantPatch);
-      const changes = Object.fromEntries(Object.entries(grantPatch ?? {}).filter(([, value]) => value !== undefined)) as GrantPatch;
-      const grant = { ...initial, ...changes, revision: 1 };
-      grant.boundBrainId = normalizeGrantBrain(grant.boundBrainId);
-      validateClientGrant(grant, await grantValidationContext(this.sql));
+      const built = grant(await grantValidationContext(this.sql));
       // GST-1113: with a transaction, the scope-source check and the insert commit together under the source row locks.
-      const metadata = { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now };
-      await (this.transaction ? this.transaction(sql => insertClientGrant(sql, grant, metadata)) : insertClientGrant(this.sql, grant, metadata));
+      await (this.transaction ? this.transaction(sql => insertClientGrant(sql, built, metadata)) : insertClientGrant(this.sql, built, metadata));
       return { clientId, clientSecret };
     }
     if (grantPatch || hasScope(parseScopeString(scopes), 'agent')) {

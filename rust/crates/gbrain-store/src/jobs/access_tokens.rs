@@ -1,21 +1,25 @@
 //! Jobs: the `access_tokens` table, the columns the legacy-token mint and the read-floor command touch, as the members
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
-//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust.
+//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, and the credential members of
+//! `src/core/engine-sql/access-credentials.ts`: listAccessTokens, readActiveAccessTokenGrant, accessTokenLive,
+//! revokeAccessTokensNamed and revokeAccessToken.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
 //!
-//! Kept: the columns those three members read or write (id, name, token_hash, scopes, permissions, the five grant
+//! Kept: the columns those members read or write (id, name, token_hash, scopes, permissions, the five grant
 //! columns, grant_revision, min_trust, revoked_at, created_at) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
-//! Not kept: `last_used_at`, the member, attest and private columns, and the `trust_generation_update` trigger. Setting
+//! Not kept: `last_used_at`, the member, attest and private columns, and the `trust_generation_update` trigger: a listed
+//! row reads them as the table's defaults (`last_used_at` and `member_id` NULL, `private_pages` and `private_facts`
+//! `'none'`). No member returns `token_hash`. Setting
 //! the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
 use super::*;
-use crate::env::parse_iso;
+use crate::env::{iso, parse_iso};
 
 const TOKEN: u8 = 0x2B;
 const TABLE: &str = "access_tokens";
@@ -199,6 +203,95 @@ impl Store {
             record.check()?;
             put_json(tx, &token_key(id), &record)?;
             Ok(true)
+        })
+    }
+}
+
+impl TokenRecord {
+    /// The row `listAccessTokens` returns: the columns `gbrain auth list` prints, the ones not kept at their defaults.
+    fn listed(&self) -> Value {
+        json!({
+            "id": self.id,
+            "name": self.name,
+            "scopes": self.scopes,
+            "created_at": iso(self.created_at),
+            "last_used_at": Value::Null,
+            "revoked_at": self.revoked_at.map(iso),
+            "private_pages": "none",
+            "private_facts": "none",
+            "member_id": Value::Null,
+        })
+    }
+}
+
+impl Store {
+    /// `listAccessTokens()`: every token, revoked ones too, newest first (`ORDER BY created_at DESC`; a tie by id).
+    pub fn list_access_tokens(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut rows = all_tokens(&*read)?;
+        rows.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(Value::Array(rows.iter().map(TokenRecord::listed).collect()))
+    }
+
+    /// `readActiveAccessTokenGrant(id)`: `{ permissions, private_pages }` of the token not revoked with this id (a UUID,
+    /// so any case), or None.
+    /// `private_pages` is not kept, so it reads as the column's default.
+    pub fn read_active_access_token_grant(&self, id: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(
+            get_json::<TokenRecord>(&*read, &token_key(&id.to_ascii_lowercase()))?
+                .filter(|t| t.revoked_at.is_none())
+                .map(|t| json!({ "permissions": t.permissions, "private_pages": "none" })),
+        )
+    }
+
+    /// `accessTokenLive(id)`: whether a token not revoked has this id, compared as text (`id::text = $1`).
+    pub fn access_token_live(&self, id: &str) -> Result<bool> {
+        let read = self.read()?;
+        Ok(
+            get_json::<TokenRecord>(&*read, &token_key(id))?
+                .is_some_and(|t| t.revoked_at.is_none()),
+        )
+    }
+
+    /// `revokeAccessTokensNamed(name)`: stamps `revoked_at` on every token not revoked with this exact name, in one
+    /// write; the ids it revoked, by id.
+    pub fn revoke_access_tokens_named(&self, name: &str) -> Result<Vec<String>> {
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let mut ids = Vec::new();
+            for mut t in all_tokens(&*tx)? {
+                if t.revoked_at.is_some() || t.name != name {
+                    continue;
+                }
+                t.revoked_at = Some(now);
+                put_json(tx, &token_key(&t.id), &t)?;
+                ids.push(t.id);
+            }
+            ids.sort();
+            Ok(ids)
+        })
+    }
+
+    /// `revokeAccessToken(id)`: stamps `revoked_at` on the token not revoked with this id (a UUID, so any case); its
+    /// name, or None.
+    pub fn revoke_access_token(&self, id: &str) -> Result<Option<String>> {
+        let id = id.to_ascii_lowercase();
+        let id = id.as_str();
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(id))? else {
+                return Ok(None);
+            };
+            if t.revoked_at.is_some() {
+                return Ok(None);
+            }
+            t.revoked_at = Some(self.env.now_micros());
+            put_json(tx, &token_key(id), &t)?;
+            Ok(Some(t.name))
         })
     }
 }

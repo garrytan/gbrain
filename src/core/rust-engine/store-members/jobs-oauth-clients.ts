@@ -3,8 +3,12 @@
  * A time crosses the binding as ISO text. The store refuses a write that breaks a constraint of the table with
  * `constraint_violation`; the PGLite and Postgres engines raise SQLSTATE 23514 / 23505 / 23503 with the constraint name,
  * so constraint-errors.ts gives the Rust refusal the same code and constraint, and a caller branches on one error shape.
+ * The delete, the liveness check, the column probes, the scoped-client insert and its lifetime write are the credential
+ * members of engine-sql/access-credentials.ts. The store keeps no grant audit (oauth_grant_audit): the scoped-client
+ * insert writes the client only, and no client reads as lifetime-clamped.
  */
 import { normalizeOauthClientRow, type OauthClientInsert, type OauthClientPatch, type OauthClientPatchGuard, type OauthClientPatched, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
+import { OAUTH_CLIENT_PROBE_COLUMNS, type DeletedOAuthClient, type OauthClientGrantInsert, type OauthClientProbe } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 
@@ -28,3 +32,24 @@ export const patchOauthClient: StoreMember<[clientId: string, patch: OauthClient
   const raw = await refusing('patchOauthClient', () => brain.patchOauthClient(clientId, { ...patch, set }, guard ?? {})) as { row: Record<string, unknown>; before: OauthClientPatched['before'] } | null;
   return raw ? { row: normalizeOauthClientRow(raw.row), before: raw.before } : null;
 };
+
+export const deleteOAuthClient: StoreMember<[clientId: string], DeletedOAuthClient | null> = (brain, clientId) =>
+  refusing('deleteOAuthClient', () => brain.deleteOauthClient(clientId)) as Promise<DeletedOAuthClient | null>;
+
+export const oauthClientLive: StoreMember<[clientId: string], boolean> = (brain, clientId) =>
+  storeCall({ member: 'oauthClientLive' }, () => brain.oauthClientLive(clientId)) as Promise<boolean>;
+
+/** The store keeps every `oauth_clients` column, so each probe names all of its columns. */
+export const readOauthClientColumns: StoreMember<[probe: OauthClientProbe], string[]> = async (_brain, probe) => [...OAUTH_CLIENT_PROBE_COLUMNS[probe]];
+
+export const setOauthClientTokenTtl: StoreMember<[clientId: string, ttlSeconds: number], boolean> = (brain, clientId, ttlSeconds) =>
+  refusing('setOauthClientTokenTtl', () => brain.setOauthClientTokenTtl(clientId, ttlSeconds)) as Promise<boolean>;
+
+/** The client row through insertOauthClient; the register audit row is not kept (the store keeps no grant audit). */
+export const insertOauthClientGrant: StoreMember<[row: OauthClientGrantInsert], void> = async (brain, row) => {
+  const { audit: _audit, budget_usd_per_day, ...columns } = row;
+  await insertOauthClient(brain, { ...columns, budget_usd_per_day: budget_usd_per_day === null ? null : Number(budget_usd_per_day) });
+};
+
+/** The store keeps no grant audit, so no upgrade clamped a client's token lifetime. */
+export const readTokenLifetimeClampedClients: StoreMember<[], string[]> = async () => [];

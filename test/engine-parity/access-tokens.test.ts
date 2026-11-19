@@ -21,7 +21,7 @@
 import { describe } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { setMinTrust } from '../../src/core/trust/min-trust.ts';
-import { mintLegacyToken } from '../../src/core/token-mint.ts';
+import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -102,6 +102,63 @@ describe('engine parity: access_tokens members', () => {
         dupe, repeated, badGrant, badTier, ambiguousMint,
         left: { again: (await engine.findActiveAccessTokens('dupe-again')).length, grant: (await engine.findActiveAccessTokens('bad-grant')).length,
           tier: (await engine.findActiveAccessTokens('bad-tier')).length, harness: (await engine.findActiveAccessTokens('harness')).length },
+      };
+    });
+
+  parityTest('mint: a minted token reads back its private-pages grant and its permissions while active, and an id no token has reads none',
+    { methods: ['insertAccessToken', 'readActiveAccessTokenGrant'] }, async (engine) => {
+      const minted = await mintLegacyToken(engine, { name: 'minted', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const nobody = '00000000-0000-4000-8000-0000000000e1';
+      return {
+        privatePages: await readActiveTokenPrivatePages(engine, minted.id),
+        permissions: await readActiveTokenPermissions(engine, minted.id),
+        upperCase: (await readActiveTokenPermissions(engine, minted.id.toUpperCase())) !== undefined,
+        nobody: { privatePages: await readActiveTokenPrivatePages(engine, nobody), permissions: await readActiveTokenPermissions(engine, nobody) },
+        notAnId: { privatePages: await readActiveTokenPrivatePages(engine, 'minted'), permissions: await readActiveTokenPermissions(engine, 'minted') },
+        member: await engine.readActiveAccessTokenGrant(nobody, 'permissions'),
+      };
+    });
+
+  parityTest('list: every token newest first, revoked ones included, with its grant columns and never its hash',
+    { methods: ['insertAccessToken', 'listAccessTokens', 'revokeAccessToken'] }, async (engine) => {
+      const empty = await engine.listAccessTokens();
+      const names = new Map<string, string>();
+      for (const name of ['first', 'second', 'third']) {
+        const row = await insert(engine, name, `h-list-${name}`, { scopes: name === 'second' ? ['read', 'write'] : ['read'] });
+        names.set(row.id, name);
+        await Bun.sleep(5);
+      }
+      const second = [...names].find(([, n]) => n === 'second')![0];
+      await engine.revokeAccessToken(second);
+      const rows = await engine.listAccessTokens();
+      return {
+        empty,
+        rows: rows.map(r => ({
+          name: r.name, id: names.get(r.id) ?? 'unknown', scopes: r.scopes, created: r.created_at instanceof Date, lastUsed: r.last_used_at,
+          revoked: r.revoked_at instanceof Date, member: r.member_id, privatePages: r.private_pages ?? 'none',
+          hash: Object.keys(r).filter(k => k.includes('hash')),
+        })),
+      };
+    });
+
+  parityTest('revoke: by name stamps every active token of that name once, by id returns its name once, and a revoked token reads as gone',
+    { methods: ['insertAccessToken', 'revokeAccessTokensNamed', 'revokeAccessToken', 'readActiveAccessTokenGrant', 'accessTokenLive', 'findActiveAccessTokens', 'forgetWakeCredential'] }, async (engine) => {
+      const a = await insert(engine, 'twin', 'h-rv-1');
+      const b = await insert(engine, 'twin', 'h-rv-2');
+      const solo = await insert(engine, 'solo', 'h-rv-3');
+      const keep = await insert(engine, 'keep', 'h-rv-4');
+      const names = new Map([[a.id, 'twin-a'], [b.id, 'twin-b'], [solo.id, 'solo'], [keep.id, 'keep']]);
+      const live = async () => Object.fromEntries(await Promise.all([...names].map(async ([id, n]) => [n, await engine.accessTokenLive(id)] as const)));
+      const before = await live();
+      const byName = (await engine.revokeAccessTokensNamed('twin')).map(id => names.get(id)).sort();
+      const byNameAgain = await engine.revokeAccessTokensNamed('twin');
+      const byId = await revokeLegacyTokenById(engine, solo.id.toUpperCase());
+      const byIdAgain = await revokeLegacyTokenById(engine, solo.id);
+      const member = await engine.revokeAccessToken('00000000-0000-4000-8000-0000000000e2');
+      return {
+        before, byName, byNameAgain, byId, byIdAgain, member, after: await live(),
+        grants: { solo: await engine.readActiveAccessTokenGrant(solo.id, 'permissions'), keep: (await engine.readActiveAccessTokenGrant(keep.id, 'permissions')) !== null },
+        active: { twin: (await engine.findActiveAccessTokens('twin')).length, solo: (await engine.findActiveAccessTokens('solo')).length, keep: (await engine.findActiveAccessTokens('keep')).length },
       };
     });
 });

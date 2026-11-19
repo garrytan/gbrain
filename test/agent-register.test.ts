@@ -281,7 +281,7 @@ beforeEach(async () => {
 describe('PGLite integration (pre-flight → tx → audit → exchange)', () => {
   test('end-to-end: row, ttl, surface via rescope, audit row, verify round-trip', async () => {
     const sql = sqlQueryForEngine(engine);
-    const columns = await preflightOauthClientColumns(sql);
+    const columns = await preflightOauthClientColumns(engine);
     expect(columns.has('token_ttl')).toBe(true);
     expect(columns.has('surface')).toBe(true);
     expect(columns.has('deleted_at')).toBe(true);
