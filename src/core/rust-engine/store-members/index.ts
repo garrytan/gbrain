@@ -77,6 +77,7 @@ import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
+import * as sessionState from './session-state.ts';
 import * as writeGuards from './write-guards.ts';
 import * as pageVisibility from './page-visibility.ts';
 import * as largePage from './large-page.ts';
@@ -139,6 +140,8 @@ export const STORE_MEMBERS = {
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
   ...entityIdentities,
+  // Ambient recall session state (rust/docs/store/session_state.md).
+  ...sessionState,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
   ...pageEmbeddingBudget,

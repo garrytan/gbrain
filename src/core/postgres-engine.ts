@@ -262,6 +262,7 @@ import * as timelineReadsImpl from './engine-sql/timeline-reads.ts';
 import type { TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import * as telemetryImpl from './engine-sql/telemetry.ts';
 import * as chatUsageImpl from './engine-sql/chat-usage.ts';
+import * as sessionStateImpl from './engine-sql/session-state.ts';
 import * as fieldUsageImpl from './engine-sql/field-usage.ts';
 import * as decideStoreImpl from './engine-sql/decide-store.ts';
 import * as aliasFanoutReadsImpl from './engine-sql/alias-fanout-reads.ts';
@@ -2157,6 +2158,13 @@ export class PostgresEngine implements BrainEngine {
   readMcpLifetimeUsage(tokenNames: readonly string[]) { return telemetryImpl.readMcpLifetimeUsage(this.telemetryRead, tokenNames); }
   logChatUsage(row: chatUsageImpl.ChatUsageLogRow) { return chatUsageImpl.logChatUsage(this.autocommitSql, row); }
   readChatUsage(days: number) { return chatUsageImpl.readChatUsage(this.telemetryRead, days); }
+  private get sessionStateRead() { return unscopedExecutor(this.engineSql, 'session state reads: master engine.executeRaw, unscoped; keyed by source'); }
+  readSessionContextState(key: sessionStateImpl.SessionStateKey) { return sessionStateImpl.readSessionContextState(this.sessionStateRead, key); }
+  readDeltaSessionRow(key: sessionStateImpl.SessionStateKey) { return sessionStateImpl.readDeltaSessionRow(this.sessionStateRead, key); }
+  readCheckpointManifest(key: sessionStateImpl.SessionStateKey) { return sessionStateImpl.readCheckpointManifest(this.sessionStateRead, key); }
+  upsertSessionContextRow(key: sessionStateImpl.SessionStateKey, write: sessionStateImpl.SessionContextWrite) { return sessionStateImpl.upsertSessionContextRow(this.autocommitSql, key, write); }
+  writeCheckpointManifest(key: sessionStateImpl.SessionStateKey, manifest: readonly unknown[]) { return sessionStateImpl.writeCheckpointManifest(this.autocommitSql, key, manifest); }
+  gcSessionContextRows(olderThanDays: number, maxRowsPerClient: number) { return sessionStateImpl.gcSessionContextRows(this.autocommitSql, olderThanDays, maxRowsPerClient); }
   readFieldUsageSamples(query: fieldUsageImpl.FieldUsageQuery) { return fieldUsageImpl.readFieldUsageSamples(unscopedExecutor(this.engineSql, 'field usage samples: master engine.executeRaw, unscoped'), query); }
   private get aliasFanoutRead() { return unscopedExecutor(this.engineSql, 'alias fan-out reads: master engine.executeRaw, unscoped'); }
   findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }) { return aliasFanoutReadsImpl.findPagesByTitles(this.aliasFanoutRead, titleNorms, sourceIds, types, opts); }

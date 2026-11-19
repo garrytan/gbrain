@@ -121,6 +121,7 @@ import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRo
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
+import type { DeltaSessionRow, SessionContextStateRow, SessionContextWrite, SessionStateKey } from './engine-sql/session-state.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
 import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
@@ -1711,6 +1712,16 @@ export interface BrainEngine {
   /** The chat usage ledger insert and the get_usage window read (SQL and contracts in engine-sql/chat-usage.ts). */
   logChatUsage(row: ChatUsageLogRow): Promise<void>;
   readChatUsage(days: number): Promise<ChatUsageWindow>;
+  /**
+   * Ambient recall session state (`session_context_state`): the context pack and delta reads, the cursor upsert, the
+   * checkpoint manifest read and write, and the row GC (SQL and contracts in engine-sql/session-state.ts).
+   */
+  readSessionContextState(key: SessionStateKey): Promise<SessionContextStateRow | null>;
+  readDeltaSessionRow(key: SessionStateKey): Promise<DeltaSessionRow | null>;
+  readCheckpointManifest(key: SessionStateKey): Promise<{ checkpoint_manifest: unknown } | null>;
+  upsertSessionContextRow(key: SessionStateKey, write: SessionContextWrite): Promise<number>;
+  writeCheckpointManifest(key: SessionStateKey, manifest: readonly unknown[]): Promise<void>;
+  gcSessionContextRows(olderThanDays: number, maxRowsPerClient: number): Promise<void>;
   /** `schema detect --fields`: live page type counts and per-type page samples (SQL and contract in engine-sql/field-usage.ts). */
   readFieldUsageSamples(query: FieldUsageQuery): Promise<FieldUsageTypeSample[]>;
   /** Alias fan-out's exact-title lookup, case-sensitive alias read, page title and alias rows (SQL and contracts in engine-sql/alias-fanout-reads.ts). */

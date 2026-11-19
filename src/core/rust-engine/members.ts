@@ -551,6 +551,14 @@ export const RUST_ENGINE_MEMBERS = {
   pruneMcpRequestLogBatch: 'telemetry',
   logChatUsage: 'telemetry',
   readChatUsage: 'telemetry',
+  // session_state (engine-sql/session-state.ts): ambient recall session cursors, checkpoint manifests and their GC
+  // (key tag `x`, rust/docs/store/session_state.md).
+  readSessionContextState: 'session_state',
+  readDeltaSessionRow: 'session_state',
+  readCheckpointManifest: 'session_state',
+  upsertSessionContextRow: 'session_state',
+  writeCheckpointManifest: 'session_state',
+  gcSessionContextRows: 'session_state',
   // ingest_log
   logIngest: 'ingest_log',
   getIngestLog: 'ingest_log',

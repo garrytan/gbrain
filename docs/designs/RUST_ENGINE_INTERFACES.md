@@ -170,6 +170,7 @@ Reserved tags:
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
+| session_state | `x` | `SESSION_STATE` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -1290,6 +1291,17 @@ Cross-source identity groups (migration v137): manual links, lookups, the canoni
 - **Postgres tables:** `entity_identities`; SQL in `src/core/engine-sql/entity-identities.ts`.
 - **Parity cases:** `test/engine-parity/entity-identities.test.ts`.
 - **Known gap:** the store page policy has no owner-only rule, so the list refuses a policy read typed while an owner-only source exists (TODOS `rust-owner-only-page-policy`).
+
+### session_state
+
+Ambient recall's per-session row (migration v126): delta's cursors, the context pack's standing entities, the checkpoint manifest. Detail: `rust/docs/store/session_state.md`.
+
+- **Files:** `gbrain-store/src/session_state.rs`, `gbrain-napi/src/families/session_state.rs`, `store-members/session-state.ts`.
+- **Tag:** `x` (`SESSION_STATE`). Cascade on page delete: no (the table has no foreign key).
+- **Keys:** `x 0x01 <source_id> 0x00 <client_id> 0x00 <session_id>` to the row JSON.
+- **Members (6), capability:** `session_state` (6): `readSessionContextState`, `readDeltaSessionRow`, `readCheckpointManifest`, `upsertSessionContextRow`, `writeCheckpointManifest`, `gcSessionContextRows`.
+- **Postgres tables:** `session_context_state`; SQL in `src/core/engine-sql/session-state.ts`.
+- **Parity cases:** `test/engine-parity/session-state.test.ts`.
 
 ### timeline_queries
 

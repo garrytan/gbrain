@@ -61,6 +61,8 @@ export const ENGINE_CAPABILITIES = [
   'telemetry',
   /** Cross-source entity identity groups (migration v137; key tag `i`). */
   'entity_identities',
+  /** Ambient recall session state: delta and pack cursors, checkpoint manifests (migration v126; key tag `x`). */
+  'session_state',
   'ingest_log',
   'dream_verdicts',
   'contradictions',
