@@ -51,7 +51,7 @@ import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCache
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from './engine-sql/fence-holds.ts';
-import type { GenerationActivationRow, GenerationLedgerRow, GenerationRowKey, HeldGenerationRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
+import type { GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow, HeldInputRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3412,6 +3412,14 @@ export interface BrainEngine {
   readLiveGenerationRow(key: GenerationRowKey): Promise<LiveGenerationRow | null>;
   activateGenerationRows(key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow, items: readonly GenerationLedgerRow[]): Promise<number>;
   recordHeldGenerationRow(key: GenerationRowKey, row: HeldGenerationRow): Promise<void>;
+  /** publishGeneration's producer-path statements: held rows of one input, a held row's context, the identical replay, the attempt counter and the valve. */
+  heldGenerationRowsForInput(key: GenerationRowKey, pin: string): Promise<HeldInputRow[]>;
+  readHeldGenerationContext(key: GenerationRowKey, holdId: string): Promise<{ held_context: Record<string, unknown> | null } | null>;
+  liveGenerationForOperation(operationId: string): Promise<number | null>;
+  countGenerationAttempt(key: GenerationRowKey, holdId: string, code: string): Promise<GenerationAttemptCount>;
+  clearGenerationAttempts(holdId: string): Promise<void>;
+  readGenerationValve(key: GenerationRowKey, windowKey: string): Promise<GenerationValveRow>;
+  bumpGenerationValve(key: GenerationRowKey, windowKey: string, retired: number): Promise<void>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */

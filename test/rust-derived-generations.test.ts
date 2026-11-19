@@ -16,8 +16,8 @@
  *  - Seam: the transaction engine's own executeRaw (PGLite) is wrapped to record each statement and restored with
  *    `delete`; nothing else is replaced. Postgres runs when DATABASE_URL is set (testBackends) and checks the database
  *    name first. The Rust half needs the addon: skipped without it unless GBRAIN_TEST_RUST_ADDON_REQUIRED=1.
- *  - Not covered: publishGeneration's attempt counter, replay select, valve and exhausted-hold reads, which still go
- *    through `executeRaw` (publish.ts), so the producer path of generations/publish.ts still stops on a Rust brain.
+ *  - Not covered: publishGeneration's attempt counter, replay select, valve and exhausted-hold reads, which
+ *    test/rust-generation-publish.test.ts pins.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';

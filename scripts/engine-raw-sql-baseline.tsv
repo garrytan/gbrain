@@ -465,7 +465,6 @@ src/core/generations/fence-evidence.ts	execute_raw	4
 src/core/generations/fence-restore.ts	execute_raw	3
 src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
-src/core/generations/publish.ts	execute_raw	7
 src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	3
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut

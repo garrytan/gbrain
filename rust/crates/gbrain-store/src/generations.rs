@@ -1,9 +1,11 @@
 //! Derived generations: the `derived_generations` and `derived_generation_items` tables of the
 //! PGLite engine, the generation ledger of `src/core/generations/publish.ts`.
 //!
-//! Members: readLiveGenerationRow, activateGenerationRows, recordHeldGenerationRow (the ledger
-//! statements of `engine-sql/derived-generations.ts`), listFenceHoldRows and clearFenceHoldRows
-//! (the held fence statements of `engine-sql/fence-holds.ts`).
+//! Members: readLiveGenerationRow, activateGenerationRows, recordHeldGenerationRow,
+//! heldGenerationRowsForInput, readHeldGenerationContext, liveGenerationForOperation,
+//! countGenerationAttempt, clearGenerationAttempts, readGenerationValve and bumpGenerationValve
+//! (the statements of `engine-sql/derived-generations.ts`), listFenceHoldRows and
+//! clearFenceHoldRows (the held fence statements of `engine-sql/fence-holds.ts`).
 //!
 //! Keys, all under `keys::DERIVED_GENERATION` (`h`):
 //! - `h 0x01 id(8) -> GenerationRecord`, one row of `derived_generations`. Ids come from the
@@ -13,6 +15,13 @@
 //!   No part may hold a NUL byte (Postgres `text` refuses one too), so the split is exact.
 //! - `h 0x03 id(8) item_key -> ItemRecord`, one row of `derived_generation_items`; the key is the
 //!   `(generation_id, item_key)` primary key.
+//! - `h 0x04 hold_id -> AttemptRecord`, one row of `derived_generation_attempts` (its primary key).
+//! - `h 0x05 source \0 kind \0 window_key -> ValveRecord`, one row of `derived_generation_valve`
+//!   (its primary key).
+//! - `h 0x06 operation_id \0 id(8) -> []` for each live row: the replay lookup
+//!   (`liveGenerationForOperation`) reads one prefix instead of every row.
+//! - `h 0x07 source \0 kind \0 owner_key \0 hold_id -> []` for each attempt row: the index
+//!   `derived_generation_attempts_key`, so an activation deletes its key's counters by prefix.
 //!
 //! Time: `created_at` and `updated_at` are UTC microseconds from the store's clock; in a
 //! transaction that is the transaction's clock, as Postgres `now()` is the transaction's start.
@@ -21,8 +30,7 @@
 //! values, are refused where Postgres `jsonb` refuses them, and are stored in Postgres `jsonb` key
 //! order (`dream::jsonb`).
 //!
-//! The store keeps no `derived_generation_attempts` rows (`recordAttempt` still runs raw SQL, which
-//! this engine refuses), so the attempt counter delete of an activation has nothing to delete.
+//! A source delete removes the source's rows of all four tables (`remove_source_rows`).
 //!
 //! Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`. This
 //! family writes no page record, so it never sets the member-access flag itself; a page write in the
@@ -40,6 +48,10 @@ use std::collections::BTreeSet;
 const RECORD: u8 = 0x01;
 const POINTER: u8 = 0x02;
 const ITEM: u8 = 0x03;
+const ATTEMPT: u8 = 0x04;
+const VALVE: u8 = 0x05;
+const LIVE_OPERATION: u8 = 0x06;
+const ATTEMPT_BY_KEY: u8 = 0x07;
 
 /// The id counter (`pages::next_id`).
 const ID_COUNTER: &str = "next_derived_generation_id";
@@ -116,6 +128,24 @@ struct ItemRecord {
     #[serde(default)]
     preimage_bytes: Option<i32>,
     pending: bool,
+}
+
+/// One row of `derived_generation_attempts`; the key holds `hold_id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AttemptRecord {
+    source_id: String,
+    kind: String,
+    owner_key: String,
+    attempts: i32,
+    codes: Vec<String>,
+    updated_at_us: i64,
+}
+
+/// One row of `derived_generation_valve`; the key holds `(source_id, kind, window_key)`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ValveRecord {
+    retired: i32,
+    updated_at_us: i64,
 }
 
 /// A generation key (`GenerationRowKey`, engine-sql/derived-generations.ts).
@@ -215,6 +245,78 @@ fn item_key(id: u64, item: &str) -> Vec<u8> {
     key
 }
 
+fn attempt_key(hold_id: &str) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, ATTEMPT];
+    key.extend_from_slice(hold_id.as_bytes());
+    key
+}
+
+fn attempt_index_prefix(parts: &[&str]) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, ATTEMPT_BY_KEY];
+    for part in parts {
+        key.extend_from_slice(part.as_bytes());
+        key.push(0);
+    }
+    key
+}
+
+fn attempt_index_key(record: &AttemptRecord, hold_id: &str) -> Vec<u8> {
+    let mut key = attempt_index_prefix(&[&record.source_id, &record.kind, &record.owner_key]);
+    key.extend_from_slice(hold_id.as_bytes());
+    key
+}
+
+fn valve_prefix(parts: &[&str]) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, VALVE];
+    for part in parts {
+        key.extend_from_slice(part.as_bytes());
+        key.push(0);
+    }
+    key
+}
+
+fn valve_key(source_id: &str, kind: &str, window_key: &str) -> Vec<u8> {
+    let mut key = valve_prefix(&[source_id, kind]);
+    key.extend_from_slice(window_key.as_bytes());
+    key
+}
+
+fn live_operation_prefix(operation_id: &str) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, LIVE_OPERATION];
+    key.extend_from_slice(operation_id.as_bytes());
+    key.push(0);
+    key
+}
+
+fn live_operation_key(record: &GenerationRecord) -> Vec<u8> {
+    let mut key = live_operation_prefix(&record.operation_id);
+    key.extend_from_slice(&record.id.to_be_bytes());
+    key
+}
+
+/// Deletes the attempt row `hold_id` with its index entry.
+fn delete_attempt(tx: &mut dyn KvWrite, hold_id: &str) -> Result<()> {
+    if let Some(record) = get_json::<AttemptRecord>(&*tx, &attempt_key(hold_id))? {
+        tx.delete(&attempt_index_key(&record, hold_id))?;
+        tx.delete(&attempt_key(hold_id))?;
+    }
+    Ok(())
+}
+
+/// Deletes the attempt rows whose index entries start with `prefix` (a key, or a source).
+fn delete_attempts_under(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
+    for (k, _) in collect_prefix(&*tx, prefix, false, usize::MAX)? {
+        let hold_id = k
+            .iter()
+            .rposition(|b| *b == 0)
+            .map(|at| String::from_utf8_lossy(&k[at + 1..]).into_owned())
+            .ok_or_else(|| corrupt("attempt index"))?;
+        tx.delete(&k)?;
+        tx.delete(&attempt_key(&hold_id))?;
+    }
+    Ok(())
+}
+
 fn corrupt(what: &str) -> StoreError {
     StoreError::new(STORE_CORRUPT, format!("derived_generations: bad {what}"))
 }
@@ -266,6 +368,9 @@ fn record_generation_key(record: &GenerationRecord) -> GenerationKey {
 
 /// Deletes the row `id` with its pointer and its items (`ON DELETE CASCADE` of the items).
 fn delete_row(tx: &mut dyn KvWrite, record: &GenerationRecord) -> Result<()> {
+    if record.state == "live" {
+        tx.delete(&live_operation_key(record))?;
+    }
     if record.state == "live" || record.state == "held" {
         let key = record_generation_key(record);
         if pointed(&*tx, &key, &record.state)? == Some(record.id) {
@@ -440,6 +545,7 @@ impl Store {
                 if pointed(&*tx, &live_key, "live")? == Some(id) {
                     tx.delete(&pointer_key(&live_key, "live"))?;
                 }
+                tx.delete(&live_operation_key(&live))?;
                 live.state = "superseded".into();
                 live.updated_at_us = now;
                 put_json(tx, &record_key(id), &live)?;
@@ -477,6 +583,7 @@ impl Store {
             };
             put_json(tx, &record_key(id), &record)?;
             tx.put(&pointer_key(key, "live"), &id.to_be_bytes())?;
+            tx.put(&live_operation_key(&record), &[])?;
             // UPDATE derived_generations SET superseded_by=$1 WHERE id=$2
             if let Some(old) = live_id.and_then(|old| u64::try_from(old).ok())
                 && let Some(mut superseded) = read_record(&*tx, old)?
@@ -494,6 +601,11 @@ impl Store {
             if let Some(held) = pointed_record(&*tx, key, "held")? {
                 delete_row(tx, &held)?;
             }
+            // ... DELETE FROM derived_generation_attempts WHERE source_id=$1 AND kind=$2 AND owner_key=$3
+            delete_attempts_under(
+                tx,
+                &attempt_index_prefix(&[&key.source_id, &key.kind, &key.owner_key]),
+            )?;
             Ok(id)
         })
     }
@@ -658,6 +770,192 @@ impl Store {
             Ok(())
         })
     }
+
+    /// `heldGenerationRowsForInput(key, pin)`: the held rows of `key` whose `input_pin` is `pin`
+    /// (at most one: a key holds one held row).
+    pub fn held_generation_rows_for_input(&self, key: &GenerationKey, pin: &str) -> Result<Value> {
+        const OP: &str = "heldGenerationRowsForInput";
+        check_key(OP, key)?;
+        no_nul(OP, &[("input_pin", pin)])?;
+        let read = self.read()?;
+        let rows = match pointed_record(&*read, key, "held")? {
+            Some(held) if held.input_pin.as_deref() == Some(pin) => vec![json!({
+                "hold_id": held.hold_id,
+                "item_set_hash": held.item_set_hash,
+                "held_reason": held.held_reason,
+            })],
+            _ => Vec::new(),
+        };
+        Ok(Value::Array(rows))
+    }
+
+    /// `readHeldGenerationContext(key, holdId)`: `{ held_context }` of the key's held row when its
+    /// `hold_id` is `hold_id`, or null.
+    pub fn read_held_generation_context(
+        &self,
+        key: &GenerationKey,
+        hold_id: &str,
+    ) -> Result<Value> {
+        const OP: &str = "readHeldGenerationContext";
+        check_key(OP, key)?;
+        no_nul(OP, &[("hold_id", hold_id)])?;
+        let read = self.read()?;
+        Ok(match pointed_record(&*read, key, "held")? {
+            Some(held) if held.hold_id.as_deref() == Some(hold_id) => {
+                json!({ "held_context": held.held_context })
+            }
+            _ => Value::Null,
+        })
+    }
+
+    /// `liveGenerationForOperation(operationId)`: the `generation` of a live row whose
+    /// `operation_id` is `operation_id`, or null.
+    pub fn live_generation_for_operation(&self, operation_id: &str) -> Result<Value> {
+        const OP: &str = "liveGenerationForOperation";
+        no_nul(OP, &[("operation_id", operation_id)])?;
+        let read = self.read()?;
+        let prefix = live_operation_prefix(operation_id);
+        let Some((k, _)) = collect_prefix(&*read, &prefix, false, 1)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(Value::Null);
+        };
+        let id = keys::be8(&k[prefix.len()..]).ok_or_else(|| corrupt("operation index"))?;
+        let record = read_record(&*read, id)?.ok_or_else(|| corrupt("operation index target"))?;
+        if record.state != "live" {
+            return Err(corrupt("operation index state"));
+        }
+        Ok(json!(record.generation))
+    }
+
+    /// `countGenerationAttempt(key, holdId, code)`: inserts the attempt row `hold_id` with one
+    /// attempt and `[code]`, or adds one attempt and appends `code`; resolves
+    /// `{ attempts, codes }`.
+    pub fn count_generation_attempt(
+        &self,
+        key: &GenerationKey,
+        hold_id: &str,
+        code: &str,
+    ) -> Result<Value> {
+        const OP: &str = "countGenerationAttempt";
+        check_key(OP, key)?;
+        no_nul(OP, &[("hold_id", hold_id), ("code", code)])?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let record = match get_json::<AttemptRecord>(&*tx, &attempt_key(hold_id))? {
+                // ON CONFLICT (hold_id) DO UPDATE: the row keeps its own key columns.
+                Some(mut existing) => {
+                    existing.attempts = existing.attempts.checked_add(1).ok_or_else(|| {
+                        StoreError::new(
+                            INVALID_ARGUMENT,
+                            format!("{OP}: integer out of range (attempts)"),
+                        )
+                    })?;
+                    existing.codes.push(code.to_owned());
+                    existing.updated_at_us = now;
+                    existing
+                }
+                None => {
+                    crate::sources::require_source(&*tx, &key.source_id)?;
+                    AttemptRecord {
+                        source_id: key.source_id.clone(),
+                        kind: key.kind.clone(),
+                        owner_key: key.owner_key.clone(),
+                        attempts: 1,
+                        codes: vec![code.to_owned()],
+                        updated_at_us: now,
+                    }
+                }
+            };
+            put_json(tx, &attempt_key(hold_id), &record)?;
+            tx.put(&attempt_index_key(&record, hold_id), &[])?;
+            Ok(json!({ "attempts": record.attempts, "codes": record.codes }))
+        })
+    }
+
+    /// `clearGenerationAttempts(holdId)`: deletes the attempt row `hold_id`.
+    pub fn clear_generation_attempts(&self, hold_id: &str) -> Result<()> {
+        no_nul("clearGenerationAttempts", &[("hold_id", hold_id)])?;
+        self.write(|tx| delete_attempt(tx, hold_id))
+    }
+
+    /// `readGenerationValve(key, windowKey)`: `{ retired, owned }`: the retirements of the
+    /// source and kind's valve window (null: no row), and the items the live generations of the
+    /// source and kind own.
+    pub fn read_generation_valve(&self, key: &GenerationKey, window_key: &str) -> Result<Value> {
+        const OP: &str = "readGenerationValve";
+        check_key(OP, key)?;
+        no_nul(OP, &[("window_key", window_key)])?;
+        let read = self.read()?;
+        let retired =
+            get_json::<ValveRecord>(&*read, &valve_key(&key.source_id, &key.kind, window_key))?
+                .map(|valve| valve.retired);
+        let mut live = Vec::new();
+        let prefix = pointer_prefix(&[&key.source_id, &key.kind]);
+        for (k, v) in collect_prefix(&*read, &prefix, false, usize::MAX)? {
+            if k.ends_with(b"\0live") {
+                live.push(keys::be8(&v).ok_or_else(|| corrupt("pointer"))?);
+            }
+        }
+        let mut owned: i64 = 0;
+        for id in live {
+            let mut failure = None;
+            scan_prefix(&*read, &item_prefix(id), false, &mut |_, v| {
+                match serde_json::from_slice::<ItemRecord>(v) {
+                    Ok(item) if OWNED_ACTIONS.contains(&item.action.as_str()) => owned += 1,
+                    Ok(_) => {}
+                    Err(e) => {
+                        failure = Some(StoreError::from(e));
+                        return false;
+                    }
+                }
+                true
+            })?;
+            if let Some(e) = failure {
+                return Err(e);
+            }
+        }
+        Ok(json!({ "retired": retired, "owned": owned }))
+    }
+
+    /// `bumpGenerationValve(key, windowKey, retired)`: adds `retired` to the valve window of the
+    /// key's source and kind (inserted at `retired`).
+    pub fn bump_generation_valve(
+        &self,
+        key: &GenerationKey,
+        window_key: &str,
+        retired: f64,
+    ) -> Result<()> {
+        const OP: &str = "bumpGenerationValve";
+        check_key(OP, key)?;
+        no_nul(OP, &[("window_key", window_key)])?;
+        let retired = int4(OP, "retired", retired)?;
+        let now = self.env.now_micros();
+        let at = valve_key(&key.source_id, &key.kind, window_key);
+        self.write(|tx| {
+            let total = match get_json::<ValveRecord>(&*tx, &at)? {
+                Some(valve) => valve.retired.checked_add(retired).ok_or_else(|| {
+                    StoreError::new(
+                        INVALID_ARGUMENT,
+                        format!("{OP}: integer out of range (retired)"),
+                    )
+                })?,
+                None => {
+                    crate::sources::require_source(&*tx, &key.source_id)?;
+                    retired
+                }
+            };
+            put_json(
+                tx,
+                &at,
+                &ValveRecord {
+                    retired: total,
+                    updated_at_us: now,
+                },
+            )
+        })
+    }
 }
 
 /// `ON DELETE CASCADE` of `derived_generations.source_id` (and of the items with their row).
@@ -685,6 +983,10 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     }
     for record in &doomed {
         delete_row(tx, record)?;
+    }
+    delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
+    for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
+        tx.delete(&k)?;
     }
     Ok(())
 }
@@ -782,12 +1084,183 @@ mod tests {
         assert!(read_record(&*read, first.id).unwrap().is_none());
     }
 
+    fn activation(operation: &str, generation: f64) -> ActivationInput {
+        ActivationInput {
+            generation,
+            run_id: None,
+            operation_id: operation.into(),
+            input_pin: None,
+            input_size: None,
+            completeness: "{}".into(),
+            set_hash: "set".into(),
+            restore_of: None,
+            activation_id: None,
+            locator: None,
+        }
+    }
+
+    fn owned(item: &str) -> LedgerItemInput {
+        LedgerItemInput {
+            item_key: item.into(),
+            identity_hash: item.into(),
+            action: "published".into(),
+            preimage: None,
+            preimage_bytes: None,
+            pending: false,
+        }
+    }
+
+    #[test]
+    fn attempts_count_up_and_an_activation_deletes_its_keys_counters() {
+        let store = store();
+        let one = store
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        assert_eq!(one, json!({"attempts": 1, "codes": ["boom"]}));
+        let two = store
+            .count_generation_attempt(&key(), "a1", "bang")
+            .unwrap();
+        assert_eq!(two, json!({"attempts": 2, "codes": ["boom", "bang"]}));
+        store.clear_generation_attempts("a1").unwrap();
+        let again = store
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        assert_eq!(again["attempts"], json!(1));
+        store
+            .activate_generation_rows(&key(), None, &activation("op1", 1.0), &[owned("x")])
+            .unwrap();
+        let read = store.read().unwrap();
+        assert!(
+            collect_prefix(&*read, &[keys::DERIVED_GENERATION, ATTEMPT], false, 10)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_replay_lookup_finds_only_the_live_row_of_an_operation() {
+        let store = store();
+        assert_eq!(
+            store.live_generation_for_operation("op1").unwrap(),
+            Value::Null
+        );
+        let first = store
+            .activate_generation_rows(&key(), None, &activation("op1", 1.0), &[owned("x")])
+            .unwrap();
+        assert_eq!(
+            store.live_generation_for_operation("op1").unwrap(),
+            json!(1)
+        );
+        store
+            .activate_generation_rows(&key(), Some(first as f64), &activation("op2", 2.0), &[])
+            .unwrap();
+        assert_eq!(
+            store.live_generation_for_operation("op1").unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            store.live_generation_for_operation("op2").unwrap(),
+            json!(2)
+        );
+    }
+
+    #[test]
+    fn the_valve_adds_retirements_and_counts_live_owned_items() {
+        let store = store();
+        let empty = store
+            .read_generation_valve(&key(), "day:2026-11-19")
+            .unwrap();
+        assert_eq!(empty, json!({"retired": null, "owned": 0}));
+        store
+            .activate_generation_rows(
+                &key(),
+                None,
+                &activation("op1", 1.0),
+                &[owned("x"), owned("y")],
+            )
+            .unwrap();
+        store
+            .bump_generation_valve(&key(), "day:2026-11-19", 2.0)
+            .unwrap();
+        store
+            .bump_generation_valve(&key(), "day:2026-11-19", 3.0)
+            .unwrap();
+        let valve = store
+            .read_generation_valve(&key(), "day:2026-11-19")
+            .unwrap();
+        assert_eq!(valve, json!({"retired": 5, "owned": 2}));
+        let err = store
+            .bump_generation_valve(&key(), "day:x", 0.5)
+            .unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn the_held_reads_match_the_held_row() {
+        let store = store();
+        let mut row = held("h1", "attempts_exhausted");
+        row.input_pin = Some("pin-1".into());
+        store.record_held_generation_row(&key(), &row).unwrap();
+        let rows = store
+            .held_generation_rows_for_input(&key(), "pin-1")
+            .unwrap();
+        assert_eq!(rows[0]["hold_id"], json!("h1"));
+        assert_eq!(
+            store
+                .held_generation_rows_for_input(&key(), "pin-2")
+                .unwrap(),
+            json!([])
+        );
+        let context = store.read_held_generation_context(&key(), "h1").unwrap();
+        assert_eq!(context["held_context"]["slug"], json!("notes/a"));
+        assert_eq!(
+            store.read_held_generation_context(&key(), "h2").unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
+        let store = store();
+        store
+            .write(|tx| {
+                let record = AttemptRecord {
+                    source_id: "default".into(),
+                    kind: "facts_fence".into(),
+                    owner_key: "page:notes/a".into(),
+                    attempts: 1,
+                    codes: vec!["boom".into()],
+                    updated_at_us: 0,
+                };
+                put_json(tx, &attempt_key("a1"), &record)?;
+                tx.put(&attempt_index_key(&record, "a1"), &[])?;
+                let page = keys::page("default", "notes/closed");
+                let page_record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                tx.put(&page, &serde_json::to_vec(&page_record)?)
+            })
+            .unwrap();
+        assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+        let alone = crate::test_support::store();
+        alone
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        alone.bump_generation_valve(&key(), "day:x", 1.0).unwrap();
+        assert_eq!(alone.get_config(FLAG).unwrap(), None);
+    }
+
     #[test]
     fn a_source_delete_removes_its_rows() {
         let store = store();
         store
             .record_held_generation_row(&key(), &held("h1", "no_proof"))
             .unwrap();
+        store
+            .activate_generation_rows(&key(), None, &activation("op1", 1.0), &[owned("x")])
+            .unwrap();
+        store
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        store.bump_generation_valve(&key(), "day:x", 1.0).unwrap();
         store.write(|tx| remove_source_rows(tx, "default")).unwrap();
         let read = store.read().unwrap();
         assert!(

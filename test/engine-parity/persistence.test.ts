@@ -238,6 +238,44 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('a publication counts its failures, reads its replay and adds to its valve window', {
+    methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'heldGenerationRowsForInput', 'readHeldGenerationContext',
+      'liveGenerationForOperation', 'countGenerationAttempt', 'clearGenerationAttempts', 'readGenerationValve', 'bumpGenerationValve'],
+  }, async (engine) => {
+    const key = { sourceId: 'default', kind: 'publish_parity', ownerKey: 'input:parity' };
+    const row = (generation: number, operationId: string) => ({ generation, runId: 'r1', operationId, inputPin: 'pin', inputSize: 4,
+      completeness: '{"complete":true}', setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (itemKey: string, action: string) => ({ item_key: itemKey, identity_hash: itemKey, action, preimage: null, preimage_bytes: null, pending: false });
+    const counts = [];
+    for (const code of ['a', 'b']) counts.push(await engine.transaction(tx => tx.countGenerationAttempt(key, 'hold-1', code)));
+    await engine.transaction(tx => tx.clearGenerationAttempts('hold-1'));
+    counts.push(await engine.transaction(tx => tx.countGenerationAttempt(key, 'hold-1', 'c')));
+    const emptyValve = await engine.readGenerationValve(key, 'run:r1');
+    const noReplay = await engine.liveGenerationForOperation('op-1');
+    const first = await engine.transaction(tx => tx.activateGenerationRows(key, null, row(1, 'op-1'), [item('a', 'published'), item('b', 'published'), item('c', 'retired')]));
+    const replay = await engine.liveGenerationForOperation('op-1');
+    await engine.transaction(tx => tx.activateGenerationRows(key, first, row(2, 'op-2'), [item('a', 'kept')]));
+    const afterSupersede = [await engine.liveGenerationForOperation('op-1'), await engine.liveGenerationForOperation('op-2')];
+    // The activation deleted the key's attempt counter: the next count starts at one.
+    const afterActivation = await engine.transaction(tx => tx.countGenerationAttempt(key, 'hold-1', 'd'));
+    await engine.transaction(tx => tx.bumpGenerationValve(key, 'run:r1', 2));
+    await engine.transaction(tx => tx.bumpGenerationValve(key, 'run:r1', 3));
+    const valve = await engine.readGenerationValve(key, 'run:r1');
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, { holdId: 'hold-x', runId: null, inputPin: 'pin', inputSize: 4, setHash: 'h', reason: 'valve',
+      context: '{"window_retired":5}', proposal: '[]', proposalBytes: 2 }));
+    const held = await engine.heldGenerationRowsForInput(key, 'pin');
+    const otherPin = await engine.heldGenerationRowsForInput(key, 'pin-2');
+    const context = await engine.readHeldGenerationContext(key, 'hold-x');
+    const otherHold = await engine.readHeldGenerationContext(key, 'hold-y');
+    await engine.transaction(tx => tx.clearGenerationAttempts('hold-1'));
+    const answers = { counts, emptyValve, noReplay, replay, afterSupersede, afterActivation, valve, held, otherPin, context, otherHold };
+    expect(answers).toEqual({ counts: [{ attempts: 1, codes: ['a'] }, { attempts: 2, codes: ['a', 'b'] }, { attempts: 1, codes: ['c'] }],
+      emptyValve: { retired: null, owned: 0 }, noReplay: null, replay: 1, afterSupersede: [null, 2], afterActivation: { attempts: 1, codes: ['d'] },
+      valve: { retired: 5, owned: 1 }, held: [{ hold_id: 'hold-x', item_set_hash: 'h', held_reason: 'valve' }], otherPin: [],
+      context: { held_context: { window_retired: 5 } }, otherHold: null });
+    return answers;
+  });
+
   parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
     methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
   }, async (engine) => {

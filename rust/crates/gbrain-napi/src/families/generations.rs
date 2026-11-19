@@ -86,4 +86,96 @@ impl Brain {
             s.clear_fence_hold_rows(&key)
         })
     }
+
+    /// `heldGenerationRowsForInput(key, pin)`: resolves the held rows of that input.
+    #[napi]
+    pub fn held_generation_rows_for_input<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        pin: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "heldGenerationRowsForInput key")?;
+            s.held_generation_rows_for_input(&key, &pin)
+        })
+    }
+
+    /// `readHeldGenerationContext(key, holdId)`: resolves `{ held_context }` or null.
+    #[napi]
+    pub fn read_held_generation_context<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        hold_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "readHeldGenerationContext key")?;
+            s.read_held_generation_context(&key, &hold_id)
+        })
+    }
+
+    /// `liveGenerationForOperation(operationId)`: resolves the generation number or null.
+    #[napi]
+    pub fn live_generation_for_operation<'env>(
+        &self,
+        env: &'env Env,
+        operation_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.live_generation_for_operation(&operation_id))
+    }
+
+    /// `countGenerationAttempt(key, holdId, code)`: resolves `{ attempts, codes }`.
+    #[napi]
+    pub fn count_generation_attempt<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        hold_id: String,
+        code: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "countGenerationAttempt key")?;
+            s.count_generation_attempt(&key, &hold_id, &code)
+        })
+    }
+
+    /// `clearGenerationAttempts(holdId)`: resolves null.
+    #[napi]
+    pub fn clear_generation_attempts<'env>(
+        &self,
+        env: &'env Env,
+        hold_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.clear_generation_attempts(&hold_id))
+    }
+
+    /// `readGenerationValve(key, windowKey)`: resolves `{ retired, owned }`.
+    #[napi]
+    pub fn read_generation_valve<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        window_key: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "readGenerationValve key")?;
+            s.read_generation_valve(&key, &window_key)
+        })
+    }
+
+    /// `bumpGenerationValve(key, windowKey, retired)`: resolves null.
+    #[napi]
+    pub fn bump_generation_valve<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        window_key: String,
+        retired: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "bumpGenerationValve key")?;
+            s.bump_generation_valve(&key, &window_key, retired)
+        })
+    }
 }

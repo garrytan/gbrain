@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine generation-publish follow-ups (filed 2026-11-19)
+
+- [ ] **P3 — rust-generation-files-raw-sql: the other generation files still stop on a Rust brain.** **What:** `publishGeneration` now runs on every engine (`test/rust-generation-publish.test.ts`), but these files still send raw SQL through `executeRaw`, which the Rust engine refuses (`raw_sql`): `src/core/generations/fence-evidence.ts` (4 calls), `src/core/generations/repair.ts` (6), `src/core/generations/fence-restore.ts` (3), `src/core/generations/ledger-scrub.ts` (7) and `src/core/generations/managed.ts` (7), plus the `factPreimages` read of `src/core/generations/adapters/fact-rows.ts`. So on a Rust brain a fence evidence read, `gbrain repair generations`, a fence restore, the ledger scrub and a managed publication stop with a refusal. **Fix:** move each file's statements into engine members (as `src/core/engine-sql/derived-generations.ts` does), with a byte-for-byte PGLite pin, a three-engine walk that fails first on the Rust arm, and the Rust store rows they need. **Effort:** M per file. **Priority:** P3.
+
 ## Rust engine embed-configured follow-ups (filed 2026-11-19)
 
 - [ ] **P3 — rust-init-width-without-model: a Rust brain's setup writes no model row where PGLite refuses.** **What:** the Rust `initSchema` (`src/core/rust-engine/store-members/init-schema.ts`) seeds the `embedding_model` and `embedding_dimensions` config rows as PGLite's schema text does. When the brain stores a width but no known model, the Rust member writes the width row and no model row, while PGLite's `initSchema` throws. A doctor run on such a brain then reports a missing model row on Rust and never gets there on PGLite. **Fix:** decide which answer is right for both engines (refuse on Rust as PGLite does, or let PGLite seed the width alone), then pin it with a case in `test/rust-init-embedding-config.test.ts`. **Effort:** S. **Priority:** P3.
