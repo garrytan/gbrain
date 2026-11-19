@@ -56,6 +56,8 @@ import type { LedgerScrubCounts } from './engine-sql/generation-ledger.ts';
 import type { GenerationActivationRecord, GenerationActivationState, GenerationOrphanRow, PendingGenerationMemberRow } from './engine-sql/generation-activations.ts';
 import type { GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, SourceIncarnationListRow,
   UnmatchedGenerationRow } from './engine-sql/generation-repair.ts';
+import type { FenceVersionBodyRow } from './engine-sql/generation-fence-evidence.ts';
+import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from './engine-sql/generation-fence-restore.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3442,6 +3444,15 @@ export interface BrainEngine {
   readHeldGenerationProposal(id: number): Promise<HeldGenerationProposalRow | null>;
   /** The incarnation of each known source of `sourceIds` as text, in id order (the preview hash of a repair binds it). */
   listSourceIncarnations(sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]>;
+  /** The fence evidence statements of generations/fence-evidence.ts (engine-sql/generation-fence-evidence.ts, #8819). */
+  listRecordedFenceItemKeys(key: GenerationRowKey, itemKeys: readonly string[]): Promise<Array<{ item_key: string }>>;
+  hasBodylessPageVersion(sourceId: string, slug: string): Promise<boolean>;
+  listFenceVersionBodies(sourceId: string, slug: string, before: number | null, limit: number): Promise<FenceVersionBodyRow[]>;
+  moveKeptFactRows(sourceId: string, slug: string, ids: readonly number[], claimed: readonly number[]): Promise<void>;
+  /** The fence restore reads of generations/fence-restore.ts (engine-sql/generation-fence-restore.ts). */
+  readGenerationFenceBlocks(generationIds: readonly number[]): Promise<GenerationFenceBlockRow[]>;
+  listOwnedGenerationItems(generationIds: readonly number[]): Promise<GenerationOwnedItemRow[]>;
+  readLiveGenerationId(key: GenerationRowKey): Promise<{ id: number | string } | null>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */

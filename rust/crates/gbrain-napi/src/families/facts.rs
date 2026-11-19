@@ -239,4 +239,19 @@ impl Brain {
             s.migrate_facts_to_canonical(&phantom_slug, &canonical_slug, &source_id)
         })
     }
+
+    /// `moveKeptFactRows(sourceId, slug, ids, claimed)`: resolves once the claimed rows moved.
+    #[napi]
+    pub fn move_kept_fact_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        ids: Vec<f64>,
+        claimed: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.move_kept_fact_rows(&source_id, &slug, &ids, &claimed)
+        })
+    }
 }

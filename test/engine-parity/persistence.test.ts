@@ -379,6 +379,49 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the facts fence evidence and restore reads: recorded keys, fence versions, the kept row move and the fence blocks', {
+    methods: ['transaction', 'putPage', 'createVersion', 'insertFacts', 'listFactsForPage', 'activateGenerationRows', 'listRecordedFenceItemKeys',
+      'hasBodylessPageVersion', 'listFenceVersionBodies', 'moveKeptFactRows', 'readGenerationFenceBlocks', 'listOwnedGenerationItems', 'readLiveGenerationId'],
+  }, async (engine) => {
+    const slug = 'notes/fence-parity';
+    const key = { sourceId: 'default', kind: 'fact_fence', ownerKey: `page:${slug}` };
+    const row = (generation: number, completeness: string) => ({ generation, runId: null, operationId: `fence-parity-${generation}`, inputPin: 'p', inputSize: 1,
+      completeness, setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (item_key: string, action: string) => ({ item_key, identity_hash: `id-${item_key}`, action, preimage: null, preimage_bytes: null, pending: false });
+    await engine.putPage(slug, { type: 'note', title: 'Fence parity', compiled_truth: 'one <!--- gbrain:facts:begin --> x' });
+    await engine.createVersion(slug, { sourceId: 'default' });
+    await engine.putPage(slug, { type: 'note', title: 'Fence parity', compiled_truth: 'two, no marker' });
+    await engine.createVersion(slug, { sourceId: 'default' });
+    const ids = await engine.transaction(async tx => {
+      const prev = await tx.activateGenerationRows(key, null, row(1, '{"fence":{"body":"B1","timeline":null}}'), [item('row:1', 'published'), item('row:2', 'published')]);
+      const live = await tx.activateGenerationRows(key, prev, row(2, '{}'), [item('row:1', 'kept'), item('row:2', 'retired')]);
+      return { prev, live };
+    });
+    const name = (id: unknown) => Number(id) === ids.live ? 'live' : Number(id) === ids.prev ? 'prev' : 'other';
+    const facts = await engine.insertFacts([1, 2].map(n => ({ fact: `fact ${n}`, kind: 'fact' as const, entity_slug: slug, source: 'test', row_num: n,
+      source_markdown_slug: slug })), { source_id: 'default' });
+    await engine.transaction(tx => tx.moveKeptFactRows('default', slug, facts.ids, [1]));
+    const answers = {
+      recorded: (await engine.listRecordedFenceItemKeys(key, ['row:1', 'row:2', 'row:3'])).map(r => r.item_key).sort(),
+      bodyless: await engine.hasBodylessPageVersion('default', slug),
+      versions: (await engine.listFenceVersionBodies('default', slug, null, 10)).map(r => r.compiled_truth),
+      rows: (await engine.listFactsForPage('default', slug)).map(r => ({ fact: r.fact, row_num: Number(r.row_num) })).sort((x, y) => x.row_num - y.row_num),
+      blocks: (await engine.readGenerationFenceBlocks([ids.live, ids.prev])).map(r => ({ id: name(r.id), fence: r.fence })).sort((x, y) => x.id.localeCompare(y.id)),
+      owned: (await engine.listOwnedGenerationItems([ids.live, ids.prev])).map(r => `${name(r.generation_id)}:${r.item_key}`).sort(),
+      live: name((await engine.readLiveGenerationId(key))?.id),
+    };
+    expect(answers).toEqual({
+      recorded: ['row:1', 'row:2'],
+      bodyless: false,
+      versions: ['one <!--- gbrain:facts:begin --> x'],
+      rows: [{ fact: 'fact 2', row_num: 2 }, { fact: 'fact 1', row_num: 3 }],
+      blocks: [{ id: 'live', fence: null }, { id: 'prev', fence: { body: 'B1', timeline: null } }],
+      owned: ['live:row:1', 'prev:row:1', 'prev:row:2'],
+      live: 'live',
+    });
+    return answers;
+  });
+
   parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
     methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
   }, async (engine) => {

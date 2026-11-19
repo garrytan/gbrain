@@ -31,6 +31,11 @@
 //! - The reads of `gbrain repair generations` add no keys (`generations/repair.rs`, members
 //!   readGenerationItemsByIds, listUnmatchedGenerationRows, listRestorableGenerationRows,
 //!   listHeldGenerationRows and readHeldGenerationProposal).
+//! - The fence evidence reads of `generations/fence-evidence.ts` and the fence restore reads of
+//!   `generations/fence-restore.ts` add no keys (`generations/fence_evidence.rs`, members
+//!   listRecordedFenceItemKeys, hasBodylessPageVersion and listFenceVersionBodies;
+//!   `generations/fence_restore.rs`, members readGenerationFenceBlocks, listOwnedGenerationItems
+//!   and readLiveGenerationId).
 //!
 //! Time: `created_at` and `updated_at` are UTC microseconds from the store's clock; in a
 //! transaction that is the transaction's clock, as Postgres `now()` is the transaction's start.
@@ -57,6 +62,8 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 mod activations;
+mod fence_evidence;
+mod fence_restore;
 mod repair;
 pub use activations::ActivationRecordInput;
 pub use repair::RepairFilter;

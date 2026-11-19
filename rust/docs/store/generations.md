@@ -33,6 +33,13 @@ The key layout is in the module header of `rust/crates/gbrain-store/src/generati
 | `brain.listRestorableGenerationRows(sourceIds, kind, filter)` | `[{ id, source_id, owner_key, generation, prev_id, prev_generation }]`, each live row with each superseded row whose `superseded_by` names it (in any source or kind, as the SQL join does), in id order | `listRestorableGenerationRows` |
 | `brain.listHeldGenerationRows(sourceIds, kind, filter)` | `[{ id, source_id, owner_key, held_reason, hold_id, input_pin, attempts, proposal_bytes, items }]`; `items` is the proposal's length, null without one, and a non-array proposal is `invalid_argument` (as `jsonb_array_length` refuses it) | `listHeldGenerationRows` |
 | `brain.readHeldGenerationProposal(id)` | `{ proposal, hold_id }` of the row while it is held, or `null` | `readHeldGenerationProposal` |
+| `brain.listRecordedFenceItemKeys(key, itemKeys)` | `[{ item_key }]`, each key of `itemKeys` that an item of a generation of `key` not held records with an action other than `retired`, once each, in key order (Postgres sends `SELECT DISTINCT` with no ORDER BY) | `listRecordedFenceItemKeys` |
+| `brain.hasBodylessPageVersion(sourceId, slug)` | whether a stored version of the page has a null `compiled_truth`; `false` for a missing page | `hasBodylessPageVersion` |
+| `brain.listFenceVersionBodies(sourceId, slug, before, limit)` | `[{ id, compiled_truth, timeline }]`, the page's stored versions with a body whose body or timeline holds `gbrain:facts:`, below id `before` when not null, newest first, at most `limit` (a negative limit is `invalid_argument`) | `listFenceVersionBodies` |
+| `brain.moveKeptFactRows(sourceId, slug, ids, claimed)` | `null`. The fact rows of `ids` in the source whose row number is in `claimed` take `top + 1`, `top + 2`, ... in (row number, id) order, `top` the largest row number of page `slug` and of `claimed` (0 when both are empty) | `moveKeptFactRows` |
+| `brain.readGenerationFenceBlocks(ids)` | `[{ id, fence }]` for each generation of `ids` that exists, `fence` the `completeness.fence` value or `null`, in id order (Postgres sends no ORDER BY) | `readGenerationFenceBlocks` |
+| `brain.listOwnedGenerationItems(ids)` | `[{ generation_id, item_key }]` for the items of those generations whose action is not `retired`, in id and item key order (Postgres sends no ORDER BY) | `listOwnedGenerationItems` |
+| `brain.readLiveGenerationId(key)` | `{ id }` of the key's live row, or `null` | `readLiveGenerationId` |
 | `brain.listFenceHoldRows(sourceIds, kinds, ownerKey?)` | the held rows of those sources and kinds (one owner when given), `{ source_id, kind, owner_key, held_reason, held_context, created_at }`, oldest first; `created_at` is Postgres `timestamptz` text | `listFenceHoldRows` |
 | `brain.clearFenceHoldRows(key)` | `null`. Deletes the key's held row when its reason is `fence_absent` or `no_proof` | `clearFenceHoldRows` |
 
@@ -62,6 +69,13 @@ narrows the rows as its SQL fragment does, a row with a null `run_id` never matc
 instant (other text is `invalid_argument`, where Postgres's `::timestamptz` cast accepts more forms; repair.ts always
 passes a concrete ISO instant, `GenerationsSelection.since`). `listSourceIncarnations` is not a store
 method: the TypeScript member reads `readSourceIncarnation` once per distinct id and sorts by id in code-unit order.
+
+The fence evidence and restore reads (`generations/fence_evidence.rs`, `generations/fence_restore.rs`) and the kept row
+move (`facts/kept_rows.rs`) add no keys: they read the ledger rows and items, the page and version records, and the
+fact records. Ids read back as integers. Where the statement has no ORDER BY, the store answers in a fixed order (key
+order, id order); fence-evidence.ts and fence-restore.ts read the rows into sets and maps, so no caller depends on the
+order. As in the statement, the move does not name the page for the moving rows: a claimed row of another page of the
+source moves too (fence-evidence.ts passes the page's own rows).
 
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all five tables (`cascade.rs`).

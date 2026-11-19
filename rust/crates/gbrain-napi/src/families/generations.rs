@@ -358,4 +358,78 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_held_generation_proposal(id))
     }
+
+    /// `listRecordedFenceItemKeys(key, itemKeys)`: resolves the recorded keys of `itemKeys`.
+    #[napi]
+    pub fn list_recorded_fence_item_keys<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        item_keys: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "listRecordedFenceItemKeys key")?;
+            s.list_recorded_fence_item_keys(&key, &item_keys)
+        })
+    }
+
+    /// `hasBodylessPageVersion(sourceId, slug)`: resolves whether a version has no body.
+    #[napi]
+    pub fn has_bodyless_page_version<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_bodyless_page_version(&source_id, &slug))
+    }
+
+    /// `listFenceVersionBodies(sourceId, slug, before, limit)`: resolves one batch of the
+    /// versions that carry a facts fence, newest first.
+    #[napi]
+    pub fn list_fence_version_bodies<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        before: Option<f64>,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_fence_version_bodies(&source_id, &slug, before, limit)
+        })
+    }
+
+    /// `readGenerationFenceBlocks(ids)`: resolves `{ id, fence }` per generation.
+    #[napi]
+    pub fn read_generation_fence_blocks<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_generation_fence_blocks(&ids))
+    }
+
+    /// `listOwnedGenerationItems(ids)`: resolves the items those generations still own.
+    #[napi]
+    pub fn list_owned_generation_items<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_owned_generation_items(&ids))
+    }
+
+    /// `readLiveGenerationId(key)`: resolves `{ id }` of the live generation, or null.
+    #[napi]
+    pub fn read_live_generation_id<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "readLiveGenerationId key")?;
+            s.read_live_generation_id(&key)
+        })
+    }
 }

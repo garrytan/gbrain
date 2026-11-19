@@ -736,6 +736,8 @@ test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
 test/rust-derived-generations.test.ts
 test/rust-fence-generations.test.ts
+test/rust-generation-fence-evidence.test.ts
+test/rust-generation-fence-restore.test.ts
 test/rust-generation-managed.test.ts
 test/rust-generation-publish.test.ts
 test/rust-generation-repair.test.ts

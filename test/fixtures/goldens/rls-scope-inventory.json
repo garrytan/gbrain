@@ -1991,6 +1991,17 @@
         ],
         "flagOnScopes": []
       },
+      "hasBodylessPageVersion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "hasClaimableWrite#default": {
         "flagOffLanes": [
           "pool"
@@ -2562,6 +2573,28 @@
         ],
         "flagOnScopes": []
       },
+      "listFenceVersionBodies#before": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFenceVersionBodies#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFilesForPage#default": {
         "flagOffLanes": [
           "pool"
@@ -2668,6 +2701,17 @@
         ]
       },
       "listLocalPathSources#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listOwnedGenerationItems#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2905,6 +2949,17 @@
         "flagOnScopes": [
           "src-a,src-b"
         ]
+      },
+      "listRecordedFenceItemKeys#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "listReservationsAfter#default": {
         "flagOffLanes": [
@@ -3414,6 +3469,17 @@
         ],
         "flagOnScopes": []
       },
+      "moveKeptFactRows#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "parkEffectRow#default": {
         "flagOffLanes": [
           "pool"
@@ -3646,6 +3712,17 @@
         ],
         "flagOnScopes": []
       },
+      "readGenerationFenceBlocks#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readGenerationItemsByIds#default": {
         "flagOffLanes": [
           "pool"
@@ -3801,6 +3878,17 @@
         "flagOnScopes": []
       },
       "readLedgerSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLiveGenerationId#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5631,6 +5719,7 @@
         "getVersions": "none",
         "getWorktreeBinding": "none",
         "getWriteGateHoldRow": "none",
+        "hasBodylessPageVersion": "none",
         "hasClaimableWrite": "none",
         "hasCodeEdgesSymbol": "none",
         "hasCompanyBrainReceipt": "none",
@@ -5726,6 +5815,7 @@
         "listFenceHoldRows": "none",
         "listFenceRetireCandidates": "none",
         "listFenceRowGroups": "none",
+        "listFenceVersionBodies": "none",
         "listFilesForPage": "none",
         "listFreshExtractionOutcomes": "none",
         "listGatedMirrorRequests": "none",
@@ -5751,6 +5841,7 @@
         "listOpenLoops": "none",
         "listOriginClaims": "none",
         "listOutsideContentFenceCounts": "none",
+        "listOwnedGenerationItems": "none",
         "listOwnedPrivateQueues": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
@@ -5765,6 +5856,7 @@
         "listRecentLeasePressure": "none",
         "listRecentSynthesisCompletions": "none",
         "listRecordMetadataRows": "none",
+        "listRecordedFenceItemKeys": "none",
         "listRelationshipNoteRows": "none",
         "listRelinkCandidateRows": "none",
         "listReservationsAfter": "none",
@@ -5865,6 +5957,7 @@
         "migrateFactsToCanonical": "none",
         "moveChunkIndexes": "none",
         "moveFactWithdrawalSubject": "none",
+        "moveKeptFactRows": "none",
         "nextLivePageAfter": "none",
         "onCheckout": "none",
         "openBodyStaging": "none",
@@ -5928,6 +6021,7 @@
         "readFenceOriginGone": "none",
         "readFieldUsageSamples": "none",
         "readGenerationActivationState": "none",
+        "readGenerationFenceBlocks": "none",
         "readGenerationItemsByIds": "none",
         "readGenerationValve": "none",
         "readGlobalMaintenanceDeaths": "none",
@@ -5951,6 +6045,7 @@
         "readLedgerSource": "none",
         "readLegacyJobAuthority": "none",
         "readLinkRelationshipEvidence": "none",
+        "readLiveGenerationId": "none",
         "readLiveGenerationRow": "none",
         "readLivePageBody": "none",
         "readLocalWriterRow": "none",

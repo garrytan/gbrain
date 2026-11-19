@@ -17,6 +17,8 @@ import type {
   GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, SourceIncarnationListRow,
   UnmatchedGenerationRow,
 } from '../../engine-sql/generation-repair.ts';
+import type { FenceVersionBodyRow } from '../../engine-sql/generation-fence-evidence.ts';
+import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from '../../engine-sql/generation-fence-restore.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The live generation of `key` with its owned items, or null. */
@@ -138,3 +140,35 @@ export const listSourceIncarnations: StoreMember<[sourceIds: readonly string[]],
   }
   return rows;
 };
+
+/** The item keys of `itemKeys` that a generation of `key` not held records without retiring them. */
+export const listRecordedFenceItemKeys: StoreMember<[key: GenerationRowKey, itemKeys: readonly string[]], Array<{ item_key: string }>> =
+  async (brain, key, itemKeys) =>
+    storeCall({ member: 'listRecordedFenceItemKeys', sourceId: key.sourceId }, () => brain.listRecordedFenceItemKeys(key, [...itemKeys]));
+
+/** Whether page `slug` of `sourceId` has a stored version without a body. */
+export const hasBodylessPageVersion: StoreMember<[sourceId: string, slug: string], boolean> = async (brain, sourceId, slug) =>
+  storeCall({ member: 'hasBodylessPageVersion', sourceId }, () => brain.hasBodylessPageVersion(sourceId, slug));
+
+/** Up to `limit` stored versions of the page with a body carrying a facts fence marker, below id `before`, newest first. */
+export const listFenceVersionBodies: StoreMember<[sourceId: string, slug: string, before: number | null, limit: number], FenceVersionBodyRow[]> =
+  async (brain, sourceId, slug, before, limit) =>
+    storeCall({ member: 'listFenceVersionBodies', sourceId }, () => brain.listFenceVersionBodies(sourceId, slug, before, limit));
+
+/** Moves the claimed kept fact rows `ids` to fresh numbers above the page and the claims. */
+export const moveKeptFactRows: StoreMember<[sourceId: string, slug: string, ids: readonly number[], claimed: readonly number[]], void> =
+  async (brain, sourceId, slug, ids, claimed) => {
+    await storeCall({ member: 'moveKeptFactRows', sourceId }, () => brain.moveKeptFactRows(sourceId, slug, [...ids], [...claimed]));
+  };
+
+/** The recorded fence block of each generation of `generationIds`, in id order. */
+export const readGenerationFenceBlocks: StoreMember<[generationIds: readonly number[]], GenerationFenceBlockRow[]> = async (brain, generationIds) =>
+  storeCall({ member: 'readGenerationFenceBlocks' }, () => brain.readGenerationFenceBlocks([...generationIds]));
+
+/** The item keys the generations `generationIds` still own, in id and key order. */
+export const listOwnedGenerationItems: StoreMember<[generationIds: readonly number[]], GenerationOwnedItemRow[]> = async (brain, generationIds) =>
+  storeCall({ member: 'listOwnedGenerationItems' }, () => brain.listOwnedGenerationItems([...generationIds]));
+
+/** The id of the live generation of `key`, or null. */
+export const readLiveGenerationId: StoreMember<[key: GenerationRowKey], { id: number | string } | null> = async (brain, key) =>
+  storeCall({ member: 'readLiveGenerationId', sourceId: key.sourceId }, () => brain.readLiveGenerationId(key));
