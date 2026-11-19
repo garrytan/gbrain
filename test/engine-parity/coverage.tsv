@@ -636,7 +636,7 @@ listTrustScanRows	trust_tier_reads	yes	4	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	4	no	yes	yes	serves
 readTrustScanCursor	trust_tier_reads	yes	3	no	yes	yes	serves
 writeTrustScanCursor	trust_tier_reads	yes	2	no	yes	yes	serves
-listClaimPendingSourceIds	trust_tier_reads	yes	2	no	yes	yes	serves
+listClaimPendingSourceIds	trust_tier_reads	yes	3	no	yes	yes	serves
 readTrustScanCeilings	trust_tier_reads	yes	2	no	yes	yes	serves
 readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves

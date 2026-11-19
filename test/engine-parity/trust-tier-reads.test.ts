@@ -322,6 +322,20 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
+    'listClaimPendingSourceIds orders hyphenated ids by bytes on every engine, whatever the database collation',
+    { methods: ['listClaimPendingSourceIds'] },
+    async (engine, backend) => {
+      const claimed = { trust_tier: OWNER_TIER_FLOOR, [TRUST_CLAIMED_AT_KEY]: '2026-01-01T00:00:00Z' };
+      // A linguistic collation (en_US) skips the hyphen on its first pass, so it puts a1 before a-b-c and coop before
+      // co-op-2. A source id is lowercase (Rust and `gbrain sources add` refuse capitals), so case cannot split the arms.
+      for (const id of ['coop', 'ab', 'a-c', 'co-op-2', 'b', 'a1', 'a-b-c', 'co-op', 'a-1']) await createSource(engine, backend, id, claimed);
+      const pending = await engine.listClaimPendingSourceIds();
+      expect(pending).toEqual(['a-1', 'a-b-c', 'a-c', 'a1', 'ab', 'b', 'co-op', 'co-op-2', 'coop']);
+      return pending;
+    },
+  );
+
+  parityTest(
     'listVersionTrustTiers and listVersionReasonWriters read the snapshot tier and the type and tier of the write that replaced each version',
     { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'createVersion', 'readPageTrustRows', 'listVersionTrustTiers', 'listVersionReasonWriters'] },
     async (engine) => {

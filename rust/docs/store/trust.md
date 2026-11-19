@@ -219,7 +219,7 @@ it stopped, as on PGLite; doctor `trust_scan` reads the same cursor. No new key 
   the same key and value, so `readOpCheckpointKeys`, `writeOpCheckpointKeys` and `purgeStaleCheckpoints` see it as
   they see the Postgres row. The SQL texts are scan.ts's, not those members' (they read child paths and return text).
 - The TypeScript member sends the connector kinds (`CONNECTOR_SOURCE_KINDS`), so the list stays in one place.
-- `ORDER BY s.id` has no `COLLATE "C"`; the store sorts the ids by bytes, as PGLite does. A Postgres database with
-  another collation can order hyphenated ids differently. The order only names the ids in the scan's refusal.
+- The SQL orders by `s.id COLLATE "C"` and the store sorts the ids by bytes, so every engine lists them in one order
+  whatever the database collation. The order only names the ids in the scan's refusal.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` (a scan that stops and resumes; doctor `trust_scan`) on every
   arm, by `tests/trust_scan_state.rs` and by the `persistence::trust_scan_cursor` unit tests.

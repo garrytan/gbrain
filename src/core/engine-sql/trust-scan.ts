@@ -8,7 +8,8 @@
  *   strings, and stamp `updated_at` in the insert. A Rust brain keeps the row under the same store key as those
  *   members (rust/crates/gbrain-store/src/persistence/trust_scan_cursor.rs).
  * - `listClaimPendingSourceIds`: the claimed sources whose lift has not finished (trust/claim-state.ts), which the
- *   scan refuses to run past.
+ *   scan refuses to run past. Ordered by `s.id COLLATE "C"` (bytes): scan.ts ran a bare `ORDER BY s.id`,
+ *   which a database with a linguistic collation (en_US) ordered past hyphens, unlike PGLite and the Rust store.
  * - `readTrustScanCeilings`: each scanned table's max id, the ceiling a first run records when the write gate has no
  *   baseline for the current detector.
  *
@@ -31,7 +32,7 @@ export const READ_TRUST_SCAN_CURSOR_SQL = 'SELECT completed_keys AS keys FROM op
 export const WRITE_TRUST_SCAN_CURSOR_SQL = `INSERT INTO op_checkpoints(op, fingerprint, completed_keys) VALUES ($1, $2, $3::text::jsonb)
     ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()`;
 
-export const LIST_CLAIM_PENDING_SOURCE_IDS_SQL = `SELECT s.id FROM sources s WHERE ${claimPendingSql('s')} ORDER BY s.id`;
+export const LIST_CLAIM_PENDING_SOURCE_IDS_SQL = `SELECT s.id FROM sources s WHERE ${claimPendingSql('s')} ORDER BY s.id COLLATE "C"`;
 
 /** `SELECT max(id) AS n FROM <table>` for one scanned table. */
 export function trustScanCeilingSql(table: TrustScanTable): string {
