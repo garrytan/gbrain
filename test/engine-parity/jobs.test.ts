@@ -295,7 +295,7 @@ describe('engine parity: minion jobs', () => {
       };
     });
 
-  // Options the Rust store does not run yet: PGLite serves them and the Rust arm stops on the typed refusal.
+  // A delegated client's lock and capacity check run in the admission's transaction on every arm, before the insert.
   parityTest('admitJob runs a delegated client\'s lock and capacity check inside the admission',
     { methods: ['admitJob'] }, async (engine) => {
       const seen: Array<number | null> = [];

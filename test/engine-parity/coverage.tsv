@@ -451,7 +451,7 @@ hasOverdueWatchdogSuspect	minion_queue	yes	1	no	yes	yes	serves
 listUnreviewedJobs	minion_queue	yes	1	no	yes	yes	serves
 getFailedJobForRetry	minion_queue	yes	2	no	yes	yes	serves
 countOpenJobsByOwner	minion_queue	yes	2	no	yes	yes	serves
-lockOAuthClient	minion_queue	yes	1	no	yes	yes	refuses:minion_queue
+lockOAuthClient	minion_queue	yes	1	no	yes	yes	serves
 readJobSourceState	minion_queue	yes	1	no	yes	yes	serves
 listJobPage	minion_queue	yes	1	no	yes	yes	serves
 listJobAttachmentNames	minion_queue	yes	3	no	yes	yes	serves

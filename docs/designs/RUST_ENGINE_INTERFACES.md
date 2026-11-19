@@ -1546,16 +1546,12 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     counts and inserts in one write, so no second admission can see the count before the insert. The cases in
     `test/minions-admission.test.ts` stay as they are. Budget reservations (`budget-meter.ts`) and rate leases
     (`rate-leases.ts`) follow the same rule: count, check the cap, write, in one member.
-  - Delegated admission and retry: the refuse-before-write guard. `admitJob` with a delegated client's policy and
-    `retryJob` run the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`) that
-    serves the job reads, `countOpenJobsByOwner` and `readJobSourceState` from the store. When the policy has called
-    `lockOAuthClient`, the handle records it (`handle.locked()`), and the member refuses (`engine_capability_missing`)
-    before it writes anything: the lock, the capacity count and the write are separate store calls, so they are not
-    one admission. The guard stays until admission is one store write. The store keeps no `oauth_clients` or
-    `access_tokens` table, so the policy's grant read refuses the same way, and `lockOAuthClient` called directly
-    refuses too (a lock that locks nothing would hide a missing guarantee). No production caller reaches the engine
-    member on a Rust brain: its one caller, `lockDelegatedSubmission` (`src/core/minions/delegated-admission.ts:38`),
-    runs on the handle above, so the member stays refused.
+  - Delegated admission and retry: one engine transaction. `admitJob` with a delegated client's policy runs the lock,
+    a store probe (`capacityCheck: true`, which answers a coalesce or stops where the capacity check runs and writes
+    nothing), the policy's capacity check and the store admission in one `transaction`, and `retryJob` runs its job
+    read, policy and update in one. The store admits one write transaction at a time, so the policy's count and the
+    insert are one admission. `lockOAuthClient` resolves with nothing to do: inside a transaction the store's single
+    writer holds what the row lock holds.
   - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
     `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
     `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same

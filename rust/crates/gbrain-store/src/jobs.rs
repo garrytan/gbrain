@@ -522,6 +522,11 @@ pub struct AdmitSpec {
     #[serde(default)]
     pub backpressure: Option<Backpressure>,
     pub max_spawn_depth: i64,
+    /// Stop after the idempotency and parameter coalesce and answer `capacity` with nothing written,
+    /// so a caller can run a delegated client's capacity check at the place the SQL engines run it
+    /// (after the coalesce, before the quota), then admit again in the same transaction.
+    #[serde(default)]
+    pub capacity_check: bool,
 }
 
 /// What `admit_job` did. `conflict` means an existing row is held under another submission
@@ -902,6 +907,8 @@ fn decide(row: &JobRecord, caller: Option<&Value>) -> Decision {
 enum Step {
     Done(AdmitOutcome),
     Conflict(Value),
+    /// `capacity_check`: no coalesce answered, and the caller's capacity check runs next.
+    Capacity,
 }
 
 impl Store {
@@ -931,26 +938,41 @@ impl Store {
             "admitJob private_queue_lease_until",
             &v.private_queue_lease_until,
         )?;
-        let mut tx = self.kv.begin_write()?;
-        let now = self.env.now_micros();
-        match admit_in(
-            &mut *tx,
-            spec,
-            authority.as_ref(),
-            spend,
-            (delay_until, lease_until),
-            now,
-        )? {
-            Step::Done(outcome) => {
-                tx.commit()?;
-                Ok(outcome)
-            }
-            // Nothing written is kept: a key released before the conflict stays held.
-            Step::Conflict(row) => Ok(AdmitOutcome {
-                outcome: "conflict",
-                row,
-                audit: None,
-            }),
+        // A conflict or a capacity stop keeps nothing: the statement is dropped (rolled back on its
+        // own, or a statement of the open transaction on a bound store), and the outcome is answered.
+        let mut undone: Option<AdmitOutcome> = None;
+        let result = self.write(|tx| {
+            let now = self.env.now_micros();
+            let stop = match admit_in(
+                tx,
+                spec,
+                authority.as_ref(),
+                spend,
+                (delay_until, lease_until),
+                now,
+            )? {
+                Step::Done(outcome) => return Ok(outcome),
+                // A key released before the conflict stays held.
+                Step::Conflict(row) => AdmitOutcome {
+                    outcome: "conflict",
+                    row,
+                    audit: None,
+                },
+                // The caller admits again after its check.
+                Step::Capacity => AdmitOutcome {
+                    outcome: "capacity",
+                    row: Value::Null,
+                    audit: None,
+                },
+            };
+            undone = Some(stop);
+            Err(StoreError::invalid(
+                "admitJob: the admission stopped and keeps nothing",
+            ))
+        });
+        match (result, undone) {
+            (Ok(outcome), _) | (Err(_), Some(outcome)) => Ok(outcome),
+            (Err(error), None) => Err(error),
         }
     }
 
@@ -1680,6 +1702,9 @@ fn admit_in(
                 _ => Ok(Step::Conflict(m.to_json())),
             };
         }
+    }
+    if spec.capacity_check {
+        return Ok(Step::Capacity);
     }
     // Name quota (every queue).
     if let Some(max) = spec.quota_max_waiting {
