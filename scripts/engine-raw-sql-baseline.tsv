@@ -612,7 +612,7 @@ src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
 src/core/page-body/tail-digest.ts	execute_raw	1
-src/core/page-embedding-budget.ts	execute_raw	13
+src/core/page-embedding-budget.ts	execute_raw	6
 src/core/page-embedding-lease.ts	execute_raw	1
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4

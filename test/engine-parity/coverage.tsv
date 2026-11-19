@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 670/670
+# covered: 675/675
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -15,7 +15,7 @@
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 37/37
+# chunks: 42/42
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -75,11 +75,11 @@ transaction	lifecycle	yes	53	no	yes	yes	serves
 transactionDirect	lifecycle	yes	9	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	73	yes	yes	yes	serves
+getPage	pages	yes	77	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	300	yes	yes	yes	serves
+putPage	pages	yes	304	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -194,6 +194,11 @@ setChunkerVersion	chunks	yes	9	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
+readPageEmbeddingBudget	chunks	yes	4	no	yes	yes	serves
+recordPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
+openPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
+reservePageEmbedding	chunks	yes	4	no	yes	yes	serves
+settlePageEmbeddingReservation	chunks	yes	1	no	yes	yes	serves
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves

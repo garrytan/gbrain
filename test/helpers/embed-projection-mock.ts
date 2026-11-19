@@ -26,6 +26,10 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     renewPageEmbeddingLease: async () => true,
     releasePageEmbeddingLease: async () => undefined,
     transaction: async (run: (tx: BrainEngine) => Promise<unknown>) => run(engine),
+    // The page embedding ledger (page-embedding-budget.ts) has no row and no hold marker: every page is unmetered.
+    readPageEmbeddingBudget: async () => ({ marker: null, state: null, reason: null, embedding_signature: null, spent_usd: null,
+      reserved_usd: null, cap_usd: null, unpriced_calls: null, reservation_window: null }),
+    reservePageEmbedding: async () => ({ kind: 'unmetered' }),
     readPageSnapshot: async (slug: string, opts?: { sourceId?: string }) => {
       const page = overrides.getPage ? await overrides.getPage(slug, opts) : { slug, compiled_truth: 'Fixture body', timeline: '' };
       if (!page) return null;

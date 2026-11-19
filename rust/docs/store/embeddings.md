@@ -21,6 +21,8 @@ Tag `B` (`keys::EMBEDDING_STATE`); ids are u64 BE, chunk indexes u32 BE.
   transaction.
 - `B 's' <page id>` holds the page's embedding signature (`pages.embedding_signature`), UTF-8.
 - `B 'k' <take id>` holds the take's `claim_rev` at the time its vector was written (u64 BE).
+- `B 'b' <page id>` holds the page's embedding ledger row (`page_embedding_budget`), JSON. It goes with the
+  page when the page is deleted for good.
 
 A vector value is: version u8 (1), dims u32 BE, `embedded_at` µs i64 BE, model length u16 BE, the model in
 UTF-8, then dims f32 values, little-endian.
@@ -78,12 +80,32 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | `brain.getTakeEmbeddings(ids)` | `[{ id, embedding }]` for takes with a current vector | `getTakeEmbeddings` |
 | `brain.countStaleTakes(opts)` / `brain.listStaleTakes(opts)` | active takes on live pages with no current vector, or one of another model or width; the list is by id, at most 100000 | `countStaleTakes`, `listStaleTakes` |
 
+## Page embedding ledger
+
+The paid path meters each page's embedding spend on one ledger row (`gbrain_store::page_embedding_budget`;
+the policy is `src/core/page-embedding-budget.ts`, the SQL copy `src/core/engine-sql/page-embedding-budget.ts`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readPageEmbeddingBudget(pageId)` | the hold marker (`transcript_archive.embedding_hold`, else `call_import.embedding_hold`) and the row's state, reason, signature, spent, reserved, cap, unpriced count and reservation window; all null for a missing page | the plan's hold read |
+| `brain.recordPageEmbeddingHold(pageId, reason)` | a held row for a page with no row; a page with a row keeps it | `INSERT ... ON CONFLICT DO NOTHING` |
+| `brain.openPageEmbeddingHold(pageId)` | opens the row; no row is a no-op | the small-page approval |
+| `brain.reservePageEmbedding(pageId, input)` | `held`, `needs_junk` (an open, unapproved page with no junk verdict yet) or a `grant` of the newest chunks that fit the cap | the grant transaction |
+| `brain.settlePageEmbeddingReservation(pageId, settle)` | books the spend and drops the hold, only while the grant's window is still open | `settleLedgerReservation` |
+
+The grant is one store write, so it needs no row lock. A reservation older than an hour counts as spent.
+A new signature starts a new ledger. A window is `reserved_at` in microseconds; a new window is at least one
+millisecond later than the one it replaces. An unlimited cap crosses the addon as `null`.
+
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
 stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 
 ## Known edges
 
-- The page-embedding budget (`budgetLimited`) is not kept: no page leaves the stale queue for it.
+- The stale queue keeps a held or capped page (`budgetLimited` is not kept). The plan then refuses the page
+  from its ledger row, so no money is spent on it, but each embedding run lists it again.
+- `reservePageSpend`'s embedding branch, `listBudgetLimitedPages`, `readPageSizeStates` and
+  `holdPageEmbedding` are still raw SQL, so a Rust brain refuses them (`engine_capability_missing`).
 - PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
   (`visible_at`).
 - A segmented page counts as having no chunkless content.
