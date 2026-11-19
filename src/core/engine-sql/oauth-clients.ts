@@ -182,10 +182,16 @@ export interface OauthClientPatch {
   surface_set_by?: string | null;
 }
 
-/** Which client rows a patch may touch: `live` skips a deleted client; `unless_surface_set_by` skips a client whose `surface_set_by` is that value (NULL is not equal to it). */
+/**
+ * Which client rows a patch may touch: `live` skips a deleted client; `unless_surface_set_by` skips a client whose
+ * `surface_set_by` is that value (NULL is not equal to it); `client_secret_hash_is` touches the client only while its
+ * secret hash is still that value (a compare-and-set, so a caller that read the hash and lost a race to another writer
+ * changes nothing).
+ */
 export interface OauthClientPatchGuard {
   live?: boolean;
   unless_surface_set_by?: string;
+  client_secret_hash_is?: string;
 }
 
 /** The five patchable columns, as they were before the patch. */
@@ -217,12 +223,13 @@ export async function patchOauthClient(
        surface_set_by = CASE WHEN $11::boolean THEN $12::text ELSE c.surface_set_by END
      FROM prior
      WHERE c.client_id = prior.client_id AND ($13::text IS NULL OR prior.surface_set_by IS DISTINCT FROM $13::text)
+       AND ($14::text IS NULL OR prior.client_secret_hash = $14::text)
      RETURNING c.*, prior.client_secret_hash AS prior_client_secret_hash, prior.token_ttl AS prior_token_ttl,
        prior.min_trust AS prior_min_trust, prior.surface AS prior_surface, prior.surface_set_by AS prior_surface_set_by`,
     [clientId, guard.live === true,
       has('client_secret_hash'), patch.client_secret_hash ?? null, has('token_ttl'), patch.token_ttl ?? null,
       has('min_trust'), patch.min_trust ?? null, has('surface'), patch.surface ?? null,
-      has('surface_set_by'), patch.surface_set_by ?? null, guard.unless_surface_set_by ?? null]);
+      has('surface_set_by'), patch.surface_set_by ?? null, guard.unless_surface_set_by ?? null, guard.client_secret_hash_is ?? null]);
   const found = rows[0];
   if (!found) return null;
   const row: Record<string, unknown> = {};

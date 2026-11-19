@@ -240,8 +240,8 @@ fn a_patch_guard_leaves_an_excluded_client_alone_and_a_refused_value_leaves_the_
         json!({ "surface": "full", "surface_set_by": "self" }),
     );
     let unless = ClientPatchGuard {
-        live: false,
         unless_surface_set_by: Some("operator".into()),
+        ..Default::default()
     };
     assert!(
         b.patch_oauth_client("pinned", &set, &unless)
@@ -260,7 +260,7 @@ fn a_patch_guard_leaves_an_excluded_client_alone_and_a_refused_value_leaves_the_
     );
     let live = ClientPatchGuard {
         live: true,
-        unless_surface_set_by: None,
+        ..Default::default()
     };
     assert!(b.patch_oauth_client("gone", &set, &live).unwrap().is_none());
     assert!(
@@ -283,4 +283,71 @@ fn a_patch_guard_leaves_an_excluded_client_alone_and_a_refused_value_leaves_the_
         b.read_oauth_client("unpinned").unwrap().unwrap()["min_trust"],
         Value::Null
     );
+}
+
+#[test]
+fn a_secret_patch_that_names_the_hash_it_read_writes_only_while_the_hash_is_still_that() {
+    let b = brain("oauth-patch-cas");
+    insert(
+        &b,
+        json!({ "client_id": "c", "client_name": "c", "client_secret_hash": "h0" }),
+    )
+    .unwrap();
+    insert(&b, json!({ "client_id": "public", "client_name": "p" })).unwrap();
+    fn is(h: &str) -> ClientPatchGuard {
+        ClientPatchGuard {
+            client_secret_hash_is: Some(h.into()),
+            ..Default::default()
+        }
+    }
+    fn set(h: &str) -> ClientPatch {
+        patch(&["client_secret_hash"], json!({ "client_secret_hash": h }))
+    }
+    // A stale read changes nothing; a current read writes and reports the hash it replaced.
+    assert!(
+        b.patch_oauth_client("c", &set("h9"), &is("old"))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        b.read_oauth_client("c").unwrap().unwrap()["client_secret_hash"],
+        "h0"
+    );
+    let done = b
+        .patch_oauth_client("c", &set("h1"), &is("h0"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["before"]["client_secret_hash"], "h0");
+    assert_eq!(done["row"]["client_secret_hash"], "h1");
+    assert!(
+        b.patch_oauth_client("c", &set("h2"), &is("h0"))
+            .unwrap()
+            .is_none()
+    );
+    // A client with no secret is never equal to a hash.
+    assert!(
+        b.patch_oauth_client("public", &set("h3"), &is(""))
+            .unwrap()
+            .is_none()
+    );
+    assert!(b.read_oauth_client("public").unwrap().unwrap()["client_secret_hash"].is_null());
+    // Eight callers that read the same hash at once: one write wins, the rest are told nothing changed.
+    let store = &b.store;
+    let wins: usize = std::thread::scope(|s| {
+        let callers: Vec<_> = (0..8)
+            .map(|i| {
+                s.spawn(move || {
+                    store
+                        .patch_oauth_client("c", &set(&format!("w{i}")), &is("h1"))
+                        .unwrap()
+                        .is_some()
+                })
+            })
+            .collect();
+        callers
+            .into_iter()
+            .map(|h| usize::from(h.join().unwrap()))
+            .sum()
+    });
+    assert_eq!(wins, 1);
 }

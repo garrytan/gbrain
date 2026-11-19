@@ -25,9 +25,11 @@
  *  - Seam: none. Real engines, typed methods only; the sources a row names are made by the harness fixture. The row's
  *    own clock (`created_at`) is compared as a Date when given and as present when defaulted.
  */
-import { describe } from 'bun:test';
+import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OauthClientInsert } from '../../src/core/engine-sql/oauth-clients.ts';
+import { rotateClientSecret } from '../../src/commands/agent-register.ts';
+import { hashToken } from '../../src/core/utils.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -186,5 +188,26 @@ describe('engine parity: oauth_clients rows and constraints', () => {
       out.afterBad = await seen('a');
       return out;
     });
-});
 
+  parityTest('two concurrent secret rotations of one client: exactly one wins, the other gets the same error, and the winner\'s secret is the one kept',
+    { methods: ['insertOauthClient', 'readOauthClient', 'patchOauthClient'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'rot', client_name: 'rot', client_secret_hash: 'h0', grant_types: ['client_credentials'] });
+      const settled = await Promise.allSettled([rotateClientSecret(engine, 'rot', 'h0'), rotateClientSecret(engine, 'rot', 'h0')]);
+      const won = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
+      const lost = settled.flatMap(r => (r.status === 'rejected' ? [r.reason as { reason?: unknown; message?: unknown }] : []));
+      expect(won.length).toBe(1);
+      expect(lost.length).toBe(1);
+      const kept = (await engine.readOauthClient('rot'))?.client_secret_hash;
+      const failure = async (run: () => Promise<unknown>) => run().then(() => null, (e: { reason?: unknown; message?: unknown }) => ({ reason: e.reason, message: e.message }));
+      // A reissue that read a secret which has since been replaced, one for a client that is not there, and one that read the secret that is current.
+      const stale = await failure(() => rotateClientSecret(engine, 'rot', 'h0'));
+      const absent = await failure(() => rotateClientSecret(engine, 'nope', 'h0'));
+      const fresh = await rotateClientSecret(engine, 'rot', kept!);
+      return {
+        winners: won.length,
+        losers: lost.map(e => ({ reason: e.reason, message: e.message })),
+        keptIsWinners: won.length === 1 && kept === hashToken(won[0]!),
+        stale, absent, freshIsKept: (await engine.readOauthClient('rot'))?.client_secret_hash === hashToken(fresh),
+      };
+    });
+});

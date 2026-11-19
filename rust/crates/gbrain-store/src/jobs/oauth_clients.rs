@@ -427,13 +427,18 @@ pub struct ClientPatch {
 }
 
 /// The rows a patch may touch: `live` skips a deleted client, `unless_surface_set_by` skips a client whose
-/// `surface_set_by` is that value (a NULL `surface_set_by` is not equal to it, as `IS DISTINCT FROM`).
+/// `surface_set_by` is that value (a NULL `surface_set_by` is not equal to it, as `IS DISTINCT FROM`),
+/// `client_secret_hash_is` skips a client whose secret hash is not that value (a NULL hash is never equal to it).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ClientPatchGuard {
     #[serde(default)]
     pub live: bool,
     #[serde(default)]
     pub unless_surface_set_by: Option<String>,
+    /// Touch the client only while its secret hash is this value (a compare-and-set: the read, the check and the
+    /// write are one store write, so of two callers that read the same hash exactly one writes).
+    #[serde(default)]
+    pub client_secret_hash_is: Option<String>,
 }
 
 impl Store {
@@ -455,6 +460,11 @@ impl Store {
             }
             if let Some(held) = &guard.unless_surface_set_by
                 && record.surface_set_by.as_deref() == Some(held.as_str())
+            {
+                return Ok(None);
+            }
+            if let Some(expected) = &guard.client_secret_hash_is
+                && record.client_secret_hash.as_deref() != Some(expected.as_str())
             {
                 return Ok(None);
             }

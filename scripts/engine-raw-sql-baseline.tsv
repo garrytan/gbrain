@@ -10,7 +10,7 @@ src/commands/access-rules.ts	execute_raw	4
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	5
 src/commands/agent-logs.ts	execute_raw	1
-src/commands/agent-register.ts	execute_raw	3
+src/commands/agent-register.ts	execute_raw	2
 src/commands/agent-register.ts	sql_template	7
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-client-rows.ts	execute_raw	6
