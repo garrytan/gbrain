@@ -1,0 +1,127 @@
+name: Rust CLI parity
+
+# Runs test/rust-cli-parity.serial.test.ts on Linux against a freshly built Rust addon: each
+# read command, and `put`, runs through the real CLI on a PGLite brain and on a Rust brain. A
+# command that answers the same, is refused with a typed refusal, or has no Rust engine passes;
+# a diverged command fails. GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error
+# instead of a skip.
+#
+# Why a separate workflow: Rust engine lane branches (rust-engine/**) reach rust-engine/main
+# through the trunk, not through pull requests, and rust-engine.yml runs only on pull requests
+# and on pushes to master. So no lane head ran the CLI parity test, and a lane head that left a
+# Rust `put` queued forever got a green Test run. This workflow runs on every push to a lane
+# branch and on every pull request whose files can change what the CLI does on a Rust brain.
+# The path list is broad on purpose (all of src/**): narrower lists are what missed it.
+#
+# Advisory: not a required check. rust-engine.yml keeps its own CLI parity step, which covers
+# pushes to master and the macOS cell.
+#
+# Event parity (docs/TESTING.md#event-parity): push to a lane branch, pull request and
+# workflow_dispatch run the same job with the same steps. Master pushes are covered by
+# rust-engine.yml's addon job. The two path lists are identical (test/scripts/rust-cli-parity-workflow.test.ts).
+
+on:
+  push:
+    branches: ['rust-engine/**']
+    paths:
+      - 'src/**'
+      - 'rust/**'
+      - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/fixtures/rust-cli-parity-brain/**'
+      - 'test/helpers/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - 'tsconfig.json'
+      - 'scripts/ci-bun-install.ts'
+      - 'scripts/ci-bounded-run.ts'
+      - '.github/workflows/rust-cli-parity.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'rust/**'
+      - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/fixtures/rust-cli-parity-brain/**'
+      - 'test/helpers/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - 'tsconfig.json'
+      - 'scripts/ci-bun-install.ts'
+      - 'scripts/ci-bounded-run.ts'
+      - '.github/workflows/rust-cli-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  cli-parity:
+    name: CLI parity on a Rust brain against PGLite (linux-x64-glibc)
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # rustup reads the pinned version from rust/rust-toolchain.toml. A runner without rustup
+      # fails here rather than piping an installer into sh.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+          rustc --version
+          cargo --version
+      # Same cache family as rust-engine.yml's Linux addon cell. The name is built in a step so the
+      # cache key line holds no long literal value.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-addon-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the addon
+        timeout-minutes: 15
+        run: bun run rust:build
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      - name: CLI parity on a Rust brain against PGLite (no diverged command)
+        timeout-minutes: 15
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=60000 test/rust-cli-parity.serial.test.ts
