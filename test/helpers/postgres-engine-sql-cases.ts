@@ -578,6 +578,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal, 'listFenceHoldRows': OOS.journal,
+  'readFenceOriginGone': OOS.journal, 'lockGenerationKey': OOS.journal, 'clearFenceHoldRows': OOS.journal, 'readFenceHoldFiles': OOS.journal,
   'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
   'insertPublicationEffects': OOS.journal,
@@ -1331,6 +1332,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['all', (e) => e.listFenceHoldRows([SRC], ['fact_fence', 'take_fence'])],
     ['owner', (e) => e.listFenceHoldRows([SRC], ['fact_fence', 'take_fence'], 'page:people/alice-example')],
   ]),
+  ...variants('readFenceOriginGone', [['default', (e) => e.readFenceOriginGone(SRC, SLUG)]]),
+  ...variants('lockGenerationKey', [['default', (e) => e.transaction((tx: any) => tx.lockGenerationKey('fact_fence:default:page:people/alice-example'))]]),
+  ...variants('clearFenceHoldRows', [['default', (e) => e.transaction((tx: any) => tx.clearFenceHoldRows({ sourceId: SRC, kind: 'fact_fence', ownerKey: 'page:people/alice-example' }))]]),
+  ...variants('readFenceHoldFiles', [['default', (e) => e.readFenceHoldFiles([SRC], [SLUG])]]),
   ...variants('readWriteRequest', [['default', (e) => e.readWriteRequest('local_cli', 'writer-1', JOURNAL_REQUEST)]]),
   ...variants('readWriteRequestById', [['default', (e) => e.readWriteRequestById(JOURNAL_REQUEST)]]),
   ...variants('lockPersistenceCounters', [['default', (e) => e.transaction((tx: any) => tx.lockPersistenceCounters(JOURNAL_KEYS))]]),

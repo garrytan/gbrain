@@ -21,6 +21,8 @@ import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { fenceHoldEntries, fenceReadOf } from '../../src/core/generations/fence.ts';
+import { projectFactFenceGeneration } from '../../src/core/generations/adapters/fact-rows.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
@@ -153,6 +155,70 @@ describe('engine parity: write journal', () => {
     const answers = { everyOwner, oneOwner, noSources };
     expect(answers).toEqual({ everyOwner: [], oneOwner: [], noSources: [] });
     return answers;
+  });
+
+  parityTest('a fence publish reads its page and the held list reads its pages\' files', {
+    methods: ['putPage', 'softDeletePage', 'readFenceOriginGone', 'readFenceHoldFiles'],
+  }, async (engine) => {
+    await engine.putPage('notes/filed', { type: 'note', title: 'Filed', compiled_truth: 'filed body', source_path: 'notes/filed.md' });
+    await engine.putPage('notes/blank-path', { type: 'note', title: 'Blank', compiled_truth: 'blank body', source_path: '  ' });
+    await engine.putPage('notes/db-only', { type: 'note', title: 'Db only', compiled_truth: 'db body' });
+    await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'gone body', source_path: 'notes/gone.md' });
+    await engine.softDeletePage('notes/gone');
+    const origin = {
+      live: await engine.readFenceOriginGone('default', 'notes/filed'),
+      deleted: await engine.readFenceOriginGone('default', 'notes/gone'),
+      missing: await engine.readFenceOriginGone('default', 'notes/never'),
+      otherSource: await engine.readFenceOriginGone('other', 'notes/filed'),
+    };
+    const files = (await engine.readFenceHoldFiles(['default', 'other'], ['notes/filed', 'notes/blank-path', 'notes/db-only', 'notes/gone', 'notes/never']))
+      .map(row => ({ ...row })).sort((a, b) => `${a.source_id}/${a.slug}`.localeCompare(`${b.source_id}/${b.slug}`));
+    const answers = { origin, files, none: await engine.readFenceHoldFiles([], []) };
+    expect(answers).toEqual({
+      origin: { live: false, deleted: true, missing: true, otherSource: true },
+      files: [
+        { source_id: 'default', slug: 'notes/blank-path', database_only: true },
+        { source_id: 'default', slug: 'notes/db-only', database_only: true },
+        { source_id: 'default', slug: 'notes/filed', database_only: false },
+      ],
+      none: [],
+    });
+    return answers;
+  });
+
+  parityTest('gbrain get and doctor list no held fence result on a brain with none', {
+    methods: ['putPage', 'listFenceHoldRows'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'alice body' });
+    // `gbrain get` lists one page's holds; doctor's generation_held check lists every source's.
+    const answers = { get: await fenceHoldEntries(engine, ['default'], { slug: 'people/alice-example' }), doctor: await fenceHoldEntries(engine, ['default', 'other']) };
+    expect(answers).toEqual({ get: [], doctor: [] });
+    return answers;
+  });
+
+  parityTest('a readable fence clears its page\'s hold under the generation key lock', {
+    methods: ['transaction', 'lockGenerationKey', 'clearFenceHoldRows', 'listFenceHoldRows'],
+  }, async (engine) => {
+    const key = { sourceId: 'default', kind: 'fact_fence', ownerKey: 'page:people/alice-example' };
+    const held = await engine.transaction(async tx => {
+      await tx.lockGenerationKey('fact_fence:default:page:people/alice-example');
+      await tx.clearFenceHoldRows(key);
+      return tx.listFenceHoldRows(['default'], ['fact_fence', 'take_fence'], key.ownerKey);
+    });
+    expect(held).toEqual([]);
+    return held;
+  });
+
+  parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
+    methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'alice body' });
+    // The forget's page publication reprojects the fence (persistence/canonical-projections.ts) with the rows it still holds.
+    const rows = [{ row_num: 1, fact: 'Alice keeps bees', visibility: 'world' }];
+    const outcome = await engine.transaction(tx => projectFactFenceGeneration(tx, { sourceId: 'default', slug: 'people/alice-example',
+      read: fenceReadOf({ body: '## Facts block', timeline: null }), incoming: JSON.stringify(rows), rows, writer: 'projection' }));
+    expect(outcome).toMatchObject({ state: 'published', generation: 1, retiring: 0 });
+    return outcome;
   });
 
   parityTest('one request is admitted, read, claimed, locked and completed, and its counters are charged then released', {
