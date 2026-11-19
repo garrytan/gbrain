@@ -96,6 +96,16 @@
           }
         ]
       },
+      "listSourceIds": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id",
+            "textSha256": "7e856b330d2fb81894fb9cd8df8b8a79fc5bbbab1f5c03694ddf378db0671551"
+          }
+        ]
+      },
       "listSourceLocalPaths": {
         "default": [
           {

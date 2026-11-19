@@ -1430,6 +1430,8 @@ export interface BrainEngine {
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
   /** Live sources last synced more than seven days ago by the database clock, by id (engine-sql/sources.ts). */
   listStaleSyncSourceIds(): Promise<string[]>;
+  /** Every source id, archived sources included, by id (engine-sql/sources.ts). */
+  listSourceIds(): Promise<string[]>;
   /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
   readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
@@ -1668,6 +1670,8 @@ export interface BrainEngine {
   readReferrerRecordCandidates(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
     scope: LinkTemporalSql.ReferrerRecordCandidateScope): Promise<LinkTemporalSql.ReferrerRecordCandidateRow[]>;
   readReferrerRecordPages(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerRecordPageRow[]>;
+  /** The canonical and stored types among an entity's referrers (the unknown-type error of get_backlinks). */
+  readReferrerTypes(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerTypeScope): Promise<LinkTemporalSql.ReferrerTypeRow[]>;
   /** reindex-search-vector's steps (SQL in engine-sql/search-vector.ts and search-vector-backfill.ts). */
   countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
   replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string): Promise<void>;

@@ -148,6 +148,7 @@ export const RUST_ENGINE_MEMBERS = {
   listSourceRoutingRows: 'sources',
   countDefaultSourceSplit: 'sources',
   listStaleSyncSourceIds: 'sources',
+  listSourceIds: 'sources',
   readSourceRow: 'sources',
   lockSourceRow: 'sources',
   countSourcePages: 'sources',
@@ -326,6 +327,7 @@ export const RUST_ENGINE_MEMBERS = {
   readReferrerRows: 'links',
   readReferrerRecordCandidates: 'links',
   readReferrerRecordPages: 'links',
+  readReferrerTypes: 'links',
   // reindex-search-vector's steps (engine-sql/search-vector.ts): no-ops under the store's one language
   countSearchVectorRows: 'keyword_search',
   replaceSearchVectorTriggerFunction: 'keyword_search',

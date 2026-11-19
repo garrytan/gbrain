@@ -29,7 +29,6 @@ import { stripFactsFence } from '../facts-fence.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { typeAliasPairs, type PackTypes } from './policy.ts';
 import { isQuarantined } from '../quarantine.ts';
-import { referrersCte } from './referrers-sql.ts';
 import { trustFields, type TrustFields } from '../eligibility/labels.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 
@@ -128,9 +127,9 @@ export function decodeCursor(cursor: string): [string | null, string, string] | 
 export async function referrerTypes(engine: BrainEngine, scope: ReferrerScope): Promise<string[]> {
   const t = await targetPages(engine, scope);
   const pairs = typeAliasPairs(scope.pack);
-  const rows = await engine.executeRaw<{ canonical_type: string; type: string | null }>(
-    `${referrersCte(scope)} SELECT DISTINCT canonical_type, type FROM typed`,
-    [t.sources, t.slugs, scope.referrerSources, pairs.stored, pairs.canonical]);
+  // engine-sql/link-temporal.ts readReferrerTypes
+  const rows = await engine.readReferrerTypes(t, { referrerSources: scope.referrerSources, storedTypes: pairs.stored,
+    canonicalTypes: pairs.canonical, excludePrivate: scope.excludePrivate, eligibility: scope.eligibility, includeQuarantined: scope.includeQuarantined });
   return [...new Set(rows.flatMap(r => [r.canonical_type, ...(r.type ? [r.type] : [])]))].sort();
 }
 

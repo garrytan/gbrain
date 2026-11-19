@@ -276,6 +276,9 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listSourceIds#default": {
+      "raw": 1
+    },
     "listSourceLocalPaths#default": {},
     "listSourceRoutingRows#default": {
       "raw": 1

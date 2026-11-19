@@ -194,4 +194,26 @@ describe('engine parity: referrer page and record reads', () => {
       return out;
     },
   );
+  parityTest(
+    'with no source in scope, get_backlinks reads every source, accepts a type a referrer has, and filters array mode by type',
+    { methods: ['putPage', 'softDeletePage', 'addLinksBatch', 'listSourceIds', 'readReferrerTypes', 'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows'] },
+    async (engine: BrainEngine, backend) => {
+      await seed(engine, backend);
+      const op = operations.find(o => o.name === 'get_backlinks')!;
+      const notices: Notice[] = [];
+      const ctx = { ...ctxFor(engine, notices), sourceId: undefined } as OperationContext;
+      const slugs = (rows: Array<{ slug?: string; from_slug?: string }>) => rows.map(r => r.slug ?? r.from_slug);
+      // `note` is no pack type, so the referrers' observed types (readReferrerTypes) accept it.
+      const notes = await op.handler(ctx, { slug: ACME, group: 'page', type: 'note' }) as { rows: Row[]; total: number };
+      const meetings = await op.handler(ctx, { slug: ACME, type: 'meeting' }) as Array<{ from_slug: string }>;
+      const bogus = await op.handler(ctx, { slug: ACME, group: 'page', type: 'nonsense-type' }).then(() => 'accepted', (e: Error) => e.message);
+      const out = { notes: { slugs: slugs(notes.rows), sources: notes.rows.map(r => r.source_id), total: notes.total },
+        meetings: slugs(meetings).sort(), bogus, notices: notices.map(n => n.code) };
+      expect(out.notes).toEqual({ slugs: ['notes/elsewhere', 'notes/secret', 'notes/a-tie', 'notes/b-tie'],
+        sources: ['other', 'default', 'default', 'default'], total: 4 });
+      expect(out.meetings).toEqual(['meetings/kickoff', 'meetings/review']);
+      expect(out.bogus).toContain('nonsense-type');
+      return out;
+    },
+  );
 });
