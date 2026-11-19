@@ -285,7 +285,11 @@ export async function recordSyncerHost(engine: Exec, sourceId: string, hostId: s
  * Called where a sync advances a source's last_commit (sync-anchor.ts writeSyncAnchor): records this host as the
  * source's syncer, so this host's resident notifier watches it, and clears the markers that head satisfies. Best effort: a sync never fails on it.
  */
-export async function recordLocalSyncer(engine: Exec, sourceId: string): Promise<void> {
+export async function recordLocalSyncer(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>, sourceId: string): Promise<void> {
+  // A Rust brain's store has no notifier tables: its resident notifier is off (resident.ts), no marker can be recorded,
+  // and status reports no coverage. There is nothing to record or prune, so the sync skips the step instead of sending
+  // raw SQL the store refuses.
+  if (engine.kind === 'rust') return;
   try { await recordSyncerHost(engine, sourceId, hostIdFor(engine)); } catch { /* the notifier reports the source as unrecorded */ }
   // The CLI's re-check (GBRA-133 PR 2a.3): a run that reached a marker's head clears it, whoever ran it.
   try { await pruneSatisfiedMarkers(engine, [sourceId]); } catch { /* the residents' marker scan prunes it */ }

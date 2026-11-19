@@ -58,11 +58,12 @@ export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?:
     await writeChunks(brain, slug, chunks, { sourceId, expectedRevision: opts?.expectedRevision ?? current.revision, seal: true, searchTimeline }, 'sealChunks');
   };
 
-export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean }], Chunk[]> =
+export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean }], Chunk[]> =
   async (brain, slug, opts) => {
-    const { sourceIds, sourceId, includeEmbedding, includeUnsealed } =
-      takeOptions('getChunks', opts, ['sourceId', 'sourceIds', 'includeEmbedding', 'includeUnsealed']) as
-        { sourceId?: unknown; sourceIds?: unknown[]; includeEmbedding?: boolean; includeUnsealed?: boolean };
+    // `requireSafeChunks` (the chunker-version fence the import's chunk reuse asks for) is served by the store.
+    const { sourceIds, sourceId, includeEmbedding, includeUnsealed, requireSafeChunks } =
+      takeOptions('getChunks', opts, ['sourceId', 'sourceIds', 'includeEmbedding', 'includeUnsealed', 'requireSafeChunks']) as
+        { sourceId?: unknown; sourceIds?: unknown[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean };
     // PGLite reads `sourceIds` when it is not empty and otherwise the one `sourceId` (default `default`). An id that
     // names no source (an empty string) matches nothing there, and the store would read it as "no scope" and answer
     // for every source, so a scope that names no source is answered here with no chunks and never forwarded.
@@ -72,7 +73,10 @@ export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; s
     // Chunks of one slug from several sources come back in an order PGLite leaves to the database (the sort key ties
     // across sources), so a read over more than one source is refused, not guessed.
     if (named.length > 1) refuseMember('getChunks', 'a read over several sources');
-    const scope = { sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true };
+    const scope = {
+      sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true,
+      requireSafeChunks: requireSafeChunks === true,
+    };
     const rows: Chunk[] = await storeCall({ member: 'getChunks', slug }, () => brain.getChunks(slug, scope));
     return rows.map((row) => toChunk(row));
   };

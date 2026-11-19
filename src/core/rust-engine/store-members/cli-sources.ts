@@ -3,10 +3,11 @@
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
  * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here. countSourcePages counts one source's pages and insertSource creates a source
- * (store side: the same cli_reads/sources.rs).
+ * (store side: the same cli_reads/sources.rs). writeSourceCommitAnchor and writeSourceLocalPath are the sync anchor
+ * writes, writeSourceUpstreamObservation the sync's upstream observation (store side: sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourcePagePath, RenameStoredTitle, LiveIdentityHolder, PageIdentityRow, SourceRoutingRow, SourceUpstreamObservation } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
@@ -60,8 +61,39 @@ export const readSourceRow: StoreMember<[sourceId: string], SourceCheckRow | nul
 export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = (brain, sourceId) =>
   sourceCheckRow(brain, 'lockSourceRow', sourceId);
 
+export const listSourcePagePaths: StoreMember<[sourceId: string], SourcePagePath[]> = (brain, sourceId) =>
+  storeCall({ member: 'listSourcePagePaths', sourceId }, () => brain.listSourcePagePaths(sourceId));
+
+/** The rename confirmation reads (sync-rename-identity.ts); the store holds no value it cannot compare, so none refuses 22021. */
+export const readRenameStoredTitles: StoreMember<[sourceId: string, paths: readonly string[], slugs: readonly string[]], RenameStoredTitle[]> = (brain, sourceId, paths, slugs) =>
+  storeCall({ member: 'readRenameStoredTitles', sourceId }, () => brain.readRenameStoredTitles(sourceId, [...paths], [...slugs]));
+
+export const readLiveIdentityHolders: StoreMember<[sourceId: string, ids: readonly string[], titles: readonly string[]], LiveIdentityHolder[]> = (brain, sourceId, ids, titles) =>
+  storeCall({ member: 'readLiveIdentityHolders', sourceId }, () => brain.readLiveIdentityHolders(sourceId, [...ids], [...titles]));
+
+export const readPageIdentity: StoreMember<[pageId: number], PageIdentityRow | null> = (brain, pageId) =>
+  storeCall({ member: 'readPageIdentity' }, () => brain.readPageIdentity(pageId));
+
 export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDeleted?: boolean }], number> = async (brain, sourceId, opts) =>
   Number(await storeCall({ member: 'countSourcePages', sourceId }, () => brain.countSourcePages(sourceId, opts?.includeDeleted === true)));
+
+/** The sync anchor advance; the store stamps `last_sync_at` from the process clock (rust/docs/store/sources.md). */
+export const writeSourceCommitAnchor: StoreMember<[sourceId: string, commit: string, opts?: { newestContentAt: string | null }], void> = async (brain, sourceId, commit, opts) => {
+  await storeCall({ member: 'writeSourceCommitAnchor', sourceId }, () => brain.writeSourceCommitAnchor(sourceId, commit, opts !== undefined, opts?.newestContentAt ?? null));
+};
+
+export const writeSourceLocalPath: StoreMember<[sourceId: string, localPath: string], void> = async (brain, sourceId, localPath) => {
+  await storeCall({ member: 'writeSourceLocalPath', sourceId }, () => brain.writeSourceLocalPath(sourceId, localPath));
+};
+
+export const writeSourceSyncHeartbeat: StoreMember<[sourceId: string], void> = async (brain, sourceId) => {
+  await storeCall({ member: 'writeSourceSyncHeartbeat', sourceId }, () => brain.writeSourceSyncHeartbeat(sourceId));
+};
+
+export const writeSourceUpstreamObservation: StoreMember<[sourceId: string, observed: SourceUpstreamObservation], void> = async (brain, sourceId, observed) => {
+  await storeCall({ member: 'writeSourceUpstreamObservation', sourceId }, () =>
+    brain.writeSourceUpstreamObservation(sourceId, observed.checkedAt, observed.commit, observed.behind));
+};
 
 /**
  * A taken id or name refuses `constraint_violation`, as the SQL unique keys do; the store also refuses an id outside

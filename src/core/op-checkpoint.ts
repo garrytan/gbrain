@@ -11,23 +11,6 @@ import { SYNC_DELETE_TOMBSTONE_OP } from './persistence/sync-delete-tombstones.t
 const APPEND_CHUNK = 1000;
 
 /**
- * Single writable-CTE statement (one round-trip): ensure the parent
- * op_checkpoints row exists (FK target) and bump its updated_at so the 7-day
- * purge tracks activity, then INSERT the delta child rows. `ON CONFLICT DO
- * NOTHING` makes re-appending an already-banked path a no-op. $3 binds a JS
- * string[] to a Postgres text[] (NOT a jsonb param), which postgres.js + PGLite
- * both handle natively — so it sidesteps executeRawJsonb's array rejection.
- */
-const APPEND_PATHS_SQL = `WITH parent AS (
-  INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-  VALUES ($1, $2, '[]'::jsonb, now())
-  ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at = now()
-)
-INSERT INTO op_checkpoint_paths (op, fingerprint, path)
-SELECT $1, $2, unnest($3::text[])
-ON CONFLICT (op, fingerprint, path) DO NOTHING`;
-
-/**
  * v0.42.x (#1794): every checkpoint write routes through the DIRECT session
  * pool (`executeRawDirect`) wrapped in `withRetry(BULK_RETRY_OPTS)`. Rationale:
  * under Supavisor transaction-pooler exhaustion (`EMAXCONNSESSION` / SQLSTATE
@@ -136,32 +119,14 @@ export async function loadOpCheckpoint(
     // keeps the child rows; the third arm flags the corruption so we log it once
     // (migration v119's CHECK makes this impossible going forward; a hit implies
     // schema drift / disabled constraint / an out-of-band writer).
-    const rows = await engine.executeRaw<{ ckey: unknown; corrupt: number }>(
-      `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
-         WHERE op = $1 AND fingerprint = $2
-       UNION ALL
-       SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
-       UNION ALL
-       SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
-      [key.op, key.fingerprint],
-    );
-    const set = new Set<string>();
-    let corruptParent = false;
-    for (const r of rows) {
-      if (Number(r.corrupt) === 1) {
-        corruptParent = true;
-        continue;
-      }
-      if (typeof r.ckey === 'string') set.add(r.ckey);
-    }
+    // The statement lives in engine-sql/op-checkpoint.ts (readOpCheckpoint), so every engine answers it.
+    const { keys, corruptParent } = await engine.readOpCheckpoint(key.op, key.fingerprint);
     if (corruptParent) {
       console.error(
         `[op-checkpoint] WARNING: op_checkpoints.completed_keys for (${key.op}, ${key.fingerprint}) is a non-array (scalar) and was skipped to protect the load — child op_checkpoint_paths rows still applied. This implies schema drift, a disabled CHECK constraint, or an out-of-band writer.`,
       );
     }
-    return [...set];
+    return [...new Set(keys)];
   } catch (e) {
     console.error(`[op-checkpoint] load failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
     return [];
@@ -196,15 +161,7 @@ export async function recordCompleted(
   // the CLAUDE.md double-encode trap (the grep guard only caught the template form).
   // Sync uses `appendCompleted` (below, `unnest($3::text[])`) instead, never this.
   const sorted = [...keys].sort();
-  return durableWrite(engine, key, 'write', () =>
-    engine.executeRawDirect(
-      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::text::jsonb, now())
-       ON CONFLICT (op, fingerprint) DO UPDATE
-         SET completed_keys = EXCLUDED.completed_keys,
-             updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
-    ));
+  return durableWrite(engine, key, 'write', () => engine.writeOpCheckpointKeys(key.op, key.fingerprint, sorted));
 }
 
 /**
@@ -227,7 +184,7 @@ export async function appendCompleted(
   for (let i = 0; i < deltaKeys.length; i += APPEND_CHUNK) {
     const chunk = deltaKeys.slice(i, i + APPEND_CHUNK);
     const ok = await durableWrite(engine, key, 'append', () =>
-      engine.executeRawDirect(APPEND_PATHS_SQL, [key.op, key.fingerprint, chunk]));
+      engine.appendOpCheckpointPaths(key.op, key.fingerprint, chunk));
     if (!ok) return false;
   }
   return true;
@@ -248,7 +205,7 @@ export async function appendCompletedOnce(
 ): Promise<boolean> {
   if (deltaKeys.length === 0) return true;
   try {
-    await engine.executeRawDirect(APPEND_PATHS_SQL, [key.op, key.fingerprint, deltaKeys]);
+    await engine.appendOpCheckpointPaths(key.op, key.fingerprint, deltaKeys);
     return true;
   } catch (e) {
     console.error(`[op-checkpoint] sigterm-append failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
@@ -272,16 +229,7 @@ export async function clearOpCheckpoint(
   // absent. Both routed through the direct pool + retry so a clean-exit clear
   // survives pool exhaustion (a swallowed clear would make the next run skip
   // already-cleared files).
-  await durableWrite(engine, key, 'clear', () =>
-    engine.executeRawDirect(
-      `DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`,
-      [key.op, key.fingerprint],
-    ));
-  await durableWrite(engine, key, 'clear-children', () =>
-    engine.executeRawDirect(
-      `DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2`,
-      [key.op, key.fingerprint],
-    ));
+  await durableWrite(engine, key, 'clear', () => engine.deleteOpCheckpoint(key.op, key.fingerprint));
 }
 
 /**

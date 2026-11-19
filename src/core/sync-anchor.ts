@@ -238,7 +238,6 @@ export async function writeSyncAnchor(
 ): Promise<void> {
   return withCompanyBrainSource(engine, sourceId, async engine => {
   if (sourceId) {
-    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
       // Wave-D review (#4369 follow-up): guard the commit-anchor trio
@@ -268,15 +267,9 @@ export async function writeSyncAnchor(
         const iso = newestContentEpochMs === null
           ? null
           : new Date(newestContentEpochMs).toISOString();
-        await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
-          [value, sourceId, iso],
-        );
+        await engine.writeSourceCommitAnchor(sourceId, value, { newestContentAt: iso });
       } else {
-        await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
-          [value, sourceId],
-        );
+        await engine.writeSourceCommitAnchor(sourceId, value);
       }
       // GBRA-133 PR 2a: the host that advanced a classic source is the one whose resident notifier watches it.
       await (await import('./notifier/store.ts')).recordLocalSyncer(engine, sourceId);
@@ -295,10 +288,7 @@ export async function writeSyncAnchor(
         );
         return;
       }
-      await engine.executeRaw(
-        `UPDATE sources SET ${col} = $1 WHERE id = $2`,
-        [value, sourceId],
-      );
+      await engine.writeSourceLocalPath(sourceId, value);
     }
     return;
   }

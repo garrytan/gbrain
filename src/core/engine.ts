@@ -59,7 +59,9 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { OpCheckpointRead } from './engine-sql/op-checkpoint.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourcePagePath, RenameStoredTitle, LiveIdentityHolder, PageIdentityRow, SourceRoutingRow, SourceUpstreamObservation } from './engine-sql/sources.ts';
+import type { PageSizeRow } from './engine-sql/large-page.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
@@ -1380,6 +1382,35 @@ export interface BrainEngine {
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
   /** Stamps the source's chunker version; an unknown source changes nothing (engine-sql/sources.ts). */
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
+  /**
+   * The sync anchor advance (`writeSyncAnchor`): sets the source's `last_commit` and stamps `last_sync_at` now; with
+   * `opts` also sets `newest_content_at` (an ISO time, or null to clear it). An unknown source changes nothing.
+   */
+  writeSourceCommitAnchor(sourceId: string, commit: string, opts?: { newestContentAt: string | null }): Promise<void>;
+  /** The sync anchor's directory repoint (`writeSyncAnchor`, `repo_path`): sets `local_path`. An unknown source changes nothing. */
+  writeSourceLocalPath(sourceId: string, localPath: string): Promise<void>;
+  /** The sync's upstream observation of the source's checkout (engine-sql/sources.ts); an unknown source changes nothing. */
+  /** The 0-change sync heartbeat: `last_sync_at` = now, the commit anchor untouched. An unknown source changes nothing. */
+  writeSourceSyncHeartbeat(sourceId: string): Promise<void>;
+  writeSourceUpstreamObservation(sourceId: string, observed: SourceUpstreamObservation): Promise<void>;
+  // Operation checkpoint statements (engine-sql/op-checkpoint.ts): the text op-checkpoint.ts sent through executeRaw (the load) and
+  // executeRawDirect (the writes, which Postgres sends on the direct pool).
+  /** The banked keys of checkpoint (`op`, `fingerprint`): its path rows, then its legacy completed_keys; corruptParent when those are not an array. */
+  readOpCheckpoint(op: string, fingerprint: string): Promise<OpCheckpointRead>;
+  /** Replace the checkpoint's completed_keys with `keys` (its path rows stay). */
+  writeOpCheckpointKeys(op: string, fingerprint: string, keys: readonly string[]): Promise<void>;
+  /** Bank `paths` under the checkpoint, creating or stamping its parent row; a banked path is a no-op. */
+  appendOpCheckpointPaths(op: string, fingerprint: string, paths: readonly string[]): Promise<void>;
+  /** Drop the checkpoint and its path rows. */
+  deleteOpCheckpoint(op: string, fingerprint: string): Promise<void>;
+  /** The live pages of one source that record a source path, as `{ slug, source_path }` in slug byte order (the full sync's stale-page reconcile). */
+  listSourcePagePaths(sourceId: string): Promise<SourcePagePath[]>;
+  /** Rename confirmation (sync-rename-identity.ts): the live pages of `sourceId` whose source_path is in `paths` or slug in `slugs`, slug byte order. */
+  readRenameStoredTitles(sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameStoredTitle[]>;
+  /** Rename confirmation: the live pages of `sourceId` whose frontmatter `id` (as `->>` text) is in `ids` or title in `titles`, slug byte order. */
+  readLiveIdentityHolders(sourceId: string, ids: readonly string[], titles: readonly string[]): Promise<LiveIdentityHolder[]>;
+  /** The frontmatter `id` and title of live page `pageId`; null for a missing or soft-deleted page. */
+  readPageIdentity(pageId: number): Promise<PageIdentityRow | null>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
@@ -3092,6 +3123,12 @@ export interface BrainEngine {
   readWriterSlugFence(principal: { kind: string; id: string }): Promise<unknown>;
   /** A live page's stored body size (segmented `body_bytes`, else the UTF-8 bytes of its body columns), or null (engine-sql/large-page.ts). */
   readStoredBodyBytes(slug: string, sourceId: string): Promise<number | null>;
+  /**
+   * The size-state read of a sync receipt (page-embedding-budget.ts `readPageSizeStates`): the live pages of the
+   * source, all or only `slugs`, with an `embed_skip` frontmatter key, a body over `inlineMaxBytes`, segmented
+   * storage or an embedding budget row, in slug byte order (engine-sql/large-page.ts).
+   */
+  listPageSizeRows(sourceId: string, opts: { inlineMaxBytes: number; slugs: readonly string[] | null }): Promise<PageSizeRow[]>;
   // Relational recall arm page reads (engine-sql/relational-reads.ts).
   /** The refs naming a live, unquarantined page of an unarchived source that `policy` admits (`pageReadFilter` live); in no set order. */
   readAdmittedPageRefs(refs: readonly PageRefRow[], policy: PageReadPolicy): Promise<PageRefRow[]>;

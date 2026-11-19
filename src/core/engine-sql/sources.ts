@@ -121,6 +121,50 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
 }
 
+/** The sync anchor statements `writeSyncAnchor` (src/core/sync-anchor.ts) sends, verbatim. */
+export const SOURCE_COMMIT_ANCHOR_SQL = {
+  stampNewest: 'UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2',
+  keepNewest: 'UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2',
+} as const;
+export const SOURCE_LOCAL_PATH_SQL = 'UPDATE sources SET local_path = $1 WHERE id = $2';
+
+/**
+ * The sync anchor advance: sets `last_commit`, stamps `last_sync_at` with the database clock and, when `opts` is given,
+ * sets `newest_content_at` (an ISO time, or null to clear it). An unknown source changes nothing.
+ */
+export async function writeSourceCommitAnchor(exec: SqlExecutor, sourceId: string, commit: string, opts?: { newestContentAt: string | null }): Promise<void> {
+  if (opts) await exec.executeRaw(SOURCE_COMMIT_ANCHOR_SQL.stampNewest, [commit, sourceId, opts.newestContentAt]);
+  else await exec.executeRaw(SOURCE_COMMIT_ANCHOR_SQL.keepNewest, [commit, sourceId]);
+}
+
+/** The sync anchor's directory repoint: sets `local_path`. An unknown source changes nothing. */
+export async function writeSourceLocalPath(exec: SqlExecutor, sourceId: string, localPath: string): Promise<void> {
+  await exec.executeRaw(SOURCE_LOCAL_PATH_SQL, [localPath, sourceId]);
+}
+
+/** What sync observed of the checkout's Git upstream (`observeUpstream` in sync-upstream.ts). */
+export interface SourceUpstreamObservation { checkedAt: string; commit: string; behind: number | null }
+/** The statement `recordUpstreamObservation` (src/core/sync-upstream.ts) sends, verbatim. */
+export const SOURCE_SYNC_HEARTBEAT_SQL = 'UPDATE sources SET last_sync_at = now() WHERE id = $1';
+
+/**
+ * The 0-change sync heartbeat: stamps `last_sync_at` with the database clock and leaves `last_commit` alone, so doctor's
+ * sync freshness sees a quiet source as synced. An unknown source changes nothing.
+ */
+export async function writeSourceSyncHeartbeat(exec: SqlExecutor, sourceId: string): Promise<void> {
+  await exec.executeRaw(SOURCE_SYNC_HEARTBEAT_SQL, [sourceId]);
+}
+
+export const SOURCE_UPSTREAM_OBSERVATION_SQL = 'UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1';
+
+/**
+ * The sync's upstream observation: sets `upstream_checked_at` (an ISO time), `upstream_commit` and `upstream_behind`
+ * (null when the synced commit is unknown). An unknown source changes nothing.
+ */
+export async function writeSourceUpstreamObservation(exec: SqlExecutor, sourceId: string, observed: SourceUpstreamObservation): Promise<void> {
+  await exec.executeRaw(SOURCE_UPSTREAM_OBSERVATION_SQL, [sourceId, observed.checkedAt, observed.commit, observed.behind]);
+}
+
 /**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.
@@ -238,6 +282,48 @@ export async function countDefaultSourceSplit(exec: LegacyUnscopedRead): Promise
     nonDefaultPages: Number(r?.non_default_pages) || 0,
     nonDefaultSources: Number(r?.non_default_sources) || 0,
   };
+}
+
+/** One file-backed page of a source: its slug and the repo path it was imported from. */
+export interface SourcePagePath { slug: string; source_path: string }
+
+/** The full sync's stale-page reconcile read (sync/full.ts): every live page of the source that records a source path. */
+export const SOURCE_PAGE_PATHS_SQL =
+  'SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL ORDER BY slug COLLATE "C"';
+
+/** The live, file-backed pages of one source in slug byte order; an unknown source has none. Unscoped on master. */
+export async function listSourcePagePaths(exec: LegacyUnscopedRead, sourceId: string): Promise<SourcePagePath[]> {
+  return exec.executeRaw<SourcePagePath>(SOURCE_PAGE_PATHS_SQL, [sourceId]);
+}
+
+/** The stored title of a live page a rename confirmation compares (sync-rename-identity.ts). */
+export interface RenameStoredTitle { slug: string; source_path: string | null; title: string | null }
+/** A live page holding a frontmatter id or title a rename confirmation compares (sync-rename-identity.ts). */
+export interface LiveIdentityHolder { slug: string; source_path: string | null; fm_id: string | null; title: string | null }
+/** The stored frontmatter id and title of one live page, by id. */
+export interface PageIdentityRow { fm_id: string | null; title: string | null }
+
+/** The caller's text plus ORDER BY slug COLLATE "C": the first match per path decides, so row order is byte order on every engine. */
+export const RENAME_STORED_TITLES_SQL =
+  'SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[])) ORDER BY slug COLLATE "C"';
+export const LIVE_IDENTITY_HOLDERS_SQL = `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[])) ORDER BY slug COLLATE "C"`;
+export const PAGE_IDENTITY_SQL = `SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`;
+
+/** The live pages of a source whose source_path is in `paths` or whose slug is in `slugs`, in slug byte order. Unscoped on master. */
+export async function readRenameStoredTitles(exec: LegacyUnscopedRead, sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameStoredTitle[]> {
+  return exec.executeRaw<RenameStoredTitle>(RENAME_STORED_TITLES_SQL, [sourceId, [...paths], [...slugs]]);
+}
+
+/** The live pages of a source whose frontmatter id is in `ids` or whose title is in `titles`, in slug byte order. Unscoped on master. */
+export async function readLiveIdentityHolders(exec: LegacyUnscopedRead, sourceId: string, ids: readonly string[], titles: readonly string[]): Promise<LiveIdentityHolder[]> {
+  return exec.executeRaw<LiveIdentityHolder>(LIVE_IDENTITY_HOLDERS_SQL, [sourceId, [...ids], [...titles]]);
+}
+
+/** The frontmatter id and title of live page `pageId`; null for a missing or soft-deleted page. Unscoped on master. */
+export async function readPageIdentity(exec: LegacyUnscopedRead, pageId: number): Promise<PageIdentityRow | null> {
+  const [row] = await exec.executeRaw<PageIdentityRow>(PAGE_IDENTITY_SQL, [pageId]);
+  return row ?? null;
 }
 
 /** Pages of one source (`SELECT COUNT(*)::int AS n FROM pages WHERE source_id=$1`); soft-deleted pages count only with `includeDeleted`. Unscoped on master. */
