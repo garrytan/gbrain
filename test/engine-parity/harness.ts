@@ -222,8 +222,8 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
  */
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
+    // The Rust arm runs the same production path; it stops on the engine's typed refusal until the ledger is served.
     case 'rust':
-      throw new Error('enableBeliefCoverage: the Rust store has no belief ledger; a case reaching this fixture on the Rust arm must stop on a typed refusal first');
     case 'pglite':
     case 'postgres':
       await enableBeliefLedger(engine, sourceId);
@@ -239,8 +239,8 @@ export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityB
  */
 export async function restrictFolder(engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
   switch (backend) {
+    // The Rust arm has no access-rule store yet; the same SQL stops on the engine's typed raw_sql refusal.
     case 'rust':
-      throw new Error('restrictFolder: the Rust store has no folder access rules; a case reaching this fixture on the Rust arm must stop on a typed refusal first');
     case 'pglite':
     case 'postgres':
       await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
