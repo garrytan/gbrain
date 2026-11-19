@@ -383,10 +383,12 @@ fn chunk_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
     let honored = PrivacyPolicy {
         honor_aliases: true,
         entity_privacy: true,
+        ..Default::default()
     };
     let visibility_only = PrivacyPolicy {
         honor_aliases: false,
         entity_privacy: true,
+        ..Default::default()
     };
     let page_seen = |policy: Option<PrivacyPolicy>, safe: bool| -> Vec<&str> {
         pages
@@ -394,7 +396,7 @@ fn chunk_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
             .map(|(slug, _)| *slug)
             .filter(|slug| {
                 let options = ChunkPageOptions {
-                    exclude_private: policy,
+                    exclude_private: policy.clone(),
                     require_safe_chunks: safe,
                     ..page_opts("default", 0.0, 10.0)
                 };
@@ -403,13 +405,13 @@ fn chunk_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
             .collect()
     };
     assert_eq!(page_seen(None, false).len(), 5);
-    assert_eq!(page_seen(Some(honored), true), ["notes/open"]);
+    assert_eq!(page_seen(Some(honored.clone()), true), ["notes/open"]);
     assert_eq!(
-        page_seen(Some(honored), false),
+        page_seen(Some(honored.clone()), false),
         ["notes/open", "notes/unsafe"]
     );
     assert_eq!(
-        page_seen(Some(visibility_only), true),
+        page_seen(Some(visibility_only.clone()), true),
         ["notes/open", "notes/alias"]
     );
     assert_eq!(page_seen(None, true).len(), 4);
@@ -430,8 +432,11 @@ fn chunk_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
         seen
     };
     assert_eq!(window_seen(None, false).len(), 5);
-    assert_eq!(window_seen(Some(honored), true), [ids[0]]);
-    assert_eq!(window_seen(Some(honored), false), [ids[0], ids[4]]);
-    assert_eq!(window_seen(Some(visibility_only), true), [ids[0], ids[3]]);
+    assert_eq!(window_seen(Some(honored.clone()), true), [ids[0]]);
+    assert_eq!(window_seen(Some(honored.clone()), false), [ids[0], ids[4]]);
+    assert_eq!(
+        window_seen(Some(visibility_only.clone()), true),
+        [ids[0], ids[3]]
+    );
     assert_eq!(window_seen(None, true).len(), 4);
 }

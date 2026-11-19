@@ -49,10 +49,11 @@ becomes visible to the brain in one commit, or not at all.
     `readTransactionSettings(names)` are `set_config(name, value, true)` and
     `current_setting(name, true)`:
     - Inside a transaction, a setting reads back what was last applied in it. The six write trust
-      settings go to the write trust context on the transaction's handle
-      ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`, `gbrain.write_request`,
-      `gbrain.write_principal_kind`, `gbrain.write_principal_id` and `gbrain.git_protocol` stay
-      on the transaction in TypeScript (`RustTransactionScope.settings`).
+      settings and the three attribution settings (`gbrain.write_request`,
+      `gbrain.write_principal_kind`, `gbrain.write_principal_id`) go to the write context on the
+      transaction's handle ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`,
+      `gbrain.git_protocol` and `gbrain.persistence_protocol` stay on the transaction in
+      TypeScript (`RustTransactionScope.settings`).
     - They end with the transaction. A savepoint rollback restores them; a release keeps them.
     - Outside a transaction an apply keeps nothing, as a lone `set_config(..., true)` on PGLite.
     - A name never set reads `null`. A name set before on the engine reads `''`, as Postgres

@@ -22,7 +22,11 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChronicleTimelineRow, OntologyConflict } from '../../src/core/types.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
+import { withWriteAttribution } from '../../src/core/persistence/context.ts';
+import type { WriteAttribution } from '../../src/core/persistence/attribution.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { CALLER_ENTITIES, CALLER_PROVENANCE, OPEN_PAGE, putCallerPages, readAsCallers } from './fact-callers.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -164,6 +168,173 @@ describe('engine parity: timeline entries', () => {
   );
 
   parityTest(
+    'getTimeline under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['getTimeline', 'addTimelineEntry', 'upsertEventProjection', 'putPage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'alt');
+      const page = (slug: string, type: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+        engine.putPage(slug, { type: type as 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+      await page('people/alice-example', 'person', {});
+      await page('people/private-example', 'person', { visibility: 'private' });
+      await page('people/alt-private-example', 'person', { visibility: 'private' }, { sourceId: 'alt' });
+      await page('people/readers-example', 'person', { readable_by: ['alice-example'] });
+      await page('people/team-example', 'person', { readable_by: 'group:team-a' });
+      await page('people/bob-only-example', 'person', { readable_by: ['bob-example'] });
+      await page('people/pinned-example', 'person', { visibility: 'private', pinned_question: true });
+      for (const [eventSlug, frontmatter] of [
+        ['life/events/open', {}], ['life/events/private', { visibility: 'private' }],
+        ['life/events/readers', { readable_by: ['alice-example'] }], ['life/events/bob-only', { readable_by: ['bob-example'] }],
+      ] as const) {
+        await engine.putPage(eventSlug, {
+          type: 'event', title: eventSlug, compiled_truth: `${eventSlug} body`, timeline: '',
+          frontmatter: { ...frontmatter, event: { kind: 'meeting', who: ['people/alice-example'] } },
+          effective_date: new Date('2026-06-18T09:00:00Z'), effective_date_source: 'event_date',
+        });
+        await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug, date: '2026-06-18', summary: eventSlug });
+      }
+      const own = ['people/private-example', 'people/readers-example', 'people/team-example', 'people/bob-only-example', 'people/pinned-example'];
+      for (const slug of own) await engine.addTimelineEntry(slug, { date: '2026-06-15', summary: `${slug} plain` });
+      await engine.addTimelineEntry('people/alt-private-example', { date: '2026-06-15', summary: 'alt plain' }, { sourceId: 'alt' });
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => {
+        const rows: Record<string, string[]> = {};
+        for (const slug of ['people/alice-example', ...own, 'people/alt-private-example']) {
+          rows[slug] = (await engine.getTimeline(slug, { excludePrivate: true })).map((e) => e.summary);
+        }
+        return rows;
+      });
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger['people/alice-example']).toEqual(['life/events/open']);
+      expect(sorted(member['people/alice-example'])).toEqual(['life/events/open', 'life/events/readers']);
+      expect(member['people/readers-example']).toEqual(['people/readers-example plain']);
+      expect(member['people/team-example']).toEqual(['people/team-example plain']);
+      expect(member['people/bob-only-example']).toEqual([]);
+      expect(member['people/private-example']).toEqual([]);
+      expect(granted['people/private-example']).toEqual(['people/private-example plain']);
+      expect(granted['people/pinned-example']).toEqual([]);
+      expect(granted['people/alt-private-example']).toEqual([]);
+      expect(sorted(granted['people/alice-example'])).toEqual(['life/events/open', 'life/events/private', 'life/events/readers']);
+      return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'getTimeline under an eligibility policy drops every row of a soft-deleted or quarantined page, before the limit',
+    { methods: ['getTimeline', 'addTimelineEntry', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'alt');
+      const page = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+        engine.putPage(slug, { type: 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+      await page('people/alice-example', {});
+      await page('people/alice-example', { quarantine: { reason: 'review' } }, { sourceId: 'alt' });
+      await page('people/held-example', { quarantine: false });
+      await page('people/gone-example', {});
+      await page('people/private-example', { visibility: 'private' });
+      for (const [slug, date, summary, sourceId] of [
+        ['people/alice-example', '2026-06-15', 'open old', undefined],
+        ['people/alice-example', '2026-06-17', 'open new', undefined],
+        ['people/alice-example', '2026-06-18', 'quarantined in alt', 'alt'],
+        ['people/alice-example', '2026-06-19', 'quarantined in alt, newest', 'alt'],
+        ['people/held-example', '2026-06-15', 'held', undefined],
+        ['people/gone-example', '2026-06-15', 'gone', undefined],
+        ['people/private-example', '2026-06-15', 'private', undefined],
+      ] as const) {
+        await engine.addTimelineEntry(slug, { date, summary }, sourceId ? { sourceId } : undefined);
+      }
+      await engine.softDeletePage('people/gone-example');
+      const summaries = async (slug: string, opts?: Parameters<BrainEngine['getTimeline']>[1]) =>
+        (await engine.getTimeline(slug, opts)).map((e) => `${new Date(e.date).toISOString().slice(0, 10)} ${e.summary}`);
+      const out = {
+        all: await summaries('people/alice-example'),
+        eligible: await summaries('people/alice-example', { eligibility: {} }),
+        eligibleAlt: await summaries('people/alice-example', { sourceIds: ['alt'], eligibility: {} }),
+        eligibleLimited: await summaries('people/alice-example', { limit: 1, eligibility: {} }),
+        eligibleWindow: await summaries('people/alice-example', { after: '2026-06-16', eligibility: {} }),
+        noPolicy: await summaries('people/alice-example', { eligibility: undefined }),
+        held: await summaries('people/held-example'),
+        heldEligible: await summaries('people/held-example', { eligibility: {} }),
+        gone: await summaries('people/gone-example'),
+        goneEligible: await summaries('people/gone-example', { eligibility: {} }),
+        privateEligible: await summaries('people/private-example', { eligibility: {} }),
+        privateBoth: await summaries('people/private-example', { eligibility: {}, excludePrivate: true }),
+      };
+      expect(out.all.length).toBe(4);
+      expect(out.eligible).toEqual(['2026-06-17 open new', '2026-06-15 open old']);
+      expect(out.eligibleAlt).toEqual([]);
+      expect(out.eligibleLimited).toEqual(['2026-06-17 open new']);
+      expect(out.eligibleWindow).toEqual(['2026-06-17 open new']);
+      expect(out.noPolicy).toEqual(out.all);
+      expect([out.held, out.gone]).toEqual([['2026-06-15 held'], ['2026-06-15 gone']]);
+      expect([out.heldEligible, out.goneEligible]).toEqual([[], []]);
+      expect(out.privateEligible).toEqual(['2026-06-15 private']);
+      expect(out.privateBoth).toEqual([]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'getTimeline under an eligibility trust floor drops rows below the floor; each row reads the tier and origin its insert declared',
+    { methods: ['transaction', 'applyTransactionSettings', 'getTimeline', 'addTimelineEntry', 'putPage'] },
+    async (engine) => {
+      await engine.putPage('people/alice-example', { type: 'person', title: 'alice', compiled_truth: 'body', timeline: '' });
+      for (const [tier, date] of [['operator_curated', '2026-06-15'], ['agent_written', '2026-06-16'], ['external_untrusted', '2026-06-17']] as const) {
+        await engine.transaction(async (tx) => {
+          await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+          await tx.addTimelineEntry('people/alice-example', { date, summary: tier });
+        });
+      }
+      const summaries = async (opts?: Parameters<BrainEngine['getTimeline']>[1]) =>
+        (await engine.getTimeline('people/alice-example', opts)).map((e) => e.summary);
+      await engine.addTimelineEntry('people/alice-example', { date: '2026-06-18', summary: 'undeclared' });
+      const out = {
+        curated: await summaries({ eligibility: { floor: 'operator_curated' } }),
+        agent: await summaries({ eligibility: { floor: 'agent_written' } }),
+        columns: (await engine.getTimeline('people/alice-example')).map((e) =>
+          ({ summary: e.summary, ...pick(e as unknown as Record<string, unknown>, ['trust_tier', 'write_origin']) })),
+      };
+      expect(out.curated).toEqual(['operator_curated']);
+      expect(out.agent).toEqual(['agent_written', 'operator_curated']);
+      expect(out.columns).toEqual([
+        { summary: 'undeclared', trust_tier: 'unknown', write_origin: null },
+        { summary: 'external_untrusted', trust_tier: 'external_untrusted', write_origin: { channel: 'external_untrusted' } },
+        { summary: 'agent_written', trust_tier: 'agent_written', write_origin: { channel: 'agent_written' } },
+        { summary: 'operator_curated', trust_tier: 'operator_curated', write_origin: { channel: 'operator_curated' } },
+      ]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'getTimeline under eligibility suppressFlagged drops flagged rows at or below agent_written',
+    { methods: ['transaction', 'applyTransactionSettings', 'getTimeline', 'addTimelineEntry', 'putPage', 'upsertWriteGateReceipt'] },
+    async (engine) => {
+      await engine.putPage('people/alice-example', { type: 'person', title: 'alice', compiled_truth: 'body', timeline: '' });
+      for (const [tier, date, summary] of [
+        ['agent_written', '2026-06-15', 'agent flagged'], ['agent_written', '2026-06-16', 'agent clean'],
+        ['operator_curated', '2026-06-17', 'curated flagged'],
+      ] as const) {
+        await engine.transaction(async (tx) => {
+          await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+          await tx.addTimelineEntry('people/alice-example', { date, summary });
+        });
+      }
+      // Receipt targets need the row ids; they are written, never returned or compared.
+      for (const row of await engine.getTimeline('people/alice-example')) {
+        if (!row.summary.endsWith('flagged')) continue;
+        await engine.upsertWriteGateReceipt({
+          target_table: 'timeline_entries', target_id: String(row.id), source_id: 'default',
+          content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: ['override'],
+          reasons: ['override'], detector_error: false, request_id: null,
+        });
+      }
+      const suppressed = (await engine.getTimeline('people/alice-example', { eligibility: { suppressFlagged: true } })).map((e) => e.summary);
+      expect(suppressed).toEqual(['curated flagged', 'agent clean']);
+      return { suppressed };
+    },
+  );
+
+  parityTest(
     'addTimelineEntriesBatch counts inserted rows, drops missing pages and replays as no-ops',
     { methods: ['addTimelineEntriesBatch', 'getTimeline', 'putPage'] },
     async (engine, backend) => {
@@ -298,6 +469,137 @@ describe('engine parity: timeline entries', () => {
       expect(answers.own).toContain('edited since=changed');
       expect(answers.event).toEqual(['before']);
       return answers;
+    },
+  );
+});
+
+/**
+ * Timeline write receipts (persistence/attribution-schema.ts `gbrain_stamp_write_attribution`): an insert under a
+ * principal stamps `write_*` and `last_*` with the request and the principal; an update keeps `write_*` and moves
+ * `last_*` (and `last_written_at`) only when the row's content changed. Request ids are fixed text, so they compare
+ * as values; `last_written_at` compares as a shape and as "moved or not".
+ */
+const RECEIPT_KEYS = [
+  'write_request_id', 'write_principal_kind', 'write_principal_id',
+  'last_write_request_id', 'last_write_principal_kind', 'last_write_principal_id',
+] as const;
+const REQUEST_A = '0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e01';
+const REQUEST_B = '0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e02';
+const asActor = (requestId: string | null, kind: WriteAttribution['principal']['kind'], id: string): WriteAttribution =>
+  ({ requestId, principal: { kind, id } });
+/** Runs `fn` in one transaction under `attribution` (none: no principal set). */
+async function attributed<T>(engine: BrainEngine, attribution: WriteAttribution | null, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return engine.transaction(async (tx) => (attribution ? withWriteAttribution(tx, attribution, () => fn(tx)) : fn(tx)));
+}
+type Receipted = Record<string, unknown>;
+const receiptOf = (entry: Receipted) => ({
+  summary: entry.summary, ...pick(entry, RECEIPT_KEYS),
+  last_written_at: entry.last_written_at === null ? null : entry.last_written_at instanceof Date ? 'Date' : typeof entry.last_written_at,
+});
+async function receipts(engine: BrainEngine, slug: string) {
+  return ((await engine.getTimeline(slug)) as unknown as Receipted[]).map(receiptOf).sort((a, b) => String(a.summary).localeCompare(String(b.summary)));
+}
+const writtenAt = async (engine: BrainEngine, slug: string) => new Map(((await engine.getTimeline(slug)) as unknown as Receipted[])
+  .map((e) => [String(e.summary), e.last_written_at instanceof Date ? e.last_written_at.getTime() : e.last_written_at]));
+
+describe('engine parity: timeline write receipts', () => {
+  parityTest(
+    'a timeline insert under a principal stamps write_* and last_* with its request and principal, on every insert path',
+    { methods: ['transaction', 'readTransactionSettings', 'applyTransactionSettings', 'addTimelineEntry', 'addTimelineEntriesBatch', 'upsertEventProjection', 'getTimeline', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/receipt');
+      await putEvent(engine, 'life/events/2026-08-01-001', '2026-08-01T09:00:00Z', { kind: 'meeting' });
+      await attributed(engine, asActor(REQUEST_A, 'application', 'host:test-a'), async (tx) => {
+        await tx.addTimelineEntry('people/receipt', { date: '2026-08-01', source: 'cal', summary: 'single add', detail: 'one' });
+        await tx.addTimelineEntriesBatch([{ slug: 'people/receipt', date: '2026-08-02', source: 'cal', summary: 'batch add', detail: 'two' }]);
+        await tx.upsertEventProjection({ depthSlug: 'people/receipt', eventSlug: 'life/events/2026-08-01-001', date: '2026-08-01', summary: 'projected', detail: 'three' });
+      });
+      // A maintenance actor with no journal request: the request columns stay null, the principal is stamped.
+      await attributed(engine, asActor(null, 'application', 'host:unregistered'), (tx) =>
+        tx.addTimelineEntry('people/receipt', { date: '2026-08-03', summary: 'maintenance add' }));
+      const rows = await receipts(engine, 'people/receipt');
+      expect(rows.find((r) => r.summary === 'single add')).toMatchObject({ write_principal_id: 'host:test-a', last_write_request_id: REQUEST_A, last_written_at: 'Date' });
+      expect(rows.find((r) => r.summary === 'maintenance add')).toMatchObject({ write_request_id: null, write_principal_kind: 'application', last_written_at: 'Date' });
+      return rows;
+    },
+  );
+
+  parityTest(
+    'a timeline insert with no principal leaves every receipt column null',
+    { methods: ['transaction', 'addTimelineEntry', 'addTimelineEntriesBatch', 'upsertEventProjection', 'getTimeline', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/unreceipted');
+      await putEvent(engine, 'life/events/2026-08-04-001', '2026-08-04T09:00:00Z', { kind: 'meeting' });
+      await engine.addTimelineEntry('people/unreceipted', { date: '2026-08-04', summary: 'plain add' });
+      await attributed(engine, null, async (tx) => {
+        await tx.addTimelineEntriesBatch([{ slug: 'people/unreceipted', date: '2026-08-05', summary: 'plain batch' }]);
+        await tx.upsertEventProjection({ depthSlug: 'people/unreceipted', eventSlug: 'life/events/2026-08-04-001', date: '2026-08-04', summary: 'plain projection' });
+      });
+      const rows = await receipts(engine, 'people/unreceipted');
+      for (const row of rows) expect(Object.values(pick(row, [...RECEIPT_KEYS, 'last_written_at']))).toEqual([null, null, null, null, null, null, null]);
+      return rows;
+    },
+  );
+
+  parityTest(
+    'a timeline update keeps write_* and moves last_* and last_written_at only when the content changed',
+    { methods: ['transaction', 'readTransactionSettings', 'applyTransactionSettings', 'addTimelineEntry', 'updateTimelineDetails', 'upsertEventProjection', 'listStoredTimelineRows', 'getTimeline', 'getPage', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/rewrite');
+      await putEvent(engine, 'life/events/2026-08-06-001', '2026-08-06T09:00:00Z', { kind: 'meeting' });
+      const pageId = Number((await engine.getPage('people/rewrite'))!.id);
+      const first = asActor(REQUEST_A, 'application', 'host:test-a');
+      const second = asActor(REQUEST_B, 'oauth_client', 'client:test-b');
+      await attributed(engine, first, async (tx) => {
+        await tx.addTimelineEntry('people/rewrite', { date: '2026-08-06', summary: 'detail moves', detail: 'before' });
+        await tx.addTimelineEntry('people/rewrite', { date: '2026-08-06', summary: 'detail stays', detail: 'same' });
+        await tx.addTimelineEntry('people/rewrite', { date: '2026-08-06', summary: 'unattributed edit', detail: 'before' });
+        await tx.upsertEventProjection({ depthSlug: 'people/rewrite', eventSlug: 'life/events/2026-08-06-001', date: '2026-08-06', summary: 'projection', detail: 'before' });
+      });
+      const before = await writtenAt(engine, 'people/rewrite');
+      const idOf = async (summary: string) => (await engine.listStoredTimelineRows('default', 'people/rewrite')).find((r) => r.summary === summary)!.id;
+      const refresh = [
+        { id: await idOf('detail moves'), detail: 'before', next: 'after' },
+        { id: await idOf('detail stays'), detail: 'same', next: 'same' },
+      ];
+      const unattributed = await idOf('unattributed edit');
+      await attributed(engine, second, async (tx) => {
+        await tx.updateTimelineDetails(pageId, refresh);
+        // The same projection again changes nothing; then a new detail moves it.
+        await tx.upsertEventProjection({ depthSlug: 'people/rewrite', eventSlug: 'life/events/2026-08-06-001', date: '2026-08-06', summary: 'projection', detail: 'before' });
+      });
+      const afterSame = await writtenAt(engine, 'people/rewrite');
+      const projectionKept = afterSame.get('projection') === before.get('projection');
+      await attributed(engine, second, (tx) =>
+        tx.upsertEventProjection({ depthSlug: 'people/rewrite', eventSlug: 'life/events/2026-08-06-001', date: '2026-08-06', summary: 'projection', detail: 'after' }));
+      // An edit with no principal clears last_* and still moves last_written_at.
+      await engine.updateTimelineDetails(pageId, [{ id: unattributed, detail: 'before', next: 'after' }]);
+      const after = await writtenAt(engine, 'people/rewrite');
+      // Two transactions can share a millisecond, so a moved time compares as not older; a kept one as equal.
+      const kept = after.get('detail stays') === before.get('detail stays');
+      const notOlder = [...before.keys()].every((k) => Number(after.get(k)) >= Number(before.get(k)));
+      const rows = await receipts(engine, 'people/rewrite');
+      expect(rows.find((r) => r.summary === 'detail moves')).toMatchObject({ write_request_id: REQUEST_A, last_write_request_id: REQUEST_B, last_write_principal_id: 'client:test-b' });
+      expect(rows.find((r) => r.summary === 'detail stays')).toMatchObject({ write_request_id: REQUEST_A, last_write_request_id: REQUEST_A });
+      expect(rows.find((r) => r.summary === 'unattributed edit')).toMatchObject({ write_principal_id: 'host:test-a', last_write_principal_kind: null, last_written_at: 'Date' });
+      expect({ projectionKept, kept, notOlder }).toEqual({ projectionKept: true, kept: true, notOlder: true });
+      return { rows, projectionKept, kept, notOlder };
+    },
+  );
+
+  parityTest(
+    'a write request that is not a UUID is kept by the setting and refuses the timeline write that reads it',
+    { methods: ['transaction', 'applyTransactionSettings', 'readTransactionSettings', 'addTimelineEntry', 'getTimeline', 'putPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/bad-request');
+      const names = ['gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id'];
+      let kept: Array<string | null> = [];
+      const outcome = await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(names, ['req-1', 'application', 'host:test-a']);
+        kept = await tx.readTransactionSettings(names);
+        await tx.addTimelineEntry('people/bad-request', { date: '2026-08-09', summary: 'refused add' });
+      }).then(() => 'written', () => 'refused');
+      return { kept, outcome, rows: (await engine.getTimeline('people/bad-request')).length };
     },
   );
 });
@@ -502,6 +804,34 @@ describe('engine parity: excludePrivate on the chronicle reads', () => {
       return { alice, aliceKept, aliceDefault, aliceAlt, charlie, charlieKept, hidden, hiddenKept };
     },
   );
+
+  parityTest(
+    'the chronicle reads under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'upsertEventProjection', 'addTimelineEntry', 'getTimelineForDate', 'getSince', 'getOnThisDay', 'getLastSeen'] },
+    async (engine, backend) => {
+      await seedPrivacy(engine, backend);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+        day: summaries(await engine.getTimelineForDate('2026-06-18', { excludePrivate: true })),
+        week: summaries(await engine.getTimelineForDate('2026-06-18', { week: true, excludePrivate: true })),
+        since: summaries(await engine.getSince('2026-06-18', { excludePrivate: true })),
+        onThisDay: summaries(await engine.getOnThisDay({ date: '2026-06-18', excludePrivate: true })),
+        charlie: await engine.getLastSeen('people/charlie-example', { asof: '2026-06-25', excludePrivate: true }),
+        hidden: await engine.getLastSeen('people/hidden-person', { asof: '2026-06-25', excludePrivate: true }),
+      }));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      expect(stranger.day).toEqual(['2026-06-18 open plain', '2026-06-18 alt open plain', '2026-06-18 open depth, open event']);
+      expect(member.day).toContain('2026-06-18 depth with readers, open event');
+      expect(member.day).toContain('2026-06-18 open depth, event with readers');
+      expect(member.day).not.toContain('2026-06-18 private depth, open event');
+      expect(granted.day).toContain('2026-06-18 private depth, open event');
+      expect(granted.onThisDay).toContain('2025-06-18 private last year');
+      expect(granted.onThisDay).not.toContain('2025-06-18 alt private last year');
+      expect(granted.hidden.last_date).not.toBeNull();
+      return { member, granted, stranger };
+    },
+  );
 });
 
 describe('engine parity: ontology', () => {
@@ -591,6 +921,54 @@ describe('engine parity: ontology', () => {
       expect(defaultOnly.find((d) => d.dimension === 'role')?.entities).toBe(2);
       expect(missing).toEqual([]);
       return { all, defaultOnly, federated, missing };
+    },
+  );
+
+  parityTest(
+    'getOntology and findOntologyConflicts under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'mergeOntologyFact', 'getOntology', 'findOntologyConflicts'] },
+    async (engine) => {
+      await putCallerPages(engine);
+      const merge = (entitySlug: string, dimension: string, value: string, source: string, validFrom: string) =>
+        engine.mergeOntologyFact({ entitySlug, dimension, value, source, validFrom, visibility: 'world' });
+      // A newer value merged first and an older one merged after both stay current: a conflict that shows only while
+      // both values are visible. Each provenance page holds the older role and an employer of an entity with no page;
+      // each entity page's entity holds two roles from two open pages.
+      const provEntity = (i: number) => `people/prov-${i}-example`;
+      for (const [i, [slug]] of CALLER_PROVENANCE.entries()) {
+        await merge(provEntity(i), 'role', 'open', OPEN_PAGE, '2026-05-01');
+        await merge(provEntity(i), 'role', 'page', slug, '2026-01-01');
+        await merge(provEntity(i), 'employer', 'page', slug, '2025-01-01');
+      }
+      const SECOND_OPEN = 'notes/second-open';
+      await engine.putPage(SECOND_OPEN, { type: 'note', title: SECOND_OPEN, compiled_truth: 'Open.', timeline: '', frontmatter: {} });
+      for (const [slug] of CALLER_ENTITIES) {
+        await merge(slug, 'role', 'newer', OPEN_PAGE, '2026-05-01');
+        await merge(slug, 'role', 'older', SECOND_OPEN, '2026-01-01');
+      }
+      const kept = await readAsCallers(async () => {
+        const ontology: string[] = [];
+        for (const [i, [slug]] of CALLER_PROVENANCE.entries()) {
+          for (const r of await engine.getOntology(provEntity(i), { excludePrivate: true })) ontology.push(`${slug}:${r.dimension}=${r.value}`);
+        }
+        for (const [slug] of CALLER_ENTITIES) {
+          for (const r of await engine.getOntology(slug, { excludePrivate: true })) ontology.push(`${slug}:${r.dimension}=${r.value}`);
+        }
+        const conflicts = conflictView(await engine.findOntologyConflicts({ excludePrivate: true }))
+          .map((c) => `${c.entity_slug}:${c.dimension}`);
+        return { ontology: ontology.sort(), conflicts: conflicts.sort() };
+      });
+      // This policy reads no identity on the provenance page: only the open page's employer shows, for every caller.
+      const provenance = [...CALLER_PROVENANCE.map(([slug]) => `${slug}:role=open`), `${OPEN_PAGE}:employer=page`];
+      const view = (entities: string[]) => ({
+        ontology: [...provenance, ...entities.map((e) => `${e}:role=newer`)].sort(),
+        conflicts: entities.map((e) => `${e}:role`).sort(),
+      });
+      expect(kept.none).toEqual(view(['people/open-example']));
+      expect(kept.stranger).toEqual(kept.none);
+      expect(kept.member).toEqual(view(['people/open-example', 'people/readers-example', 'people/team-example']));
+      expect(kept.granted).toEqual(view(['people/open-example', 'people/readers-example', 'people/private-example']));
+      return kept;
     },
   );
 

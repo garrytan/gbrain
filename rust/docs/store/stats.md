@@ -50,7 +50,9 @@ two engines share that code instead of copying it:
   PGLite's `pageReadFilter('p', { excludePrivate }, [], true)` (`src/core/engine-sql/salience.ts:271`) to the
   baseline cohort keys, the baseline day counts and today's counts alike: the store skips each page that
   `page_hidden` (`facts/privacy.rs`) hides, as described in [salience.md](salience.md#private-pages-excludeprivate).
-  A caller record that changes `privatePagesFilterForCaller('p')` refuses with `engine_capability_missing`.
+  A caller whose record holds only a reader identity and a private-readable grant is served with both (the
+  `callerReaders` opt-in of `storePagePolicy`); any other caller record that changes
+  `privatePagesFilterForCaller('p')` refuses with `engine_capability_missing`.
 - `listEnrichCandidates` clamps `limit` and `thinThreshold` and turns `reenrichAfterMs` into the
   `enrichedAfter` text. An unknown `order` reads as `inbound-links`, as PGLite's lookup does.
 

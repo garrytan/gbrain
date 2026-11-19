@@ -26,7 +26,8 @@ On `getChunkPage` and `getChunkWindows`, `excludePrivate: true` applies the stor
 `page_hidden` test of `privatePagesFilterForCaller('p')`), and a safe-chunk read (`requiresSafeChunks`: `requireSafeChunks`,
 else `excludePrivate`) applies the chunker-version fence, `chunker_version >= 4`, which a page with no recorded version
 fails, as NULL fails the SQL comparison. A page either test drops reads as a page with no chunks in `getChunkPage` and is
-absent from the `getChunkWindows` rows. A caller whose member pages, grants or lineage widen the page policy refuses.
+absent from the `getChunkWindows` rows. Both reads serve a caller whose record holds only a reader identity and a
+private-readable grant (the `callerReaders` opt-in of `storePagePolicy`); any other caller whose policy differs refuses.
 The code chunk reads in the table (`findCodeDefinitions` and the others) still refuse a safe-chunk read.
 `minTrust` and `suppressFlagged` are ignored, because those SQL statements ignore them too.
 
@@ -90,7 +91,8 @@ These members replace raw SQL at code-def, code-refs, doctor, code readiness, th
 the page projection, repair contextual-mode and evidence delivery. Each answers what its statement in
 `chunk-reads.ts` answers.
 
-- The read policy is `pageReadFilter`'s source clause, its page privacy policy and its live test: not deleted, no
+- The read policy is `pageReadFilter`'s source clause, its page privacy policy (a caller's reader identity and
+  private-readable grant included, through the `callerReaders` opt-in of `storePagePolicy`) and its live test: not deleted, no
   `quarantine` frontmatter key, in a source that exists and is not archived. The TypeScript member sends the scope;
   a `requireSafeChunks` scope refuses with `engine_capability_missing` before any store call. `resolveFrozenHits`
   takes `minTrust` and `suppressFlagged` (assemble_evidence passes the caller's floor) and applies `trust::TrustPolicy`

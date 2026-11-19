@@ -32,7 +32,7 @@ const CHRONICLE = ['week', 'kind', 'limit', 'sourceId', 'sourceIds', 'excludePri
 
 /** The options with `excludePrivate` replaced by the page policy the store applies, or null for none. */
 function withPolicy(member: string, options: Record<string, unknown>): Record<string, unknown> {
-  return { ...options, excludePrivate: storePagePolicy(member, options.excludePrivate) ?? null };
+  return { ...options, excludePrivate: storePagePolicy(member, options.excludePrivate, { callerReaders: true }) ?? null };
 }
 
 export const getTimelineForDate: StoreMember<[date: string, opts?: ChronicleTimelineOpts], ChronicleTimelineRow[]> = (brain, date, opts) => {

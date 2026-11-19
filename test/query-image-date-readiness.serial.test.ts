@@ -24,6 +24,7 @@ describe('image query retains date and readiness contracts outside hybrid search
       executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
       // No page rows in this fake brain: the typed trust read finds nothing.
       readPageTrustRows: async () => [],
+      readRowTrustRows: async () => [],
       // Readiness reads through typed members: no generation (never cached), nothing pending, no held pages.
       readProjectionReadinessGeneration: async () => null,
       readProjectionReadiness: async () => ({ pending: false }),

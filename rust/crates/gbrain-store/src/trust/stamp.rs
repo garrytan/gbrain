@@ -214,7 +214,8 @@ pub fn page_frontmatter_content(frontmatter: &Map<String, Value>) -> Map<String,
 }
 
 /// The trust context of one write: PGLite's `gbrain.write_trust_tier`, `gbrain.write_origin`,
-/// `gbrain.write_trust_promotion`, `gbrain.write_trust_backfill` and `gbrain.write_trust_keep`.
+/// `gbrain.write_trust_promotion`, `gbrain.write_trust_backfill` and `gbrain.write_trust_keep`,
+/// plus the write's actor from the three attribution settings.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WriteTrust {
     /// The declared tier of the writer. `None` is an undeclared writer.
@@ -227,6 +228,9 @@ pub struct WriteTrust {
     pub backfill: bool,
     /// Tables whose content changes keep the stored tier.
     pub keep: Vec<TrustTable>,
+    /// The actor (`gbrain.write_request`, `gbrain.write_principal_kind`,
+    /// `gbrain.write_principal_id`) the timeline write receipt stamps. Not a trust input.
+    pub attribution: crate::write_trust::WriteAttribution,
 }
 
 /// The row the stamp applies to.

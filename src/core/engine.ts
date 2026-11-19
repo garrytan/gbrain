@@ -12,6 +12,7 @@ import type { RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/grap
 import type { ExtractionPendingRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
+import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
@@ -60,6 +61,10 @@ import type {
   ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow,
 } from './engine-sql/jobs-spend.ts';
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
+import type {
+  BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
+  ValidTimeIdentitySpec, ValidTimePickSpec,
+} from './engine-sql/trust-tier-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
   SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
@@ -177,6 +182,10 @@ export interface GuestSourceLookupRow { hidden: boolean; source_id: string | nul
 export interface PageTrustLookup { ids?: readonly number[]; keys?: ReadonlyArray<{ source_id: string; slug: string }>; includeDeleted?: boolean }
 /** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source. */
 export interface PageTrustRow { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; byId: boolean }
+/** `readRowTrustRows` input: a row table and the row ids to read. */
+export interface RowTrustLookup { table: 'facts' | 'takes' | 'timeline_entries'; ids: readonly number[] }
+/** One fact, take or timeline row's trust fields; `flagged` marks an activation-suppressed row, `contested` its first pending supersede proposal (`tp<id>:challenger|challenged`, never set on a timeline row). */
+export interface RowTrustRow { id: number; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null }
 /** A live page with its frontmatter aliases and knowledge revision (`listLinkPageMetadata`). */
 export interface LinkPageMetadataRow { slug: string; source_id: string; type: string; title: string; aliases?: unknown; knowledge_revision: string }
 /** One stored non-event timeline row (`listStoredTimelineRows`); `date` is `YYYY-MM-DD`. */
@@ -1368,6 +1377,8 @@ export interface BrainEngine {
   hasGuestSource(): Promise<boolean>;
   /** Trust tier, write origin, activation flag and guest flag of pages by id and by (source_id, slug). */
   readPageTrustRows(lookup: PageTrustLookup): Promise<PageTrustRow[]>;
+  /** Trust tier, write origin, activation flag and pending-supersede ref of fact, take or timeline rows by id; an id with no row reads none. */
+  readRowTrustRows(lookup: RowTrustLookup): Promise<RowTrustRow[]>;
   /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
   readDatabaseClock(): Promise<string>;
   /**
@@ -3204,6 +3215,14 @@ export interface BrainEngine {
   /** Deletes the source's relink attempts of `tier` that name `targetSlug`. */
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string): Promise<void>;
 
+  // Facts relink writes (engine-sql/fact-relink-writes.ts): the guarded facts update statements relink ran through executeRaw.
+  /** Places a pinned fact that still has no entity, page, row number or expiry (link onto `slug`'s fence, or retire as a duplicate); true when it moved. */
+  placeRelinkedFact(sourceId: string, placement: RelinkPlacement): Promise<boolean>;
+  /** Links a conversation page's derived row still exactly as planned onto a live page; true when it was linked. */
+  linkConversationFact(sourceId: string, link: ConversationFactLink): Promise<boolean>;
+  /** The conversation relink's page pick: the pages with the most derived rows it would link, most rows first, then by slug in byte order. */
+  listConversationRelinkPages(sourceId: string, q: ConversationRelinkPagesQuery): Promise<string[]>;
+
   // Facts statements, command, cycle and fence reads (engine-sql/facts-cycle.ts). Each runs the statement its caller ran through executeRaw.
   /** enrich's grounding read: an entity's unexpired, unlapsed facts, highest confidence first (newest id breaks a tie), at most `limit`. */
   listActiveFactsForEntity(sourceId: string, entitySlug: string, limit: number): Promise<FactsCycleSql.EvidenceFactRow[]>;
@@ -3869,6 +3888,25 @@ export interface BrainEngine {
   countZeroWeightWithTakes(): Promise<{ zero_weight_with_takes: number; nonzero_weight: number }>;
   /** Whether the source owns an unresolved (symbol-target) code edge. */
   hasCodeEdgesSymbol(sourceId: string): Promise<boolean>;
+  // Group D (trust tier reads): the stamped-tier reads of core memory, the trust scan, belief history, page history and valid time.
+  /** The live `always_load` pages, by source then slug, with the trust columns a delivery read asks for. */
+  listCorePageRows(spec: CorePageRowSpec): Promise<CorePageRow[]>;
+  /** Rows of one scanned table above an id whose stored tier is listed, by id. */
+  listTrustScanRows(spec: TrustScanRowSpec): Promise<TrustScanRow[]>;
+  /** How many rows of one scanned table above an id (and at or below a ceiling) have a listed stored tier. */
+  countUnscannedTrustRows(spec: UnscannedTrustSpec): Promise<number>;
+  /** One page of a source's belief events, with the per-row visibility facts the remote filter reads. */
+  readBeliefHistoryRows(spec: BeliefHistoryRowQuery): Promise<Array<Record<string, unknown>>>;
+  /** The listed page lifetimes that are live and whose page passes the remote read floor. */
+  listVisibleBeliefLifetimes(lifetimes: readonly string[]): Promise<string[]>;
+  /** The stored snapshot tier of each listed page version, by id. */
+  listVersionTrustTiers(ids: readonly number[]): Promise<Array<{ id: number; trust_tier: string | null }>>;
+  /** The type and tier of the write that replaced each listed version (the next snapshot, or the live page), by id. */
+  listVersionReasonWriters(ids: readonly number[]): Promise<Array<{ id: number; type: string | null; tier: string | null }>>;
+  /** The live pages with a slug a valid-time read may follow, by source (at most six). */
+  listValidTimeIdentities(spec: ValidTimeIdentitySpec): Promise<ValidTimeIdentityRow[]>;
+  /** The valid-time pick over one page and its retained versions; null when the page is gone. */
+  pickValidTimeEdition(spec: ValidTimePickSpec): Promise<Record<string, unknown> | null>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

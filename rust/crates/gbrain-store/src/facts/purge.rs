@@ -46,7 +46,7 @@ fn outcome_marker(row: &FactRecord) -> bool {
 }
 
 /// `unbackedEntitySql`: `COALESCE(strpos(entity_slug, '/') = 0 AND NOT EXISTS (live page), false)`.
-fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(super) fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(entity) = row.entity_slug.as_deref() else {
         return Ok(false);
     };
