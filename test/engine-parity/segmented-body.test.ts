@@ -537,4 +537,47 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       return { title: version.title, count: versions.length };
     },
   );
+
+  // Review finding specialist-batched#2: updateSlug versions the page before it moves it. SQL versions a segmented page as
+  // a reference to its live body generation; the Rust store keeps no such reference, so it must refuse the rename (as
+  // createVersion does) instead of writing a version with no body and moving the page.
+  parityTest(
+    'pageCollapseFacts reads a segmented page through its stored truth lead',
+    { methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'flipBodyGeneration', 'pageCollapseFacts', 'putPage'] },
+    async (engine) => {
+      // Long enough (>= 200 characters) that the collapse facts carry an md5 of the body, not only its length and lead.
+      const LONG = segmentText(`# Long\n${'a long segmented body about the pelican migration. '.repeat(6)}\n`);
+      const { id: pageId } = await engine.createSegmentedPageShell('notes/long', pageMeta('Long page'), { sourceId: 'default' });
+      const occurrences = await engine.allocateBodyOccurrenceIds(1);
+      const { stagingId } = await stageApart(engine, { pageId, slug: 'notes/long', genFrom: 1, texts: [LONG], occurrences });
+      await engine.flipBodyGeneration(flipInput(pageId, 0, stagingId, [LONG]));
+      await engine.setBodyStagingState(stagingId, 'committed');
+      const inline = await engine.putPage('notes/short', { type: 'note', title: 'Short', compiled_truth: 'a short inline body', timeline: '' });
+      const rows = await engine.pageCollapseFacts([pageId, inline.id], [pageId, inline.id]);
+      const view = rows.map((r) => ({ page: r.id === pageId ? 'segmented' : 'inline', body_chars: r.body_chars, hashed: r.body !== null,
+        lead: r.lead?.slice(0, 30) ?? null }));
+      const segmented = view.find((r) => r.page === 'segmented');
+      expect(segmented?.body_chars).toBeGreaterThan(200);
+      expect(segmented?.hashed).toBe(true);
+      expect(segmented?.lead).toStartWith('# Long');
+      return { view, bodies: rows.map((r) => r.body) };
+    },
+  );
+
+  parityTest(
+    'updateSlug of a segmented page versions it by reference on PGLite and is a typed refusal on the Rust store',
+    { methods: ['updateSlug', 'getVersions', 'getPage'] },
+    async (engine) => {
+      await publishApart(engine, 'notes/renamed-big');
+      // Rust: the typed refusal ends the case, and nothing was renamed or versioned (checked in the store's unit test).
+      const moved = await engine.updateSlug('notes/renamed-big', 'notes/renamed-big-2');
+      const versions = await engine.getVersions('notes/renamed-big-2');
+      const page = await engine.getPage('notes/renamed-big-2');
+      return {
+        moved,
+        page: page ? { slug: page.slug, title: page.title } : null,
+        versions: versions.map((v) => ({ title: v.title, compiled_truth: v.compiled_truth, timeline: v.timeline, content_hash: v.content_hash ?? null })),
+      };
+    },
+  );
 });

@@ -615,6 +615,11 @@ on the redacted default.
 
 ## If a secret reached the brain
 
+A value redacted by `gbrain repair secret-spans` or by a publish is kept, encrypted, in the secret store, under a key
+that stays on the host (never in the database, the repository or a backup bucket); see
+[docs/guides/secret-store.md](docs/guides/secret-store.md). Export that key with `gbrain secrets key export`;
+`gbrain doctor` warns until you do.
+
 Transcript ingest, captures and syncs redact credential-shaped strings before
 anything is written: vendor key prefixes, JWTs, cloud/API key shapes, `Bearer`
 headers, connection strings carrying inline passwords, PEM private keys, and
@@ -631,7 +636,8 @@ complete. If you find a live credential in a page:
 
    `--purge` is honored only by the local CLI; remote/MCP callers keep the
    72-hour soft delete. It removes the row and its chunks, links and raw session
-   metadata with no recovery window, and it refuses to report success while
+   metadata with no recovery window, along with any sealed secret store
+   original that only this page referenced, and it refuses to report success while
    the page's markdown file remains on disk: it retries the removal and, if the
    file still cannot be removed, stops with `storage_error` naming the path so
    you can fix permissions and re-run (the row stays soft-deleted until the
