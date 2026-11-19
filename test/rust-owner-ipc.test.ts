@@ -255,7 +255,9 @@ describe('deadlines, cancel and permits', () => {
     const { engine, close } = await clientOf(server.socketPath);
     try {
       const started = Date.now();
-      const calls = [0, 1, 2, 3].map(() => withReadDeadline(Date.now() + 300, () => engine.getHealth()).then(() => null, e => e));
+      // One deadline for all four, so a queued call never takes a permit a running call released.
+      const deadline = Date.now() + 300;
+      const calls = [0, 1, 2, 3].map(() => withReadDeadline(deadline, () => engine.getHealth()).then(() => null, e => e));
       await Bun.sleep(100);
       expect(server.stats()).toMatchObject({ active: 2, queued: 2 });
       const errors = await Promise.all(calls);

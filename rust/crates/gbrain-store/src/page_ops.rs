@@ -989,6 +989,9 @@ impl Store {
                     .or_default()
                     .push(page.slug.clone());
             }
+            for (source, slugs) in &by_source {
+                crate::page_body::delete_slug_stagings(tx, source, slugs)?;
+            }
             crate::page_body::delete_purged_texts(tx, &texts)?;
             let now = self.env.now_micros();
             for (source, slugs) in &by_source {
