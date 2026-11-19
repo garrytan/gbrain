@@ -97,9 +97,13 @@ for (const { name, make } of engines) {
           await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'secret_store_key_missing' });
           expect(await b.engine.executeRaw('SELECT 1 FROM secret_store')).toEqual([]);
         });
+        await expect(restoreBackup(b.engine, storage, out.object)).rejects.toMatchObject({ code: 'invalid_params',
+          message: expect.stringContaining('skipped because their page is not in this brain'), suggestion: 'Sync the pages, then run the same restore again.' });
+        expect(await b.engine.executeRaw('SELECT 1 FROM secret_store')).toEqual([]);
+        expect(await b.engine.executeRaw('SELECT 1 FROM secret_store_occurrence')).toEqual([]);
         await b.engine.putPage('notes/deploy-plan', { type: 'note', title: 'Deploy plan', compiled_truth: 'Deploy notes.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
         const restored = await restoreBackup(b.engine, storage, out.object);
-        expect(restored).toMatchObject({ inserted: out.entries, existing: 0, unreadable: [] });
+        expect(restored).toMatchObject({ inserted: out.entries, existing: 0, skipped_no_page: 0, unreadable: [] });
         expect((await reveal(b.engine, sealed.id, 'test')).value).toBe(TOKEN);
         expect((await reveal(b.engine, sealed.id, 'test')).occurrences.map(o => o.slug)).toEqual(['notes/deploy-plan']);
         expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 0, existing: out.entries });
