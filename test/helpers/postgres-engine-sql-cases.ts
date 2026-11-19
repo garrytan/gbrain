@@ -537,6 +537,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'appendOpCheckpointPaths': OOS.writeMisc,
   'deleteOpCheckpoint': OOS.writeMisc,
   'deleteOpCheckpointPaths': OOS.writeMisc,
+  'purgeStaleCheckpoints': OOS.writeMisc,
   'readHealthMemoClock': OOS.writeMisc,
   'listSynopsisSourceIds': OOS.writeMisc,
   'bumpPageRetrievals': OOS.pageRetrievals,

@@ -123,13 +123,18 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | the parent created with no keys or stamped now, then each path not yet stored added | `appendOpCheckpointPaths` (`appendCompleted`, `appendCompletedOnce`) |
 | `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
 | `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
+| `brain.purgeStaleCheckpoints(ttlDays)` | how many parents it deleted: each `d 0x02` parent (housekeeping turns included) stamped more than `ttlDays` days ago that no exemption keeps, with its paths. The exemptions read the rows as they were before the purge. A `ttlDays` that is not a finite number refuses with `invalid_input` | `purgeStaleCheckpoints` (the cycle's purge phase, `bookkeeping-gc.ts`) |
 
 Differences from the SQL engines:
 
 - The SQL read names no order; the store lists the paths in path order. `resumeFilter` and every caller
   use the keys as a set.
-- `purgeStaleCheckpoints` (the cycle's 7-day purge) is still raw SQL, which this engine refuses, so a
-  checkpoint that no run clears stays until an op clears it.
+- The purge keeps the exemptions whose data the store has: the ops never purged, the sync delete
+  tombstone and identity downgrade while their page has the recorded `deleted_at`, the rows kept
+  while their source incarnation lives, and the managed sync run and manifest rules. The store keeps
+  no `source_ingestion_receipts`, so the incomplete-receipt exemption never holds. A recorded time or
+  hold count the store cannot read keeps the row, where Postgres fails the whole purge (and the
+  caller answers 0).
 - The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
   persistence receipts) are still raw SQL. Their rows are not in this store.
 

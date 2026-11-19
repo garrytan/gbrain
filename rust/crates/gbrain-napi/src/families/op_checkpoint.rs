@@ -74,4 +74,14 @@ impl Brain {
             s.delete_op_checkpoint_paths(&op, &fingerprint)
         })
     }
+
+    /// `purgeStaleCheckpoints(ttlDays)`: how many stale checkpoints it deleted.
+    #[napi]
+    pub fn purge_stale_checkpoints<'env>(
+        &self,
+        env: &'env Env,
+        ttl_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.purge_stale_checkpoints(ttl_days))
+    }
 }

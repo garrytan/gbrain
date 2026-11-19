@@ -137,6 +137,7 @@ export const RUST_ENGINE_MEMBERS = {
   appendOpCheckpointPaths: 'persistence_journal',
   deleteOpCheckpoint: 'persistence_journal',
   deleteOpCheckpointPaths: 'persistence_journal',
+  purgeStaleCheckpoints: 'persistence_journal',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',
