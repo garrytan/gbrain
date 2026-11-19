@@ -565,7 +565,6 @@ src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
-src/core/ops/persistence.ts	execute_raw	3
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/search-type-filter.ts	execute_raw	1
@@ -968,7 +967,6 @@ src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
-src/core/shared-skills/membership-authority.ts	execute_raw	4
 src/core/shared-skills/membership.ts	execute_raw	17
 src/core/shared-skills/migration-export.ts	execute_raw	7
 src/core/shared-skills/migration-members.ts	execute_raw	1

@@ -55,6 +55,8 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  // access-grants.ts builders
+  tokenGrantColumnList: 'src/core/engine-sql/access-grants.ts (from grants/model.ts): joins only TOKEN_GRANT_ROW_COLUMNS constant names, filtered by which ones pg_attribute reports present; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
   relinkTriedSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationTriedSql EXISTS predicate (conversation-memo.ts; code-constant outcome and reason codes) or the literal false; no values',

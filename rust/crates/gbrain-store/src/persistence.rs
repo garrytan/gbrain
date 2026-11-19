@@ -1212,6 +1212,19 @@ impl Store {
         Ok(read_request(&*read, principal, &request_id)?.map(|r| r.to_row()))
     }
 
+    /// `readWriteRequestsByRequestId(requestId)`: at most two request rows with this request id,
+    /// from any principal, in key order. The trusted local CLI answers a receipt by request id
+    /// alone only when exactly one row has it, so two rows is enough to know it is ambiguous.
+    pub fn list_write_requests_by_request_id(&self, request_id: &str) -> Result<Vec<Value>> {
+        let request_id = uuid_param(request_id, "requestId")?;
+        Ok(all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| r.request_id == request_id)
+            .take(2)
+            .map(|r| r.to_row())
+            .collect())
+    }
+
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the request row or `None`.
     pub fn read_write_request_by_id(&self, id: &str) -> Result<Option<Value>> {
         Ok(request_by_id(&*self.read()?, id)?.map(|r| r.to_row()))

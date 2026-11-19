@@ -4,6 +4,7 @@ import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
+import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -3455,6 +3456,18 @@ export interface BrainEngine {
 
   /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
   insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
+  /** An OAuth client's receipt grant row, deleted or not, or undefined; `lock` reads it `FOR SHARE` (engine-sql/access-grants.ts). */
+  readOAuthClientReceiptGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptClientGrant | undefined>;
+  /** An access token's receipt grant row, revoked or not, or undefined; `lock` reads it `FOR SHARE`. */
+  readAccessTokenReceiptGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptTokenGrant | undefined>;
+  /** A live (not deleted) OAuth client's membership grant row read `FOR SHARE`, or undefined. */
+  readOAuthClientMemberGrant(clientId: string): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
+  /** A live (not revoked) access token's grant columns read `FOR SHARE`, or undefined. */
+  readAccessTokenMemberGrant(tokenId: string): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
+  /** A local writer's grant ceiling and revoked_at read `FOR SHARE`, revoked or not, or undefined. */
+  readLocalWriterMemberGrant(id: string): Promise<AccessGrantsSql.MemberLocalWriterGrant | undefined>;
+  /** The shared-skill serving epoch, or null when the brain has no shared-skill state row. */
+  readSharedSkillServingEpoch(): Promise<string | null>;
 
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
   /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
@@ -3472,6 +3485,8 @@ export interface BrainEngine {
   readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
+  /** At most two requests with this request_id (a uuid), from any principal, in no set order. */
+  readWriteRequestsByRequestId(requestId: string): Promise<WriteRequest[]>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
   /** A principal's requests in one live source, newest sequence first, through the cursor and fences (list_write_requests). */

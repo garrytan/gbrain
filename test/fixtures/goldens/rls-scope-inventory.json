@@ -3531,6 +3531,39 @@
           "default"
         ]
       },
+      "readAccessTokenMemberGrant#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessTokenReceiptGrant#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessTokenReceiptGrant#lock": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "readCanonicalTwin#default": {
         "flagOffLanes": [
           "pool"
@@ -3925,6 +3958,17 @@
         ],
         "flagOnScopes": []
       },
+      "readLocalWriterMemberGrant#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "readLocalWriterRow#default": {
         "flagOffLanes": [
           "pool"
@@ -3992,6 +4036,39 @@
         "flagOnScopes": []
       },
       "readNoopEmbeddingCandidates#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOAuthClientMemberGrant#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOAuthClientReceiptGrant#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readOAuthClientReceiptGrant#lock": {
         "flagOffLanes": [
           "tx"
         ],
@@ -4184,6 +4261,17 @@
         ],
         "flagOnScopes": []
       },
+      "readSharedSkillServingEpoch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
@@ -4262,6 +4350,17 @@
         "flagOnScopes": []
       },
       "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriteRequestsByRequestId#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6027,6 +6126,8 @@
         "queueWakeForget": "none",
         "rankEntities": "none",
         "rawTransaction": "none",
+        "readAccessTokenMemberGrant": "none",
+        "readAccessTokenReceiptGrant": "none",
         "readAccessTokenWriteGrant": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
@@ -6089,6 +6190,7 @@
         "readLinkRelationshipEvidence": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
+        "readLocalWriterMemberGrant": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
         "readManifest": "none",
@@ -6100,6 +6202,8 @@
         "readMentionLastPass": "none",
         "readMirrorGateRows": "none",
         "readNoopEmbeddingCandidates": "none",
+        "readOAuthClientMemberGrant": "none",
+        "readOAuthClientReceiptGrant": "none",
         "readOAuthClientWriteGrant": "none",
         "readOauthClient": "none",
         "readOldestWaitingAge": "none",
@@ -6135,6 +6239,7 @@
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
         "readSegmentedEmbedPage": "none",
+        "readSharedSkillServingEpoch": "none",
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",
@@ -6154,6 +6259,7 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriteRequestsByRequestId": "none",
         "readWriteVisibilityProbe": "none",
         "readWriterSlugFence": "none",
         "readWriterVersionCutoff": "none",

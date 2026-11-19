@@ -83,6 +83,7 @@ import * as fieldUsage from './field-usage.ts';
 import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
+import * as accessGrants from './access-grants.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -131,6 +132,8 @@ export const STORE_MEMBERS = {
   ...importMembers,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
+  // The access-grant reads and the request-id lookup of the receipt operations (rust/docs/store/persistence.md).
+  ...accessGrants,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

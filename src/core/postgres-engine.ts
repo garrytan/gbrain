@@ -164,6 +164,7 @@ import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
+import * as accessGrantsImpl from './engine-sql/access-grants.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
@@ -1277,6 +1278,12 @@ export class PostgresEngine implements BrainEngine {
   declarePersistence(opts?: { durable?: DurablePersistenceSettings }) { return persistenceDeclarationImpl.declarePersistence(this, opts?.durable); }
   requireSynchronousCommit() { return persistenceDeclarationImpl.requireSynchronousCommit(this); }
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }
+  readOAuthClientReceiptGrant(clientId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => accessGrantsImpl.readOAuthClientReceiptGrant(unscopedExecutor(exec, 'access grants: a receipt client grant read ran unscoped through executeRaw'), clientId, opts), opts?.lock); }
+  readAccessTokenReceiptGrant(tokenId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => accessGrantsImpl.readAccessTokenReceiptGrant(unscopedExecutor(exec, 'access grants: a receipt token grant read ran unscoped through executeRaw'), tokenId, opts), opts?.lock); }
+  readOAuthClientMemberGrant(clientId: string) { return this.preparationRead(exec => accessGrantsImpl.readOAuthClientMemberGrant(unscopedExecutor(exec, 'access grants: a member client grant read ran unscoped through executeRaw'), clientId), true); }
+  readAccessTokenMemberGrant(tokenId: string) { return this.preparationRead(exec => accessGrantsImpl.readAccessTokenMemberGrant(unscopedExecutor(exec, 'access grants: a member token grant read ran unscoped through executeRaw'), tokenId), true); }
+  readLocalWriterMemberGrant(id: string) { return this.preparationRead(exec => accessGrantsImpl.readLocalWriterMemberGrant(unscopedExecutor(exec, 'access grants: a member local writer grant read ran unscoped through executeRaw'), id), true); }
+  readSharedSkillServingEpoch() { return this.preparationRead(exec => accessGrantsImpl.readSharedSkillServingEpoch(unscopedExecutor(exec, 'access grants: the serving epoch read ran unscoped through executeRaw'))); }
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
   readJournalLimitRows() { return this.preparationRead(exec => persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(exec, 'persistence: journal limit read ran unscoped through executeRaw'))); }
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]) { return this.preparationRead(exec => persistenceJournalImpl.readHeldPageRows<R>(unscopedExecutor(exec, 'persistence: hold read ran unscoped through executeRaw'), pageIds)); }
@@ -1287,6 +1294,7 @@ export class PostgresEngine implements BrainEngine {
   clearFenceHoldRows(key: fenceHoldsImpl.FenceHoldKey) { return fenceHoldsImpl.clearFenceHoldRows(this.executeRaw.bind(this), key); }
   readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]) { return fenceHoldsImpl.readFenceHoldFiles(this.executeRaw.bind(this), sourceIds, slugs); }
   readWriteRequest(principalKind: string, principalId: string, requestId: string) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequest(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId)); }
+  readWriteRequestsByRequestId(requestId: string) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestsByRequestId(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), requestId)); }
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestById(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), id, opts)); }
   listWriteRequestRows(principalKind: string, principalId: string, sourceId: string, filter: persistenceJournalImpl.WriteRequestListFilter) { return persistenceJournalImpl.listWriteRequestRows(unscopedExecutor(this.engineSql, 'persistence: receipt list ran unscoped through executeRaw'), principalKind, principalId, sourceId, filter); }
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestProgress(unscopedExecutor(exec, 'persistence: request progress read ran unscoped through executeRaw'), id, opts)); }
