@@ -69,10 +69,11 @@ async function finishRefreshRun(engine: BrainEngine, run: RefreshRun, opts: Fini
   const drained: RefreshLinkBacklog[] = [];
   if (run.backlog.length) {
     const { drainSyncTailBacklog } = await import('./sync-tail.ts');
-    const started = performance.now(), deadlineAtMs = Math.max(...run.backlog.map(item => item.share.deadlineAtMs)), brain = engine.readPersistenceBrainId();
+    const started = performance.now(), deadlineAtMs = Math.max(...run.backlog.map(item => item.share.deadlineAtMs));
+    let brain: Promise<string | null> | undefined;
     for (const { sourceId, share } of run.backlog) {
       try {
-        const lock = await tryAcquireNativeLock(join(persistenceHome(), 'locks', `link-backlog-${createHash('sha256').update(`${await brain}\0${sourceId}`).digest('hex').slice(0, 32)}.lock`));
+        const lock = await tryAcquireNativeLock(join(persistenceHome(), 'locks', `link-backlog-${createHash('sha256').update(`${await (brain ??= engine.readPersistenceBrainId())}\0${sourceId}`).digest('hex').slice(0, 32)}.lock`));
         if (!lock) { drained.push({ source_id: sourceId, outcome: 'skipped', pages: 0 }); continue; }
         try {
           await opts.beforeDrain?.(sourceId);

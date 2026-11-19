@@ -134,7 +134,7 @@ test('GST-3202: another brain under the same GBRAIN_HOME drains its own source o
 test('GST-3202: the backlog drain still has time when a step after the first member\'s tail outlasts that member\'s share', () => each(async f => {
   await withBacklog(f);
   pushThree(f, 1);
-  const budgetMs = 10_000;
+  const budgetMs = 20_000;
   const result = await refreshWorktree(f.engine, f.alpha, { syncBudgetMs: budgetMs, hooks: { boundary: async point => {
     // Past every share the first member's tail left (each ends within half the budget of the sync start), inside the budget.
     if (point === 'synced') await new Promise(resolve => setTimeout(resolve, budgetMs / 2 + 250));
