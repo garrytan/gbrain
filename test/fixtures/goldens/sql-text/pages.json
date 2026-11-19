@@ -1991,10 +1991,13 @@
             "params": [
               "string",
               "string",
+              "string",
+              "string",
+              "string",
               "string"
             ],
-            "sql": "UPDATE secret_store_occurrence SET slug = $1 WHERE source_id = $2 AND slug = $3 AND commit_sha IS NULL",
-            "textSha256": "9063580b6f617e58b9596b633c20cfecc0cb60204eeffd33ad0a2fac0758c573"
+            "sql": "UPDATE secret_store_occurrence SET slug = $1 WHERE source_id = $2 AND slug = $3 AND commit_sha IS NULL AND (page_id IS NULL OR page_id IN (SELECT id FROM pages WHERE source_id = $4 AND slug IN ($5, $6)))",
+            "textSha256": "dc82a72d28c14eaf8b2e4848234a3c3ce9b4281001969f91ef6f47a969eb4e3c"
           },
           {
             "event": "savepoint-release",
