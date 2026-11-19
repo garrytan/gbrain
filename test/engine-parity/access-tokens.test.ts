@@ -299,6 +299,49 @@ describe('engine parity: access_tokens members', () => {
       return out;
     });
 
+  parityTest('bearer check, OAuth rung, in a session set to America/Los_Angeles: the client grant timestamps read as the same UTC text and the token authenticates the same',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'readOauthAccessTokenRows'] }, async (engine, backend, ctx) => {
+      const now = Math.floor(Date.now() / 1000);
+      await engine.insertOauthClient({
+        client_id: 'oc-tz', client_name: 'Client oc-tz', scope: 'read write', source_id: 'default', federated_read: ['default'], client_id_issued_at: 1_700_000_000,
+        token_ttl: 600, surface: 'full', surface_set_by: 'operator',
+        // A summer and a winter instant (PDT and PST offsets), each with a fraction.
+        created_at: new Date('2026-07-04T15:16:17.123Z'), reads_unscoped: new Date('2026-01-02T03:04:05.5Z'),
+      });
+      await engine.insertOauthToken({ token_hash: hashToken('ot-tz'), token_type: 'access', client_id: 'oc-tz', scopes: ['read'], expires_at: now + 3600,
+        resource: null, created_at: now, grant_type: 'client_credentials' });
+      // The session time zone a Postgres server or PGLite can carry; the Rust store has no session.
+      let reader: BrainEngine = engine;
+      let restore = async () => {};
+      if (backend === 'pglite') {
+        await engine.executeRaw(`SET TIME ZONE 'America/Los_Angeles'`);
+        restore = async () => { await engine.executeRaw('RESET TIME ZONE'); };
+      } else if (backend === 'postgres') {
+        const [{ db }] = await engine.executeRaw<{ db: string }>('SELECT current_database() AS db');
+        const quoted = `"${db.replace(/"/g, '""')}"`;
+        await engine.executeRaw(`ALTER DATABASE ${quoted} SET timezone TO 'America/Los_Angeles'`);
+        const fresh = ctx.unconnectedEngine();
+        await fresh.engine.connect(fresh.config);
+        reader = fresh.engine;
+        restore = async () => { await engine.executeRaw(`ALTER DATABASE ${quoted} RESET timezone`); };
+      }
+      try {
+        // Not vacuous: the session really is on Pacific time where there is one.
+        const zone = backend === 'rust' ? 'America/Los_Angeles'
+          : (await reader.executeRaw<{ tz: string }>(`SELECT current_setting('TimeZone') AS tz`))[0]!.tz;
+        const [row] = await reader.readOauthAccessTokenRows(hashToken('ot-tz'), 0);
+        const grant = (row?.current_grant ?? {}) as Record<string, unknown>;
+        const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(reader), engine: reader });
+        return {
+          zone,
+          created_at: grant.created_at, reads_unscoped: grant.reads_unscoped, deleted_at: grant.deleted_at,
+          auth: await bearer(reader, provider, 'ot-tz'),
+        };
+      } finally {
+        await restore();
+      }
+    });
+
   parityTest('the expired-credential sweep serve --http runs at startup deletes the expired OAuth tokens of any type and keeps the live ones',
     { methods: ['insertOauthClient', 'insertOauthToken', 'deleteExpiredOauthCredentials', 'readOauthAccessTokenRows'] }, async (engine) => {
       const now = Math.floor(Date.now() / 1000);

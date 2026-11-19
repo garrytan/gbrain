@@ -15,7 +15,9 @@ never logs one.
 | `brain.deleteExpiredOauthTokens(now)` | how many tokens of any type it deleted: those whose `expires_at` is before `now` (epoch seconds). A NULL `expires_at` stays. One write |
 
 `current_grant` is the client row as JSON (`to_jsonb`), without `client_secret_hash`; `budget_usd_per_day` is a JSON number
-and times are `+00:00` text, as PostgreSQL gives them in a UTC session. `source_active` is whether the client's source
+and times (`created_at`, `deleted_at`, `reads_unscoped`) are `+00:00` text, as PostgreSQL gives them in a UTC session.
+The PostgreSQL and PGLite reader moves the same three fields to that UTC text whatever the session TimeZone
+(`utcCurrentGrant` in `src/core/engine-sql/access-credentials.ts`), so all engines return one text. `source_active` is whether the client's source
 exists and is not archived. `active_read_sources` lists the non-archived sources in the client's `federated_read`, sorted
 and without repeats.
 
@@ -48,6 +50,5 @@ Differences from PGLite and PostgreSQL:
 - Not kept: the secondary indexes, and the `oauth_codes` table.
 - An expired row stays until the sweep runs or its client is deleted; the bearer check refuses it either way.
 - `active_read_sources` is sorted by id; PostgreSQL's order is unspecified.
-- The `current_grant` timestamp text assumes a UTC session.
 - Still raw SQL, so a Rust brain refuses them: `revokeToken` and `revokeClient` in `oauth-grants.ts`, `grants/lifecycle.ts`,
   `grants/service.ts`, and the two counts in `serve-http-admin-api.ts`.

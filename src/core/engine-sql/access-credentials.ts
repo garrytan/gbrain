@@ -348,8 +348,38 @@ export type OauthTokenRung = 0 | 1 | 2 | 3 | 4;
 export type TokenByHashCaller = 'provider' | 'transport';
 
 /** The OAuth access token with this hash joined to its live client, at one rung of the degrade ladder. */
-export function readOauthAccessTokenRows(tx: Raw, hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]> {
-  return tx.executeRaw<Record<string, unknown>>(BEARER_SQL.oauth_rungs[rung], [hash]);
+export async function readOauthAccessTokenRows(tx: Raw, hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]> {
+  return (await tx.executeRaw<Record<string, unknown>>(BEARER_SQL.oauth_rungs[rung], [hash])).map(utcCurrentGrant);
+}
+
+/** The `oauth_clients` timestamp columns `current_grant` (to_jsonb of the client row) carries. */
+const GRANT_TIME_KEYS = ['created_at', 'deleted_at', 'reads_unscoped'] as const;
+const JSONB_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?([+-])(\d{2})(?::(\d{2}))?(?::(\d{2}))?$/;
+
+/**
+ * A to_jsonb timestamptz text as the same instant on UTC (`2026-01-02T03:04:05.5+00:00`): to_jsonb prints it in the
+ * session TimeZone, so one row reads differently per server or session; the fraction digits are kept as stored.
+ * Text of another shape (a year past 9999, BC, infinity) is returned unchanged.
+ */
+export function utcJsonbTime(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const m = JSONB_TIME.exec(value);
+  if (!m) return value;
+  const offset = (Number(m[9]) * 3600 + Number(m[10] ?? 0) * 60 + Number(m[11] ?? 0)) * (m[8] === '-' ? -1 : 1);
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])) - offset * 1000;
+  const utc = new Date(ms).toISOString();
+  return /^\d{4}-/.test(utc) ? `${utc.slice(0, 19)}${m[7] ?? ''}+00:00` : value;
+}
+
+/** A bearer OAuth token row with its `current_grant` timestamps on UTC (utcJsonbTime), the text the Rust store returns. */
+export function utcCurrentGrant(row: Record<string, unknown>): Record<string, unknown> {
+  const grant = row.current_grant;
+  if (grant == null || typeof grant !== 'object' || Array.isArray(grant)) return row;
+  const g = grant as Record<string, unknown>;
+  if (!GRANT_TIME_KEYS.some((k) => typeof g[k] === 'string')) return row;
+  const next: Record<string, unknown> = { ...g };
+  for (const k of GRANT_TIME_KEYS) if (k in next) next[k] = utcJsonbTime(next[k]);
+  return { ...row, current_grant: next };
 }
 
 /** The whole row (`SELECT *`, every schema generation) of the token not revoked with this hash, or null. */
