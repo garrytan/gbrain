@@ -37,6 +37,7 @@ mod page_projection;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
+pub mod shared_skill_members;
 pub mod sources;
 #[cfg(feature = "test-seeds")]
 pub mod test_seeds;
@@ -352,8 +353,8 @@ pub(crate) struct StoredFormat {
 }
 
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`), the caller's `initial_config` rows and the
-/// `default` source.
+/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the
+/// `default` source and the shared-skill catalog token secret.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
@@ -368,5 +369,6 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
         tx.put(&keys::text(keys::CONFIG, &[key.as_str()]), value.as_bytes())?;
     }
     access_flag::record_scan_done(tx)?;
-    sources::seed_default_source(tx, env)
+    sources::seed_default_source(tx, env)?;
+    shared_skill_members::seed_state(tx, env)
 }
