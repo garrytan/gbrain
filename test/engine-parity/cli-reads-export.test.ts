@@ -309,11 +309,16 @@ describe('engine parity: export reads', () => {
       'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
   }, async (engine) => {
     const titles = ['Intro', 'Next'];
-    const { pageId } = await publishSegmented(engine, 'notes/big', {
+    const { pageId, occurrences } = await publishSegmented(engine, 'notes/big', {
       row: seq => ({ outline: [{ level: seq + 1, text: titles[seq]!, proj_byte: 0 }], factsSlots: [] }),
     });
     const body = await openSegmentedBody(engine, { pageId });
+    const toJson = (v: unknown) => typeof v === 'string' ? JSON.parse(v) as unknown : v;
+    const stored = (await engine.readBodyManifestOutline(pageId, occurrences, 1))
+      .map(r => ({ occurrence: occurrences.indexOf(Number(r.occurrence_id)), outline: toJson(r.outline), facts_slots: toJson(r.facts_slots) }))
+      .sort((a, b) => a.occurrence - b.occurrence);
     return {
+      stored,
       all: await projectedOutline(engine, body, 0, 10),
       second: await projectedOutline(engine, body, 1, 1),
       past: await projectedOutline(engine, body, 5, 1),
