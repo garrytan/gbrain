@@ -88,6 +88,12 @@ function editsAfterComparison(engine: BrainEngine, after: () => void): BrainEngi
         if (!fired && /UNION ALL[\s\S]*page_versions/.test(sql)) { fired = true; after(); }
         return rows;
       };
+      // The comparison's page-history read is the typed listPageStates member (file-body-guard.ts replaceableFile).
+      if (prop === 'listPageStates') return async (...args: unknown[]) => {
+        const rows = await (target.listPageStates as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+        if (!fired) { fired = true; after(); }
+        return rows;
+      };
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
