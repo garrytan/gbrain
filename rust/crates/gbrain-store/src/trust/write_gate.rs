@@ -402,6 +402,19 @@ pub(crate) fn activation_suppressed(
         }))
 }
 
+/// Whether target (`target_table`, `target_id`) holds a `flag` receipt naming `family` in its
+/// reason families (`r.verdict = 'flag' AND family = ANY(r.reason_families)`).
+pub(crate) fn flagged_for(
+    read: &dyn KvRead,
+    target_table: &str,
+    target_id: u64,
+    family: &str,
+) -> Result<bool> {
+    Ok(receipts_of(read, target_table, &target_id.to_string())?
+        .iter()
+        .any(|r| r.verdict == "flag" && r.reason_families.iter().any(|f| f == family)))
+}
+
 fn receipts_of(
     read: &dyn KvRead,
     target_table: &str,

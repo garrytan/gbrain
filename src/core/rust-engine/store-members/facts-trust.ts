@@ -17,10 +17,9 @@
  * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs; the store keeps no derivation
  * inputs, so only the holding page and a backstop's named page mark a fact quoted.
  *
- * Refused (not exported): `readFactForOwnerAction`, `listStandingPreferences` and
- * `countDerivedFactTaint` (`listRestatedPrivateCopies` is served by facts-trust-reads.ts). The store keeps the columns
- * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
- * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
+ * `listRestatedPrivateCopies` is served by facts-trust-reads.ts; `readFactForOwnerAction`, `listStandingPreferences` and
+ * `countDerivedFactTaint` by facts-trust-owner.ts. The `entity_ended` arm reads the withdrawal ledger through
+ * `gbrain_fact_fingerprint`, which no store read joins yet.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { escapeLikePattern } from '../../cjk.ts';
