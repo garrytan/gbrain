@@ -346,6 +346,7 @@
     "readEmbeddingStateCounts#ops": {
       "raw": 1
     },
+    "readHotMemoryWatermark#default": {},
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
