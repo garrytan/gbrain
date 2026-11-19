@@ -54,6 +54,7 @@ public final class SendService {
     let lock = NSLock()
     let stateLock: NSRecursiveLock
     var adminSaves = 0
+    var stops = Stops()
     var inflight = Set<String>()
     var lastRetention: Date?
 
@@ -98,6 +99,7 @@ public final class SendService {
             state = try store.load() ?? state
             guard state.enabled, !switchedOn() else { return }
             state.enabled = false
+            defer { bump(nil) }
             try store.save(state)
         } catch {
             Log.line("send: could not record that the config switch turned sending off")
@@ -106,6 +108,7 @@ public final class SendService {
 
     public func handle(_ request: HTTPRequest, peer: UInt32) -> SendReply {
         let now = clock.now()
+        let seen = currentStops()
         var state: SendState
         do {
             state = try store.load() ?? SendState()
@@ -137,15 +140,15 @@ public final class SendService {
             inflight.remove(idempotencyKey)
             lock.unlock()
         }
-        return queue.sync { serially(send, key: idempotencyKey, signer: key, peer: peer) }
+        return queue.sync { serially(send, key: idempotencyKey, signer: key, peer: peer, seen: seen) }
     }
 
-    func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32) -> SendReply {
+    func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32, seen: Stops) -> SendReply {
         let limits: SendLimits
         let hashKey: [UInt8]
         do {
             (limits, hashKey) = try locked { () throws -> (SendLimits, [UInt8]) in
-                var state = try allowed(signer)
+                var state = try allowed(signer, since: seen)
                 return (state.limits, try recipientKey(&state))
             }
         } catch {
@@ -193,13 +196,15 @@ public final class SendService {
         let dispatch: DispatchResult
         switch messages.prepare(askPermission: false) {
         case .ready:
-            let handed = locked { () -> Result<DispatchResult, Problem> in
-                do {
-                    _ = try allowed(signer)
-                } catch {
-                    return .failure((error as? Problem) ?? .sendKeysUnreadable)
+            let handed = messages.handOver {
+                locked { () -> Result<DispatchResult, Problem> in
+                    do {
+                        _ = try allowed(signer, since: seen)
+                    } catch {
+                        return .failure((error as? Problem) ?? .sendKeysUnreadable)
+                    }
+                    return .success(messages.send(text: send.text, to: send.to))
                 }
-                return .success(messages.send(text: send.text, to: send.to))
             }
             switch handed {
             case .success(let result): dispatch = result
@@ -234,12 +239,25 @@ public final class SendService {
         return record(.from(delivery), pending: pending)
     }
 
-    func allowed(_ signer: SendKey) throws -> SendState {
+    func allowed(_ signer: SendKey, since seen: Stops) throws -> SendState {
         var state = try store.load() ?? SendState()
         observeKill(&state)
-        guard state.enabled, switchedOn() else { throw Problem.sendDisabled }
-        guard state.keys.contains(signer) else { throw Problem.unknownSendKey }
+        let now = currentStops()
+        guard state.enabled, switchedOn(), now.all == seen.all else { throw Problem.sendDisabled }
+        guard state.keys.contains(signer), now.keys[signer.name] == seen.keys[signer.name] else { throw Problem.unknownSendKey }
         return state
+    }
+
+    func currentStops() -> Stops {
+        lock.lock()
+        defer { lock.unlock() }
+        return stops
+    }
+
+    func bump(_ keyName: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let keyName { stops.keys[keyName, default: 0] += 1 } else { stops.all += 1 }
     }
 
     func recipientKey(_ state: inout SendState) throws -> [UInt8] {
@@ -396,7 +414,9 @@ public final class SendService {
             let first = try locked { () throws -> (change: (state: SendState, reason: String?, save: Bool), seen: SendState, saves: Int) in
                 var current = try store.load() ?? SendState()
                 observeKill(&current)
+                defer { if action == "off" { bump(nil) } }
                 let change = try Self.change(action, fields, current)
+                defer { if action == "remove_key", let name = fields["name"] { bump(name) } }
                 if change.reason == nil, change.save {
                     try store.save(change.state)
                     adminSaves += 1
@@ -424,6 +444,11 @@ public final class SendService {
         } catch {
             return .problem((error as? Problem) ?? .internalError)
         }
+    }
+
+    struct Stops: Equatable {
+        var all = 0
+        var keys: [String: Int] = [:]
     }
 
     func locked<T>(_ body: () throws -> T) rethrows -> T {
