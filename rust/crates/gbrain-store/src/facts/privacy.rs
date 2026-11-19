@@ -122,7 +122,7 @@ const PRIVACY_ALIASES: [(&str, &[&str]); 2] = [
 ];
 
 /// `edgeTrimSql`: the ASCII blanks, plus the Unicode spaces a UTF-8 database adds.
-const EDGE_SPACE: &[char] = &[
+pub(crate) const EDGE_SPACE: &[char] = &[
     ' ', '\t', '\n', '\u{0B}', '\u{0C}', '\r', '\u{A0}', '\u{1680}', '\u{2000}', '\u{2001}',
     '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}', '\u{2009}',
     '\u{200A}', '\u{2028}', '\u{2029}', '\u{202F}', '\u{205F}', '\u{3000}', '\u{FEFF}',
@@ -513,7 +513,11 @@ fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
 }
 
 /// `privateSnapshotFilterFragment` over a row's type and frontmatter.
-fn snapshot_fields_allow(page_type: &str, fm: &Map<String, Value>, honor_aliases: bool) -> bool {
+pub(crate) fn snapshot_fields_allow(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    honor_aliases: bool,
+) -> bool {
     let visibility = text(fm, "visibility");
     let effective = visibility
         .as_deref()
@@ -528,7 +532,7 @@ fn snapshot_fields_allow(page_type: &str, fm: &Map<String, Value>, honor_aliases
 }
 
 /// `privacyAliasSql`: an alias value, trimmed of edge spaces and ASCII lower-cased, is private.
-fn alias_private(frontmatter: &Map<String, Value>) -> bool {
+pub(crate) fn alias_private(frontmatter: &Map<String, Value>) -> bool {
     PRIVACY_ALIASES.iter().any(|(key, values)| {
         text(frontmatter, key).is_some_and(|v| {
             let v = v.trim_matches(EDGE_SPACE).to_ascii_lowercase();

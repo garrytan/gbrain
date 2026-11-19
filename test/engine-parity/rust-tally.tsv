@@ -13,7 +13,7 @@ test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/doctor-acc.test.ts	4	0
 test/engine-parity/doctor-checkpoints.test.ts	5	0
-test/engine-parity/doctor-derived.test.ts	7	6
+test/engine-parity/doctor-derived.test.ts	15	0
 test/engine-parity/doctor-pages.test.ts	16	0
 test/engine-parity/doctor-persistence.test.ts	4	0
 test/engine-parity/doctor-reads.test.ts	1	0
