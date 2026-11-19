@@ -475,6 +475,28 @@ describe('runSubagentOneshot', () => {
       expect(calls.length).toBe(2);
     });
 
+    test('an empty first answer is not re-asked', async () => {
+      const ctx = await makeCtx(DATA);
+      const calls: unknown[][] = [];
+      const args = makeArgs(ctx, DATA, '');
+      args._chat = sequence(['  \n'], calls as never);
+      expect(await runSubagentOneshot(args)).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: FB_TOKENS });
+      expect(calls.length).toBe(1);
+    });
+
+    test('a re-ask that fails prompt-too-long keeps the first answer', async () => {
+      const ctx = await makeCtx(DATA);
+      const calls: unknown[][] = [];
+      const args = makeArgs(ctx, DATA, '');
+      const first = sequence([PROSE_SKIP], calls as never)!;
+      args._chat = (async (opts: Parameters<NonNullable<OneshotArgs['_chat']>>[0]) => {
+        if (calls.length > 0) { calls.push(opts.messages as never); throw new Error('prompt is too long: 1000123 tokens > 1000000 maximum'); }
+        return first(opts);
+      }) as OneshotArgs['_chat'];
+      expect(await runSubagentOneshot(args)).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: FB_TOKENS });
+      expect(calls.length).toBe(2);
+    });
+
     test('an answer that attempted JSON is not re-asked', async () => {
       const ctx = await makeCtx(DATA);
       const calls: unknown[][] = [];

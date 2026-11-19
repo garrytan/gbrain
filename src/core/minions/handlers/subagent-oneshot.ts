@@ -465,6 +465,8 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
         logSubagentHeartbeat({ job_id: ctx.id, event: 'oneshot_timeout', turn_idx: 0, ms_elapsed: Date.now() - t0 });
         return { kind: 'fallback', reason: 'oneshot_timeout' };
       }
+      // A failed re-ask (prompt_too_long from the longer context, or a transport error) keeps the first answer.
+      if (turn > 0 && !ctx.signal?.aborted) break;
       // Same terminal classification as the gateway-loop path's
       // runLoopConvertingLeaseLoss (subagent.ts): `chat()` here is the SAME
       // gateway.chat() entrypoint, so a 400 "prompt is too long" arrives
@@ -501,8 +503,9 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
     // #9648: a model that answers a routine transcript in prose, with no JSON at all, is asked once for the JSON, so
     // its skip is banked instead of falling through to the agentic loop and dead-lettering under require_writes.
     const stop = chatResult.stopReason;
-    if (turn > 0 || stop === 'length' || stop === 'refusal' || stop === 'content_filter' || (chatResult.text ?? '').includes('{')) break;
-    messages.push({ role: 'assistant', content: chatResult.text ?? '' }, { role: 'user', content: ONESHOT_REASK });
+    const text = chatResult.text ?? '';
+    if (turn > 0 || stop === 'length' || stop === 'refusal' || stop === 'content_filter' || text.trim() === '' || text.includes('{')) break;
+    messages.push({ role: 'assistant', content: text }, { role: 'user', content: ONESHOT_REASK });
   }
 
   // Post-call fallbacks carry the attempt's usage for the result rollup.
