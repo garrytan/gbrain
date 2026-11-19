@@ -161,7 +161,7 @@ counter is `M next_facts_id`.
 | `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
-| `F 0x0C source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
+| `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
 
 ### Relink attempts (`facts/relink.rs`)
 
@@ -510,7 +510,7 @@ subject `*` or the page ("The fact purge ledger"). A NUL character or a row numb
 
 ## The fact purge ledger
 
-`facts/purge_ledger.rs` keeps `fact_purges` (key `F 0x0C`). `insertFactPurge({ sourceId, visibility, subject,
+`facts/purge_ledger.rs` keeps `fact_purges` (key `F 0x0F`). `insertFactPurge({ sourceId, visibility, subject,
 factHash, requestId, actor, reason })` stores a tombstone and answers true, or false when the key exists
 (`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A visibility other than `private` or `world`, a
 `requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing source refuses as the
