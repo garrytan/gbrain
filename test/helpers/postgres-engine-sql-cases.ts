@@ -536,6 +536,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readLiveMember': OOS.callerRawSql,
   'readFolderAccess': OOS.callerRawSql,
   'upsertSessionState': OOS.callerRawSql,
+  'listFactProvenance': OOS.callerRawSql,
   'readSessionCursor': OOS.callerRawSql,
   'readDeltaSessionRow': OOS.callerRawSql,
   'readCheckpointManifestRow': OOS.callerRawSql,
@@ -1306,6 +1307,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readSessionCursor', [['default', (e) => e.readSessionCursor('default', 'local', 's')]]),
   ...variants('readDeltaSessionRow', [['default', (e) => e.readDeltaSessionRow('default', 'local', 's')]]),
   ...variants('readCheckpointManifestRow', [['default', (e) => e.readCheckpointManifestRow('default', 'local', 's')]]),
+  ...variants('listFactProvenance', [['default', (e) => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] })]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

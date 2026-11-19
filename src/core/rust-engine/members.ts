@@ -396,6 +396,7 @@ export const RUST_ENGINE_MEMBERS = {
   listLexicalContestCandidates: 'facts',
   listRestatedPrivateCopies: 'facts',
   countDerivedFactTaint: 'facts',
+  listFactProvenance: 'facts',
 
   // takes
   addTakesBatch: 'takes',

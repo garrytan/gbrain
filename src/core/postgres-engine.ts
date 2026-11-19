@@ -1245,6 +1245,7 @@ export class PostgresEngine implements BrainEngine {
   listLexicalContestCandidates(opts: Parameters<typeof factsTrustImpl.listLexicalContestCandidates>[1]) { return factsTrustImpl.listLexicalContestCandidates(this.executeRaw.bind(this), opts); }
   listRestatedPrivateCopies(opts: Parameters<typeof factsTrustImpl.listRestatedPrivateCopies>[1]) { return factsTrustImpl.listRestatedPrivateCopies(this.executeRaw.bind(this), opts); }
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.executeRaw.bind(this)); }
+  listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.executeRaw.bind(this), opts); }
 
 
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }

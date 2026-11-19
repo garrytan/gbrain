@@ -42,6 +42,7 @@ mod embedding;
 mod fence;
 pub mod loops;
 mod privacy;
+pub mod provenance;
 pub mod purge;
 pub mod relink;
 pub mod relink_writes;

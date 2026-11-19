@@ -314,6 +314,15 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 | `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
 | `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
 
+## Stored provenance (`facts/provenance.rs`)
+
+The `source` each fact row keeps, read by id. context_pack and delta attach it to each fact they
+deliver as `provenance` (`ops/facts.ts` `withProvenance`, a fail-soft read).
+
+| Member | Site | Served | Notes |
+|---|---|---|---|
+| `listFactProvenance` | `ops/facts.ts` `withProvenance` | yes | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row of the source has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses an id that is not a safe integer. |
+
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 
 | Member | Site | Served | Notes |

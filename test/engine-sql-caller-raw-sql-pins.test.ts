@@ -134,6 +134,11 @@ const PINS: Pin[] = [
          AND s.session_id = ranked.session_id
          AND ranked.rn > $1`],
   },
+  {
+    from: 'src/core/ops/facts.ts:706 withProvenance, at 0a68889b57',
+    case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] }) },
+    texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

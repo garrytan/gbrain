@@ -3314,6 +3314,8 @@ export interface BrainEngine {
   listRestatedPrivateCopies(opts: { sourceId: string; claim: string; entity: string | null; writer: import('./trust/tier.ts').TrustTier }): Promise<Array<{ id: number; visibility: string; trust_tier: string }>>;
   /** How many facts carry taint inputs in their write origin, and how many of those are external_untrusted. */
   countDerivedFactTaint(): Promise<{ derived: number; external: number }>;
+  /** The stored provenance (`facts.source`) of the named facts of one source (ops/facts.ts `withProvenance`). */
+  listFactProvenance(opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

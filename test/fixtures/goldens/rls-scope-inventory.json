@@ -2298,6 +2298,17 @@
         ],
         "flagOnScopes": []
       },
+      "listFactProvenance#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactsByEntity#allFilters": {
         "flagOffLanes": [
           "pool"
@@ -4958,6 +4969,7 @@
         "listExactIdentityCandidates": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
+        "listFactProvenance": "none",
         "listFactRelinkOutcomes": "none",
         "listFactWithdrawalDates": "none",
         "listFactWithdrawalKeys": "none",
