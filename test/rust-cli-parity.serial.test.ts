@@ -453,7 +453,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // provenance_stamp_drift is gone from this list: listDriftLiveRows reads the live pages and their versions from the store.
       // trust_scan is gone from this list: the takes count is served, and a fresh Rust brain marks the trust backfill done,
       // as PGLite's migration does.
-      untypedWarnings: ['fact_take_vectors'],
+      // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width, as PGLite's does.
+      untypedWarnings: [],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
