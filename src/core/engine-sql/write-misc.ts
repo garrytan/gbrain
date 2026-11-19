@@ -8,7 +8,7 @@
  */
 import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
-import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 
@@ -139,12 +139,15 @@ export type LiveMemberLookup = 'member' | 'stdio_config' | 'access_token' | 'oau
 /** An access member that is neither disabled nor tombstoned, with its group ids sorted. */
 export interface LiveMemberRow { id: string; groups: string[] }
 
-const LIVE_MEMBER_ID_SQL: Record<LiveMemberLookup, string> = {
-  member: '$1',
-  stdio_config: `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`,
-  access_token: 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL',
-  oauth_client: 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL',
-};
+/** The subquery (or bound value) naming the member id `key` resolves to through `lookup`, `key` bound once. */
+function liveMemberIdSql(lookup: LiveMemberLookup, key: string): SqlFragment {
+  switch (lookup) {
+    case 'member': return sqlFragment`${key}::text`;
+    case 'stdio_config': return sqlFragment`SELECT ${trustedSql(edgeTrimSql('value'))} FROM config WHERE key = ${key}`;
+    case 'access_token': return sqlFragment`SELECT member_id FROM access_tokens WHERE id::text = ${key} AND revoked_at IS NULL`;
+    case 'oauth_client': return sqlFragment`SELECT member_id FROM oauth_clients WHERE client_id = ${key} AND deleted_at IS NULL`;
+  }
+}
 
 /**
  * The live member `key` resolves to through `lookup`, with its groups; null when nothing resolves or the member is
@@ -152,10 +155,10 @@ const LIVE_MEMBER_ID_SQL: Record<LiveMemberLookup, string> = {
  * so access/caller.ts keeps deciding which failures read as nobody.
  */
 export async function readLiveMember(exec: LegacyUnscopedRead, lookup: LiveMemberLookup, key: string): Promise<LiveMemberRow | null> {
-  const [row] = await exec.executeRaw<LiveMemberRow>(`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  const { rows: [row] } = await exec.run<LiveMemberRow>(sqlFragment`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
-  WHERE m.id = (${LIVE_MEMBER_ID_SQL[lookup]}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
-  GROUP BY m.id`, [key]);
+  WHERE m.id = (${liveMemberIdSql(lookup, key)}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`);
   return row ?? null;
 }
 

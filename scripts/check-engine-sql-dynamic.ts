@@ -55,6 +55,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  edgeTrimSql: 'src/core/edge-whitespace.ts: btrim of a code-constant column expression over the constant EDGE_WHITESPACE set; callers pass a literal column name; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
   relinkTriedSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationTriedSql EXISTS predicate (conversation-memo.ts; code-constant outcome and reason codes) or the literal false; no values',
