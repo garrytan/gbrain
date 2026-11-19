@@ -361,20 +361,6 @@ describe('the Rust arm serves each member and returns exactly the pages PGLite l
       expect({ member: r.member, closed }).toEqual({ member: r.member, closed: [] });
     }
   });
-
-  // The members whose SQL reads a page policy but that the store does not serve under excludePrivate refuse it, naming the option.
-  // getRecentSalience and findAnomalies serve excludePrivate on the Rust store (with the caller's reader identities), so they are not here.
-  test('the members the store does not serve under excludePrivate refuse it', async () => {
-    const rust = arms().find((arm) => arm.backend === 'rust');
-    if (!rust) return;
-    const engine = rust.engine;
-    const calls: Array<[string, () => Promise<unknown>]> = [
-      ['getTags', () => engine.getTags('notes/open', { excludePrivate: true })],
-    ];
-    for (const [member, call] of calls) {
-      const error = await (async () => call())().then(() => null, (e: unknown) => e as { code?: string; message?: string });
-      expect({ member, code: error?.code, message: error?.message })
-        .toMatchObject({ code: 'engine_capability_missing', message: expect.stringContaining('excludePrivate') });
-    }
-  });
+  // getTags, the last member of this kind, serves excludePrivate on the Rust store now (test/engine-parity/private-page-reads.test.ts),
+  // so no member is left to refuse the option here.
 });

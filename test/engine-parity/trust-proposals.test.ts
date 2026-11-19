@@ -13,10 +13,9 @@
  *    the fence guard's held arm read the wrong state.
  *  - Why existing coverage misses it: the statements ran through `executeRaw` inside trust/proposals.ts, which the
  *    parity cases cannot call (D18).
- *  - The contradiction cases: decide proposals are written by the decide sweep's own writer (ai/decide/proposals-store.ts),
- *    which is raw SQL. The SQL arms list the pending pair of two active facts and leave out a stale or decided pair; the
- *    Rust arm must refuse that write (no Rust brain holds a decide proposal), and `trust review` there must answer as an
- *    SQL brain with no decide proposal does, rather than stop on the raw read it used to run.
+ *  - The contradiction cases: decide proposals are written by the decide sweep's own writer (ai/decide/proposals-store.ts,
+ *    the decide proposal members the Rust store serves). All three arms list the pending pair of two active facts and
+ *    leave out a stale or decided pair; `trust review` answers the same on each.
  *  - Seam: the queue is read and written through the six typed members only. Times are masked to "set" or null: each
  *    engine stamps its own clock. Ids are compared as offsets from the first id, since each arm starts its own sequence.
  */
@@ -24,7 +23,6 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { TrustProposalRow } from '../../src/core/engine-sql/trust-proposals.ts';
 import { parityArms } from './harness.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { insertProposal, transitionProposal } from '../../src/core/ai/decide/proposals-store.ts';
 import { buildTrustReview } from '../../src/core/trust/review.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -160,9 +158,9 @@ describe('engine parity: the trust decision queue', () => {
     return review;
   });
 
-  parityTest('listPendingContradictions lists a pending pair of two active facts, not a stale or decided pair; the decide write refuses on Rust', {
+  parityTest('listPendingContradictions lists a pending pair of two active facts, not a stale or decided pair', {
     methods: ['insertFacts', 'listPendingContradictions'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     const { ids } = await engine.insertFacts(Array.from({ length: 6 }, (_, i) => ({
       row_num: i + 1, source_markdown_slug: SLUG, fact: `Claim ${i + 1}`, entity_slug: SLUG, source: 'fence', kind: 'fact' as const,
       visibility: 'world' as const, valid_from: new Date(`2026-02-0${i + 1}T01:02:03.250Z`),
@@ -174,11 +172,6 @@ describe('engine parity: the trust decision queue', () => {
     const pair = (i: number, newer: number, older: number) => ({ source_id: SRC, sweep_id: 'sweep-parity', pair_index: i, new_fact_id: f[newer]!, old_fact_id: f[older]!,
       direction: 'new_supersedes_old', p_supersede: 0.9, threshold: 0.8, proposal_floor: 0.5, model_resolved: null });
     const write = await insertProposal(engine, pair(0, 1, 0)).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.listPendingContradictions({})).toEqual([]);
-      throw write;
-    }
     expect(write).toBeNull();
     await insertProposal(engine, pair(1, 3, 2));
     const decided = await insertProposal(engine, pair(2, 5, 4));
