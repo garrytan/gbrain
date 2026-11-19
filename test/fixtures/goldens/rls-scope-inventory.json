@@ -2141,6 +2141,17 @@
         ],
         "flagOnScopes": []
       },
+      "listAppliedPolicyRevisions#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChunklessPagesWithContent#afterPageId+sourceId": {
         "flagOffLanes": [
           "pool"
@@ -4824,6 +4835,7 @@
         "listAllPageRefs": "none",
         "listAllSources": "none",
         "listAmendmentsNotApplied": "none",
+        "listAppliedPolicyRevisions": "none",
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
@@ -5020,6 +5032,7 @@
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
         "readBeliefHistoryRows": "none",
+        "readCallerPageAccess": "none",
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
         "readChildCompletions": "none",
@@ -5066,6 +5079,7 @@
         "readMentionLastPass": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
+        "readPageHiddenFromCaller": "none",
         "readPageOrigin": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
@@ -5093,6 +5107,7 @@
         "readSourceMembership": "none",
         "readSourceRow": "none",
         "readSourceState": "none",
+        "readStoredBodyBytes": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
@@ -5103,6 +5118,8 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriteVisibilityProbe": "none",
+        "readWriterSlugFence": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordSearchTelemetry": "none",
