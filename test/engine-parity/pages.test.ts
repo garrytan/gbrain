@@ -15,7 +15,8 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { parseFindPattern } from '../../src/core/page-find.ts';
+import { parseFindPattern, type FindPagesQuery } from '../../src/core/page-find.ts';
+import { QUARANTINE_KEY } from '../../src/core/quarantine.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { Page, PageInput } from '../../src/core/types.ts';
 import { archiveSource, createSource, parityArms, pick, sorted } from './harness.ts';
@@ -692,6 +693,43 @@ describe('engine parity: pages', () => {
       };
       expect(out.all.every((page) => page.compiled_truth === '' && page.timeline === '')).toBe(true);
       expect(out.hidden.map((page) => page.at)).not.toContain('default:people/private-example');
+      return out;
+    },
+  );
+
+  parityTest(
+    'findPages under untrusted hides private and quarantined pages, and applies a caller\'s private-readable grant',
+    { methods: ['findPages', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      await engine.putPage('people/quarantined-example', {
+        type: 'person', title: 'people/quarantined-example', compiled_truth: 'quarantined body', timeline: '',
+        frontmatter: { [QUARANTINE_KEY]: { reason: 'parity' } },
+      });
+      const find = async (untrusted?: FindPagesQuery['untrusted'], sourceIds?: string[]) => {
+        const found = await engine.findPages({ pattern: parseFindPattern('people/*'), limit: 3, untrusted, excludeSlugPrefixes: [], ...(sourceIds ? { sourceIds } : {}) });
+        return { total: found.total, rows: found.rows.map((r) => `${r.source_id}:${r.slug}:${r.type}:${r.title}`) };
+      };
+      const all = async (untrusted?: FindPagesQuery['untrusted']) => (await engine.findPages({
+        pattern: parseFindPattern('people/*'), limit: 50, untrusted, excludeSlugPrefixes: [],
+      })).rows.map((r) => `${r.source_id}:${r.slug}`);
+      const out = {
+        trusted: await all(),
+        empty: await all({}),
+        hidden: await all({ excludePrivate: true }),
+        hiddenPage: await find({ excludePrivate: true }),
+        hiddenAlt: await find({ excludePrivate: true }, ['alt']),
+        granted: await withCallerAccess({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true },
+          () => all({ excludePrivate: true })),
+        member: await withCallerAccess({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true },
+          () => all({ excludePrivate: true })),
+      };
+      expect(out.trusted).toContain('default:people/quarantined-example');
+      expect(out.empty).not.toContain('default:people/quarantined-example');
+      expect(out.hidden).not.toContain('default:people/private-example');
+      expect(out.hidden).not.toContain('alt:people/alice-example');
+      expect(out.granted).toContain('default:people/private-example');
+      expect(out.member).toContain('default:people/readers-example');
       return out;
     },
   );
