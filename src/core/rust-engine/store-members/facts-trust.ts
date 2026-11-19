@@ -12,8 +12,12 @@
  *
  * Served: `matchSavedFacts`, for the one correction cue saved-facts-match.ts sends, under the same rules (a widened
  * `worldOnly` visibility, a private-facts grant, refuses).
+ * `listLexicalContestCandidates`, the keyless conflict slot's read of a remember, is served from
+ * rust/crates/gbrain-store/src/facts/contest.rs. `listFactsFromQuotedPages` and `listOwnerTierFacts`, the quote reads of
+ * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs; the store keeps no derivation
+ * inputs, so only the holding page and a backstop's named page mark a fact quoted.
  *
- * Refused (not exported): `readFactForOwnerAction`, `listStandingPreferences`, `listLexicalContestCandidates` and
+ * Refused (not exported): `readFactForOwnerAction`, `listStandingPreferences` and
  * `countDerivedFactTaint` (`listRestatedPrivateCopies` is served by facts-trust-reads.ts). The store keeps the columns
  * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
  * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
@@ -100,3 +104,14 @@ export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
   }));
   return rows.map(row => withDates(row, ['at', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['matchSavedFacts']>>[number]);
 };
+
+export const listLexicalContestCandidates: Member<'listLexicalContestCandidates'> = (brain, q) =>
+  storeCall({ member: 'listLexicalContestCandidates', sourceId: q.sourceId }, () => brain.listLexicalContestCandidates({
+    sourceId: q.sourceId, entitySlug: q.entitySlug, kind: q.kind, visibility: q.visibility, pageSlug: q.pageSlug ?? null, writer: q.writer }));
+
+export const listFactsFromQuotedPages: Member<'listFactsFromQuotedPages'> = (brain, q) =>
+  storeCall({ member: 'listFactsFromQuotedPages' }, () => brain.listFactsFromQuotedPages({
+    ids: [...new Set(q.ids.map(Number))], pageTypes: [...q.pageTypes], backstop: q.backstop.map(([source, prefix]) => [source, prefix]) }));
+
+export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = (brain, q) =>
+  storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));

@@ -16,6 +16,7 @@ import { opError } from '../../ops/contract.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from '../../persistence/native-lock.ts';
 import { parseGlobalFlags } from '../../cli-options.ts';
 import { connectOwner, type OwnerConnection } from './client.ts';
+import { recordOwnedRustBrain } from '../owned-brains.ts';
 import { ownerLockPath, ownerSocketPath } from './protocol.ts';
 import { serveOwnerEngine, type OwnerEngineServer, type OwnerServerOptions } from './server.ts';
 
@@ -66,7 +67,7 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
       try {
         const { waitMs: _waitMs, onLock: _onLock, ...serverOpts } = opts;
         const server = await serveOwnerEngine(engine, socketPath, { ...serverOpts, serve: opts.serve ?? processIsServe() });
-        if (server) return { role: 'owner', lock, server };
+        if (server) { recordOwnedRustBrain(databasePath, lock); return { role: 'owner', lock, server }; }
         lastError = new Error('The owner socket is claimed by another process.');
       } catch (error) {
         lastError = error;

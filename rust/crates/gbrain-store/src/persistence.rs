@@ -34,6 +34,7 @@
 //! no worktree binding exists here), so the worktree terms of the claim statements are answered
 //! as Postgres answers them for a null worktree.
 
+use crate::cli_reads::pg_text::jsonb_value;
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
@@ -814,7 +815,8 @@ pub(crate) fn complete_write_row_in(
     let now = env.now_micros();
     let committed = c.state == "committed";
     record.state = c.state.clone();
-    record.outcome = (!c.outcome.is_null()).then(|| c.outcome.clone());
+    // Stored as `jsonb` stores it: keys shorter first, then by bytes, at every depth.
+    record.outcome = (!c.outcome.is_null()).then(|| jsonb_value(&c.outcome));
     record.error_code = c.error_code.clone();
     record.error_message = c.error_message.clone();
     record.blocked_reason = None;
@@ -822,7 +824,7 @@ pub(crate) fn complete_write_row_in(
     record.updated_at_us = now;
     let extra = &mut record.extra;
     if !c.error_detail.is_null() {
-        extra.insert("error_detail".into(), c.error_detail.clone());
+        extra.insert("error_detail".into(), jsonb_value(&c.error_detail));
     }
     extra.insert("claim_expires_at".into(), Value::Null);
     if committed {

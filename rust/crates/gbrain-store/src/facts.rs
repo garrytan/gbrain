@@ -42,6 +42,7 @@
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
 mod collapse;
+pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
@@ -54,6 +55,7 @@ mod page_purges;
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
+pub mod quote;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;

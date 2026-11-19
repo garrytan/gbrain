@@ -47,6 +47,7 @@
 
 mod arm;
 mod chunk_search;
+mod entity_fuzzy;
 mod filters;
 mod index;
 mod index_build;

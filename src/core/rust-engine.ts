@@ -31,7 +31,6 @@ import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { installOwnerClient } from './rust-engine/owner-ipc/client.ts';
-import { forgetOwnedRustBrain, recordOwnedRustBrain } from './rust-engine/owned-brains.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 
@@ -173,9 +172,7 @@ export class RustEngine {
         }
         opened = store;
         this._store = store;
-        recordOwnedRustBrain(this.databasePath);
         return async () => {
-          forgetOwnedRustBrain(this.databasePath);
           opened = null;
           if (this._store === store) this._store = null;
           await store.close().catch(() => undefined);
@@ -184,7 +181,6 @@ export class RustEngine {
     });
     if (generation !== this._generation) {
       if (role.role === 'owner') {
-        forgetOwnedRustBrain(this.databasePath);
         await role.server.close();
         const store = opened as RustStore | null;
         if (store && this._store === store) this._store = null;
@@ -238,7 +234,6 @@ export class RustEngine {
     // The owner stops serving and drains its calls, then closes the store, and only then frees the owner lock: the
     // next owner opens the store as soon as it holds the lock.
     if (owner?.role === 'owner') {
-      forgetOwnedRustBrain(this.databasePath);
       await owner.server.close();
     }
     const store = this._store;

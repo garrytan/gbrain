@@ -73,7 +73,7 @@ export const findActiveSingleFact: Member<'findActiveSingleFact'> = async (brain
   const remoteFloor = opts.remoteFloor ? storeFloorPolicy('findActiveSingleFact') : undefined;
   const row: Row | null = await storeCall({ member: 'findActiveSingleFact' }, () => brain.findActiveSingleFact({
     sourceId: opts.sourceId, entitySlug: opts.entitySlug, visibility: opts.visibility, fact: opts.fact,
-    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor }));
+    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor, newest: opts.newest === true }));
   return row === null ? null : withDates(row, FACT_DATES) as never;
 };
 

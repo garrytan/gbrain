@@ -355,18 +355,8 @@ async function findExactBasenameCandidates(
 ): Promise<Array<{ slug: string }>> {
   const token = slugify(raw);
   if (raw.includes('/') || !token.includes('-')) return [];
-  let rows: Array<{ slug: string }>;
-  try {
-    rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
-        LIMIT 2`,
-      [source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`)],
-    );
-  } catch {
-    return [];
-  }
-  return canonicalPages(engine, source_id, rows.map(r => r.slug));
+  const slugs = await engine.findExactBasenameCandidates(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`));
+  return canonicalPages(engine, source_id, slugs);
 }
 
 /**
@@ -861,24 +851,7 @@ async function tryFuzzyMatch(
   // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
-    const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; score: number }>(
-      `SELECT slug, title, type,
-         GREATEST(
-           similarity(lower(title), $2),
-           similarity(slug, $3)
-         ) AS score
-       FROM pages
-       WHERE source_id = $1
-         AND deleted_at IS NULL
-         AND NOT ${retiredPageSql('pages')}
-         AND (
-           lower(title) % $2
-           OR slug ILIKE '%' || $3 || '%'
-         )
-       ORDER BY score DESC, slug ASC
-       LIMIT 5`,
-      [source_id, lc, fragment],
-    );
+    const rows = await engine.findFuzzyEntityCandidates(source_id, lc, fragment);
     // A trigram score alone attributes facts about "Alicia Example" to Alice,
     // and facts about a person with no page to a meeting page that carries
     // their name. Entity resolution takes a candidate only when it names the

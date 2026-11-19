@@ -13,6 +13,7 @@ Code: `rust/crates/gbrain-store/src/keyword.rs` and its `keyword/` modules, the 
 | Member | State |
 |---|---|
 | `findByTitleFuzzy(name, dirPrefix?, minSimilarity?, sourceId?)` | served (`keyword/title_fuzzy.rs`) |
+| `findFuzzyEntityCandidates(sourceId, title, fragment)` | served (`keyword/entity_fuzzy.rs`): live, unretired pages of the source whose lowercased title passes `%` against `title` or whose slug contains `fragment` (`ILIKE`), scored by the greater of `similarity(lower(title), title)` and `similarity(slug, fragment)`, best score then slug bytes, at most five |
 | `searchKeyword(query, opts?)` | served (`keyword/arm.rs`), with the hybrid keyword arm's options |
 | `searchKeywordChunks(query, opts?)` | served (`keyword/chunk_search.rs`) |
 | `countKeywordPages(query, opts?)` | served (`keyword/page_search.rs`) |

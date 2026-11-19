@@ -43,18 +43,21 @@ export interface ActivationVerdict {
   unconfirmed: boolean;
 }
 
-const TABLE_SQL: Readonly<Record<EligibilityTable, string>> = {
-  facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries', pages: 'pages',
-};
+/** The typed trust reads activationVerdicts runs: each row's tier and its `activationSuppressedSql` flag. */
+type VerdictExec = Pick<BrainEngine, 'readRowTrustRows' | 'readPageTrustRows'>;
+
+/** One table's rows by id: pages through readPageTrustRows, the projection tables through readRowTrustRows. */
+async function trustRowsById(engine: VerdictExec, table: EligibilityTable, ids: number[]): Promise<Array<{ id: number; trust_tier: string; flagged: boolean }>> {
+  return table === 'pages' ? engine.readPageTrustRows({ ids }) : engine.readRowTrustRows({ table, ids });
+}
 
 /** Tier and suppression state for each referenced row; rows that no longer exist are absent. */
-export async function activationVerdicts(engine: Exec, refs: readonly ActivationRef[], policy: ReadEligibility): Promise<Map<string, ActivationVerdict>> {
+export async function activationVerdicts(engine: VerdictExec, refs: readonly ActivationRef[], policy: ReadEligibility): Promise<Map<string, ActivationVerdict>> {
   const out = new Map<string, ActivationVerdict>();
   const byTable = new Map<EligibilityTable, number[]>();
   for (const r of refs) if (Number.isFinite(r.id)) byTable.set(r.table, [...(byTable.get(r.table) ?? []), r.id]);
   for (const [table, ids] of byTable) {
-    const rows = await engine.executeRaw<{ id: number | string; trust_tier: string; flagged: boolean }>(
-      `SELECT a.id, a.trust_tier, ${activationSuppressedSql(table, 'a')} AS flagged FROM ${TABLE_SQL[table]} a WHERE a.id = ANY($1::bigint[])`, [[...new Set(ids)]]);
+    const rows = await trustRowsById(engine, table, [...new Set(ids)]);
     for (const row of rows) {
       const tier = storedTrustTier(row.trust_tier);
       const flagged = row.flagged === true;
@@ -82,7 +85,7 @@ export interface ActivationPartition<T> {
  * proactive surface never injects what it could not check). Order is kept.
  */
 export async function partitionForActivation<T>(
-  engine: Exec, items: readonly T[], refOf: (item: T) => ActivationRef, policy: ReadEligibility,
+  engine: VerdictExec, items: readonly T[], refOf: (item: T) => ActivationRef, policy: ReadEligibility,
 ): Promise<ActivationPartition<T>> {
   if (items.length === 0) return { kept: [], withheld: 0 };
   let verdicts: Map<string, ActivationVerdict>;

@@ -451,6 +451,8 @@ export const RUST_ENGINE_MEMBERS = {
   readFactForOwnerAction: 'facts',
   listStandingPreferences: 'facts',
   listLexicalContestCandidates: 'facts',
+  listFactsFromQuotedPages: 'facts',
+  listOwnerTierFacts: 'facts',
   listRestatedPrivateCopies: 'facts',
   countDerivedFactTaint: 'facts',
 
@@ -699,6 +701,8 @@ export const RUST_ENGINE_MEMBERS = {
   countPagesDueForMentions: 'pages',
   readIdentitySiblingCandidates: 'pages',
   findExactSlug: 'pages',
+  findFuzzyEntityCandidates: 'pages',
+  findExactBasenameCandidates: 'pages',
   readRetirementHop: 'pages',
   readEntityCardRows: 'pages',
   readExtractionLagCounts: 'pages',

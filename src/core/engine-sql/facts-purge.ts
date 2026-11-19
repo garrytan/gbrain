@@ -194,9 +194,10 @@ export type ExactFactRow = FactRow & { source_markdown_slug: string | null; row_
 /**
  * decideSingleFact: the first active fact (lowest id) with the same fingerprint, entity, visibility and speaker slot. With
  * `pageSlug` it is a fact on that page; without, one on no owned memory page (an empty `pageSlug` matches nothing).
- * `remoteFloor` adds the remote provenance floor (a remote caller's own reads).
+ * `remoteFloor` adds the remote provenance floor (a remote caller's own reads). `newest` answers the highest id instead
+ * (remember linking the unlinked copy of a claim).
  */
-export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean }): Promise<ExactFactRow | null> {
+export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean; newest?: boolean }): Promise<ExactFactRow | null> {
   const floor = trustedSql(opts.remoteFloor ? ` AND ${remoteProvenanceFloorSql('facts')}` : '');
   const page = opts.pageSlug ? sqlFragment`source_markdown_slug=${opts.pageSlug}`
     : sqlFragment`(${opts.pageSlug}::text IS NULL AND NOT ${trustedSql(onOwnedMemoryPageSql('facts'))})`;
@@ -205,7 +206,7 @@ export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId:
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint(${opts.fact})
     AND (${opts.attributedTo}::text IS NULL OR attributed_to IS NULL OR attributed_to=${opts.attributedTo}::text)${floor}
     AND ${page}
-    ORDER BY id LIMIT 1`);
+    ORDER BY id${trustedSql(opts.newest ? ' DESC' : '')} LIMIT 1`);
   const [exact] = await raw<ExactFactRow>(text, params);
   return exact ?? null;
 }

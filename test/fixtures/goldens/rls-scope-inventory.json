@@ -717,6 +717,17 @@
           "src-a"
         ]
       },
+      "findExactBasenameCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "findExactSlug#any": {
         "flagOffLanes": [
           "pool"
@@ -740,6 +751,17 @@
         "flagOnScopes": []
       },
       "findExactSlug#retired": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "findFuzzyEntityCandidates#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3575,6 +3597,17 @@
         ],
         "flagOnScopes": []
       },
+      "readRetirementHop#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
@@ -4973,7 +5006,9 @@
         "findCodeRefChunks": "none",
         "findDuplicatePage": "direct",
         "findDuplicatePages": "direct",
+        "findExactBasenameCandidates": "none",
         "findExactSlug": "none",
+        "findFuzzyEntityCandidates": "none",
         "findOntologyConflicts": "none",
         "findOrphanPages": "none",
         "findPages": "direct",
@@ -5146,6 +5181,7 @@
         "listFactsBySession": "none",
         "listFactsForPage": "none",
         "listFactsForRelevance": "none",
+        "listFactsFromQuotedPages": "none",
         "listFactsKeyset": "none",
         "listFactsReconcileBacklog": "none",
         "listFactsSince": "none",
@@ -5178,6 +5214,7 @@
         "listOverdueHeldWrites": "none",
         "listOwnedPrivateQueues": "none",
         "listOwnerRecoveryHeads": "none",
+        "listOwnerTierFacts": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
         "listPagesTitledIn": "none",
@@ -5396,6 +5433,7 @@
         "readReceiptBudget": "none",
         "readRemoteForgetTier": "none",
         "readRequestEffects": "none",
+        "readRetirementHop": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",
         "readSegmentDerivations": "none",

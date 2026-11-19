@@ -217,6 +217,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFreshExtractionOutcomes': OOS.factsCycle,
   'listHeldFenceFactRows': OOS.factsPurge,
   'listLexicalContestCandidates': OOS.factsTrust,
+  'listFactsFromQuotedPages': OOS.factsTrust,
+  'listOwnerTierFacts': OOS.factsTrust,
   'listOutsideContentFenceCounts': OOS.factsDoctor,
   'listRelinkCandidateRows': OOS.factsPurge,
   'listRestatedPrivateCopies': OOS.factsTrust,
@@ -724,7 +726,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
-  'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
+  'findExactSlug': OOS.entityReads, 'findFuzzyEntityCandidates': OOS.entityReads, 'findExactBasenameCandidates': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
@@ -1559,6 +1561,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['retired', (e) => e.findExactSlug(SRC, [SLUG], { retired: true })],
     ['any', (e) => e.findExactSlug(SRC, [SLUG, 'other/slug'])],
   ]),
+  ...variants('findFuzzyEntityCandidates', [['default', (e) => e.findFuzzyEntityCandidates(SRC, 'alice example', 'alice-example')]]),
+  ...variants('findExactBasenameCandidates', [['default', (e) => e.findExactBasenameCandidates(SRC, ['people/alice-example', 'concepts/alice-example'])]]),
   ...variants('readRetirementHop', [
     ['none', (e) => e.readRetirementHop(SRC, SLUG, 'none')],
     ['caller', (e) => e.readRetirementHop(SRC, SLUG, 'caller')],

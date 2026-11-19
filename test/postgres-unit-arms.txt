@@ -160,6 +160,8 @@ test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
+test/engine-parity/entity-basename.test.ts
+test/engine-parity/entity-fuzzy.test.ts
 test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
@@ -218,6 +220,7 @@ test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/remember-meta.test.ts
 test/engine-parity/remember-whole.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/request-tools-persist.test.ts
@@ -261,6 +264,7 @@ test/engine-parity/withdrawal-fence.test.ts
 test/engine-parity/withdrawal-forget.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
+test/engine-parity/write-outcome-order.test.ts
 test/engine-parity/write-request-cancel.test.ts
 test/engine-parity/write-request-reads.test.ts
 test/engine-parity/writer-registration.test.ts
