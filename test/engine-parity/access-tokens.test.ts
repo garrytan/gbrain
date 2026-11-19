@@ -27,6 +27,9 @@ import { hashToken } from '../../src/core/utils.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { parityArms } from './harness.ts';
+import type { Server } from 'node:http';
+import express from 'express';
+import { buildServeHttpApp } from '../../src/commands/serve-http.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -196,5 +199,40 @@ describe('engine parity: access_tokens members', () => {
       for (const k of ['reader', 'writer', 'beforeRevoke']) if ('refused' in (out[k] as object)) throw new Error(`${k} refused: ${JSON.stringify(out[k])}`);
       for (const k of ['revoked', 'unknown', 'hashNotToken']) if (!('refused' in (out[k] as object))) throw new Error(`${k} authenticated`);
       return out;
+    });
+  parityTest('serve --http end to end: one MCP tool call with a valid access token returns the same result, and an unknown token gets 401',
+    { methods: ['putPage', 'insertAccessToken', 'readActiveAccessTokenByHash'], timeout: 120_000 }, async (engine) => {
+      await engine.putPage('notes/served-example', { type: 'note', title: 'Served example', compiled_truth: 'A page read over serve --http.', timeline: '' });
+      await insert(engine, 'http-reader', 'tok-http-reader');
+      const app = express();
+      const server: Server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+      try {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('expected a TCP address');
+        const base = `http://127.0.0.1:${address.port}`;
+        await buildServeHttpApp(app, engine, { port: address.port, tokenTtl: 3600, enableDcr: false, publicUrl: base });
+        const call = async (token: string) => {
+          const res = await fetch(`${base}/mcp`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_page', arguments: { slug: 'notes/served-example' } } }),
+          });
+          const text = await res.text();
+          if (res.status !== 200) return { status: res.status, error: (() => { try { return JSON.parse(text).error; } catch { return text; } })() };
+          const dataLine = text.split('\n').find(l => l.startsWith('data:'));
+          const result = JSON.parse(dataLine ? dataLine.slice('data:'.length) : text).result as { isError?: boolean; content: Array<{ text: string }> };
+          if (result.isError) return { status: res.status, isError: true, error: result.content[0]?.text };
+          const page = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+          return { status: res.status, isError: result.isError ?? false, page: { slug: page.slug, type: page.type, title: page.title, compiled_truth: page.compiled_truth } };
+        };
+        const ok = await call('tok-http-reader');
+        const unknown = await call('tok-http-nobody');
+        // Not vacuous: the valid token reads the page and the unknown one is refused, on every arm.
+        if (ok.status !== 200 || (ok as { page?: { slug?: unknown } }).page?.slug !== 'notes/served-example') throw new Error(`valid token: ${JSON.stringify(ok)}`);
+        if (unknown.status !== 401) throw new Error(`unknown token: ${JSON.stringify(unknown)}`);
+        return { ok, unknown };
+      } finally {
+        await new Promise<void>(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); });
+      }
     });
 });
