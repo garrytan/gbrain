@@ -429,7 +429,7 @@ impl Store {
                 }
                 return Err(missing("addTimelineEntry", "page", slug, source_id));
             };
-            let Some(date) = date else {
+            let Some(date) = date.clone() else {
                 return Err(not_null("date"));
             };
             let Some(summary) = entry.summary.as_deref() else {
@@ -861,7 +861,7 @@ mod tests {
                 .map(|row| row["summary"].clone())
                 .collect()
         };
-        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
         assert_eq!(summaries("people/a", json!({})).len(), 4);
         // The event page is judged by id: a read scoped to `default` still hides the private event
         // page in `alt`, and an entry whose event page is gone fails the EXISTS.

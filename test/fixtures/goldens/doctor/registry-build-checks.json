@@ -487,6 +487,10 @@
       },
       {
         "category": "ops",
+        "name": "owner_only_marks_triggers"
+      },
+      {
+        "category": "ops",
         "name": "database_encoding"
       },
       {
@@ -1216,6 +1220,10 @@
       {
         "category": "brain",
         "name": "person_title_duplicates"
+      },
+      {
+        "category": "brain",
+        "name": "entity_duplicates"
       },
       {
         "category": "brain",

@@ -238,6 +238,8 @@
     "listEnrichCandidates#default": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
+    "listEntityKeyRows#after": {},
+    "listEntityKeyRows#default": {},
     "listFactsByEntity#allFilters": {},
     "listFactsByEntity#default": {},
     "listFactsBySession#allFilters": {},

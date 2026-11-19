@@ -121,7 +121,15 @@ public final class Server {
             parsed = HTTPParser.parse(buffer, maxBytes: maxRequestBytes)
         }
         switch parsed {
-        case .request(let request):
+        case .request(var request, let headLength):
+            if request.method == "POST" {
+                switch readBody(client, request: request, buffer: buffer, headLength: headLength, started: started) {
+                case .success(let body): request.body = body
+                case .failure(let failure):
+                    guard let problem = failure.problem else { return abandon(client, requestId: rid, started: started) }
+                    return finish(client, .problem(problem, requestId: rid), route: "-", rows: 0, requestId: rid, started: started)
+                }
+            }
             let routed = router.handle(request, peer: peer, port: boundPort, requestId: rid)
             finish(client, routed.response, route: routed.route, rows: routed.rows, requestId: rid, started: started)
         case .tooLarge:
@@ -129,6 +137,32 @@ public final class Server {
         default:
             finish(client, .problem(.badParam("malformed HTTP request"), requestId: rid), route: "-", rows: 0, requestId: rid, started: started)
         }
+    }
+
+    struct BodyFailure: Error {
+        let problem: Problem?
+    }
+
+    func readBody(_ client: Int32, request: HTTPRequest, buffer: [UInt8], headLength: Int, started: Date) -> Result<[UInt8], BodyFailure> {
+        guard request.headers["transfer-encoding"] == nil, request.headers["expect"] == nil else { return .failure(BodyFailure(problem: .lengthRequired)) }
+        guard let lengthText = request.headers["content-length"], lengthText.allSatisfy(\.isNumber), let length = Int(lengthText) else {
+            return .failure(BodyFailure(problem: .lengthRequired))
+        }
+        guard let limit = router.bodyLimit(path: request.path) else { return .failure(BodyFailure(problem: .methodNotAllowed)) }
+        guard length <= limit else { return .failure(BodyFailure(problem: .tooLarge)) }
+        var body = Array(buffer[headLength...])
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while body.count < length {
+            let remaining = ioTimeout - Date().timeIntervalSince(started)
+            guard remaining > 0 else { return .failure(BodyFailure(problem: nil)) }
+            var timeout = timeval(tv_sec: Int(remaining), tv_usec: Int32((remaining - Double(Int(remaining))) * 1_000_000))
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            let count = recv(client, &chunk, min(chunk.count, length - body.count + 1), 0)
+            guard count > 0 else { return .failure(BodyFailure(problem: nil)) }
+            body.append(contentsOf: chunk[0..<count])
+        }
+        guard body.count == length else { return .failure(BodyFailure(problem: .badParam("the body is longer than its Content-Length"))) }
+        return .success(body)
     }
 
     func abandon(_ client: Int32, requestId: String, started: Date) {

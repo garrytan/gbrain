@@ -34,6 +34,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { chat as defaultChat, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
 import { embedQueryWithPrefix } from '../search/query-prefix.ts';
+import { embeddingSendBlocked } from '../embedding-disabled.ts';
 import { hybridSearch, hybridSearchCached } from '../search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
 import { fetchFar, type CloseRef, type FarPage } from './domain-bank.ts';
@@ -390,25 +391,14 @@ export async function loadCalibrationContext(
   engine: BrainEngine,
   opts: { holder: string; sourceId?: string }
 ): Promise<{ active_bias_tags: string[]; pattern_statements: string[] } | null> {
-  const sourceClause = opts.sourceId
-    ? `AND source_id = '${opts.sourceId.replace(/'/g, "''")}'`
-    : '';
-  let rows: Array<{ active_bias_tags: string[]; pattern_statements: string[] }>;
+  let row: { active_bias_tags: string[]; pattern_statements: string[] } | null;
   try {
-    rows = await engine.executeRaw(
-      `SELECT active_bias_tags, pattern_statements
-         FROM calibration_profiles
-         WHERE holder = $1 ${sourceClause}
-         ORDER BY generated_at DESC
-         LIMIT 1`,
-      [opts.holder]
-    ) as Array<{ active_bias_tags: string[]; pattern_statements: string[] }>;
+    row = await engine.getLatestCalibrationProfile({ holder: opts.holder, sourceId: opts.sourceId || undefined });
   } catch {
     // Pre-v0.36.1 brains: calibration_profiles table doesn't exist.
     return null;
   }
-  if (rows.length === 0) return null;
-  const row = rows[0];
+  if (!row) return null;
   const tags = Array.isArray(row.active_bias_tags) ? row.active_bias_tags : [];
   const patterns = Array.isArray(row.pattern_statements) ? row.pattern_statements : [];
   if (tags.length === 0) return null; // codex #8 cold-start gate
@@ -693,7 +683,7 @@ async function _runBrainstormInner(
   // ---- Phase 1: question embedding + close-set retrieval ----
   let questionEmbedding: Float32Array | null = null;
   try {
-    questionEmbedding = await embedFn(opts.question);
+    if (!await embeddingSendBlocked(engine)) questionEmbedding = await embedFn(opts.question);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     stderr(`[${profile.label}] WARN: question embedding failed (${msg}); distance scores will be neutral.\n`);

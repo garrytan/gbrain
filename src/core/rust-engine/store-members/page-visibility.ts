@@ -17,6 +17,7 @@
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { ANY_OWNER_ONLY_SQL, ownerOnlyPageSql } from '../../access/owner-only.ts';
 import { storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /**
@@ -36,7 +37,8 @@ function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy 
 function restrictedCallerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy {
   if (part === 'read') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
   const text = callerAccessAllowedSql('p');
-  const off = { honorAliases: false, entityPrivacy: false };
+  const ownerOnly: 'lineage' | 'closed' = text.includes(ownerOnlyPageSql('p', 'fn')) ? 'lineage' : text.includes(ANY_OWNER_ONLY_SQL) ? 'closed' : refuseMember(member, 'an owner-only rule the store does not model');
+  const off = { honorAliases: false, entityPrivacy: false, ownerOnly };
   if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;
   const access = currentCallerAccess();
   const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };

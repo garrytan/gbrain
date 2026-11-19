@@ -30,6 +30,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::{DEFAULT_SOURCE, read_source};
 use crate::takes::{TakeRecord, all_takes, read_take, write_take};
+use crate::vectors::{check_query, norm_sq, served_cosine};
 use crate::{Result, Store, keys, put_json};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -910,6 +911,37 @@ impl Store {
                 }
                 if let Some(stored) = read_chunk_vector(&*read, chunk.page_id, chunk.chunk_index)? {
                     out.push(json!({ "id": chunk.id, "embedding": vector_value(&stored.vector) }));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// `cosinesByChunkIds(ids, query)`: `[{ id, cosine }]`, an exact scan of the chunks that
+    /// `getEmbeddingsByChunkIds` reads (served, with a vector). The text-space cosine of the stored
+    /// vector and `query`, as `cosineByChunkIdsStatement` computes it: 0 for another dimension
+    /// count or a zero vector or query; an id that is no served chunk with a vector has no row.
+    /// A query pgvector cannot parse (empty, NaN, infinite) refuses before any row is read.
+    pub fn cosines_by_chunk_ids(&self, ids: &[u64], query: &[f64]) -> Result<Vec<Value>> {
+        let query = check_query(query)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query_norm_sq = norm_sq(&query);
+        let wanted: HashSet<u64> = ids.iter().copied().collect();
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for ctx in page_contexts(&*read)? {
+            if !ctx.sealed() {
+                continue;
+            }
+            for chunk in ctx.visible() {
+                if !wanted.contains(&chunk.id) || !chunk.embed.has_vector() {
+                    continue;
+                }
+                if let Some(stored) = read_chunk_vector(&*read, chunk.page_id, chunk.chunk_index)? {
+                    let cosine = served_cosine(&query, query_norm_sq, &stored.vector);
+                    out.push(json!({ "id": chunk.id, "cosine": cosine }));
                 }
             }
         }

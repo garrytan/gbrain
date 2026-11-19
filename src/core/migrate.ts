@@ -18,6 +18,7 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
 import { hardenFailureLine, hardenFunctionSearchPaths } from './function-search-path.ts';
+import { ensureOwnerOnlyMarkTriggersAtRun } from './access/owner-only-marks.ts';
 import { resumePageRevisionBackfill } from './page-state/revision-backfill-schema.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
@@ -466,6 +467,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
     } catch (e) {
       process.stderr.write(hardenFailureLine(e));
     }
+    await ensureOwnerOnlyMarkTriggersAtRun(engine, nameLeftovers);
   };
   if (pending.length === 0) {
     await harden(false);

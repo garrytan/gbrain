@@ -5,7 +5,7 @@ import { opError, OperationError, type AuthInfo } from '../ops/contract.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
-import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
+import { readBrainIdentity, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { rustOwnerServesPersistence } from '../rust-engine/owner-ipc/client.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';

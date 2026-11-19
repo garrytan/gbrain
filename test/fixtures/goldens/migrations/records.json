@@ -1,15 +1,11 @@
 {
   "golden": {
-    "count": 317,
+    "count": 321,
     "gaps": [
       17,
       18,
       19,
-      100,
-      322,
-      323,
-      324,
-      325
+      100
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -77,7 +73,7 @@
       "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
       "failClosedLedgerGuards": "8a095ef92247a83e7d569c0a721facf0bb4c4213bd2ed5149a81947469bbd5e6",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
-      "grantFromRow": "d0b537d687ed3f88f61e33b88490c6dcc74b829485b0c2c44d3238d100c4c3a7",
+      "grantFromRow": "5e476f2df993a1de223727c72ddad3351462a1981c9a02285a2d847f7c29188d",
       "hardenFunctionSearchPaths": "ca7bce96a087bfb4644268e5c2ad0ace76532905ceffb4efdc69608e0ef11894",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
       "identityIndexHasSource": "ab7e4cad64ebf233f3a884816c114b0c582f4f2166c3bcf19ed8d92bcfcf3807",
@@ -90,6 +86,7 @@
       "migrationNotice": "9a6607b26a9719ef1833571b137bc8ebfcd1e16d545e89ff8728cf3ccbcbb409",
       "migrationStatementTimeoutMs": "2883be5073d2cd96cc17136e2f7d3223c6bdafebe3ef3c7a6836be320867251d",
       "originTwinsRepairCommand": "fb3c721e48d9f2a98845ef91231836d4a37eb5929e9a9b62f8dfab5ce395c462",
+      "ownerOnlyTriggersLeftLine": "e2e038846f7bd002831fc04b96dfd907fda768129de2971f934f199c87a6e83c",
       "pageSearchVectorTriggerFnSql": "2e418d7069473de186e9d38a726afa009b71902ce20d704638decf299f14757b",
       "protectTables": "ca31d41dd1fbc1d0cc4a41855741b55f4ec3d428dc264fb2aaf5cd1592082a14",
       "quietMigrationNotices": "4045c32034a8f46204dd5d89e185ff5c35e8073f560f14caa8b127f8a695957c",
@@ -5258,6 +5255,64 @@
         "handler": {
           "form": "arrow",
           "helpers": [
+            "ownerOnlyTriggersLeftLine"
+          ],
+          "sha256": "89c7fa05473ad788506d98a1422230a436f7cb7e8e0f9fc4fd1a2eadb5b49b0b"
+        },
+        "idempotent": true,
+        "name": "owner_only_marks",
+        "sql": {
+          "length": 13860,
+          "sha256": "4be1dc8cb37baa18683a5cc52747bf29cd47cfd3db6e9d350c397593dee9ea92"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 322
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "token_read_shared",
+        "sql": {
+          "length": 173,
+          "sha256": "e277245cb7ddc3d040b7c8a179f8a8b5fe732958eabb5f40c91ce31b0f9ad1df"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 323
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "secret_store",
+        "sql": {
+          "length": 1783,
+          "sha256": "429f1081f3455a9961b9f5735b46fea7f12242a3d21c25674b8c82fe20e2dcde"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 324
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "entity_identity_reviews",
+        "sql": {
+          "length": 914,
+          "sha256": "a2e6230cbf67352383307889e2b18aefd1f6a98396c98ec769c04d605d05dc1c"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 325
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
             "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
@@ -5601,6 +5656,10 @@
       319,
       320,
       321,
+      322,
+      323,
+      324,
+      325,
       326
     ]
   },

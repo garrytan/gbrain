@@ -367,6 +367,8 @@ export interface CallerAccess {
   privateFactSources: readonly string[];
   hidePrivate: boolean;
   owner: boolean;
+  /** GST-3058: set only by dispatch, for a direct remote call from an owner-bound credential with no room declared: the owner's widenings apply (ownerWidened). */
+  ownerReads?: boolean;
   /**
    * GST-2490 / GBRA-108 design 3: a lineage read, one member speaking for itself in a non-mutating operation: the owner
    * always, any other member only under access.members_read_lineage. Derived pages and facts pass when that member reads
@@ -439,6 +441,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
+    ownerReads: access.ownerReads ?? (fresh ? false : base.ownerReads === true),
   }), fn);
 }
 
@@ -471,6 +474,17 @@ export function privateReadableSources(): readonly string[] {
 /** GST-2059: is the current caller the brain owner (CallerAccess.owner)? False outside a remote record or a local --as of the owner. */
 export function callerIsOwner(): boolean {
   return currentCallerAccess().owner;
+}
+
+/**
+ * GST-3058: whether the owner's widenings apply: the Facts fence as stored on get_page and fetch_page, a segmented
+ * page's markdown view, every take holder for a credential with no holders list, and graph-hop text cut from fenced
+ * evidence. Off unless dispatch switched it on for a direct remote call from an owner-bound credential with no room
+ * declared; every other context (agent jobs, on-behalf-of audiences, stdio, attested actors) reads as before them.
+ */
+export function ownerWidened(): boolean {
+  const access = currentCallerAccess();
+  return access.owner && access.ownerReads === true;
 }
 
 /**

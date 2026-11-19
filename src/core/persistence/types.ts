@@ -21,6 +21,8 @@ export const WRITE_ERROR_CODES = [
   'timeline_rows_would_be_removed', 'purged_content', 'preparation_stalled',
   'fence_unrenderable', 'page_body_segmented', 'page_body_rows_unreadable', 'revision_changed', 'tail_changed',
   'write_outcome_unknown', 'write_interrupted', 'connection_inherited_read_only', 'owner_marker_missing',
+  // A member the brain's engine does not serve refused the write; it repeats on every attempt, so the write ended failed.
+  'engine_capability_missing',
 ] as const;
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];

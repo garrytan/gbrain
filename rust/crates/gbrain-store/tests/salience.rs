@@ -387,7 +387,7 @@ fn exclude_private_drops_the_pages_the_page_policy_hides_from_both_salience_read
     );
     let policy = |honor_aliases: bool, entity_privacy: bool| {
         serde_json::to_value(
-            json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy}),
+            json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "lineage"}),
         )
         .unwrap()
     };

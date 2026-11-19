@@ -286,7 +286,13 @@ impl Store {
             }
             write_page(tx, &page)?;
             if current {
-                record_search_timeline(tx, page.id, &page.knowledge_revision, &seal.timeline_text)?;
+                record_search_timeline(
+                    tx,
+                    page.id,
+                    &page.knowledge_revision,
+                    &page.title,
+                    &seal.timeline_text,
+                )?;
             }
             Ok(Some(SealedPage { id: page.id }))
         })

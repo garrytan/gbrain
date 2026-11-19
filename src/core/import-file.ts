@@ -60,6 +60,7 @@ import { writePageAliases } from './mentions/pass.ts';
 import { readMentionPolicy } from './mentions/policy.ts';
 import { warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS_SCAN_HASH_KEY } from './utils.ts';
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
+import { embeddingSendBlocked } from './embedding-disabled.ts';
 import { resolveImportContextualMode } from './import-contextual-mode.ts';
 import { runGuardrails } from './guardrails.ts';
 import { pageBodySegmentedError } from './page-body/page-shape.ts';
@@ -634,7 +635,7 @@ export async function importFromContent(
     // reach the provider.
     // A large or segmented page (the hysteresis band too) commits with NULL vectors; the stale
     // sweep embeds it under the per-page cap and the sampled junk check, so no provider call holds the write.
-    const noEmbed = opts.noEmbed || isEmbedSkipped(parsed.frontmatter);
+    const noEmbed = opts.noEmbed || isEmbedSkipped(parsed.frontmatter) || await embeddingSendBlocked(engine);
     const largePage = isLargePageBytes(bodyBytes) || segmented !== null;
     const postCommitEmbedding = largePage ? undefined : opts.onPostCommitEmbedding;
     const reusable = !!existing && !existing.deleted_at && !opts.forceRechunk && !postCommitEmbedding && chunks.length > 0 && bodyStorageOf(existing) !== 'segmented'
@@ -1201,6 +1202,7 @@ export async function importCodeFile(
 ): Promise<ImportResult> {
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importCodeFile(engine, relativePath, content, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
+  if (!opts.noEmbed && await embeddingSendBlocked(engine)) opts = { ...opts, noEmbed: true };
   if (opts.prepare && !opts.noEmbed) throw new Error('Coordinated code import requires provider-free preparation.');
   const slug = slugifyCodePath(relativePath);
   const lang = detectCodeLanguage(relativePath) || 'unknown';
@@ -1835,6 +1837,7 @@ export async function importImageFile(
   const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importImageFile', [filePath, relativePath, opts]); if (viaOwner) return viaOwner;
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importImageFile(engine, filePath, relativePath, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
+  if (!opts.noEmbed && await embeddingSendBlocked(engine)) opts = { ...opts, noEmbed: true };
   // Defense-in-depth: reject symlinks before reading bytes.
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {

@@ -33,7 +33,8 @@ import type { Page } from '../types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
 import { ledgerApplies } from '../page-body/segment-ledger.ts';
-import { projectedLayout, projectedOutline, projectedUnits, readBodyRange, type SegmentedBody } from '../page-body/read-range.ts';
+import { openSegmentedBody, projectedLayout, projectedOutline, projectedUnits, readBodyRange, type SegmentedBody } from '../page-body/read-range.ts';
+import { remoteReadStrips } from '../remote-body.ts';
 import { TIMELINE_SEPARATOR, spanHoldsChunk } from './document.ts';
 import { DATE, sliceWindow, slabWindow, windowAround, windowForBytes, windowFrom, type DocumentSlab, type OutlineEntry, type PageOutline, type WindowSlice } from './window.ts';
 
@@ -203,6 +204,27 @@ async function trustedBytes(engine: BrainEngine, body: SegmentedBody, start: num
   const parts: Buffer[] = [];
   for await (const piece of readBodyRange(engine, { pageId: body.pageId, space: 'stored', start, end, audience: 'trusted', body })) parts.push(piece.bytes);
   return Buffer.concat(parts);
+}
+
+/**
+ * GST-3058: whether the stored body (the trusted markdown view) holds text a world-only read strips: remoteReadStrips
+ * over each run of rows whose read projection hides or rewrites text, and the rows held from world-only readers.
+ */
+export async function segmentedBodyStrips(engine: BrainEngine, body: SegmentedBody): Promise<boolean> {
+  const layout = await projectedLayout(engine, body);
+  const runs: Array<[number, number]> = [];
+  for (const [i, row] of body.rows.entries()) {
+    if (!row.hasFacts && layout.rowBytes[i] === row.byteLen) continue;
+    const last = runs[runs.length - 1];
+    if (last && last[1] === row.byteStart) last[1] = row.byteStart + row.byteLen; else runs.push([row.byteStart, row.byteStart + row.byteLen]);
+  }
+  if (runs.length === 0) return false;
+  const worldOnly = await openSegmentedBody(engine, { pageId: body.pageId, generation: body.generation, pin: body.pin, hideHeld: true });
+  for (const [start, end] of runs) {
+    const text = await trustedBytes(engine, body, start, end);
+    if (remoteReadStrips(text.toString('utf8')) || !text.equals(await trustedBytes(engine, worldOnly, start, end))) return true;
+  }
+  return false;
 }
 
 /** The read projection as a document: what windows, outlines and around_chunk_id cut, for every caller. */

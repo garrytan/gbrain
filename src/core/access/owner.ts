@@ -38,6 +38,16 @@ export async function ownerMemberId(engine: Pick<BrainEngine, 'getConfig'>): Pro
   }
 }
 
+/**
+ * GST-3058: the take holders an HTTP transport hands dispatch for a verified credential: its stored list when it has
+ * one, none (every holder, which readHolders confirms against the caller's audience) when it is bound to the brain
+ * owner, and ['world'] for every other credential.
+ */
+export async function credentialHolders(engine: Pick<BrainEngine, 'getConfig'>, stored: string[] | null | undefined, memberId: string | null | undefined): Promise<string[] | undefined> {
+  if (stored) return stored;
+  return memberId && memberId === await ownerMemberId(engine) ? undefined : ['world'];
+}
+
 /** The configured owner, whether it is live, and the credentials that read as it. */
 export async function ownerView(engine: BrainEngine): Promise<OwnerView> {
   const raw = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim() ?? '';

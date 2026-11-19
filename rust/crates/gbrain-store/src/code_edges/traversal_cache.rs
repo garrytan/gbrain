@@ -209,7 +209,7 @@ impl Store {
                 symbol_qualified: input.symbol_qualified.clone(),
                 depth,
                 source_id: input.source_id.clone(),
-                response_json,
+                response_json: response_json.clone(),
                 max_chunk_updated_at_us,
                 xmin_max: input.xmin_max,
                 cluster_generation: input.cluster_generation,

@@ -294,7 +294,7 @@ impl Store {
             let now = self.env.now_micros();
             let mut seen = HashSet::new();
             let mut changed = 0;
-            for (row, weight) in rows.iter().zip(weights) {
+            for (row, weight) in rows.iter().zip(weights.iter().cloned()) {
                 let Some(page) = read_page(tx, &row.source_id, &row.slug)? else {
                     continue;
                 };

@@ -674,7 +674,7 @@ impl Store {
             let own = own_entries(&*tx, page_id)?;
             let mut gone = BTreeSet::new();
             let mut out = Vec::new();
-            for (id, date, row) in asked {
+            for (id, date, row) in asked.clone() {
                 let Some(entry) = id.and_then(|id| own.get(&id)) else {
                     continue;
                 };
@@ -727,7 +727,7 @@ impl Store {
         self.write(|tx| {
             let own = own_entries(&*tx, page_id)?;
             let mut done = BTreeSet::new();
-            for (id, row) in asked {
+            for (id, row) in asked.clone() {
                 let Some(entry) = id.and_then(|id| own.get(&id)) else {
                     continue;
                 };

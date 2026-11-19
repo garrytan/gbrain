@@ -95,7 +95,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 
 | Tag | Records | Owner |
 |---|---|---|
-| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`) | core |
+| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`), owner-only marks (`M owner_only_mark/pages/<page id>`) | core |
 | `C` | config | core |
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
@@ -129,9 +129,11 @@ Rules:
   the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
   column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
-- **Format.** `FORMAT_VERSION` 1, `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
+- **Format.** `FORMAT_VERSION` 2, `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
   an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core.
+  Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
+  one write transaction when it opens, and a format-1-only build refuses a format-2 brain.
 
 Reserved tags:
 
@@ -573,8 +575,8 @@ PGLite lets four `pages` columns hold NULL. The page record holds NULL in the sa
   unless `allowEmptyOverwrite`, as PGLite does.
 - **Versions.** A version snapshot copies the page's NULLs.
 - **Format.** Records written before these fields were nullable hold strings and read unchanged. A record without
-  `chunker_version` reads it as NULL, and the store writes `chunker_version` only when it is set. `FORMAT_VERSION`
-  stays 1.
+  `chunker_version` reads it as NULL, and the store writes `chunker_version` only when it is set. This needs no
+  format version of its own.
 
 #### Segmented guard (`putPage` over a segmented page)
 
@@ -601,7 +603,7 @@ others. Each family below must give the PGLite answer for a segmented shell page
 
 | Family and reader | Member | Today | PGLite for a segmented shell | What the family must do |
 | --- | --- | --- | --- | --- |
-| chunk_queries `chunkless_pages` | `countChunklessPagesWithContent`, `listChunklessPagesWithContent` | excludes the shell (its body reads as empty) | includes a segmented page with `body_bytes > 0` (`engine-sql/chunks.ts`, the chunkless queries) and returns `''` for its body and timeline (`COALESCE`) | test segmented pages by `body_bytes`, not by the body text; output `""`, never `null` |
+| chunk_queries `chunkless_pages` | `countChunklessPagesWithContent`, `listChunklessPagesWithContent` | a segmented page counts when its published `body_bytes` (page_body body state, `segmented_body_bytes`) is positive; an unpublished shell does not | includes a segmented page with `body_bytes > 0` (`engine-sql/chunks.ts`, the chunkless queries) and returns `''` for its body and timeline (`COALESCE`) | test segmented pages by `body_bytes`, not by the body text; output `""`, never `null` |
 | chunk_queries `get_chunk_windows` | `getChunkWindows` | `segmented: false` on every page row | the page row says `segmented: true` and carries no body; chunk rows carry their occurrence and span | report `segmented` from the page's body storage and send no body for a segmented page |
 | extraction `stale_row` | `listStalePagesForExtraction` (and its count) | outputs `null` for the body | lists the shell; `rowToStalePage` returns `''` | keep the shell in the list and output `""` |
 | page_ops `snapshot_json` | `readPageSnapshotsBatch` | outputs `null` for the body and `content_hash` | returns the page through `rowToPage`, so its body getters throw `page_body_segmented`; `content_hash` is `null` | keep the `null` in the JSON and decode each page in TypeScript with `toGetPage`, which applies the guard |
@@ -637,9 +639,10 @@ carries its output to the store.
   the last write that set the title or timeline.
 - **Forget.** `pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>` deletes it.
   PGLite's `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) puts the trigger form back on
-  every write whose `SET` list names either column, also with an unchanged value. `put_page_in` calls it on every
-  `putPage`; `write_page` calls it when the title or timeline changed. The page_body family calls it from
-  `refresh_page_body` and the body generation flip, and `seal_segmented_page` calls `record_search_timeline`. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
+  every write whose `SET` list names either column, also with an unchanged value. `write_page` calls it when the title or timeline changed (`write_page_setting_vector` every time, for the statements that SET them: `putPage`, the refresh, the flip), after it has built the page's trigger-form vector
+  (`keyword::check_page_vector`) and refused a vector past the 1,048,575-byte tsvector cap with PGLite's "string is too
+  long for tsvector" error. `record_search_timeline` takes the page title and refuses a sealed vector past the cap the same way. The page_body family calls it from
+  `refresh_page_body` and the body generation flip (through `write_page_setting_vector`, the flip after it has stored its body state, so the check reads the incoming lead), and `seal_segmented_page` calls `record_search_timeline`. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
   statement.
 - **Delete.** `remove_page` deletes it on a hard delete. A soft delete keeps it.
 - **Other writers.** A family that seals a page by another path and has the sanitized text from TypeScript calls
@@ -701,11 +704,9 @@ unless the PGLite query uses `lower()` on non-ASCII text in a parity case.
 
 A float score (cosine similarity, salience, rank) matches PGLite within an absolute tolerance of `1e-6`. Ties break the
 way the PGLite `ORDER BY` breaks them, usually by id. Postgres `REAL` columns (`emotional_weight`, take `weight`)
-are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is a plain BM25 today;
-the one keyword case that differs because of it is the row in `test/rust-expected-divergence/search.tsv`. The
-`ts_rank` compatibility ranker (design D5), which the keyword family writes in `keyword.rs` over the core `T`
-postings, is the parity baseline it builds toward; every other
-keyword, title and trigram case must match exactly.
+are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is the `ts_rank` and `ts_rank_cd` compatibility
+ranker (design D5, `keyword/rank.rs`); it has no expected difference (`search.tsv` is empty), so every keyword, title
+and trigram case must match exactly.
 
 ### Expected differences
 
@@ -888,6 +889,12 @@ Facts and their supersession chains.
     The relink writes `placeRelinkedFact` and `linkConversationFact` change `F 0x01` rows through `write_fact`, so
     the fence key `F 0x05` refuses a held position as the unique index does. `listConversationRelinkPages`, the
     conversation relink's page pick, reads the source's `F 0x01` rows and the tried memos.
+  - The reads `remember` and `forget` make before admission are typed members (`engine-sql/memory-mutation-reads.ts`:
+    `readSourceWriteRow`, `readSourceLocalPath`, `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder`,
+    and `readRemoteForgetTier` for the remote forget guard in `trust/supersede-handlers.ts`).
+    The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
+    rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
+    a member page or a private-facts grant widens, and a remote provenance floor that is not the no-caller one. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`.
 - **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
@@ -1011,6 +1018,7 @@ Captured eval candidates and capture failures.
 - **Tag:** `Z` (`EVAL_CAPTURE`). Cascade on page delete: no.
 - **Members (5), capability:** `eval_capture` (5).
 - **Store and binding:** `logEvalCandidate` (`log_eval_candidate`), `listEvalCandidates` (`list_eval_candidates`), `deleteEvalCandidatesBefore` (`delete_eval_candidates_before`), `logEvalCaptureFailure` (`log_eval_capture_failure`), `listEvalCaptureFailures` (`list_eval_capture_failures`).
+- **Decide store (inside this family):** 20 more members serve the decide tables `decide_state`, `decide_spend`, `decision_receipts` and `decide_calibrations` under sub-tags `Z 0x10..=0x15` (record in rust/docs/store/decide-store.md): `readDecideState`, `upsertDecideState`, `deleteDecideState`, `ensureDecideState`, `insertDecideSpend`, `dailyDecideSpend`, `listDecideSpendBySlot`, `insertDecideReceipts`, `pruneDecideReceipts`, `listDecideReceiptStats`, `decideSlotUsage`, `decideConflictNoEntityCounts`, `listDecideReplayReceipts`, `listDecideResolvedModels`, `listDecideMixedModelDecisions`, `insertDecideCalibration`, `storeDecideQualification`, `listDecideCalibrations`, `getDecideCalibration`, `setDecideCalibrationRetired`. Parity: `test/engine-parity/decide-store.test.ts`.
 - **Postgres tables:** `eval_candidates`, `eval_capture_failures`.
 - **Keys:** `Z 0x01 <id>` candidate; `Z 0x02 <id>` failure; `M next_eval_candidate_id`, `M next_eval_failure_id`. Expose `pub(crate) fn remove_retrieved_slugs(tx, source_id, slugs)` for page_ops.
 - **Depends on:** None.
@@ -1020,6 +1028,28 @@ Captured eval candidates and capture failures.
   - `code-eval-salience.test.ts`: logEvalCandidate round-trips every field through listEvalCandidates, with tool filter and limit
   - `code-eval-salience.test.ts`: listEvalCandidates since-window and deleteEvalCandidatesBefore split old from new rows
   - `code-eval-salience.test.ts`: logEvalCaptureFailure records reasons; listEvalCaptureFailures filters by since
+
+### calibration_profiles
+
+Generated calibration profiles per holder and source (decide family, group B). Shares the eval_capture tag and capability.
+
+- **Files:** `gbrain-store/src/eval_capture/calibration_profiles.rs`, `gbrain-napi/src/families/calibration_profiles.rs`, `store-members/calibration-profiles.ts`; the SQL is `src/core/engine-sql/calibration-profiles.ts`. Detail: `rust/docs/store/calibration-profiles.md`.
+- **Tag:** `Z` (`EVAL_CAPTURE`), sub-tags `0x20` (record) and `0x21` (newest-first index). Cascade on source delete: the store removes the source's rows (`remove_source_rows`, unit-tested only: the Rust store serves no source delete yet).
+- **Members (5), capability:** `eval_capture` (5): `getLatestCalibrationProfile`, `isCalibrationProfileUnchanged`, `insertCalibrationProfile`, `readVoiceGateHealth`, `purgeCalibrationProfilesByWave`.
+- **Postgres tables:** `calibration_profiles`.
+- **Parity cases (5, in `calibration-profiles.test.ts`):** newest profile with filters and id tie-break; unchanged check (REAL-rounded, NULL-safe); insert defaults and refusals that write nothing; voice-gate health over the 7-day window; wave purge dry run and delete.
+- **Notes:** The other undo-wave statements (takes, take_grade_cache, take_nudge_log) stay raw SQL and refuse on a Rust brain.
+
+### decide_proposals
+
+The decide loop's four proposal tables (group C). All members use the `eval_capture` capability and its key tag.
+
+- **Files:** `gbrain-store/src/eval_capture/decide_proposals.rs`, `gbrain-napi/src/families/decide_proposals.rs`, `store-members/decide-proposals.ts`, `src/core/engine-sql/decide-proposals.ts`.
+- **Tag:** `Z` (`EVAL_CAPTURE`), sub-tags `0x30..=0x3D`. Cascade on page delete: no.
+- **Members (16), capability:** `eval_capture` (16): `insertDecideProposal`, `getDecideProposal`, `listDecideProposalIds`, `listDecideProposals`, `transitionDecideProposal`, `listDecideProposedPairs`, `insertDecideReviewProposal`, `listDecideReviewProposals`, `getDecideReviewProposal`, `transitionDecideReviewProposal`, `listDecideReviewProposalIds`, `readProposalReviewRates`, `listDueDecideReviewQueue`, `applyDecideReviewQueue`, `listDueDecideSweepDeferred`, `applyDecideSweepDeferred`.
+- **Postgres tables:** `decide_proposals`, `decide_review_proposals`, `decide_review_queue`, `decide_sweep_deferred`.
+- **Keys and contract:** [rust/docs/store/decide-proposals.md](../../rust/docs/store/decide-proposals.md). `lock` on the two `get` members is ignored (one writer); `engine.transaction` is served.
+- **Parity cases (8, in `decide-proposals.test.ts`).**
 
 ### code_edges
 
@@ -1184,17 +1214,17 @@ Timeline reads by date and event projections.
 
 ### keyword
 
-Keyword search members the keyword_search capability still refuses, and title trigrams.
+Keyword search members of the keyword_search capability (all served), and title trigrams.
 
 - **Files:** `gbrain-store/src/keyword.rs`, `gbrain-napi/src/families/keyword.rs`, `store-members/keyword.ts`.
 - **Tag:** `R` (`TRIGRAM`). Cascade on page delete: no.
-- **Members (5), capability:** `keyword_search` (5).
-- **Store and binding:** `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
+- **Members (6), capability:** `keyword_search` (6).
+- **Store and binding:** `searchKeyword` (`search_keyword`; the hybrid arm is in `keyword/arm.rs`), `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
-- **Keys:** Postings stay core (`T`). `R <source> 0x00 <trigram> 0x00 <page id>` title trigram postings, kept by the core page index hook (`page_index::reindex_page`; the stub is in `keyword.rs`).
-- **Depends on:** Core search postings (`T`). The family writes the `ts_rank` compatibility ranker (design D5) in `keyword.rs` over those postings; the facts keyword arm reuses it. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
+- **Keys:** None written yet; every member scans the live pages and rebuilds vectors from text (`rust/docs/store/keyword.md`, "Keys"). The family owns the `R` tag (`TRIGRAM`).
+- **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are not used; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
 - **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
-- **Notes:** Every keyword case except the one in `search.tsv` must match PGLite exactly, order and score within `1e-6`.
+- **Notes:** Every keyword case must match PGLite exactly, order and score within `1e-6`; `search.tsv` is empty.
 - **Parity cases (4, in `links.test.ts`, `search.test.ts`):**
   - `links.test.ts`: findByTitleFuzzy returns the best title match above the threshold, honoring prefix and source
   - `search.test.ts`: countKeywordPages and searchKeywordPages page through strict keyword matches
@@ -1203,7 +1233,7 @@ Keyword search members the keyword_search capability still refuses, and title tr
 
 ### chunk_queries
 
-Chunk reads the chunks capability still refuses.
+Chunk reads of the chunks capability (served; the capability stays unreported while other chunk members refuse).
 
 - **Files:** `gbrain-store/src/chunk_queries.rs`, `gbrain-napi/src/families/chunk_queries.rs`, `store-members/chunk-queries.ts`.
 - **Tag:** `c` (`CHUNK_QUERIES`). Cascade on page delete: no.
@@ -1342,8 +1372,9 @@ Transaction rules shared by all four:
   `RUST_ENGINE.md`). TypeScript never holds a store lock across two calls. A member that PGLite runs as
   `SELECT ... FOR UPDATE` followed by an `UPDATE` is one member here, not two.
 - **Same results, not same mechanism.** A store write transaction is serializable: today the store runs one write
-  transaction at a time, and a later store with concurrent writers must detect the conflict and retry the
-  transaction, never commit both. So "read the first eligible row in PGLite's order, then change it" inside one
+  transaction at a time by default. With concurrent writes on (`GBRAIN_RUST_CONCURRENT_WRITES=1`), the store
+  detects the conflict and runs the losing transaction again; it never commits both
+  (`tests/jobs.rs` and `test/engine-parity/jobs.test.ts` race claimers against each other). So "read the first eligible row in PGLite's order, then change it" inside one
   write gives the result `FOR UPDATE SKIP LOCKED` gives: no row is claimed twice, and a second caller gets the next
   eligible row or none.
 - **Inside a BrainEngine transaction.** A member called with a tx handle joins the open store transaction (the core
@@ -1587,9 +1618,14 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`,
     `countLeasePressure`, `listRecentLeasePressure`) serve `describeJobs`, the hold's insert, sweep, settle and
     unknown-usage mark, and the lease-pressure audit, `jobs stats` and the `subagent_health` check
-    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). The statements that need `mcp_spend_log` or
-    `oauth_clients` (`reserve`, the capped group read, the log insert inside `settle`, `getClientDailyCapCents`) stay raw
-    and the Rust engine refuses them. `parity: test/engine-parity/jobs-spend.test.ts`.
+    (`src/core/engine-sql/jobs-spend.ts`, `rust/docs/store/jobs-spend.md`). `parity: test/engine-parity/jobs-spend.test.ts`.
+  - Spend ledger and client budgets. Ten members (`reserveClientSpend`, `reserveGroupSpend`, `readGroupSpendTotals`,
+    `settleSpendWithLog`, `insertSpendLog`, `sumClientSpendSince`, `readClientBudgetUsd`, `insertOauthClient`,
+    `updateOauthClientBudget`, `readAgentClientSpend`) serve `reserve`, `reserveGroup`, `readGroupSpend`, `settle`,
+    `getClientDailyCapCents`, `getTodaySpendCents`, `recordSpend` and the admin agent spend view
+    (`src/core/engine-sql/spend-log.ts`, `rust/docs/store/spend-log.md`). The other `oauth_clients` statements and the
+    delegated admission's `effectiveDelegation` read stay raw and the Rust engine refuses them; no `oauth_clients`
+    writer call site is switched. `parity: test/engine-parity/spend-log.test.ts`.
   - Subagent transcript and tool ledger. Seventeen members (`listSubagentMessages`, `insertSubagentMessage`, `listSubagentToolExecutions`,
     `recordSubagentToolExecutions`, `startSubagentToolExecution`, `completeSubagentToolExecution`, `failSubagentToolExecution`, the
     write-outcome, oneshot-ledger and byte-sum reads, and the dream cycle's provenance reads) serve `subagent_messages` and
@@ -1756,10 +1792,10 @@ and write provenance on content rows, and the trust records.
     and `listAmendmentsNotApplied`
     (`link_queries/link_temporal.rs`). `pageAwaitsRederive`, the purge check of `get_page`, `fetch` and `known_as_of`,
     answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
-    fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets nothing, because a
-    store transaction holds the one writer from its start, and it does not enforce `READ ONLY`. It refuses the takes and timeline
-    scan tables and a pick over a history PGLite would have pruned (TODOS.md `rust-version-prune`), and the belief
-    history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
+    fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets no isolation level, because a
+    store transaction holds the one writer from its start, and it enforces `READ ONLY` with Postgres's `25006` refusal. It refuses the takes and timeline
+    scan tables, and the belief history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
+    The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks.
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
     refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search
