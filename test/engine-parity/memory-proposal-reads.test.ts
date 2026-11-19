@@ -70,4 +70,18 @@ describe('engine parity: the owner reads of memory proposals', () => {
       expect(result).toEqual({ show: notFound, approve: notFound, deny: notFound, notUuid: notFound });
       return result;
     });
+
+  parityTest('the three engine members answer a fresh brain directly', {
+    methods: ['readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows'],
+  }, async (engine) => {
+    const row = await engine.readPendingProposalSummary();
+    const result = {
+      pending: row === null ? 0 : Number(row.n),
+      oldest: row?.oldest ?? null,
+      rows: await engine.listMemoryProposalRows({ sourceId: null, all: true, limit: 5, afterAt: null, afterId: null }),
+      owner: await engine.listOwnerProposalRows(UNKNOWN),
+    };
+    expect(result).toEqual({ pending: 0, oldest: null, rows: [], owner: [] });
+    return result;
+  });
 });
