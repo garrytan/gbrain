@@ -151,3 +151,67 @@ pub(crate) fn pg_lower_char(c: char) -> char {
     }
     c.to_lowercase().next().unwrap_or(c)
 }
+
+/// `text LIKE pattern` (or `ILIKE` when `fold`) with `\` as the escape character. A pattern that
+/// ends with the escape character refuses, as Postgres does. (Read by `jobs/health.rs`.)
+pub(crate) fn like(text: &str, pattern: &str, fold: bool) -> crate::error::Result<bool> {
+    let map = |s: &str| -> Vec<char> {
+        if fold {
+            s.chars().map(pg_lower_char).collect()
+        } else {
+            s.chars().collect()
+        }
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    enum Tok {
+        Any,
+        One,
+        Lit(char),
+    }
+    let mut toks = Vec::new();
+    let mut chars = map(pattern).into_iter();
+    while let Some(c) = chars.next() {
+        toks.push(match c {
+            '%' => Tok::Any,
+            '_' => Tok::One,
+            '\\' => match chars.next() {
+                Some(next) => Tok::Lit(next),
+                None => {
+                    return Err(crate::error::StoreError::invalid(
+                        "LIKE pattern must not end with escape character",
+                    ));
+                }
+            },
+            other => Tok::Lit(other),
+        });
+    }
+    let text = map(text);
+    // Greedy match with one backtrack point per `%`.
+    let (mut t, mut p) = (0usize, 0usize);
+    let mut star: Option<(usize, usize)> = None;
+    while t < text.len() {
+        match toks.get(p) {
+            Some(Tok::Any) => {
+                star = Some((p, t));
+                p += 1;
+            }
+            Some(Tok::One) => {
+                t += 1;
+                p += 1;
+            }
+            Some(Tok::Lit(c)) if *c == text[t] => {
+                t += 1;
+                p += 1;
+            }
+            _ => match star {
+                Some((sp, st)) => {
+                    p = sp + 1;
+                    t = st + 1;
+                    star = Some((sp, st + 1));
+                }
+                None => return Ok(false),
+            },
+        }
+    }
+    Ok(toks[p..].iter().all(|tok| *tok == Tok::Any))
+}

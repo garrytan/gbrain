@@ -140,35 +140,39 @@ struct Counters {
 /// What is stored for a request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RequestRecord {
-    id: String,
-    principal_kind: String,
-    principal_id: String,
-    request_id: String,
+    pub(crate) id: String,
+    pub(crate) principal_kind: String,
+    pub(crate) principal_id: String,
+    pub(crate) request_id: String,
     #[serde(default)]
-    client_request_id: Option<String>,
-    operation: String,
-    source_id: String,
-    source_incarnation: String,
+    pub(crate) client_request_id: Option<String>,
+    pub(crate) operation: String,
+    pub(crate) source_id: String,
+    pub(crate) source_incarnation: String,
     #[serde(default)]
-    page_id: Option<u64>,
-    slug: String,
-    digest: String,
-    intent: Value,
-    authority: Value,
-    sequence: u64,
-    state: String,
+    pub(crate) page_id: Option<u64>,
+    pub(crate) slug: String,
+    pub(crate) digest: String,
+    pub(crate) intent: Value,
+    pub(crate) authority: Value,
+    pub(crate) sequence: u64,
+    pub(crate) state: String,
     #[serde(default)]
-    outcome: Option<Value>,
+    pub(crate) outcome: Option<Value>,
     #[serde(default)]
-    error_code: Option<String>,
+    pub(crate) error_code: Option<String>,
     #[serde(default)]
-    error_message: Option<String>,
+    pub(crate) error_message: Option<String>,
     #[serde(default)]
-    blocked_reason: Option<String>,
-    created_at_us: i64,
-    updated_at_us: i64,
+    pub(crate) blocked_reason: Option<String>,
+    pub(crate) created_at_us: i64,
+    pub(crate) updated_at_us: i64,
     #[serde(default)]
-    completed_at_us: Option<i64>,
+    pub(crate) completed_at_us: Option<i64>,
+    /// The `persistence_requests` columns the native journal does not keep, stored by the
+    /// TypeScript journal members. Empty for a natively admitted request.
+    #[serde(default, flatten)]
+    pub(crate) extra: Map<String, Value>,
 }
 
 impl RequestRecord {
@@ -426,6 +430,7 @@ fn admit_in(
         created_at_us: now,
         updated_at_us: now,
         completed_at_us: None,
+        extra: Map::new(),
     };
     write_request(tx, &record)?;
     tx.put(
