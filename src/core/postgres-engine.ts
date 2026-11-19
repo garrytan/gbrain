@@ -3269,10 +3269,8 @@ export class PostgresEngine implements BrainEngine {
     return this.transaction(tx => pagesImpl.setPageAliases((tx as PostgresEngine).engineSql, tx, slug, sourceId, aliasNorms));
   }
 
-  async replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
-    // The DELETE and the INSERT commit together: a caller outside a transaction gets one, so a refused INSERT keeps the old rows.
-    if (this._pageTransaction) return pagesImpl.replaceDerivedAliases(this.autocommitSql, slug, sourceId, aliases);
-    return this.transaction(tx => pagesImpl.replaceDerivedAliases((tx as PostgresEngine).engineSql, slug, sourceId, aliases));
+  async replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> { // DELETE + INSERT commit together: outside a transaction it opens one, so a refused INSERT keeps the old rows
+    return this._pageTransaction ? pagesImpl.replaceDerivedAliases(this.autocommitSql, slug, sourceId, aliases) : this.transaction(tx => pagesImpl.replaceDerivedAliases((tx as PostgresEngine).engineSql, slug, sourceId, aliases));
   }
 
   async getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null> {
