@@ -38,12 +38,9 @@ export const staleFactEmbedding = `(f.embedding IS NULL OR f.embedding_model IS 
 export const partiallyEmbeddedFact = `(octet_length(f.fact) > ${EMBED_MAX_CHARS}
   AND length(f.fact) + length(regexp_replace(f.fact, '[^\\U00010000-\\U0010FFFF]', '', 'g')) > ${EMBED_MAX_CHARS})`;
 
-export async function countStaleFactEmbeddings(engine: Pick<BrainEngine, 'executeRaw'>, model: string, dimensions: number, sourceId?: string) {
-  const [row] = await engine.executeRaw<{ count: number; chars: string }>(`SELECT count(*)::int AS count,
-    COALESCE(sum(length(f.fact)),0)::text AS chars FROM facts f
-    WHERE ($1::text IS NULL OR f.source_id=$1) AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}`,
-  [sourceId ?? null, [...AUDIT_ROW_SOURCES], model, dimensions]);
-  return { count: Number(row.count), chars: Number(row.chars) };
+/** The stale, embeddable facts for `model` and `dimensions` and their length in characters (engine member, engine-sql/facts-doctor.ts). */
+export async function countStaleFactEmbeddings(engine: Pick<BrainEngine, 'countStaleFactEmbeddings'>, model: string, dimensions: number, sourceId?: string) {
+  return engine.countStaleFactEmbeddings({ model, dims: dimensions, sourceId });
 }
 
 export interface OversizedFact { id: string; source_id: string; slug: string | null; tokens: number }

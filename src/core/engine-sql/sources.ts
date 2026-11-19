@@ -95,6 +95,20 @@ export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promis
   return row ?? null;
 }
 
+/**
+ * Whether a writer binding claims the source's current incarnation (classic sync refuses a claimed source while managed
+ * persistence is off). False for an unknown source. The text is the statement sync-authority.ts ran through executeRaw.
+ */
+export const SOURCE_CLAIMED_SQL = `SELECT
+    EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed
+    FROM sources s WHERE s.id=$1`;
+
+/** True when a writer binding claims the source's current incarnation; false when none does or the source is unknown. Unscoped on master. */
+export async function isSourceClaimed(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ claimed: boolean }>(SOURCE_CLAIMED_SQL, [sourceId]);
+  return row?.claimed === true;
+}
+
 /** The chunker version the source's last full sync stamped, or null. Unscoped on master. */
 export async function readSourceChunkerVersion(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
   const [row] = await exec.executeRaw<{ chunker_version: string | null }>('SELECT chunker_version FROM sources WHERE id = $1', [sourceId]);

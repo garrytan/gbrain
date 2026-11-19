@@ -14,6 +14,10 @@
 //! `privatePagesFilterForCaller(p)` with the same rendering: `page_hidden` below, where
 //! `entity_privacy` says whether the privacy part applies (it does unless an operator relaxed it).
 //!
+//! Every rendering ends with the owner-only test (owner_only.rs), in the form the member read off
+//! the text (`owner_only`): the member-access part of each page the policy judges (the page of a
+//! page read, a fact's provenance, entity and holding pages) and the fact itself.
+//!
 //! The store keeps no access rules or pending coverage, so the parts of the SQL that read those
 //! tables take their empty-table values: a page names readers only through a `readable_by` key
 //! and no folder rule covers a page. Slug aliases and rename history come from `aliases.rs`
@@ -27,10 +31,12 @@ use crate::aliases::{read_slug_alias, renamed_to};
 use crate::keys;
 use crate::kv::KvRead;
 use crate::links::out_links;
+use crate::owner_only::{OwnerOnlyForm, any_owner_only, fact_owner_only, page_owner_only};
 use crate::pages::{PageRecord, read_page, read_page_by_id};
 use crate::timeline_queries::jsonb_field_text;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::sync::OnceLock;
 
 /// The policy settings the TypeScript member read from the rendered SQL.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -61,6 +67,16 @@ pub struct PrivacyPolicy {
     /// (`privateProvenanceFilterFragment`), with no entity or holding-page gate.
     #[serde(default)]
     pub provenance_only: bool,
+    /// The owner-only test the rendered policy ends with (`ownerOnlyAllowedSql`,
+    /// `ownerOnlyFactAllowedSql`): its form, read off the text by the TypeScript member. Absent
+    /// takes `closed`, which hides the most.
+    #[serde(default)]
+    pub owner_only: OwnerOnlyForm,
+    /// Whether the brain holds an owner-only source, read once for the one read this policy came
+    /// with (the `closed` form asks it for every row).
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub owner_only_any: OnceLock<bool>,
     /// The caller renders the short member-access form (`CallerAccess.restricted` false:
     /// `page_readers IS NULL AND folder_rule_ids IS NULL`), so a page that names readers fails
     /// whatever the identity. The store's own flag (`access.restrictions_present`) decides the
@@ -68,6 +84,32 @@ pub struct PrivacyPolicy {
     /// stale), the full form's origin walk applies too. See [`readers_allowed`].
     #[serde(default)]
     pub open: bool,
+}
+
+impl PrivacyPolicy {
+    /// `ownerOnlyPageSql(alias, form)` under this policy's form.
+    fn page_owner_only(&self, read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+        match self.owner_only {
+            OwnerOnlyForm::Closed => self.any_owner_only(read),
+            form => page_owner_only(read, page, form),
+        }
+    }
+
+    /// `ownerOnlyFactSql(alias, form)` under this policy's form.
+    fn fact_owner_only(&self, read: &dyn KvRead, source_id: &str) -> Result<bool> {
+        match self.owner_only {
+            OwnerOnlyForm::Closed => self.any_owner_only(read),
+            form => fact_owner_only(read, source_id, form),
+        }
+    }
+
+    fn any_owner_only(&self, read: &dyn KvRead) -> Result<bool> {
+        if let Some(any) = self.owner_only_any.get() {
+            return Ok(*any);
+        }
+        let any = any_owner_only(read)?;
+        Ok(*self.owner_only_any.get_or_init(|| any))
+    }
 }
 
 /// `PRIVACY_ALIASES`: the keys a page may carry instead of `visibility`, with their private values.
@@ -86,17 +128,20 @@ const EDGE_SPACE: &[char] = &[
     '\u{200A}', '\u{2028}', '\u{2029}', '\u{202F}', '\u{205F}', '\u{3000}', '\u{FEFF}',
 ];
 
-/// Whether the policy hides `row`: its provenance page (`source_markdown_slug`) fails the page
-/// policy, or its entity page or holding page fails the entity gate. A soft-deleted page still
-/// counts, as its row stays in `pages`.
+/// Whether the policy hides `row`: the fact is owner-only, its provenance page
+/// (`source_markdown_slug`) fails the page policy, or its entity page or holding page fails the
+/// entity gate. A soft-deleted page still counts, as its row stays in `pages`.
 pub(crate) fn hidden_by_private_provenance(
     read: &dyn KvRead,
     row: &FactRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
+    if policy.fact_owner_only(read, &row.source_id)? {
+        return Ok(true);
+    }
     if let Some(slug) = &row.source_markdown_slug
         && let Some(page) = read_page(read, &row.source_id, slug)?
-        && !(readers_allowed(read, &page, provenance_identity(policy, slug), policy.open)?
+        && !(member_access_allows(read, &page, provenance_identity(policy, slug), policy)?
             && privacy_allows(read, &page, policy.honor_aliases)?)
     {
         return Ok(true);
@@ -139,11 +184,23 @@ pub(crate) fn page_hidden(
     page: &PageRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    let allowed = readers_allowed(read, page, &policy.identity, policy.open)?
+    let allowed = member_access_allows(read, page, &policy.identity, policy)?
         && (!policy.entity_privacy
             || private_source_open(page, policy)
             || privacy_allows(read, page, policy.honor_aliases)?);
     Ok(!allowed)
+}
+
+/// The member-access part (`accessAllowedSql`): the page's readers allow `identity`, and the page
+/// is not owner-only (`ownerOnlyAllowedSql`, in the policy's form).
+fn member_access_allows(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    Ok(readers_allowed(read, page, identity, policy.open)?
+        && !policy.page_owner_only(read, page)?)
 }
 
 /// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page

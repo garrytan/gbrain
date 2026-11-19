@@ -56,6 +56,7 @@ export const RUST_ENGINE_MEMBERS = {
   readLivePageBody: 'pages',
   readPageHiddenFromCaller: 'pages',
   readCallerPageAccess: 'pages',
+  readWriteVisibilityProbe: 'pages',
   readStoredBodyBytes: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
@@ -136,6 +137,7 @@ export const RUST_ENGINE_MEMBERS = {
   listSharedSkillPackRoots: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',
+  isSourceClaimed: 'persistence_journal',
   // config
   getConfigValues: 'config',
   readRemotePolicyConfig: 'config',
@@ -343,6 +345,13 @@ export const RUST_ENGINE_MEMBERS = {
   countFactRelinkOutcomes: 'facts',
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
+  countStaleFactEmbeddings: 'facts',
+
+  // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
+  readChunkVectorColumn: 'embeddings',
+  readEmbeddingIdentity: 'embeddings',
+  listEmbeddingStores: 'embeddings',
+  hasStoredVectors: 'embeddings',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
@@ -494,6 +503,8 @@ export const RUST_ENGINE_MEMBERS = {
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
+  readFactCacheWatermark: 'facts',
+  readTrustGeneration: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',
@@ -570,6 +581,10 @@ export const RUST_ENGINE_MEMBERS = {
   selectProjectionWindowJobs: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
+  listAppliedPolicyRevisions: 'access_control',
+  readMayActFor: 'access_control',
+  readAudiencePrincipals: 'access_control',
+  readAccessMembers: 'access_control',
   listActiveAccessMembers: 'access_control',
   listAccessTokens: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)

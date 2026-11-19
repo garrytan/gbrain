@@ -42,6 +42,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -175,6 +176,12 @@ export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>
   }
 }
 
+/**
+ * An engine the audience checks read through: an engine (its typed readMayActFor and readAudiencePrincipals, which a
+ * Rust brain serves), or an executeRaw-only handle (a persistence SqlEngine, a test double), which runs the same statements.
+ */
+export type AudienceEngine = Pick<BrainEngine, 'readMayActFor' | 'readAudiencePrincipals'> | Pick<BrainEngine, 'executeRaw'>;
+
 /** Who asserts an audience: a verified credential (live call), a stored principal (a queued write or job), or a stdio server. */
 export interface AudienceCaller {
   auth?: Pick<AuthInfo, 'member' | 'mayActFor' | 'clientId' | 'clientName'> & { principal?: { kind: string; id: string } };
@@ -187,23 +194,20 @@ export interface AudienceCaller {
  * lookup from the stored principal (a revoked token or deleted client permits nothing), else for a stdio server
  * config mcp.stdio_may_act_for. Unreadable or ill-formed values permit nothing.
  */
-async function mayActForOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller): Promise<string[] | null> {
+async function mayActForOf(engine: AudienceEngine, caller: AudienceCaller): Promise<string[] | null> {
   const auth = caller.auth;
   if (auth?.member !== undefined) return auth.mayActFor ?? null;
   const principal = auth?.principal ?? caller.principal;
+  const read = (via: MayActForVia, key: string) => 'readMayActFor' in engine ? engine.readMayActFor(via, key) : readMayActForOver(engine, via, key);
   try {
-    if (principal?.kind === 'legacy_token') {
-      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [principal.id]);
-      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
-    }
-    if (principal?.kind === 'oauth_client') {
-      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [principal.id]);
-      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+    if (principal?.kind === 'legacy_token' || principal?.kind === 'oauth_client') {
+      const list = await read(principal.kind, principal.id);
+      return Array.isArray(list) ? list : null;
     }
     if (principal?.kind === 'local_stdio' || (!auth && !principal && caller.transport === 'stdio')) {
-      const [row] = await engine.executeRaw<{ value: string | null }>('SELECT value FROM config WHERE key = $1', [STDIO_MAY_ACT_FOR_KEY]);
-      const raw = row?.value?.trim();
-      return raw ? parseMayActFor(raw) : null;
+      const raw = await read('stdio_config', STDIO_MAY_ACT_FOR_KEY);
+      const text = typeof raw === 'string' ? raw.trim() : '';
+      return text ? parseMayActFor(text) : null;
     }
   } catch { /* unreadable: permits nothing */ }
   return null;
@@ -235,7 +239,7 @@ function audienceUnknown(principal: string) {
  * or an existing group (on_behalf_of_unknown_member). Read on every call, so a revoked permission or a disabled
  * member takes effect at once.
  */
-export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
+export async function resolveAudienceIdentities(engine: AudienceEngine, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
   opts: { mayActFor?: 'enforce' | 'owner_room_assessment' } = {}): Promise<string[][]> {
   // GBRA-498: only room.ts passes owner_room_assessment, after it checked that the caller reads as the brain owner or is
   // the trusted local CLI; it marks results for a room and never reads as the room, so neither needs may_act_for for it.
@@ -249,12 +253,9 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
   const members = new Map<string, string[]>();
   const groups = new Set<string>();
   try {
-    if (memberIds.length) {
-      for (const row of await engine.executeRaw<{ id: string; groups: string[] }>(MEMBERS_WHERE_SQL('m.id = ANY($1::text[])'), [memberIds])) {
-        members.set(row.id, (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`));
-      }
-    }
-    if (groupIds.length) for (const row of await engine.executeRaw<{ id: string }>('SELECT id FROM access_groups WHERE id = ANY($1::text[])', [groupIds])) groups.add(row.id);
+    const rows = 'readAudiencePrincipals' in engine ? await engine.readAudiencePrincipals(memberIds, groupIds) : await readAudiencePrincipalsOver(engine, memberIds, groupIds);
+    for (const row of rows.members) members.set(row.id, row.groups.filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`));
+    for (const id of rows.groups) groups.add(id);
   } catch { /* unreadable: every entry reads as unknown below */ }
   return audience.map(p => {
     if (p === GUEST) return [];
@@ -367,15 +368,13 @@ export interface AppliedAccess {
   relaxation: 'none' | 'granted_sources' | 'operator' | 'owner';
 }
 
-export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw'>, auth?: AuthInfo, sourceIds: readonly (string | undefined)[] = []): Promise<AppliedAccess> {
+export async function appliedAccessSummary(engine: Pick<BrainEngine, 'listAppliedPolicyRevisions'>, auth?: AuthInfo, sourceIds: readonly (string | undefined)[] = []): Promise<AppliedAccess> {
   const access = currentCallerAccess();
   const member = access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
   let policyRev: Record<string, number> | null = null;
   if (access.restricted) {
     try {
-      const rows = await engine.executeRaw<{ source_id: string; rev: number | string | null }>(
-        `SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
-          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`);
+      const rows = await engine.listAppliedPolicyRevisions();
       const visible = auth ? new Set([auth.sourceId, ...(auth.allowedSources ?? []), ...sourceIds].filter(Boolean)) : null;
       policyRev = Object.fromEntries(rows.filter(r => r.rev !== null && (!visible || visible.has(r.source_id))).map(r => [r.source_id, Number(r.rev)]));
     } catch { policyRev = null; }

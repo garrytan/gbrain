@@ -51,6 +51,7 @@ pub mod saved_match;
 pub mod trust;
 pub mod trust_reads;
 
+pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
