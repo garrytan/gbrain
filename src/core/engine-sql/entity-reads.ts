@@ -55,6 +55,12 @@ export async function readMentionIndexStatus(exec: LegacyUnscopedRead, sourceIds
     `SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
 }
 
+/** The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row. */
+export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId: string): Promise<number> {
+  const [n] = await exec.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
+  return Number(n?.n ?? 0);
+}
+
 /** Live pages due for the mention pass: no mention state, or state behind the page's content or the extractor version. */
 export async function countPagesDueForMentions(exec: LegacyUnscopedRead, q: MentionDueQuery): Promise<number> {
   const source = q.sourceId ?? null;

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 665/665
+# covered: 666/666
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -33,7 +33,7 @@
 # config: 6/6
 # import_guards: 10/10
 # persistence_journal: 40/40
-# entity_reads: 9/9
+# entity_reads: 10/10
 # cycle_locks: 7/7
 # minion_jobs: 8/8
 # minion_queue: 70/70
@@ -403,6 +403,7 @@ listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 readMentionIndexStatus	entity_reads	yes	1	no	yes	yes	serves
+countLivePagesInSource	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves

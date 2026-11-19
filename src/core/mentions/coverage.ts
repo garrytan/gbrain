@@ -38,7 +38,7 @@ const toIso = (v: unknown): string | null => {
 };
 
 /** Coverage over `sourceIds` (the caller's permitted sources). */
-export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus'>, sourceIds: string[]): Promise<MentionCoverage> {
+export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource'>, sourceIds: string[]): Promise<MentionCoverage> {
   const policy = await readMentionPolicy(engine);
   const rows = await engine.readMentionIndexStatus(sourceIds);
   const bySource = new Map(rows.map(r => [r.source_id, r]));
@@ -51,8 +51,7 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
     if (lastPass && (!last || lastPass > last)) last = lastPass;
     if (!policy.enabled) continue;
     if (!row || row.state === 'disabled') {
-      const [n] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
-      pending += Number(n?.n ?? 0);
+      pending += await engine.countLivePagesInSource(sourceId);
       continue;
     }
     if (row.state === 'failed') failed = true;
