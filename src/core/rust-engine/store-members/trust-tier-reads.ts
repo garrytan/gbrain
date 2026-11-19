@@ -17,18 +17,14 @@
  *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
  *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
  *    snapshot policy is not the no-caller one (the pick reports every row's visibility);
- *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order, and over
- *    a history PGLite would have pruned (more large inline versions than it keeps, a segmented version, a long
- *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
- *    it records (TODOS.md `rust-version-prune`). The store keeps each version's change reason, so `reason`
- *    and `introduced_because` read as on PGLite;
+ *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order. The store
+ *    prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same retained history, each version's
+ *    change reason and `successor_pruned` mark, and the page's `version_history_gap_at`;
  *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the no-caller page
  *    policy, and on dates that are not `YYYY-MM-DD`;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { LARGE_PAGE_VERSIONS_KEPT } from '../../page-body/limits.ts';
-import { PAGE_INLINE_MAX_BYTES } from '../../page-size-policy.ts';
 import {
   callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
   remoteReadFloorSql, withoutCallerAccess,
@@ -131,12 +127,14 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   }
   const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
     pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
-    policy, pruneMaxBytes: PAGE_INLINE_MAX_BYTES, pruneKept: LARGE_PAGE_VERSIONS_KEPT,
-  })) as { row: Record<string, unknown> | null; history_unpruned: boolean };
-  if (got.history_unpruned) refuseMember(member, 'a version history PGLite would have pruned, which the store keeps whole');
+    policy,
+  })) as { row: Record<string, unknown> | null };
   if (!got.row) return null;
   const row = got.row;
-  return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at) };
+  return {
+    ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), gap_at: asDate(row.gap_at),
+    created_at: asDate(row.created_at),
+  };
 };
 
 export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (brain, spec) => {

@@ -173,6 +173,10 @@ pub(crate) struct PageRecord {
     /// NULL. [`write_page`] sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_origin: Option<Value>,
+    /// When the page last lost version history (`pages.version_history_gap_at`): a version prune
+    /// (`version_prune`) or `createVersion` with `historyGap`. `None` is NULL. Not part of `to_page`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_history_gap_at_us: Option<i64>,
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -397,6 +401,10 @@ pub(crate) struct VersionRecord {
     /// set by `stamp_version_change_reason`; none when no reason was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change_reason: Option<String>,
+    /// `page_versions.successor_pruned`: a prune deleted the version that came next, so a remote
+    /// reader is never shown this version's reason (`version_prune::mark_pruned_history`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub successor_pruned: bool,
 }
 
 impl VersionRecord {
@@ -1024,6 +1032,7 @@ pub(crate) fn put_page_in(
             tag_sources: BTreeMap::new(),
             trust_tier: None,
             write_origin: None,
+            version_history_gap_at_us: None,
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -1555,6 +1564,22 @@ impl Store {
         source_id: Option<&str>,
         reason: Option<&str>,
     ) -> Result<Value> {
+        self.create_version_opts(
+            slug,
+            &CreateVersionOptions {
+                source_id: source_id.map(str::to_owned),
+                reason: reason.map(str::to_owned),
+                history_gap: None,
+            },
+        )
+    }
+
+    /// `createVersion(slug, { sourceId, reason, historyGap })`: as `create_version_with`; with
+    /// `historyGap` the page first records `version_history_gap_at`, as PGLite's
+    /// `createPageVersion` does before it inserts.
+    pub fn create_version_opts(&self, slug: &str, options: &CreateVersionOptions) -> Result<Value> {
+        let source_id = options.source_id.as_deref();
+        let reason = options.reason.as_deref();
         if let Some(reason) = reason {
             crate::links::no_nul("createVersion", &[("reason", reason)])?;
         }
@@ -1566,10 +1591,17 @@ impl Store {
                     format!("createVersion failed: page \"{slug}\" (source={source}) not found"),
                 ));
             };
+            if options.history_gap == Some(true) {
+                crate::version_prune::record_history_gap(tx, &*self.env, page.id)?;
+            }
             let mut row = snapshot_in(tx, &*self.env, &page)?;
-            if let Some(reason) = reason {
+            // A segmented prune can delete the snapshot it follows; a reason never brings it back.
+            let key = keys::version(page.id, row.id);
+            if let Some(reason) = reason
+                && tx.get(&key)?.is_some()
+            {
                 row.change_reason = Some(reason.to_owned());
-                put_json(tx, &keys::version(page.id, row.id), &row)?;
+                put_json(tx, &key, &row)?;
             }
             Ok(row.to_created_json())
         })
@@ -1644,12 +1676,14 @@ impl Store {
     }
 }
 
-/// `createVersion`'s options: the page's source and the snapshot's change reason.
+/// `createVersion`'s options: the page's source, the snapshot's change reason and the history gap.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CreateVersionOptions {
     pub source_id: Option<String>,
     pub reason: Option<String>,
+    /// Record that the page lost history (`version_history_gap_at`) before the snapshot.
+    pub history_gap: Option<bool>,
 }
 
 /// `stampVersionChangeReason`'s argument.
@@ -1663,7 +1697,7 @@ pub struct VersionReasonStamp {
 }
 
 /// The version records of one page, in id order.
-fn versions_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<VersionRecord>> {
+pub(crate) fn versions_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<VersionRecord>> {
     let mut out = Vec::new();
     let mut failure = None;
     scan_prefix(read, &keys::version_prefix(page_id), false, &mut |_, v| {
@@ -1691,6 +1725,10 @@ pub(crate) fn version_generations(read: &dyn KvRead, page_id: u64) -> Result<Vec
     failure.map_or(Ok(out), Err)
 }
 
+/// Saves a version snapshot of `page` (PGLite's `createPageVersion` insert), then prunes the page's
+/// history as PGLite does after the insert (`version_prune::prune_after_snapshot`), which can
+/// rewrite the page record (`version_history_gap_at`): a caller that writes the page afterwards
+/// reads it again first.
 pub(crate) fn snapshot_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -1728,8 +1766,11 @@ pub(crate) fn snapshot_in(
         trust_tier: (tier != crate::trust::TrustTier::Unknown).then(|| tier.as_str().to_owned()),
         write_origin,
         change_reason: None,
+        successor_pruned: false,
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
+    // PGLite's `createPageVersion` prunes the page's history after it inserts, in the same write.
+    crate::version_prune::prune_after_snapshot(tx, env, &row)?;
     Ok(row)
 }
 

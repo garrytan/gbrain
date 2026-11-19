@@ -13,9 +13,13 @@ function requireInteger(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);
 }
 
-/** `reason` is served (a null one is none); a Git-sourced reason (`reasonSource`) and `historyGap` are refused. */
-export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string; reason?: string | null }], PageVersion> = async (brain, slug, opts) => {
-  const scope = takeOptions('createVersion', opts && opts.reason === null ? { ...opts, reason: undefined } : opts, ['sourceId', 'reason']);
+/**
+ * `reason` is served (a null one is none), and so is `historyGap` (the page records `version_history_gap_at` first). A
+ * Git-sourced reason (`reasonSource`) is refused. The store prunes the page's history after the snapshot as
+ * `createPageVersion` does (rust/crates/gbrain-store/src/version_prune.rs).
+ */
+export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string; reason?: string | null; historyGap?: boolean }], PageVersion> = async (brain, slug, opts) => {
+  const scope = takeOptions('createVersion', opts && opts.reason === null ? { ...opts, reason: undefined } : opts, ['sourceId', 'reason', 'historyGap']);
   return toCreatedVersion(await storeCall({ member: 'createVersion', slug, sourceId: scope.sourceId as string | undefined },
     () => brain.createVersion(slug, scope)));
 };

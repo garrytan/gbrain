@@ -26,10 +26,27 @@ secondary indexes yet.
 | `brain.getTags(slug, { sourceId?, sourceIds? }?)` | sorted `string[]` | `getTags` |
 | `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
-| `brain.createVersion(slug, { sourceId?, reason? }?)` | the version row, with `reason` as its `change_reason` when given, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
+| `brain.createVersion(slug, { sourceId?, reason?, historyGap? }?)` | the version row, with `reason` as its `change_reason` when given (and only if the prune kept the new version), `historyGap` recording the page's `version_history_gap_at` before the snapshot, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
 | `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)` | version rows, newest first, each with its change reason as `replaced_because`; `includeBody: false` leaves out `compiled_truth` and `timeline` | `getVersions` |
 | `brain.readLatestVersionId(pageId)` | the page's newest version id, or `null` when it has none or the id is not a page's | `readLatestVersionId` |
 | `brain.stampVersionChangeReason({ pageId, afterVersionId, reason })` | how many versions took the reason: it sets `change_reason` on each of the page's versions with an id over `afterVersionId`, in one write; `invalid_argument` for a NUL byte | `stampVersionChangeReason` |
+
+### Version prune
+
+`version_prune.rs` runs PGLite's prune (`src/core/page-state/versions.ts`) in the same write as every snapshot
+(`createVersion`, a journal page write, `updateSlug`):
+
+- A large inline page (body plus timeline over `PAGE_INLINE_MAX_BYTES`, 1 MiB) keeps its newest five large inline
+  versions (`LARGE_PAGE_VERSIONS_KEPT`); a version with no body is never counted.
+- A segmented page keeps at most `versions.segmented_max_per_page` versions (default 50) and drops a version once the
+  closed manifest rows it pins, counted once per occurrence and generation, pass the larger of
+  `versions.segmented_max_pinned_bytes` (default 64 MiB) and the page's body bytes. A malformed config value reads as
+  the default. After a prune it sweeps the page's segments (`page_body.md`, "The sweep").
+- Each prune marks `successor_pruned` on the newest kept version before each pruned one and sets the page's
+  `version_history_gap_at`. That page write leaves the knowledge revision as it was, so nothing is queued.
+- PGLite's holding-page prune (`pruneHoldingPageVersions`) runs only from a fact append's raw SQL, which the store
+  refuses, so it has no store counterpart.
+
 
 `putPage` follows PGLite:
 

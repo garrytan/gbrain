@@ -47,8 +47,8 @@ use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
-    PageRecord, all_pages, read_page, rename_page, scope_sources, snapshot_in, validate_slug,
-    write_page,
+    PageRecord, all_pages, read_page, read_page_by_id, rename_page, scope_sources, snapshot_in,
+    validate_slug, write_page,
 };
 use crate::sources::{read_source, require_source};
 use crate::trust::{TrustPolicy, TrustTier};
@@ -923,6 +923,8 @@ impl Store {
                 return Ok(0);
             };
             snapshot_in(tx, &*self.env, &page)?;
+            // The snapshot's prune can record a history gap on the page: move the page as stored.
+            let page = read_page_by_id(&*tx, page.id)?.unwrap_or(page);
             let moved = rename_page(tx, &*self.env, &page, &new_slug)?;
             if moved.slug != page.slug {
                 record_rename_alias(tx, source, &page.slug, &moved.slug)?;
