@@ -72,6 +72,7 @@ pub mod withdrawal_pages;
 
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub use crate::owner_only::OwnerOnlyForm;
+pub(crate) use fence::jsonb_time;
 pub use fence::{FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};

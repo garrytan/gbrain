@@ -99,3 +99,39 @@ export async function listHeldRows(exec: LegacyUnscopedRead, q: HeldRowsQuery): 
       WHERE x.page_id = ${q.pageId} AND x.id = ANY(${[...q.ids]}::bigint[]) AND (${rank} > ${writer}${contest}) ORDER BY x.id FOR UPDATE OF x`)).rows;
   return rows.map(r => ({ id: Number(r.id), trust_tier: r.trust_tier }));
 }
+
+/** What `listGuardedTakeRows` asks: the incoming take rows of a reconcile batch, the rows it deletes, and whether an open contest holds too. */
+export interface GuardedTakeRowsQuery {
+  incoming: ReadonlyArray<{ page_id: number; row_num: number; claim: string; kind: string; holder: string; active: boolean }>;
+  gone: ReadonlyArray<{ page_id: number; row_num: number }>;
+  pending?: boolean;
+}
+
+/** A stored take a lower-tier write may not change, and how the write would change it. `trust_tier` is the stored tier. */
+export interface GuardedTakeRow { id: number; page_id: number; row_num: number; trust_tier: string; change: 'removed' | 'replaced' | 'deactivated' }
+
+/**
+ * Of the stored takes on the pages of `incoming` and `gone`, by page and row number and locked (`FOR UPDATE OF x`): those
+ * the write would delete (`gone`), overwrite with another claim, kind or holder (`replaced`) or deactivate, and that are
+ * more trusted than the writer (the transaction's declared tier) or, with `pending`, held by an open `forget` contest.
+ * This is the statement `trust/fence-guard.ts` `guardTakeRows` sent through `executeRaw`; an empty batch reads nothing.
+ */
+export async function listGuardedTakeRows(exec: LegacyUnscopedRead, q: GuardedTakeRowsQuery): Promise<GuardedTakeRow[]> {
+  if (!q.incoming.length && !q.gone.length) return [];
+  const rank = trustedSql(trustRankSql('x.trust_tier'));
+  const writer = trustedSql(WRITER_RANK_SQL);
+  const contest = q.pending ? sqlFragment` OR ${trustedSql(OPEN_CONTEST_TAKES_SQL)}` : sqlFragment``;
+  const pageIds = [...new Set([...q.incoming, ...q.gone].map(r => r.page_id))];
+  const rows = (await exec.run<{ id: number | string; page_id: number | string; row_num: number | string; trust_tier: string; change: GuardedTakeRow['change'] }>(sqlFragment`SELECT x.id, x.page_id, x.row_num, x.trust_tier,
+      CASE WHEN n.row_num IS NULL THEN 'removed' WHEN (x.claim, x.kind, x.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder) THEN 'replaced'
+        ELSE 'deactivated' END AS change
+    FROM takes x
+    LEFT JOIN jsonb_to_recordset(${JSON.stringify(q.incoming)}::text::jsonb) AS n(page_id integer, row_num integer, claim text, kind text, holder text, active boolean)
+      ON n.page_id = x.page_id AND n.row_num = x.row_num
+    LEFT JOIN jsonb_to_recordset(${JSON.stringify(q.gone)}::text::jsonb) AS g(page_id integer, row_num integer) ON g.page_id = x.page_id AND g.row_num = x.row_num
+    WHERE x.page_id = ANY(${pageIds}::integer[]) AND (${rank} > ${writer}${contest})
+      AND (g.row_num IS NOT NULL OR (n.row_num IS NOT NULL
+        AND ((x.claim, x.kind, x.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder) OR (x.active AND NOT n.active))))
+    ORDER BY x.page_id, x.row_num FOR UPDATE OF x`)).rows;
+  return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), row_num: Number(r.row_num), trust_tier: r.trust_tier, change: r.change }));
+}

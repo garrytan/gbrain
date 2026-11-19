@@ -168,6 +168,8 @@ test/engine-parity/entity-basename.test.ts
 test/engine-parity/entity-fuzzy.test.ts
 test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
+test/engine-parity/extract-takes-reads.test.ts
+test/engine-parity/extract-takes.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-pool-widening.test.ts
 test/engine-parity/fact-purge-ledger.test.ts

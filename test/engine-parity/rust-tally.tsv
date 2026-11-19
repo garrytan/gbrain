@@ -19,6 +19,8 @@ test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	35	0
 test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/entity-reads.test.ts	8	0
+test/engine-parity/extract-takes-reads.test.ts	9	0
+test/engine-parity/extract-takes.test.ts	0	2
 test/engine-parity/extraction.test.ts	6	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0
