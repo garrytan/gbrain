@@ -461,7 +461,13 @@ function groupId(kind: DuplicateKind, members: DuplicateMember[]): string {
 }
 
 export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplicatesOptions = {}): Promise<DuplicateResult> {
+  return (await findTypedDuplicateGroups(engine, opts)).result;
+}
+
+/** findDuplicateGroups plus each group's entity kind (person or company), which the finder's JSON contract leaves out. */
+export async function findTypedDuplicateGroups(engine: BrainEngine, opts: FindDuplicatesOptions = {}): Promise<{ result: DuplicateResult; kindOf: Map<string, EntityKind> }> {
   const { scan, byKey, crowded, carriers } = await loadScan(engine, opts);
+  const kindOf = new Map<string, EntityKind>();
   const matchers = opts.matchers ?? DEFAULT_MATCHERS;
   const { keptApart, confirmed } = decidedChecks(opts.decided);
   const drafts = new Map<string, Draft>();
@@ -522,7 +528,9 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
       .sort((a, b) => cmp(a.source_id, b.source_id) || cmp(a.slug, b.slug));
     const sorted = [...new Map(evidence.map(e => [evidenceKey(e), e])).values()]
       .sort((a, b) => cmp(a.matcher, b.matcher) || cmp(a.rule, b.rule) || cmp(a.key ?? '', b.key ?? '') || cmp(a.field ?? '', b.field ?? ''));
-    groups.push({ id: groupId(d.kind, members), kind: d.kind, class: cls, members, evidence: sorted });
+    const id = groupId(d.kind, members);
+    kindOf.set(id, d.members[0]!.type);
+    groups.push({ id, kind: d.kind, class: cls, members, evidence: sorted });
   }
   groups.sort((a, b) => DUPLICATE_KINDS.indexOf(a.kind) - DUPLICATE_KINDS.indexOf(b.kind) || cmp(a.id, b.id));
 
@@ -532,5 +540,5 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
     crowded_key_values: crowded,
   };
   for (const g of groups) { counts.by_kind[g.kind]++; counts.by_class[g.class]++; }
-  return { schema_version: DEDUPE_PREVIEW_SCHEMA_VERSION, groups, counts };
+  return { result: { schema_version: DEDUPE_PREVIEW_SCHEMA_VERSION, groups, counts }, kindOf };
 }
