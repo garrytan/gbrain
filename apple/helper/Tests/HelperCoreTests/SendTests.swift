@@ -13,11 +13,17 @@ final class MemoryStore: SendStateStore {
     var saves = 0
     var failure: Problem?
     init(_ state: SendState?) { self.state = state }
+    var loaded: DispatchSemaphore?
+    var saving: DispatchSemaphore?
+    var saveGate: DispatchSemaphore?
     func load() throws -> SendState? {
+        loaded?.signal()
         if let failure { throw failure }
         return state
     }
     func save(_ state: SendState) throws {
+        saving?.signal()
+        saveGate?.wait()
         self.state = state
         saves += 1
     }
@@ -88,8 +94,10 @@ final class FakePresence: OwnerPresence {
     var answer = Presence.confirmed
     var reasons: [String] = []
     var gate: DispatchSemaphore?
+    var entered: DispatchSemaphore?
     func confirm(reason: String) -> Presence {
         reasons.append(reason)
+        entered?.signal()
         gate?.wait()
         return answer
     }
@@ -614,23 +622,20 @@ final class Harness {
     @Test func aSendSeeingTheSwitchOffKeepsAKeyAddedMeanwhile() {
         let h = Harness()
         h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global().async {
             _ = self.admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic])
             group.leave()
         }
-        let deadline = Date().addingTimeInterval(10)
-        while h.presence.reasons.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         h.switchedOn = false
-        group.enter()
-        DispatchQueue.global().async {
-            _ = h.send(h.request(h.body()))
-            group.leave()
-        }
-        Thread.sleep(forTimeInterval: 0.3)
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
         h.presence.gate?.signal()
-        group.wait()
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(h.presence.reasons.count == 2)
         #expect(h.store.state?.keys.map(\.name).sorted() == ["box", "second"])
         #expect(h.store.state?.enabled == false)
         #expect(h.messages.count == 0)
@@ -640,27 +645,96 @@ final class Harness {
         let h = Harness()
         if hashKeyExists { h.store.state?.recipientHashKey = Base64URL.encode(Array(repeating: 7, count: 32)) }
         let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
-        h.presence.gate = DispatchSemaphore(value: 0)
+        h.store.saving = DispatchSemaphore(value: 0)
+        h.store.saveGate = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global().async {
             _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
             group.leave()
         }
-        let deadline = Date().addingTimeInterval(10)
-        while h.presence.reasons.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        #expect(h.store.saving?.wait(timeout: .now() + 10) == .success)
+        h.store.loaded = DispatchSemaphore(value: 0)
         var code: String?
         group.enter()
         DispatchQueue.global().async {
             code = h.send(h.request(h.body())).json["code"] as? String
             group.leave()
         }
-        Thread.sleep(forTimeInterval: 0.3)
-        h.presence.gate?.signal()
-        group.wait()
+        #expect(h.store.loaded?.wait(timeout: .now() + 10) == .success)
+        let gate = h.store.saveGate
+        h.store.saveGate = nil
+        gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
         #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
         #expect(code == "unknown_send_key")
         #expect(h.messages.count == 0)
+    }
+
+    @Test func aSendDuringAPendingTouchIDDoesNotWaitForIt() {
+        let h = Harness()
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(h.send(h.request(h.body())).status == 200)
+        #expect(h.messages.count == 1)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+    }
+
+    @Test func anAdminChangeLandingDuringTouchIDIsAskedAgain() {
+        let h = Harness()
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        DispatchQueue.global().async {
+            reply = self.admin(h, ["action": "add_key", "name": "second", "public_key": other])
+            group.leave()
+        }
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "remove_key", "name": "box"]).0 == 200)
+        h.presence.gate?.signal()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(h.store.state?.keys.isEmpty == true)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.0 == 200)
+        #expect(h.presence.reasons.count == 2)
+        #expect(h.store.state?.keys == [SendKey(name: "second", publicKey: other)])
+    }
+
+    @Test func anAdminChangeThatKeepsBeingOverrunIsRefused() {
+        let h = Harness()
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        DispatchQueue.global().async {
+            reply = self.admin(h, ["action": "set_limits", "max_per_day": "70"])
+            group.leave()
+        }
+        for perHour in [29, 28, 27] {
+            #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+            #expect(admin(h, ["action": "set_limits", "max_per_hour": String(perHour)]).0 == 200)
+            h.presence.gate?.signal()
+        }
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.presence.reasons.count == 3)
+        #expect(h.store.state?.limits.maxPerDay == 60)
+        #expect(h.store.state?.limits.maxPerHour == 27)
     }
 
     @Test func turningSendingBackOnAfterTheConfigSwitchNeedsTheOwner() {
