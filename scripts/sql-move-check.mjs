@@ -23,6 +23,8 @@
 // Exit 1 on any NOT-IDENTICAL or NO-NEW-HOME line. Exit 2 on usage or git errors.
 //
 // Scope notes:
+//   - Literals are read with the TypeScript parser (the repo's own `typescript` dev dependency), so comments, regular
+//     expressions and JSX text are never mistaken for SQL, and SQL is never hidden by them.
 //   - Only the literal shapes the lexer sees are checked: backtick templates and single- or
 //     double-quoted strings that contain SQL keywords and one of FROM/INTO/SET/WHERE/VALUES/TABLE/RETURNING/JOIN/...
 //   - ${...} interpolations are compared as part of the text, so a changed interpolation
@@ -31,6 +33,7 @@
 //   - Read-only: writes nothing to the repo.
 
 import { execFileSync } from 'node:child_process';
+import ts from 'typescript';
 
 const args = process.argv.slice(2);
 function arg(name) {
@@ -115,75 +118,22 @@ function changedPaths(base, head, paths) {
 const KW = /\b(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP)\b/i;
 const SHAPE = /\b(FROM|INTO|SET|WHERE|VALUES|TABLE|UPDATE|INSERT|SELECT|RETURNING|JOIN|WITH|UNION|DELETE)\b/i;
 
-// A '/' starts a regular expression (not a division) after these characters or words. Without this, the two slashes
-// inside a literal such as /\// read as a line comment and hide the rest of the line, SQL included.
-const REGEX_AFTER = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^']);
-const REGEX_AFTER_WORD = /^(return|typeof|case|in|of|void|delete|throw|new|else|do|yield|await)$/;
-
-function literals(src) {
+// The literals come from the TypeScript parser, not a hand-written scanner: a scanner has to guess whether a '/' starts a
+// regular expression or a division (or a comment), and every wrong guess hides the rest of the line, SQL included.
+function literals(src, file = 'x.ts') {
   const out = [];
-  let i = 0;
-  let prev = ''; // the last significant character; 'a' stands for a finished value (name, number, string, regex)
-  let prevWord = '';
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    if (c === '/' && src[i + 1] !== '/' && src[i + 1] !== '*' && (REGEX_AFTER.has(prev) || (prev === 'a' && REGEX_AFTER_WORD.test(prevWord)))) {
-      let j = i + 1;
-      let inClass = false;
-      while (j < n && src[j] !== '\n') {
-        const ch = src[j];
-        if (ch === '\\') { j += 2; continue; }
-        if (inClass) { if (ch === ']') inClass = false; }
-        else if (ch === '[') inClass = true;
-        else if (ch === '/') break;
-        j++;
-      }
-      if (j < n && src[j] === '/') {
-        j++;
-        while (j < n && /[a-z]/i.test(src[j])) j++;
-        i = j; prev = 'a'; prevWord = ''; continue;
-      }
-    }
-    if (c === '/' && src[i + 1] === '/') { const j = src.indexOf('\n', i); i = j < 0 ? n : j; continue; }
-    if (c === '/' && src[i + 1] === '*') { const j = src.indexOf('*/', i + 2); i = j < 0 ? n : j + 2; continue; }
-    if (c === "'" || c === '"') {
-      let j = i + 1;
-      while (j < n && src[j] !== c) j += src[j] === '\\' ? 2 : 1;
-      const quoted = src.slice(i + 1, j);
-      if (KW.test(quoted) && SHAPE.test(quoted)) out.push({ line: src.slice(0, i).split('\n').length, raw: quoted });
-      i = j + 1; prev = 'a'; prevWord = ''; continue;
-    }
-    if (c === '`') {
-      const start = i;
-      let j = i + 1;
-      let depth = 0;
-      while (j < n) {
-        const ch = src[j];
-        if (ch === '\\') { j += 2; continue; }
-        if (depth === 0 && ch === '`') break;
-        if (ch === '$' && src[j + 1] === '{') { depth++; j += 2; continue; }
-        if (depth > 0) {
-          if (ch === '{') depth++;
-          else if (ch === '}') depth--;
-        }
-        j++;
-      }
-      const raw = src.slice(start + 1, j);
-      if (KW.test(raw) && SHAPE.test(raw)) {
-        const line = src.slice(0, start).split('\n').length;
-        out.push({ line, raw });
-      }
-      i = j + 1; prev = 'a'; prevWord = ''; continue;
-    }
-    if (/[A-Za-z0-9_$]/.test(c)) {
-      let j = i + 1;
-      while (j < n && /[A-Za-z0-9_$]/.test(src[j])) j++;
-      prevWord = src.slice(i, j); prev = 'a'; i = j; continue;
-    }
-    if (!/\s/.test(c)) { prev = c; prevWord = ''; }
-    i++;
-  }
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, false, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const keep = (node) => {
+    const start = node.getStart(sf);
+    const raw = src.slice(start + 1, node.end - 1);
+    if (KW.test(raw) && SHAPE.test(raw)) out.push({ line: ts.getLineAndCharacterOfPosition(sf, start).line + 1, raw });
+  };
+  const visit = (node) => {
+    if (ts.isStringLiteral(node)) return keep(node);
+    if (ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) return keep(node); // ${...} stays part of the text
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
   return out;
 }
 

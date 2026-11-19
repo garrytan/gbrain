@@ -113,6 +113,8 @@ describe('sql-move-check', () => {
     ['an escaped slash', 'const slash = /\\//;'],
     ['a slash inside a character class', 'const slash = /[//]x/g;'],
     ['a regular expression after return', 'function f(s: string) { return /\\//.test(s); }'],
+    ['a regular expression after an if condition', 'if (ready) /\\//.test(path);'],
+    ['a regular expression after a while condition', 'while (more()) /[//]/.exec(path);'],
   ] as const) {
     it(`still checks a statement written after ${name} on the same line`, () => {
       baseRepo();

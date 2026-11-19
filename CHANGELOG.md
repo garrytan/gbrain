@@ -10,6 +10,41 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.746.0] - 2026-11-19
+
+**Turning GBrain Helper's sending off now cancels a text that was still on its way, and `send-setup --off` only reports success when it can show the helper is stopped or has confirmed.**
+
+### Fixed
+- A send accepted before a confirmed `send-setup --off` or `send-key remove` is refused at the handover to Messages even if sending was turned back on, or the same key added again, in the few seconds before it got there. It answers `send_disabled` or `unknown_send_key`.
+- When nothing answers on the helper's port, `send-setup --off` now checks whether a `gbrain-apple-helper` process is still running. Only when none is does it report success; otherwise it exits 69 and says a text being handed over may still go out.
+- A busy answer to `send-setup --off` says a text being handed over may still go out.
+- The helper no longer holds its settings lock while a send waits its turn with Messages, so `--off` waits only for a text already being handed over, not for one still waiting its turn. Other helper commands now wait up to 40 seconds as well, instead of 30.
+
+**A concept page hidden because one of its source notes was purged is now rebuilt from its remaining notes, unless anyone wrote something on it.**
+
+### Fixed
+- When purging an old note hid a concept that synthesis built from it, the next concept synthesis now deletes the hidden page for good and writes a new one from the notes still in the group. Nothing of the old text reaches the model or stays in the brain. Previously the concept stayed hidden and was never shown again. (#9653)
+- A hidden concept stays hidden, and the purge preview says why, when it holds anything synthesis did not write: a new title, extra frontmatter, a timeline, curated sections, a file under another name, facts, takes, tags, attached files or data, hand-made links, an entity identity, a guest mark, or a person's decision on an edge proposal. It also stays hidden when the new page would be readable more widely than the hidden one, or when no synthesis model is set.
+- Links from other pages to the concept move to the rebuilt page with all their details kept.
+- Brains with no git repository get the same behavior. On brains whose writes go through the write owner, hidden concepts stay hidden for now; their rebuild waits for a later release.
+
+**An MCP client on the starter tool list can now say when a remembered fact was true by passing `valid_from` to `remember`.**
+
+### Fixed
+- Since starter clients were limited to the parameters their tool list shows, a single `remember` call with `valid_from` was refused with `param_not_on_surface`, although the same date was already accepted inside `items`. Ingest clients that know when each message was said can now date a single fact too. `valid_from` still doesn't appear in the starter tool list, so the list's size is unchanged.
+
+**A secret store restore ties an original only to the page at its backed-up slug, and only when that page still holds its marker.**
+
+### Fixed
+- `gbrain secrets backup --restore` no longer ties an original to a page that merely took its old slug and does not hold its marker (`<REDACTED:<rule>:<id>>`), so that page's readers never pass the `reveal_secret` read check for it. A page that holds a full copy of the marker, in its text or in a timeline entry or fact filed on it, still counts as holding it.
+- A backup that names a page by a slug it had before a rename (one taken before 0.60.744.0) skips that entry (`skipped_no_page`) instead of tying it to another page, and a restore never brings back what a purge removed. This replaces the 0.60.744.0 note saying such an entry would be restored without a place.
+- A restore that loses the race with a purge of the same page no longer leaves the sealed original behind.
+
+**Shipping a gbrain change no longer reruns the full test suite on the developer's machine when Linux CI already passed at the same code.**
+
+### Changed
+- For contributors: `.gstack/pregate.json` now records that the CI `test` and `e2e` jobs run on Linux, and each full run's `tree.json` now records the runner's OS, which gstack requires before it accepts the run. `/ship` reuses a passed CI run of those jobs only when the local machine runs the same operating system, and without this field it could not match them, so it ran the whole suite locally (about an hour). Nothing changes for gbrain users.
+
 ## [0.60.745.0] - 2026-11-19
 
 **Brains with page titles longer than about 2,700 bytes upgrade again, and pages with long titles save instead of being refused (#9779).**

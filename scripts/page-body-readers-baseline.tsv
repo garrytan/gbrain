@@ -664,6 +664,7 @@ src/core/search/relational-recall.ts	hydrate	field	LEAD	synopsis from boundedBod
 src/core/search/safe-chunks.ts	bodyWriteChunkVersion	sql	SEGW	spliced into inline body writes only; a segmented row refuses those writes (CHECK)
 src/core/search/safe-chunks.ts	protectedBodyFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
 src/core/search/safe-chunks.ts	protectedTakesFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
+src/core/secret-store/marker-sql.ts	pageHoldsSql	sql	INLINE	presence check on inline columns in SQL; a segmented body is not read here, and restore reads its segments through readSegmentedBody
 src/core/secret-store/restore.ts	previewRestore	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
 src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-export.ts	exportInventory	field	INLINE	
@@ -725,3 +726,4 @@ src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	sql	INLINE	do
 src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
 src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before the body is read
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
+src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
