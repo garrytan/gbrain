@@ -33,6 +33,7 @@ import { DOCTOR_DERIVED_MEMBERS } from './engine-sql/doctor-derived.ts';
 import { DOCTOR_PERSISTENCE_MEMBERS } from './engine-sql/doctor-persistence.ts';
 import { DOCTOR_PAGES_MEMBERS } from './engine-sql/doctor-pages.ts';
 import { DOCTOR_ACC_MEMBERS } from './engine-sql/doctor-acc-members.ts';
+import { DOCTOR_CHECKPOINT_MEMBERS } from './engine-sql/doctor-checkpoints.ts';
 
 export interface StatementDeadline {
   startedAt: number;
@@ -94,9 +95,10 @@ function refuse(scope: StatementDeadline): never {
 /** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
 const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
-/** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-reads.ts), which also replaced bounded statements. */
+/** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_ACC_MEMBERS,
+  ...DOCTOR_CHECKPOINT_MEMBERS,
 ]);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;

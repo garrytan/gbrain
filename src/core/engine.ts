@@ -16,6 +16,7 @@ import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
+import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -4416,4 +4417,41 @@ export interface BrainEngine {
   listBeliefCoveredSources(coverageKey: string): Promise<string[]>;
   /** Context-volunteer events of the last 7 days per channel; null `sourceIds` reads the whole brain. */
   listVolunteerChannels(sourceIds: readonly string[] | null): Promise<DoctorAccSql.VolunteerChannelRow[]>;
+  // Doctor checkpoint reads (engine-sql/doctor-checkpoints.ts): the op_checkpoints and ingest_log statements doctor ran through executeRaw.
+  /** The `completed_keys` of one op_checkpoints row (its JSON array, or the array as text), or null when there is no row. */
+  readOpCheckpointKeys(op: string, fingerprint: string): Promise<unknown>;
+  /** The fence candidate records of live source incarnations (one source's when `sourceIds` is given), by fingerprint. */
+  listFenceCandidateRecords(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.CandidateRecord[]>;
+  /** Every derived-origin park whose page is still a tombstone, oldest first. */
+  listDerivedOriginParks(op: string): Promise<DoctorCheckpointsSql.DerivedOriginPark[]>;
+  /** Every purge-failure record whose tombstone still exists as recorded, by fingerprint. */
+  listPurgeParks(op: string): Promise<DoctorCheckpointsSql.PurgeParkRow[]>;
+  /** The sync soak counter record of each of the given UTC days (a day with none is absent). */
+  readSoakCounterRows(op: string, days: readonly string[]): Promise<Array<Record<string, unknown>>>;
+  /** The fingerprints of unfinished managed-sync cursors that no newer failure row explains. */
+  listUnfinishedManagedSyncCursors(): Promise<string[]>;
+  /** The managed-sync failure rows of live source incarnations that have no cursor row (the stops a pass left). */
+  listManagedSyncPassStops(sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.ManagedSyncPassStopRow[]>;
+  /** The headers of unfinished managed-sync cursors of registered sources. */
+  listManagedSyncBacklogHeaders(): Promise<DoctorCheckpointsSql.ManagedSyncBacklogHeader[]>;
+  /** One managed-sync pass row (record, write time and the engine clock at the read), or null when there is none. */
+  readManagedSyncPassRow(op: string, fingerprint: string): Promise<DoctorCheckpointsSql.ManagedSyncPassRowRecord | null>;
+  /** The pass rows of the sources' live incarnations (every source when `sourceIds` is omitted). */
+  listLiveManagedSyncPassRows(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.LiveManagedSyncPassRowRecord[]>;
+  /** The non-archived sources whose unfinished managed-sync cursor waits at its checkpoint step. */
+  listCheckpointBlockedSources(sourceIds?: readonly string[]): Promise<string[]>;
+  /** The open identity-downgrade records (no disposition, old page still soft-deleted by that sync), oldest first, with the live slugs at the new path. */
+  listOpenIdentityDowngrades(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.OpenIdentityDowngradeRow[]>;
+  /** The held managed-atom rows of the sources' current incarnations that no later run completed, excluding sources of role `excludedRole`. */
+  listHeldManagedAtomRows(sourceIds: readonly string[] | undefined, excludedRole: string): Promise<DoctorCheckpointsSql.HeldManagedAtomRow[]>;
+  /** The stored doctor last-known entries of one op: the entry name and its value. */
+  readDoctorLastKnown(op: string): Promise<Array<{ fingerprint: string; entry: unknown }>>;
+  /** Upserts one doctor last-known row per entry (the fingerprint is the entry name). */
+  writeDoctorLastKnown(op: string, rows: readonly DoctorCheckpointsSql.DoctorLastKnownRow[]): Promise<void>;
+  /** The sync-admission setting: the config value at `key` and the dating row's value and `set_at` (null when none). */
+  readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string): Promise<DoctorCheckpointsSql.SyncAdmissionSettingRecord>;
+  /** The summary of the newest connector receipt in the ingest log, or null when there is none. */
+  readLatestConnectorReceipt(): Promise<string | null>;
+  /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
+  listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
 }

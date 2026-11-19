@@ -49,6 +49,7 @@ mod housekeeping;
 mod projection_queue;
 pub(crate) mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
+pub(crate) use housekeeping::{HousekeepingRow, turn_key};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };

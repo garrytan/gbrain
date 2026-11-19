@@ -183,6 +183,7 @@ import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
+import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -1297,6 +1298,24 @@ export class PostgresEngine implements BrainEngine {
   readFeedbackStatus() { return doctorAccImpl.readFeedbackStatus(this.executeRaw.bind(this)); }
   listBeliefCoveredSources(coverageKey: string) { return doctorAccImpl.listBeliefCoveredSources(this.executeRaw.bind(this), coverageKey); }
   listVolunteerChannels(sourceIds: readonly string[] | null) { return doctorAccImpl.listVolunteerChannels(this.executeRaw.bind(this), sourceIds); }
+  readOpCheckpointKeys(op: string, fingerprint: string) { return doctorCheckpointsImpl.readOpCheckpointKeys(this.executeRaw.bind(this), op, fingerprint); }
+  listFenceCandidateRecords(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listFenceCandidateRecords(this.executeRaw.bind(this), op, sourceIds); }
+  listDerivedOriginParks(op: string) { return doctorCheckpointsImpl.listDerivedOriginParks(this.executeRaw.bind(this), op); }
+  listPurgeParks(op: string) { return doctorCheckpointsImpl.listPurgeParks(this.executeRaw.bind(this), op); }
+  readSoakCounterRows(op: string, days: readonly string[]) { return doctorCheckpointsImpl.readSoakCounterRows(this.executeRaw.bind(this), op, days); }
+  listUnfinishedManagedSyncCursors() { return doctorCheckpointsImpl.listUnfinishedManagedSyncCursors(this.executeRaw.bind(this)); }
+  listManagedSyncPassStops(sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listManagedSyncPassStops(this.executeRaw.bind(this), sourceIds); }
+  listManagedSyncBacklogHeaders() { return doctorCheckpointsImpl.listManagedSyncBacklogHeaders(this.executeRaw.bind(this)); }
+  readManagedSyncPassRow(op: string, fingerprint: string) { return doctorCheckpointsImpl.readManagedSyncPassRow(this.executeRaw.bind(this), op, fingerprint); }
+  listLiveManagedSyncPassRows(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listLiveManagedSyncPassRows(this.executeRaw.bind(this), op, sourceIds); }
+  listCheckpointBlockedSources(sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listCheckpointBlockedSources(this.executeRaw.bind(this), sourceIds); }
+  listOpenIdentityDowngrades(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listOpenIdentityDowngrades(this.executeRaw.bind(this), op, sourceIds); }
+  listHeldManagedAtomRows(sourceIds: readonly string[] | undefined, excludedRole: string) { return doctorCheckpointsImpl.listHeldManagedAtomRows(this.executeRaw.bind(this), sourceIds, excludedRole); }
+  readDoctorLastKnown(op: string) { return doctorCheckpointsImpl.readDoctorLastKnown(this.executeRaw.bind(this), op); }
+  writeDoctorLastKnown(op: string, rows: readonly doctorCheckpointsImpl.DoctorLastKnownRow[]) { return doctorCheckpointsImpl.writeDoctorLastKnown(this.executeRaw.bind(this), op, rows); }
+  readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string) { return doctorCheckpointsImpl.readSyncAdmissionSettingRow(this.executeRaw.bind(this), key, op, fingerprint); }
+  readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.executeRaw.bind(this)); }
+  listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.executeRaw.bind(this)); }
   upsertFactRelinkAttempt(sourceId: string, attempt: factRelinkImpl.FactRelinkAttempt, opts: factRelinkImpl.FactRelinkUpsertOpts = {}) { return factRelinkImpl.upsertFactRelinkAttempt(this.engineSql, sourceId, attempt, opts); }
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]) { return factRelinkImpl.listFactRelinkOutcomes(this.executeRaw.bind(this), sourceId, factIds, outcomes); }
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string) { return factRelinkImpl.deleteFactRelinkMemos(this.engineSql, sourceId, tier, targetSlug); }

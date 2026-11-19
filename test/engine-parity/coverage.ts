@@ -187,6 +187,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listDecideSlotUsage', 'readDecideDailySpend', 'listDecideReceiptStats',
     'readPendingProposalSummary', 'readChronicleLedgerStats', 'readChronicleDuplicateEvents',
     'readFeedbackStatus', 'listBeliefCoveredSources', 'listVolunteerChannels'],
+  // doctor_checkpoints: the op_checkpoints and ingest_log reads doctor checks ran through executeRaw (engine-sql/doctor-checkpoints.ts)
+  doctor_checkpoints: ['readOpCheckpointKeys', 'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows', 'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow', 'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows', 'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt', 'listFactsAbsorbFailureGroups'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],
