@@ -71,7 +71,7 @@ pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
 pub use projection_queue::{
-    ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
+    ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use receipt_list::WriteRequestListFilter;

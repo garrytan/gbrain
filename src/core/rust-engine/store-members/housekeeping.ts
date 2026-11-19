@@ -2,8 +2,10 @@
  * The housekeeping members the Rust store answers (engine-sql/persistence-housekeeping.ts): the host's housekeeping turn
  * (claimHousekeepingTurn, completeHousekeepingTurn), the receipt reads (readReceiptBudget, listCompactableReceipts,
  * listReservationsAfter, listTrueUpRequests), the true-up's write (trueUpReservations), the capacity forecast's reads
- * (readCapacityForecastInputs) and the projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs)
- * and the writer-version reads (readWriterVersionCutoff, listWriterVersions, recentWriterVersions).
+ * (readCapacityForecastInputs) and the projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs),
+ * the segmented projector's queue writes (claimSegmentedProjection, renewSegmentedProjectionClaim, releaseSegmentedProjectionClaim,
+ * deleteProjectionJob, markProjectionRebuildFailed) and the writer-version reads (readWriterVersionCutoff, listWriterVersions,
+ * recentWriterVersions).
  *
  * The store keeps no `persistence_consumers` rows and no worktree topology, so a live consumer never blocks a turn. Its
  * `persistence_effects` rows size the true-up as on Postgres. It keeps the page projection queue: every page write
@@ -12,8 +14,8 @@
  * What each member answers and why: rust/docs/store/persistence.md ("Housekeeping").
  */
 import type {
-  CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter,
-  TrueUpReservation,
+  CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget,
+  SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation,
 } from '../../engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from '../../page-state/projection-window.ts';
 import {
@@ -56,8 +58,8 @@ export const readCapacityForecastInputs: StoreMember<[opts?: { light?: boolean }
   storeCall({ member: 'readCapacityForecastInputs' }, () => brain.readCapacityForecastInputs(opts?.light === true));
 
 /**
- * The jobs of live segmented pages of active sources, oldest first. Every job here has reason `canonical_change`: the
- * writers of the other reasons are raw SQL this engine refuses.
+ * The jobs of live segmented pages of active sources, oldest first. A job's reason is `canonical_change`, a projector's
+ * claim or `rebuild_failed`: `chunk_replacement_continuing` and `protocol_activation` have no writer on this engine.
  */
 export const listPendingSegmentedProjections: StoreMember<[filter: SegmentedProjectionFilter], PendingSegmentedProjection[]> = (brain, filter) =>
   storeCall({ member: 'listPendingSegmentedProjections' }, () => brain.listPendingSegmentedProjections({
@@ -69,6 +71,25 @@ export const listPendingSegmentedProjections: StoreMember<[filter: SegmentedProj
 export const selectProjectionWindowJobs: StoreMember<[cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean], ProjectionWindowRow[]> =
   (brain, cursor, retryCooldown) => storeCall({ member: 'selectProjectionWindowJobs' }, () => brain.selectProjectionWindowJobs(
     { after: { source_incarnation: cursor.after.source_incarnation, slug: cursor.after.slug }, highWater: cursor.highWater }, retryCooldown));
+
+/** The segmented projector's queue writes, each one store write at the store's clock. */
+export const claimSegmentedProjection: StoreMember<[ref: ProjectionPageRef, claim: string], SegmentedProjectionClaimOutcome> = (brain, ref, claim) =>
+  storeCall({ member: 'claimSegmentedProjection' }, () => brain.claimSegmentedProjection(ref.sourceId, ref.slug, claim));
+
+export const renewSegmentedProjectionClaim: StoreMember<[ref: ProjectionPageRef, claim: string], boolean> = (brain, ref, claim) =>
+  storeCall({ member: 'renewSegmentedProjectionClaim' }, () => brain.renewSegmentedProjectionClaim(ref.sourceId, ref.slug, claim));
+
+export const releaseSegmentedProjectionClaim: StoreMember<[ref: ProjectionPageRef, claim: string], void> = async (brain, ref, claim) => {
+  await storeCall({ member: 'releaseSegmentedProjectionClaim' }, () => brain.releaseSegmentedProjectionClaim(ref.sourceId, ref.slug, claim));
+};
+
+export const deleteProjectionJob: StoreMember<[job: ProjectionJobRef], void> = async (brain, job) => {
+  await storeCall({ member: 'deleteProjectionJob' }, () => brain.deleteProjectionJob({ sourceIncarnation: job.sourceIncarnation, slug: job.slug, revision: job.revision }));
+};
+
+export const markProjectionRebuildFailed: StoreMember<[job: ProjectionJobRef], void> = async (brain, job) => {
+  await storeCall({ member: 'markProjectionRebuildFailed' }, () => brain.markProjectionRebuildFailed({ sourceIncarnation: job.sourceIncarnation, slug: job.slug, revision: job.revision }));
+};
 
 /**
  * The writer-version reads (engine-sql/writer-versions.ts), from the admitter and consumer stamps on each request. The

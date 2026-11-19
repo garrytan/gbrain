@@ -50,7 +50,8 @@ import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } 
 import type { IdleProbeRow, IdleProbeSpec } from './engine-sql/persistence-idle-probe.ts';
 import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettledRow, NoopSettleWindow } from './engine-sql/persistence-embedding-noop-settle.ts';
 import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owner-scans.ts';
-import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter, TrueUpReservation } from './engine-sql/persistence-housekeeping.ts';
+import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget,
+  SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
@@ -3687,6 +3688,17 @@ export interface BrainEngine {
   listPendingSegmentedProjections(filter: SegmentedProjectionFilter): Promise<PendingSegmentedProjection[]>;
   /** The resident projection pass's window of pending jobs after `cursor`, with the high-water row last. */
   selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]>;
+  // The segmented projector's queue writes (page-body/projection.ts). `claim` is `segmented_projecting:<uuid>`, unique to one build.
+  /** Claims the page's queued job unless another live claim holds it: `claimed`, `held`, or `absent` when the page has no job. */
+  claimSegmentedProjection(ref: ProjectionPageRef, claim: string): Promise<SegmentedProjectionClaimOutcome>;
+  /** Moves this build's claim to now, in the caller's transaction when it has one; false when the job no longer carries `claim`. */
+  renewSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string): Promise<boolean>;
+  /** Puts a job that still carries `claim` back to `canonical_change`, so another build can take it. */
+  releaseSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string): Promise<void>;
+  /** Deletes the job when it is still queued at `job.revision` (the page sealed at that revision). */
+  deleteProjectionJob(job: ProjectionJobRef): Promise<void>;
+  /** Marks a job still queued at `job.revision` and not under a live claim `rebuild_failed`, starting its retry window. */
+  markProjectionRebuildFailed(job: ProjectionJobRef): Promise<void>;
   // Effect scans (engine-sql/persistence-effect-scans.ts): the reads the effect worker's pass sent through executeRaw.
   /**
    * Up to 100 requests on worktrees `hostId` owns whose failed withdrawal mirror is parked by `gateCode` and whose other

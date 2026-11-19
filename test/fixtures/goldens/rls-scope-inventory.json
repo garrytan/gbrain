@@ -177,6 +177,17 @@
         ],
         "flagOnScopes": []
       },
+      "claimSegmentedProjection#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "clearCodeTraversalCache#allSources": {
         "flagOffLanes": [
           "pool"
@@ -567,6 +578,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "deleteProjectionJob#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -3407,6 +3429,17 @@
         ],
         "flagOnScopes": []
       },
+      "markProjectionRebuildFailed#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "mergeOntologyFact#corroborate": {
         "flagOffLanes": [
           "pool"
@@ -4426,6 +4459,17 @@
         ],
         "flagOnScopes": []
       },
+      "releaseSegmentedProjectionClaim#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "releaseUnpublishedClaim#default": {
         "flagOffLanes": [
           "pool"
@@ -4504,6 +4548,17 @@
         "flagOnScopes": []
       },
       "renewEffectClaim#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "renewSegmentedProjectionClaim#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5665,6 +5720,7 @@
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",
+        "claimSegmentedProjection": "none",
         "claimWakeForgets": "none",
         "claimWakeWatch": "none",
         "clearCodeTraversalCache": "none",
@@ -5764,6 +5820,7 @@
         "deleteOpCheckpointPaths": "none",
         "deletePage": "none",
         "deletePages": "none",
+        "deleteProjectionJob": "none",
         "deleteStalePageWriteGateReceipts": "none",
         "deleteStaleWriteGateReceipts": "none",
         "deleteTakeRows": "none",
@@ -6161,6 +6218,7 @@
         "markJobWatchdogSuspect": "none",
         "markPagesAttendanceBlocked": "none",
         "markPagesExtractedBatch": "none",
+        "markProjectionRebuildFailed": "none",
         "markSpendUsageUnknown": "none",
         "matchSavedFacts": "none",
         "matchTakeRows": "none",
@@ -6395,6 +6453,7 @@
         "relationalFanout": "none",
         "releaseCycleLock": "none",
         "releasePageEmbeddingLease": "none",
+        "releaseSegmentedProjectionClaim": "none",
         "releaseUnpublishedClaim": "none",
         "releaseWatchdogClaim": "none",
         "removeLink": "none",
@@ -6408,6 +6467,7 @@
         "renewJobLease": "none",
         "renewPageEmbeddingLease": "none",
         "renewPrivateQueueLease": "none",
+        "renewSegmentedProjectionClaim": "none",
         "renewWriteClaim": "none",
         "replaceDerivedAliases": "none",
         "replaceDerivedLinks": "none",
