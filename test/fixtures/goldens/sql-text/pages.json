@@ -2,18 +2,6 @@
   "golden": {
     "domain": "pages",
     "methods": {
-      "bumpLastRetrieved": {
-        "default": [
-          {
-            "lane": "pool",
-            "params": [
-              "array<number>"
-            ],
-            "sql": "INSERT INTO page_retrievals (page_id, last_retrieved_at) SELECT p.id, NOW() FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id WHERE p.id = ANY($1::int[]) AND (r.page_id IS NULL OR r.last_retrieved_at < NOW() - INTERVAL '5 minutes') ON CONFLICT (page_id) DO UPDATE SET last_retrieved_at = EXCLUDED.last_retrieved_at WHERE page_retrievals.last_retrieved_at < NOW() - INTERVAL '5 minutes'",
-            "textSha256": "4a034d77fbe6f93074f23dec4f480646a37a5e1e8c51f2aa5206bf48fd519f02"
-          }
-        ]
-      },
       "countPagesBy": {
         "grouped+since+remote": [
           {

@@ -2,7 +2,7 @@
  * Batch page reads and writes over the store's page_ops family (rust/docs/store/page_ops.md).
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
- * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample, bumpLastRetrieved,
+ * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
@@ -226,12 +226,6 @@ export const listPrefixSampledPages: StoreMember<[opts: DomainBankSampleOpts], D
   if (!opts.prefixes.length) return [];
   const rows: StoreBankRow[] = await storeCall({ member: 'listPrefixSampledPages' }, () => brain.listPrefixSampledPages(options));
   return rows.map(toDomainBankRow);
-};
-
-/** The `last-retrieved.ts` write-back: a stamp per page, kept by the store's page_ops family (`p 0x03 <page id>`). */
-export const bumpLastRetrieved: StoreMember<[pageIds: number[]], void> = async (brain, pageIds) => {
-  if (pageIds.length === 0) return;
-  await storeCall({ member: 'bumpLastRetrieved' }, () => brain.bumpLastRetrieved(pageIds));
 };
 
 export const listCorpusSample: StoreMember<[opts: CorpusSampleOpts], DomainBankRow[]> = async (brain, opts) => {

@@ -15,7 +15,7 @@ import { engineKey } from '../src/core/engine-key.ts';
 import { registerEngineView } from '../src/core/persistence/switches.ts';
 import { deadlineBoundEngine } from '../src/core/statement-deadline.ts';
 import { recordSearchTelemetry, awaitPendingTelemetryFlush, _resetTelemetryWriterForTest, _telemetryWriterCountForTest } from '../src/core/search/telemetry.ts';
-import { bumpLastRetrievedAt, BUMP_LAST_RETRIEVED_SQL, awaitPendingLastRetrievedWrites, _resetTrackRetrievalCacheForTests } from '../src/core/last-retrieved.ts';
+import { bumpLastRetrievedAt, awaitPendingLastRetrievedWrites, _resetTrackRetrievalCacheForTests } from '../src/core/last-retrieved.ts';
 import { resolveAdmissionPolicy, _resetAdmissionCacheForTest } from '../src/core/minions/admission.ts';
 import { resolveStrictParamsMode, resetStrictParamsModeCache } from '../src/mcp/validate-params.ts';
 import { readPublicationCeilingMs, _resetPublicationCeilingForTest } from '../src/core/persistence/publication-deadline.ts';
@@ -62,8 +62,7 @@ function configEngine(values: Record<string, string | Error | null>, calls: stri
       if (v instanceof Error) throw v;
       return v ?? null;
     },
-    async executeRaw(sql: string, _params?: unknown[]) { calls.push(sql); return []; },
-    async bumpLastRetrieved(pageIds: number[]) { calls.push(BUMP_LAST_RETRIEVED_SQL); void pageIds; },
+    async executeRaw(sql: string) { calls.push(sql); return []; },
   } as unknown as BrainEngine;
 }
 

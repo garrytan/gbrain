@@ -12,7 +12,6 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import {
   awaitPendingLastRetrievedWrites,
   bumpLastRetrievedAt,
-  BUMP_LAST_RETRIEVED_SQL,
   _resetTrackRetrievalCacheForTests,
   _resetPendingLastRetrievedWritesForTests,
   _peekPendingLastRetrievedWritesForTests,
@@ -32,8 +31,6 @@ function makeStubEngine(opts?: {
       (async () => {
         return [];
       }),
-    // The real engines run the bump statement through their own executeRaw.
-    async bumpLastRetrieved(pageIds: number[]) { await this.executeRaw(BUMP_LAST_RETRIEVED_SQL, [pageIds]); },
     getConfig:
       opts?.getConfig ??
       (async () => {

@@ -168,16 +168,6 @@ impl Brain {
         })
     }
 
-    /// `bumpLastRetrieved(pageIds)`: how many pages it stamped.
-    #[napi]
-    pub fn bump_last_retrieved<'env>(
-        &self,
-        env: &'env Env,
-        page_ids: Vec<i64>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.bump_last_retrieved(&page_ids))
-    }
-
     /// `listCorpusSample(opts)`: `DomainBankRow[]`.
     #[napi]
     pub fn list_corpus_sample<'env>(
