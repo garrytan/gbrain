@@ -212,7 +212,7 @@ export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: num
     assertRowsTile(bodyRows, { slug, sourceId, total: await generationBodyBytes(engine, { id: opts.pageId, body_generation: page.body_generation, body_bytes: page.body_bytes }, generation) });
   } catch (error) {
     if (requested !== null || attempt >= LIVE_READ_ATTEMPTS) throw error;
-    const [now] = await engine.executeRaw<{ body_generation: unknown }>('SELECT body_generation FROM pages WHERE id=$1', [opts.pageId]);
+    const now = await engine.readSegmentedPageHead(opts.pageId);
     if (!now || Number(now.body_generation) === generation) throw error;
     return openSegmentedBody(engine, opts, attempt + 1);
   }
@@ -227,8 +227,7 @@ export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: num
 /** After a pinned read, before its text is returned: the page is still at the pin and still admits the caller. */
 export async function confirmBodyPin(engine: BrainEngine, body: SegmentedBody): Promise<void> {
   if (!body.pin) return;
-  const [page] = await engine.executeRaw<Record<string, unknown>>('SELECT slug, body_generation, knowledge_revision::text AS revision FROM pages WHERE id=$1', [body.pageId]);
-  await checkPin(body.pin, page, body.pageId);
+  await checkPin(body.pin, await engine.readSegmentedPageHead(body.pageId), body.pageId);
 }
 
 interface LoadedSegment {

@@ -17,13 +17,17 @@ import { createSource, parityArms, restrictFolder } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { flipInput, manifestRow, pageMeta, segmentText, stagingInput } from '../helpers/page-body-fixtures.ts';
+import { stageGeneration } from '../helpers/page-body-fixtures.ts';
+import type { BodyFlipInput, ManifestRowInput } from '../../src/core/page-body/types.ts';
+import { confirmBodyPin, openSegmentedBody } from '../../src/core/page-body/read-range.ts';
+import { REVISION_BACKFILL_PENDING } from '../../src/core/page-state/types.ts';
 
 const { parityTest } = parityArms(testBackends());
 
 const SEGMENTS = [segmentText('# Intro\nfirst segment\n'), segmentText('## Next\nsecond segment\n')];
 
 /** Publish SEGMENTS as generation 1 of segmented page `slug`, through typed members only. */
-async function publishSegmented(engine: BrainEngine, slug: string) {
+async function publishSegmented(engine: BrainEngine, slug: string, opts: { row?: (seq: number) => Partial<ManifestRowInput>; flip?: Partial<BodyFlipInput> } = {}) {
   const { id: pageId } = await engine.createSegmentedPageShell(slug, pageMeta('Big page'), { sourceId: 'default' });
   const occurrences = await engine.allocateBodyOccurrenceIds(SEGMENTS.length);
   const staging = stagingInput({ slug, pageId, mode: 'create' });
@@ -32,13 +36,13 @@ async function publishSegmented(engine: BrainEngine, slug: string) {
     await tx.stageSegmentTexts('default', SEGMENTS, { stagingId: staging.id });
     let byteStart = 0;
     await tx.stageManifestRows(SEGMENTS.map((text, seq) => {
-      const row = manifestRow({ pageId, occurrenceId: occurrences[seq]!, genFrom: 1, seq, text, byteStart, stagingId: staging.id });
+      const row = { ...manifestRow({ pageId, occurrenceId: occurrences[seq]!, genFrom: 1, seq, text, byteStart, stagingId: staging.id }), ...opts.row?.(seq) };
       byteStart += text.body.byteLength;
       return row;
     }));
   });
   await engine.transaction(async (tx) => {
-    await tx.flipBodyGeneration(flipInput(pageId, 0, staging.id, SEGMENTS));
+    await tx.flipBodyGeneration(flipInput(pageId, 0, staging.id, SEGMENTS, opts.flip));
     await tx.setBodyStagingState(staging.id, 'committed');
   });
   return { pageId, occurrences };
@@ -235,5 +239,66 @@ describe('engine parity: export reads', () => {
     await restrictFolder(engine, backend, 'work', 'private/', 'rule');
     await restrictFolder(engine, backend, 'default', 'queued/', 'pending');
     return engine.listAccessPolicySourceIds();
+  });
+
+  // A live segmented read whose readable rows do not cover the body (a role that cannot read every manifest row)
+  // reads the page's live generation once more: a body published between the reads is read again, an unchanged
+  // generation refuses page_body_rows_unreadable. The handle hides the last live row from the first read only.
+  parityTest('a live segmented read that does not tile reads the live generation again', {
+    methods: ['readSegmentedPageHead', 'readBodyManifestRows', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging',
+      'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
+  }, async (engine) => {
+    const { pageId, occurrences } = await publishSegmented(engine, 'notes/big');
+    let hide = 0;
+    let publishOnHide = false;
+    const hiding = new Proxy(engine, {
+      get(target, key, receiver) {
+        if (key !== 'readBodyManifestRows') return Reflect.get(target, key, receiver);
+        return async (id: number, generation: number | null) => {
+          const rows = await target.readBodyManifestRows(id, generation);
+          if (generation !== null || hide <= 0) return rows;
+          hide--;
+          if (publishOnHide) {
+            publishOnHide = false;
+            const next = await stageGeneration(target, { pageId, slug: 'notes/big', genFrom: 2, texts: SEGMENTS });
+            await target.transaction(async (tx) => {
+              await tx.flipBodyGeneration(flipInput(pageId, 1, next.stagingId, SEGMENTS, { closeOccurrences: occurrences }));
+              await tx.setBodyStagingState(next.stagingId, 'committed');
+            });
+          }
+          return rows.slice(0, -1);
+        };
+      },
+    });
+    hide = 3;
+    const refused = await openSegmentedBody(hiding, { pageId }).then(() => null, (e: { code?: string; detail?: string }) => ({ code: e.code, detail: e.detail }));
+    hide = 1;
+    publishOnHide = true;
+    const reread = await openSegmentedBody(hiding, { pageId });
+    expect(refused?.code).toBe('page_body_rows_unreadable');
+    expect(reread.generation).toBe(2);
+    return { refused, reread: { generation: reread.generation, rows: reread.rows.length, bytes: reread.bodyBytes }, hidden_left: hide };
+  });
+
+  // A pinned read checks the page again before its text is returned: the same revision and generation pass, a later
+  // publish refuses revision_changed.
+  parityTest('confirmBodyPin passes at the pinned revision and refuses after a publish', {
+    methods: ['readSegmentedPageHead', 'readBodyManifestRows', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging',
+      'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
+  }, async (engine) => {
+    const { pageId, occurrences } = await publishSegmented(engine, 'notes/big');
+    const head = await engine.readSegmentedPageHead(pageId);
+    const pin = { revision: head?.revision == null ? REVISION_BACKFILL_PENDING : String(head.revision), generation: 1 };
+    const body = await openSegmentedBody(engine, { pageId, pin });
+    const before = await confirmBodyPin(engine, body).then(() => 'ok', (e: { code?: string; canonical?: string }) => e.canonical ?? e.code);
+    const next = await stageGeneration(engine, { pageId, slug: 'notes/big', genFrom: 2, texts: SEGMENTS });
+    await engine.transaction(async (tx) => {
+      await tx.flipBodyGeneration(flipInput(pageId, 1, next.stagingId, SEGMENTS, { closeOccurrences: occurrences }));
+      await tx.setBodyStagingState(next.stagingId, 'committed');
+    });
+    const after = await confirmBodyPin(engine, body).then(() => 'ok', (e: { code?: string; canonical?: string }) => e.canonical ?? e.code);
+    expect(before).toBe('ok');
+    expect(after).toBe('revision_changed');
+    return { before, after };
   });
 });
