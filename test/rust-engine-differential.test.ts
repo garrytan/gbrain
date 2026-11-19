@@ -325,10 +325,10 @@ const scenarios: Scenario[] = [
     },
   },
 
-  // 10. listColumnsOnly
+  // 10. listColumnsOnly: the list projection, with content_hash and emotional_weight present and undefined as on PGLite.
   {
     name: 'listPages with listColumnsOnly',
-    expect: 'refused',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('cols/page', NOTE);
       return engine.listPages({ slugPrefix: 'cols/', listColumnsOnly: true } as never);
