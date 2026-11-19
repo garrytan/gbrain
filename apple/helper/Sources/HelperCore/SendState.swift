@@ -189,6 +189,8 @@ public protocol OwnerPresence {
 }
 
 public final class LocalOwnerPresence: OwnerPresence {
+    public static let wait: TimeInterval = 120
+
     public init() {}
 
     public func confirm(reason: String) -> Presence {
@@ -201,7 +203,7 @@ public final class LocalOwnerPresence: OwnerPresence {
             result = ok ? .confirmed : .unavailable
             done.signal()
         }
-        guard done.wait(timeout: .now() + 120) == .success else {
+        guard done.wait(timeout: .now() + Self.wait) == .success else {
             context.invalidate()
             return .unavailable
         }

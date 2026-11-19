@@ -35,7 +35,7 @@ const aad = (id: string, sourceId: string, rule: string) => Buffer.from(`gbrain-
 const macOf = (key: Buffer, value: string) => createHmac('sha256', macKeyOf(key)).update(value, 'utf8').digest('hex');
 
 export const secretsAudit = createAuditWriter<{ ts: string } & Record<string, unknown>>({
-  featureName: 'secrets', errorLabel: 'secrets-audit', errorTrailer: '; the read or write itself went ahead',
+  featureName: 'secrets', errorLabel: 'secrets-audit', errorTrailer: '; the read or write itself went ahead', fileMode: 0o600,
 });
 
 function keyMissing(keyId: string) {
@@ -190,6 +190,56 @@ export async function keysInUse(engine: BrainEngine): Promise<Array<{ key_id: st
   const rows = await engine.executeRaw<{ key_id: string; key_host: string; entries: number | string }>(
     'SELECT key_id,key_host,count(*) AS entries FROM secret_store GROUP BY key_id,key_host ORDER BY key_id,key_host');
   return rows.map(row => ({ ...row, entries: Number(row.entries) }));
+}
+
+export type BackupEntryRow = EntryRow & { updated_at: string };
+export interface BackupOccurrenceRow {
+  entry_id: string; source_id: string; page_id: number | null; slug: string | null; field: string; origin: OccurrenceOrigin; commit_sha: string | null;
+  path: string | null; line: number | null; pre_field_sha256: string | null; created_by: string; created_at: string;
+}
+
+/**
+ * Every entry row as stored (ciphertext, never a value) and every occurrence row, for an encrypted backup (backup.ts).
+ * One statement reads both, so they come from one snapshot: an entry sealed while the backup reads is in neither list.
+ */
+export async function storeSnapshot(engine: BrainEngine): Promise<{ entries: BackupEntryRow[]; occurrences: BackupOccurrenceRow[] }> {
+  const ts = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+  const [row] = await engine.executeRaw<{ entries: string; occurrences: string }>(`SELECT
+    (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]'::jsonb)::text FROM (SELECT id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,
+      ${ts('created_at')} AS created_at, ${ts('updated_at')} AS updated_at FROM secret_store) e) AS entries,
+    (SELECT coalesce(jsonb_agg(to_jsonb(o) - 'ord' ORDER BY o.ord), '[]'::jsonb)::text FROM (SELECT id AS ord,entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,
+      pre_field_sha256,created_by,${ts('created_at')} AS created_at FROM secret_store_occurrence) o) AS occurrences`);
+  return { entries: JSON.parse(row!.entries) as BackupEntryRow[], occurrences: JSON.parse(row!.occurrences) as BackupOccurrenceRow[] };
+}
+
+/**
+ * Writes backed-up entries the store does not hold (by id, and never over a row that holds the same value, so a local
+ * row changed since the backup stays as it is), with the occurrences of the entries it wrote. It never updates or
+ * deletes a row. An occurrence's page_id is the id of the page that holds its slug in the source now, never the
+ * backed-up number (a rebuilt brain numbers its pages in another order); entries of a source this brain no longer has
+ * are skipped.
+ */
+export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number }> {
+  let written = 0, occ = 0;
+  const byEntry = new Map<string, BackupOccurrenceRow[]>();
+  for (const o of occurrences) byEntry.set(o.entry_id, [...(byEntry.get(o.entry_id) ?? []), o]);
+  await engine.transaction(async tx => {
+    for (const row of entries) {
+      const inserted = await tx.executeRaw<{ id: string }>(`INSERT INTO secret_store (id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,created_at,updated_at)
+        SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$12::timestamptz WHERE EXISTS (SELECT 1 FROM sources WHERE id=$2)
+        ON CONFLICT DO NOTHING RETURNING id`,
+      [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at]);
+      if (!inserted.length) continue;
+      written++;
+      for (const o of byEntry.get(row.id) ?? []) {
+        await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
+          VALUES ($1,$2,(SELECT id FROM pages WHERE source_id=$2 AND slug=$3),$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz)`,
+        [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at]);
+        occ++;
+      }
+    }
+  });
+  return { entries: written, occurrences: occ };
 }
 
 export { keyIdOf };
