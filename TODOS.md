@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine spend-tables follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — decide-prune-orphan-receipt-test: no test catches a prune that keeps the receipt record.** **What:** on the Rust store, `pruneDecideReceipts` (`rust/crates/gbrain-store/src/eval_capture/decide_store/receipts.rs`, branch `rust-engine/decide-family`) deletes each old receipt's time-index key and its receipt record. The mutant `prune-keeps-receipts` drops the record delete and survives the cargo tests and the parity suite: every read walks the time index, so the kept record is invisible, and only storage leaks (one orphan record per pruned receipt, forever). **Fix:** add a cargo test that prunes, then scans the receipt sub-tag (`Z` 0x13) and asserts no record outlives its index key (or a store-level count helper the test can call), and confirm the mutant is caught. **Effort:** S. **Priority:** P3.
+
 ## Rust engine alias-trust follow-ups (filed 2026-11-18)
 
 - [x] **P3 — alias-order-collate: pin `COLLATE "C"` on the alias read order.** **Done (rust-engine/alias-trust-2):** `readAliases` sorts `alias_norm`, `source_id` and `slug` `COLLATE "C"`; the byte-order case in `test/engine-parity/alias-trust.test.ts` failed on an en_US.utf8 Postgres before the change and passes on every engine after it. **What (as filed):** `readAliases` (`src/core/search/read-enrichment.ts`) orders by `a.alias_norm, a.source_id, a.rank, a.slug` with no collation, so on a Postgres whose default collation is not C the pages of one alias can come back in another order than PGLite and the Rust store (byte order) give, and a caller that takes the first page picks another one. **Fix:** order by each text column `COLLATE "C"`, with a parity case whose slugs sort differently under a locale collation. **Effort:** S. **Priority:** P3.
