@@ -302,8 +302,8 @@ describe('engine parity: source-resolution reads', () => {
   });
 
   // A remote memory_recall drops the QM scope sources it did not name (withoutScopeSources); the census found the Rust
-  // engine refused it, because the scope check read the sources through sqlQueryForEngine. It reads getSource now.
-  parityTest('the scope-source check of a remote recall drops marked sources and keeps the rest', { methods: ['getSource'] }, async (engine, backend) => {
+  // engine refused it, because the scope check read the sources through sqlQueryForEngine. It reads readScopeSourceConfigs now.
+  parityTest('the scope-source check of a remote recall drops marked sources and keeps the rest', { methods: ['readScopeSourceConfigs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'scope', { qm_scope: true, federated: false });
     await createSource(engine, backend, 'plain', { federated: true });
     const marked = [...await markedScopeSources(engine, ['plain', 'scope', 'scope', 'default', 'no-such-source'])];

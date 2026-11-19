@@ -121,3 +121,97 @@ fn a_floor_is_set_cleared_and_refused_without_touching_the_row() {
             .unwrap()
     );
 }
+
+#[test]
+fn the_list_is_newest_first_with_the_columns_not_kept_at_their_defaults_and_no_hash() {
+    let b = brain("tokens-list");
+    let first = insert(&b, token("older", "hash-older", json!({}))).unwrap();
+    b.clock.advance(1_000_000);
+    let second = insert(&b, token("newer", "hash-newer", json!({}))).unwrap();
+    let rows = b.list_access_tokens().unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![second.as_str(), first.as_str()]
+    );
+    assert_eq!(rows[0]["name"], "newer");
+    assert_eq!(rows[0]["scopes"], json!(["read"]));
+    assert_eq!(rows[0]["revoked_at"], Value::Null);
+    assert_eq!(rows[0]["last_used_at"], Value::Null);
+    assert_eq!(rows[0]["member_id"], Value::Null);
+    assert_eq!(rows[0]["private_pages"], "none");
+    assert_eq!(rows[0]["private_facts"], "none");
+    assert_eq!(rows[1]["created_at"], "2027-01-15T08:00:00.000000Z");
+    assert!(
+        rows.iter().all(|r| r.get("token_hash").is_none()),
+        "no listed row carries the hash"
+    );
+}
+
+#[test]
+fn a_revoke_by_name_stamps_every_active_token_of_that_name_once_and_ends_its_liveness() {
+    let b = brain("tokens-revoke-name");
+    let a = insert(&b, token("shared", "hash-a", json!({}))).unwrap();
+    let c = insert(&b, token("shared", "hash-c", json!({}))).unwrap();
+    let other = insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    assert!(b.access_token_live(&a).unwrap());
+    b.clock.advance(5_000_000);
+    let mut want = vec![a.clone(), c.clone()];
+    want.sort();
+    assert_eq!(b.revoke_access_tokens_named("shared").unwrap(), want);
+    assert!(
+        b.revoke_access_tokens_named("shared").unwrap().is_empty(),
+        "a revoked token is not revoked twice"
+    );
+    assert!(!b.access_token_live(&a).unwrap());
+    assert!(!b.access_token_live(&c).unwrap());
+    assert!(b.access_token_live(&other).unwrap());
+    assert!(found(&b, "shared").is_empty());
+    let rows = b.list_access_tokens().unwrap();
+    let revoked: Vec<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["name"] == "shared")
+        .map(|r| r["revoked_at"].clone())
+        .collect();
+    assert_eq!(
+        revoked,
+        vec![
+            json!("2027-01-15T08:00:05.000000Z"),
+            json!("2027-01-15T08:00:05.000000Z")
+        ]
+    );
+}
+
+#[test]
+fn a_revoke_by_id_returns_the_name_once_and_the_grant_read_stops_finding_it() {
+    let b = brain("tokens-revoke-id");
+    let id = insert(&b, token("solo", "hash-s", json!({}))).unwrap();
+    assert_eq!(
+        b.read_active_access_token_grant(&id.to_ascii_uppercase())
+            .unwrap(),
+        Some(json!({ "permissions": { "source_id": "wiki" }, "private_pages": "none" }))
+    );
+    assert!(b.access_token_live(&id).unwrap());
+    assert!(
+        !b.access_token_live("00000000-0000-4000-8000-0000000000c1")
+            .unwrap()
+    );
+    assert_eq!(
+        b.revoke_access_token(&id.to_ascii_uppercase())
+            .unwrap()
+            .as_deref(),
+        Some("solo")
+    );
+    assert_eq!(b.revoke_access_token(&id).unwrap(), None);
+    assert_eq!(
+        b.revoke_access_token("00000000-0000-4000-8000-0000000000c1")
+            .unwrap(),
+        None
+    );
+    assert_eq!(b.read_active_access_token_grant(&id).unwrap(), None);
+    assert!(!b.access_token_live(&id).unwrap());
+}

@@ -146,7 +146,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // oauth_clients rows (engine-sql/oauth-clients.ts)
     'readOauthClient', 'listOauthClients', 'patchOauthClient',
     // access_tokens rows (engine-sql/access-tokens.ts)
-    'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'],
+    'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust',
+    // credential reads and the scoped client registration (engine-sql/access-credentials.ts)
+    'listAccessTokens', 'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns',
+    'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
   minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
     'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
@@ -216,7 +219,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   write_misc: ['readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'isSourceClaimed',
-    'hasExtractedEvents', 'listActiveAccessMembers', 'notifierCoverageRecorded', 'listAccessTokens', 'listAppliedPolicyRevisions', 'readMayActFor', 'readAudiencePrincipals', 'readAccessMembers', 'readAccessCredentials', 'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'listAudienceAccessMembers', 'readAccessGroups', 'listPagesNamingReader', 'readLiveMember', 'hasLabelledOnlyMember', 'readFolderAccess', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
+    'hasExtractedEvents', 'listActiveAccessMembers', 'notifierCoverageRecorded', 'listAppliedPolicyRevisions', 'readMayActFor', 'readAudiencePrincipals', 'readAccessMembers', 'readAccessCredentials', 'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'listAudienceAccessMembers', 'readAccessGroups', 'listPagesNamingReader', 'readLiveMember', 'hasLabelledOnlyMember', 'readFolderAccess', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows',
     'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint',
     'deleteOpCheckpointPaths', 'readHealthMemoClock', 'listSynopsisSourceIds'],

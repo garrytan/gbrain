@@ -39,6 +39,8 @@ import {
 } from '../../src/core/op-checkpoint.ts';
 import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
+import { assertScopeSourceGrant, markedScopeSources } from '../../src/core/access/attest-sources.ts';
+import { GrantError } from '../../src/core/grants/model.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -107,6 +109,30 @@ describe('engine parity: write misc', () => {
     return { alpha: stateView(alpha), beta: stateView(beta), missing };
   });
 
+  // The scope-source check (attest-sources.ts) a grant write runs before it names a source: a source marked
+  // config.qm_scope is reserved for the credential that lists it, so a new grant that reads it is refused.
+  parityTest('readScopeSourceConfigs reads each known source once, in id order; a grant that reads a marked scope source is refused',
+    { methods: ['readScopeSourceConfigs'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'scope-b', { qm_scope: true });
+      await createSource(engine, backend, 'plain-a', { n: 1 });
+      const ids = ['scope-b', 'plain-a', 'scope-b', 'no-such-source'];
+      const reads = {
+        none: await engine.readScopeSourceConfigs(ids),
+        share: await engine.readScopeSourceConfigs(ids, 'share'),
+        update: await engine.transaction(tx => tx.readScopeSourceConfigs(ids, 'update')),
+      };
+      const sorted = (rows: { id: string; config: unknown }[]) => [...rows].sort((a, b) => a.id.localeCompare(b.id));
+      const marked = [...await markedScopeSources(engine, ids, 'share')];
+      const plain = await assertScopeSourceGrant(engine, null, ['default', 'plain-a']).then(() => 'allowed', (e: unknown) => String(e));
+      const refused = await assertScopeSourceGrant(engine, null, ['plain-a', 'scope-b']).then(() => 'allowed',
+        (e: unknown) => e instanceof GrantError ? { code: e.code, message: e.message } : String(e));
+      expect(reads.share.map(r => r.id)).toEqual(['plain-a', 'scope-b']);
+      expect(marked).toEqual(['scope-b']);
+      expect(plain).toBe('allowed');
+      expect(refused).toMatchObject({ code: 'invalid_grant' });
+      return { none: sorted(reads.none), share: reads.share, update: reads.update, marked, plain, refused };
+    });
+
   parityTest('readAdmissionSource reads config kind and role as text; no guest row joins an ordinary source', { methods: ['readAdmissionSource'] }, async (engine, backend) => {
     await createSource(engine, backend, 'alpha', { kind: 'notes', role: 7 }, '/var/tmp/alpha-root');
     const alpha = await engine.readAdmissionSource('alpha');
@@ -173,8 +199,8 @@ describe('engine parity: write misc', () => {
     return { tokens };
   });
 
-  // listAccessTokens is constant empty on Rust only because no Rust brain can hold a token: the token mint (raw SQL on
-  // access_tokens, token-mint.ts) must stop on the typed raw_sql refusal there and leave the list empty.
+  // A raw-SQL token mint (the INSERT token-mint.ts once ran) must stop on the typed raw_sql refusal on Rust and leave
+  // the list empty; the Rust store keeps tokens only through the typed insertAccessToken (access-tokens.test.ts).
   parityTest('a minted token refuses on Rust and lists newest first on the SQL engines', { methods: ['listAccessTokens'] }, async (engine, backend) => {
     const mint = await engine.executeRaw(
       `INSERT INTO access_tokens (name, token_hash, scopes, created_at, revoked_at) VALUES

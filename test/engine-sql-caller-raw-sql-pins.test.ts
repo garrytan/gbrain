@@ -17,6 +17,11 @@ import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { planManualClient } from '../src/core/oauth-provider.ts';
+import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
+import { CREDENTIAL_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -466,6 +471,80 @@ const PINS: Pin[] = [
         RETURNING client_id, client_name
       `],
   },
+  {
+    from: 'src/commands/auth.ts:180 list (at 837c389e52)',
+    case: { method: 'listAccessTokens', variant: 'default', run: e => e.listAccessTokens() },
+    texts: [`
+      SELECT * FROM access_tokens
+      ORDER BY created_at DESC
+    `],
+  },
+  {
+    from: 'src/core/token-mint.ts:192 readActiveTokenPrivatePages (at 837c389e52)',
+    case: { method: 'readActiveAccessTokenGrant', variant: 'private-pages', run: e => e.readActiveAccessTokenGrant('00000000-0000-4000-8000-0000000000c1', 'private_pages') },
+    texts: ['SELECT private_pages FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/core/token-mint.ts:209 readActiveTokenPermissions (at 837c389e52)',
+    case: { method: 'readActiveAccessTokenGrant', variant: 'permissions', run: e => e.readActiveAccessTokenGrant('00000000-0000-4000-8000-0000000000c1', 'permissions') },
+    texts: ['SELECT permissions FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/core/wakeshift/drain.ts:80 principalLive (legacy token, at 837c389e52)',
+    case: { method: 'accessTokenLive', variant: 'default', run: e => e.accessTokenLive('00000000-0000-4000-8000-0000000000c1') },
+    texts: ['SELECT 1 FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/core/wakeshift/drain.ts:77 principalLive (OAuth client, at 837c389e52)',
+    case: { method: 'oauthClientLive', variant: 'default', run: e => e.oauthClientLive('client-a') },
+    texts: ['SELECT 1 FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL'],
+  },
+  {
+    from: 'src/commands/auth.ts:581 preflightOauthClientColumns (at 837c389e52)',
+    case: { method: 'readOauthClientColumns', variant: 'preflight', run: e => e.readOauthClientColumns('preflight') },
+    texts: [`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'oauth_clients'
+      AND table_schema = current_schema()
+      AND column_name IN ('token_ttl', 'surface', 'federated_read', 'source_id', 'deleted_at')
+  `],
+  },
+  {
+    from: 'src/core/oauth-provider.ts:1112 registerClientManual column probe (at 837c389e52)',
+    case: { method: 'readOauthClientColumns', variant: 'grant', run: e => e.readOauthClientColumns('grant') },
+    texts: [`SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
+        AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`],
+  },
+  {
+    from: 'src/commands/auth.ts:677 registerScopedClient token_ttl write (at 837c389e52; the template, as $N text)',
+    case: { method: 'setOauthClientTokenTtl', variant: 'default', run: e => e.setOauthClientTokenTtl('client-a', 3600) },
+    texts: [`
+        UPDATE oauth_clients SET token_ttl = $1
+        WHERE client_id = $2
+        RETURNING client_id
+      `],
+  },
+  {
+    from: 'src/commands/auth.ts:1111 tokenLifetimeClampedClients (at 837c389e52)',
+    case: { method: 'readTokenLifetimeClampedClients', variant: 'default', run: e => e.readTokenLifetimeClampedClients() },
+    texts: [`SELECT DISTINCT client_id FROM oauth_grant_audit WHERE actor = 'migration' AND action IN ('clamp_token_ttl', 'shorten_access_tokens')`],
+  },
+  {
+    from: 'src/core/access/attest-sources.ts:67 markedScopeSources FOR UPDATE (at 758c3b853e)',
+    case: { method: 'readScopeSourceConfigs', variant: 'update', run: e => e.readScopeSourceConfigs(['team-a'], 'update') },
+    texts: ['SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR UPDATE'],
+  },
+  {
+    from: 'src/core/access/attest-sources.ts:69 markedScopeSources FOR SHARE (at 758c3b853e)',
+    case: { method: 'readScopeSourceConfigs', variant: 'share', run: e => e.readScopeSourceConfigs(['team-a'], 'share') },
+    texts: ['SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR SHARE'],
+  },
+  {
+    from: 'src/core/access/attest-sources.ts:70 markedScopeSources (at 758c3b853e)',
+    case: { method: 'readScopeSourceConfigs', variant: 'default', run: e => e.readScopeSourceConfigs(['team-a']) },
+    texts: ['SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))'],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
@@ -485,6 +564,46 @@ describe('caller raw SQL moved into typed members keeps its Postgres text byte f
       expect(capture.error).toBeUndefined();
       const sent = capture.trace.filter(s => s.kind === 'query').map(s => s.text);
       expect(sent).toEqual(expected);
+    });
+  }
+});
+
+describe('insertOauthClientGrant sends what insertClientGrant sends', () => {
+  // The drift pin: grants/service.ts insertClientGrant stays the provider's path, so the member's constant text and
+  // parameter order must keep matching the template it was captured from.
+  test('same statement text and parameters for one planned client', async () => {
+    const plan = planManualClient('pin-client', ['client_credentials'], 'read write', [], 'default', ['default']);
+    const context = await grantValidationContext({ listAllSources: async () => [{ id: 'default' }] } as never);
+    const grant = plan.grant(context);
+    const sent = async (run: (e: any) => Promise<unknown>) => {
+      const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'insert', variant: 'default', run }));
+      expect(capture.error).toBeUndefined();
+      return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params }));
+    };
+    const template = await sent(e => insertClientGrant(sqlQueryForEngine(e), grant, plan.metadata));
+    const member = await sent(e => e.insertOauthClientGrant(clientGrantInsert(grant, plan.metadata)));
+    expect(template.length).toBe(1);
+    expect(member).toEqual(template);
+    expect(member[0].text).toBe(CREDENTIAL_SQL.client_grant_insert);
+  });
+});
+
+describe('markedScopeSources sends the same statement through an engine as through a SqlQuery', () => {
+  // The drift pin: the grant writes still pass a transaction SqlQuery (the template path); an engine caller now reads
+  // through readScopeSourceConfigs. Both must send one text and one parameter list.
+  for (const lock of [undefined, 'share', 'update'] as const) {
+    test(`lock ${lock ?? 'none'}`, async () => {
+      const sent = async (run: (e: any) => Promise<unknown>) => {
+        const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'markedScopeSources', variant: lock ?? 'none', run }));
+        expect(capture.error).toBeUndefined();
+        return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params }));
+      };
+      const ids = ['team-b', 'team-a', 'team-b'];
+      const template = await sent(e => markedScopeSources(sqlQueryForEngine(e), ids, lock));
+      const member = await sent(e => markedScopeSources(e, ids, lock));
+      expect(template.length).toBe(1);
+      expect(member).toEqual(template);
+      expect(member[0].params).toEqual([JSON.stringify(['team-b', 'team-a'])]);
     });
   }
 });
