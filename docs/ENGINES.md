@@ -1663,8 +1663,6 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
   does; this arrives later);
 - a `putPage` that claims a `source_path` (the store has no such claim);
 - `listPages` with `listColumnsOnly`;
-- `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
-  not have, so an empty answer would be wrong to give;
 - a `getChunks` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;
 - a keyword search with an offset, `where` or a date window, and a link batch that sets a link kind or resolution.
 

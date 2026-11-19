@@ -572,7 +572,7 @@ fn list_sorts_filters_and_pages() {
 }
 
 #[test]
-fn resolve_slugs_answers_only_the_exact_live_slug() {
+fn resolve_slugs_answers_the_exact_live_slug_then_the_fuzzy_half() {
     let dir = TempDir::new("pages-resolve");
     let store = open(&dir);
     for slug in ["people/ada", "people/adam", "notes/ada-diary"] {
@@ -580,10 +580,15 @@ fn resolve_slugs_answers_only_the_exact_live_slug() {
     }
     let resolve = |p: &str| store.resolve_slugs(p, &ReadScope::default()).unwrap();
     assert_eq!(resolve("people/ada"), ["people/ada"]);
-    // A partial name, a different case and a title are the trigram half of PGLite's answer, which
-    // this store does not have: the list is empty, and the TypeScript member refuses it.
-    assert!(resolve("ADA").is_empty());
-    assert!(resolve("people/ad").is_empty());
+    // No exact slug: the fuzzy half lists slugs containing the name (any case) or titles similar
+    // to it, best title similarity first (the titles are the slugs). Expected rows read from
+    // Postgres 16 with the same WHERE and ORDER BY.
+    assert_eq!(
+        resolve("ADA"),
+        ["people/ada", "notes/ada-diary", "people/adam"]
+    );
+    assert_eq!(resolve("people/ad"), ["people/ada", "people/adam"]);
+    assert!(resolve("zz").is_empty());
     store
         .upsert_source(&SourceInput {
             id: "work".into(),
@@ -595,9 +600,10 @@ fn resolve_slugs_answers_only_the_exact_live_slug() {
         .unwrap();
     assert!(in_work.is_empty());
     store.soft_delete_page("people/ada", None).unwrap();
-    assert!(
-        resolve("people/ada").is_empty(),
-        "a soft-deleted page is not resolved"
+    assert_eq!(
+        resolve("people/ada"),
+        ["people/adam"],
+        "a soft-deleted page is not resolved; the fuzzy half still finds the slug that contains it"
     );
 }
 
@@ -838,8 +844,7 @@ fn put_page_writes_the_contextual_retrieval_stamp_it_is_given_and_none_keeps_the
 }
 
 /// `excludePrivate` on the page reads: a hidden page reads as missing, a scope whose first source
-/// holds a hidden page answers the next source, and `resolveSlugs` never names a hidden exact page
-/// (the member then refuses the trigram half instead of guessing).
+/// holds a hidden page answers the next source, and `resolveSlugs` never names a hidden page.
 #[test]
 fn exclude_private_hides_a_private_page_from_every_page_read() {
     let dir = TempDir::new("pages-exclude-private");
@@ -882,11 +887,11 @@ fn exclude_private_hides_a_private_page_from_every_page_read() {
         .unwrap()
         .unwrap();
     assert_eq!(snapshot["page"]["source_id"], "default");
-    assert!(
-        store
-            .resolve_slugs("people/secret", &hidden)
-            .unwrap()
-            .is_empty()
+    // The hidden exact page is skipped; the fuzzy half then finds the public `people/ada`, whose
+    // title (`people/ada`) shares the `people` trigrams (7 of 18, over the 0.3 threshold).
+    assert_eq!(
+        store.resolve_slugs("people/secret", &hidden).unwrap(),
+        ["people/ada"]
     );
     assert_eq!(
         store.resolve_slugs("people/ada", &alt_first).unwrap(),
