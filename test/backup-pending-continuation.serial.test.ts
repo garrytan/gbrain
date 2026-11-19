@@ -26,8 +26,8 @@ async function repository(name: string) {
 }
 const engine = (roots: string[]) => {
   const sources = () => roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} }));
-  // loadAllSources reads the typed member; the page count still runs executeRaw.
-  return { kind: 'pglite', listSourceRecords: async () => sources(),
+  // loadAllSources and countLivePages read typed members.
+  return { kind: 'pglite', listSourceRecords: async () => sources(), countLivePages: async () => 1,
     executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }] : sources() } as unknown as BrainEngine;
 };
 function spyLsRemote() {

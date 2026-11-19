@@ -37,11 +37,10 @@ src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
 src/commands/doctor/checks/calibration.ts	execute_raw	8
 src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
-src/commands/doctor/checks/content-quality.ts	execute_raw	8
+src/commands/doctor/checks/content-quality.ts	execute_raw	3
 src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
-src/commands/doctor/checks/core-health.ts	execute_raw	7
-src/commands/doctor/checks/core-memory.ts	execute_raw	1
-src/commands/doctor/checks/data-integrity.ts	execute_raw	3
+src/commands/doctor/checks/core-health.ts	execute_raw	5
+src/commands/doctor/checks/data-integrity.ts	execute_raw	2
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1
 src/commands/doctor/checks/db-connection.ts	execute_raw	1
 src/commands/doctor/checks/default-source-path.ts	execute_raw	4
@@ -49,8 +48,7 @@ src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	4
 src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
-src/commands/doctor/checks/extraction-sync.ts	execute_raw	8
-src/commands/doctor/checks/facts-pages.ts	execute_raw	1
+src/commands/doctor/checks/extraction-sync.ts	execute_raw	6
 src/commands/doctor/checks/fence-integrity.ts	execute_raw	1
 src/commands/doctor/checks/folder-access.ts	execute_raw	3
 src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
@@ -64,12 +62,10 @@ src/commands/doctor/checks/google-calendar.ts	execute_raw	1
 src/commands/doctor/checks/grant-new-ops.ts	execute_raw	2
 src/commands/doctor/checks/graph-embedding.ts	execute_raw	2
 src/commands/doctor/checks/guest-source.ts	execute_raw	4
-src/commands/doctor/checks/image-embedding-coverage.ts	execute_raw	1
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
 src/commands/doctor/checks/knowledge-health.ts	execute_raw	3
 src/commands/doctor/checks/landing-gaps.ts	execute_raw	1
 src/commands/doctor/checks/legacy-token-grants.ts	execute_raw	1
-src/commands/doctor/checks/local-audits.ts	execute_raw	1
 src/commands/doctor/checks/managed-guard.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-movement.ts	execute_raw	1
@@ -91,13 +87,12 @@ src/commands/doctor/checks/schema-health.ts	sql_template	3
 src/commands/doctor/checks/search-eval.ts	execute_raw	2
 src/commands/doctor/checks/shared-agent-access.ts	execute_raw	2
 src/commands/doctor/checks/slug-collisions.ts	execute_raw	2
-src/commands/doctor/checks/slug-path-mismatch.ts	execute_raw	2
+src/commands/doctor/checks/slug-path-mismatch.ts	execute_raw	1
 src/commands/doctor/checks/storage-manifest.ts	execute_raw	2
 src/commands/doctor/checks/strict-facts-outside-git.ts	execute_raw	1
 src/commands/doctor/checks/supervisor-health.ts	execute_raw	1
 src/commands/doctor/checks/sync-failures.ts	execute_raw	1
 src/commands/doctor/checks/transcript-archive.ts	execute_raw	1
-src/commands/doctor/checks/transcript-secrets.ts	execute_raw	1
 src/commands/doctor/checks/trust-sources-unclaimed.ts	execute_raw	1
 src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
@@ -106,7 +101,7 @@ src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	2
-src/commands/doctor/skill-checks.ts	execute_raw	5
+src/commands/doctor/skill-checks.ts	execute_raw	3
 src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
@@ -239,7 +234,7 @@ src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
 src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
-src/core/backup/coverage.ts	execute_raw	2
+src/core/backup/coverage.ts	execute_raw	1
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
 src/core/belief/append.ts	execute_raw	7
@@ -264,7 +259,7 @@ src/core/brain-writer.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/brainstorm/orchestrator.ts	execute_raw	1
 src/core/budget/daily-ledger.ts	execute_raw	6
-src/core/by-mention.ts	execute_raw	6
+src/core/by-mention.ts	execute_raw	5
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	9
@@ -500,7 +495,6 @@ src/core/link-source-check-repair.ts	execute_raw	3
 src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	11
 src/core/maintenance/run.ts	execute_raw	1
-src/core/maintenance/status.ts	execute_raw	1
 src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1

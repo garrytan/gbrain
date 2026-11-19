@@ -236,18 +236,13 @@ export async function skillPreconditionsCheck(
   const ctx: PreconditionContext = {
     async countPages() {
       try {
-        const rows = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM pages');
-        return rows[0]?.n ?? 0;
+        return await engine.countPageRows();
       } catch { return 0; }
     },
     async countPagesInDir(dir: string) {
       const prefix = dir.endsWith('/') ? dir : `${dir}/`;
       try {
-        const rows = await engine.executeRaw<{ n: number }>(
-          `SELECT COUNT(*)::int AS n FROM pages WHERE slug LIKE $1 ESCAPE '\\'`,
-          [`${prefix.replace(/[%_\\]/g, m => `\\${m}`)}%`],
-        );
-        return rows[0]?.n ?? 0;
+        return await engine.countPagesBySlugPrefix(prefix);
       } catch { return 0; }
     },
     async listSourceIds() {
