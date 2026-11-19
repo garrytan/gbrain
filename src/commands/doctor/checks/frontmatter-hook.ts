@@ -7,8 +7,7 @@ export interface OutdatedFrontmatterHook { source_id: string; hook_path: string;
 /** Installed gbrain pre-commit hooks older than this gbrain's script, one per hook file. */
 export async function outdatedFrontmatterHooks(engine: BrainEngine, sourceIds?: string[]): Promise<OutdatedFrontmatterHook[]> {
   const { inspectFrontmatterHook } = await import('../../frontmatter-install-hook.ts');
-  const rows = await engine.executeRaw<{ id: string; local_path: string }>(
-    'SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND ($1::text[] IS NULL OR id = ANY($1::text[])) ORDER BY id', [sourceIds ?? null]);
+  const rows = await engine.readDoctorSources('paths_scoped', { sourceIds });
   const seen = new Set<string>();
   const out: OutdatedFrontmatterHook[] = [];
   for (const row of rows) {

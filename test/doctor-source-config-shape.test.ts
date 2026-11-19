@@ -9,11 +9,13 @@
 import { describe, test, expect } from 'bun:test';
 import { checkSourceConfigShape } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { readDoctorSources } from '../src/core/engine-sql/doctor-sources.ts';
 
 /** Build a structurally-typed BrainEngine whose executeRaw returns per-SQL results. */
 function makeMockEngine(handler: (sql: string) => Promise<unknown[]>): BrainEngine {
   return {
     executeRaw: handler,
+    readDoctorSources: (variant: never, scope: never) => readDoctorSources(handler as never, variant, scope),
   } as unknown as BrainEngine;
 }
 

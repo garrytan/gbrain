@@ -151,6 +151,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
   // doctor_reads: the statements doctor checks ran through executeRaw (engine-sql/doctor-reads.ts)
   doctor_reads: ['countPageChildOrphans'],
+  // doctor_sources: the doctor reads over sources (engine-sql/doctor-sources.ts)
+  doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'listOwnedContentRows', 'countDefaultSourceFiles'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],

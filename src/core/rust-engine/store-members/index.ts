@@ -75,6 +75,7 @@ import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as doctorReads from './doctor-reads.ts';
+import * as doctorSources from './doctor-sources.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -124,6 +125,8 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // The statements doctor checks ran through executeRaw (rust/docs/store/cli-reads-doctor.md).
   ...doctorReads,
+  // The doctor reads over sources (rust/docs/store/cli-reads-doctor-src.md).
+  ...doctorSources,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

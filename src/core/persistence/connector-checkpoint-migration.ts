@@ -23,7 +23,7 @@ import type { BrainEngine } from '../engine.ts';
 import { CONNECTOR_KINDS_SQL, connectorCheckpointKeys, connectorIdentity, type ConnectorKind } from './connector-identity.ts';
 import { CONNECTOR_STATE_OP, connectorStateKey, emptyConnectorState, type ConnectorState } from './connector-state.ts';
 
-type Sql = Pick<BrainEngine, 'executeRaw' | 'transaction' | 'kind'>;
+type Sql = Pick<BrainEngine, 'executeRaw' | 'readDoctorSources' | 'transaction' | 'kind'>;
 /** The database time migration 176 first ran; classifies retired-format connector intents. */
 export const CONNECTOR_MIGRATION_OP = 'managed-connector-migration';
 export async function readConnectorV2Cutoff(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string | null> {
@@ -40,11 +40,11 @@ export interface LoadableConnectorKey { id: string; incarnation: string; archive
  * cursor): each source's stable key, plus its alias keys (`alias: true`, #6561) so rows an earlier release wrote
  * under them are never orphans while the source exists.
  */
-export async function loadableConnectorKeys(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, LoadableConnectorKey>> {
-  const rows = await engine.executeRaw<SourceRow>(`SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' IN (${CONNECTOR_KINDS_SQL})`);
+export async function loadableConnectorKeys(engine: Pick<BrainEngine, 'readDoctorSources'>): Promise<Map<string, LoadableConnectorKey>> {
+  const rows = await engine.readDoctorSources('connector_keys');
   const keys = new Map<string, LoadableConnectorKey>();
   for (const row of rows) {
-    const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : row.config ?? {};
+    const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : (row.config ?? {}) as Record<string, unknown>;
     const [stable, ...aliases] = connectorCheckpointKeys(row.id, row.incarnation, connectorIdentity(config.kind as ConnectorKind, config, row.local_path));
     const source = { id: row.id, incarnation: row.incarnation, archived: row.archived === true };
     keys.set(stable!, { ...source, alias: false });
@@ -79,7 +79,7 @@ const orphanPredicate = (first: number) => {
  * Checkpoint and retry rows no source can load. `before` bounds `updated_at`
  * (the migration start); `minAgeDays` adds the doctor/repair age floor.
  */
-export async function orphanConnectorCheckpoints(engine: Pick<BrainEngine, 'executeRaw'>, opts: { before?: string; minAgeDays?: number; limit?: number } = {}): Promise<OrphanCheckpointRow[]> {
+export async function orphanConnectorCheckpoints(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources'>, opts: { before?: string; minAgeDays?: number; limit?: number } = {}): Promise<OrphanCheckpointRow[]> {
   const loadable = [...(await loadableConnectorKeys(engine)).keys()];
   return engine.executeRaw<OrphanCheckpointRow>(`SELECT c.op, c.fingerprint, c.updated_at::text AS updated_at FROM op_checkpoints c
     WHERE c.op IN ('managed-connector','managed-connector-retry') AND ${orphanPredicate(2)}
@@ -87,7 +87,7 @@ export async function orphanConnectorCheckpoints(engine: Pick<BrainEngine, 'exec
 }
 
 /** Checkpoint and retry rows kept only because their key is a source's #6561 alias key (the repair preview lists them). */
-export async function aliasProtectedConnectorCheckpoints(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number> {
+export async function aliasProtectedConnectorCheckpoints(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources'>): Promise<number> {
   const aliases = [...(await loadableConnectorKeys(engine))].filter(([, source]) => source.alias).map(([key]) => key);
   if (!aliases.length) return 0;
   const [row] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM op_checkpoints c

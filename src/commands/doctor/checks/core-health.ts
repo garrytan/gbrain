@@ -609,9 +609,7 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
  */
 export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check> {
   try {
-    const rows = await engine.executeRaw<{ id: string; typ: string | null }>(
-      `SELECT id, jsonb_typeof(config) AS typ FROM sources WHERE jsonb_typeof(config) <> 'object'`,
-    );
+    const rows = await engine.readDoctorSources('config_shape');
     if (rows.length === 0) {
       return {
         name: 'source_config_shape',

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { checkSyncFreshness } from '../src/commands/doctor.ts';
+import { readDoctorSources } from '../src/core/engine-sql/doctor-sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -74,12 +75,14 @@ describe('doctor sync freshness honors automatic sync policy', () => {
   test('legacy archived-column fallback also loads and honors config', async () => {
     await seed('disabled-example', { syncEnabled: false });
     let usedFallback = false;
+    const legacyRaw = async (sql: string) => {
+      if (sql.includes('archived IS NOT TRUE')) throw new Error('column archived does not exist');
+      usedFallback = true;
+      return engine.executeRaw(sql);
+    };
     const legacyEngine = {
-      executeRaw: async (sql: string) => {
-        if (sql.includes('archived IS NOT TRUE')) throw new Error('column archived does not exist');
-        usedFallback = true;
-        return engine.executeRaw(sql);
-      },
+      executeRaw: legacyRaw,
+      readDoctorSources: (variant: never, scope: never) => readDoctorSources(legacyRaw as never, variant, scope),
     } as unknown as BrainEngine;
     const result = await checkSyncFreshness(legacyEngine, { nowMs: NOW });
     expect(usedFallback).toBe(true);
