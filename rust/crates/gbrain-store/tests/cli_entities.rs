@@ -6,7 +6,7 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::cli_reads::entities::{
-    MentionDueQuery, MentionIndexStatusQuery, SiblingCandidateQuery,
+    MentionDueQuery, MentionDueSinceQuery, MentionIndexStatusQuery, SiblingCandidateQuery,
 };
 use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -152,6 +152,19 @@ fn mention_coverage_reads_see_no_status_rows() {
     };
     assert!(status(&["default", "other", "ghost"]).is_empty());
     assert!(status(&[]).is_empty());
+    let since = |source: &str, since: &str| {
+        store.count_mention_due_since(&MentionDueSinceQuery {
+            source_id: source.into(),
+            since: since.into(),
+        })
+    };
+    assert_eq!(since("default", "-infinity").unwrap(), 11);
+    assert_eq!(since("other", "-infinity").unwrap(), 1);
+    assert_eq!(since("ghost", "-infinity").unwrap(), 0);
+    assert_eq!(since("default", "2999-01-01T00:00:00.000Z").unwrap(), 0);
+    assert_eq!(since("default", "1970-01-01T00:00:00.000Z").unwrap(), 11);
+    assert_eq!(since("default", "infinity").unwrap(), 0);
+    assert!(since("default", "yesterday").is_err());
 }
 
 #[test]

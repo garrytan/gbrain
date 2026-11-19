@@ -3938,6 +3938,8 @@ export interface BrainEngine {
   readMentionIndexStatus(sourceIds: readonly string[]): Promise<MentionIndexStatusRow[]>;
   /** The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row. */
   countLivePagesInSource(sourceId: string): Promise<number>;
+  /** Live pages of one source written at or after `since` (`-infinity` for no bound) and not scanned at their content or `mentionVersion`. */
+  countMentionDueSince(sourceId: string, since: string, mentionVersion: number): Promise<number>;
   /**
    * Live pages due for the mention pass (no mention state, or state behind the page's content or `mentionVersion`), in
    * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind.

@@ -37,6 +37,16 @@ pub struct MentionIndexStatusRow {
     pub policy_fingerprint: Option<String>,
 }
 
+/// `countMentionDueSince(sourceId, since, mentionVersion)`: the version does not matter, since no
+/// page has mention state.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionDueSinceQuery {
+    pub source_id: String,
+    /// A `timestamptz` text, or `-infinity` for no lower bound.
+    pub since: String,
+}
+
 /// `countPagesDueForMentions(q)`: only the scope matters, since every page is due.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -147,6 +157,28 @@ impl Store {
         _q: &MentionIndexStatusQuery,
     ) -> Result<Vec<MentionIndexStatusRow>> {
         Ok(Vec::new())
+    }
+
+    /// `countMentionDueSince(sourceId, since)`: the source's live pages with `updated_at >= since`.
+    /// With no mention state every page is unscanned. `-infinity` has no bound; `infinity` matches
+    /// nothing; other text must be the ISO time coverage passes (`toIso`), or the read is refused.
+    pub fn count_mention_due_since(&self, q: &MentionDueSinceQuery) -> Result<u64> {
+        let since = match q.since.trim() {
+            "-infinity" => i64::MIN,
+            "infinity" => return Ok(0),
+            text => parse_iso(text).ok_or_else(|| {
+                StoreError::invalid(format!(
+                    "countMentionDueSince: since is not an ISO time: {text:?}"
+                ))
+            })?,
+        };
+        let read = self.read()?;
+        let n = all_pages(&*read)?
+            .iter()
+            .filter(|p| p.deleted_at_us.is_none() && p.source_id == q.source_id)
+            .filter(|p| p.updated_at_us >= since)
+            .count();
+        Ok(n as u64)
     }
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is

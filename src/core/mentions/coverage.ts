@@ -38,7 +38,7 @@ const toIso = (v: unknown): string | null => {
 };
 
 /** Coverage over `sourceIds` (the caller's permitted sources). */
-export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource'>, sourceIds: string[]): Promise<MentionCoverage> {
+export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource' | 'countMentionDueSince'>, sourceIds: string[]): Promise<MentionCoverage> {
   const policy = await readMentionPolicy(engine);
   const rows = await engine.readMentionIndexStatus(sourceIds);
   const bySource = new Map(rows.map(r => [r.source_id, r]));
@@ -68,12 +68,8 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
       continue;
     }
     // Pages written at or after the last count that are not scanned at their current content (the index on updated_at keeps it small).
-    const [since] = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-        WHERE p.source_id = $1 AND p.updated_at >= $2::timestamptz AND p.deleted_at IS NULL
-          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`,
-      [sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION]);
-    pending += Number(row.pending ?? 0) + Number(since?.n ?? 0);
+    const since = await engine.countMentionDueSince(sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION);
+    pending += Number(row.pending ?? 0) + since;
   }
   const state: CoverageState = !policy.enabled ? 'disabled' : failed ? 'failed' : pending > 0 ? 'pending' : 'complete';
   return { state, pending_pages: policy.enabled ? pending : 0, last_pass_at: last, ...(state === 'complete' ? {} : { degraded: true as const }) };
