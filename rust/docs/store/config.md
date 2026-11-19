@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 A fresh brain has one config entry, `version`, set to the `schemaVersion` given to `open`
-(`getConfig('version')` equals `LATEST_SCHEMA_VERSION`, 319 today). Values are strings and keys
+(`getConfig('version')` equals `LATEST_SCHEMA_VERSION`, 324 today). Values are strings and keys
 cannot contain NUL.
 
 | JS | Resolves | Mirrors |

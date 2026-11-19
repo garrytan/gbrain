@@ -37,7 +37,7 @@ the English stop words are dropped from the query (a query of only stop words ke
 character is its own term; `websearch` syntax (quotes, `or`, `-`) is not interpreted. Like PGLite:
 every term must match, a page is one result represented by its best chunk, order is `score DESC,
 page_id ASC, chunk_id ASC`, `limit` defaults to 20 and is clamped to 100, soft-deleted pages,
-archived sources and image chunks are hidden, `test/`, `attachments/` and `.raw/` slugs are hidden
+archived sources, image chunks and pages whose frontmatter has a `quarantine` or `pinned_question` key (whatever its value) are hidden, `test/`, `attachments/` and `.raw/` slugs are hidden
 (`include_slug_prefixes` opts back in; `exclude_slug_prefixes` adds to them), and `type`, `types`,
 `exclude_slugs`, `sourceId`, `sourceIds` (wins), `detail: "low"` (compiled-truth chunks), `language`
 and `symbolKind` filter. `where`, `afterDate` and `beforeDate` reject `invalid_argument` instead of

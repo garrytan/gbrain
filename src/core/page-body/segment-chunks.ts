@@ -32,9 +32,8 @@ import type { SegmentChunkInput, BodyRegion } from './types.ts';
 import type { StoredRegion } from './segmenter.ts';
 import { projectSegment } from './segment-projection.ts';
 
-import { SEGMENTED_CHUNKER_VERSION } from './chunker-version.ts';
-
-export { SEGMENTED_CHUNKER_VERSION };
+// Defined beside SAFE_FENCE_CHUNKER_VERSION so the engines can read it without loading the chunkers (see that module).
+export { SEGMENTED_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 export type SegmentChunk = Omit<SegmentChunkInput, 'occurrence_id'>;
 

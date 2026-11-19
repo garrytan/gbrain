@@ -92,6 +92,29 @@ function makeTimerStub(): TimerStub {
   };
 }
 
+/** A manual clock for the boot deadline: timers fire only inside advance(), in due order. */
+function makeBootClock() {
+  let t = 0;
+  let next = 1;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  return {
+    now: () => t,
+    setTimeout: (fn: () => void, ms: number) => { const id = next++; timers.set(id, { at: t + ms, fn }); return id; },
+    clearTimeout: (h: unknown) => { timers.delete(h as number); },
+    advance(ms: number) {
+      const end = t + ms;
+      for (;;) {
+        const due = [...timers.entries()].filter(([, v]) => v.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        t = due[1].at;
+        due[1].fn();
+      }
+      t = end;
+    },
+  };
+}
+
 interface Harness {
   engine: StubEngine;
   stdin: EventEmitter & { isTTY?: boolean; on: any; once: any };
@@ -688,15 +711,18 @@ describe('boot-readiness deadline (#3273)', () => {
   // never killed, however long it takes in total.
   test('a slow boot that keeps advancing phases outlives several windows', async () => {
     const h = makeHarness();
+    const clock = makeBootClock();
+    h.opts.bootClock = clock;
     h.opts.startMcpServer = async (_engine, startOpts) => {
       for (const phase of ['source_preflight', 'writeback_config', 'mcp_connect', 'source_scope', 'persistence_consumer', 'resolve_ipc_bind', 'startup_sweep']) {
         startOpts?.onBootPhase?.(phase);
-        await new Promise(r => setTimeout(r, 25));
+        clock.advance(25);
       }
     };
     h.opts.bootTimeoutMs = 60;
     await runServe(h.engine as unknown as BrainEngine, [], h.opts);
-    await new Promise(r => setTimeout(r, 100));
+    clock.advance(100);
+    expect(clock.now()).toBe(275);
     expect(h.engine.disconnectCalls).toBe(0);
     expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(false);
   });
@@ -704,13 +730,15 @@ describe('boot-readiness deadline (#3273)', () => {
   test('forward-progress notes inside one long phase keep the boot alive', async () => {
     const { noteForwardProgress } = await import('../src/core/forward-progress.ts');
     const h = makeHarness();
+    const clock = makeBootClock();
+    h.opts.bootClock = clock;
     h.opts.startMcpServer = async (_engine, startOpts) => {
       startOpts?.onBootPhase?.('persistence_consumer');
-      for (let i = 0; i < 12; i++) { noteForwardProgress(); await new Promise(r => setTimeout(r, 20)); }
+      for (let i = 0; i < 12; i++) { noteForwardProgress(); clock.advance(20); }
     };
     h.opts.bootTimeoutMs = 60;
     await runServe(h.engine as unknown as BrainEngine, [], h.opts);
-    await new Promise(r => setTimeout(r, 100));
+    clock.advance(100);
     expect(h.engine.disconnectCalls).toBe(0);
     expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(false);
   });
@@ -737,10 +765,15 @@ describe('boot-readiness deadline (#3273)', () => {
 
   test('a boot that stops advancing still exits one window after its last progress, naming the phase', async () => {
     const h = makeHarness();
+    const clock = makeBootClock();
+    h.opts.bootClock = clock;
     h.opts.startMcpServer = async (_engine, startOpts) => {
       startOpts?.onBootPhase?.('source_scope');
-      await new Promise(r => setTimeout(r, 30));
+      clock.advance(30);
       startOpts?.onBootPhase?.('persistence_consumer');
+      clock.advance(49);
+      expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(false);
+      clock.advance(1);
       return new Promise<void>(() => {});
     };
     h.opts.bootTimeoutMs = 50;

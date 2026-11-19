@@ -6,7 +6,9 @@
 //! removes the old postings first. Index-wide counts (chunks, total length) live under the meta
 //! key `chunk_stats`; keyword search reads them for BM25.
 
-use crate::error::{INVALID_ARGUMENT, PAGE_NOT_FOUND, REVISION_CONFLICT, Result, StoreError};
+use crate::error::{
+    INVALID_ARGUMENT, INVALID_STATE, PAGE_NOT_FOUND, REVISION_CONFLICT, Result, StoreError,
+};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, ReadScope, find_in_scope, read_page, write_page};
 use crate::sources::DEFAULT_SOURCE;
@@ -1079,6 +1081,27 @@ fn upsert_at_chunker_version(
     }
 }
 
+/// The refusals of PGLite's `sealChunks` that come before any chunk is written, in its order: a page
+/// in an archived source reads as missing (`readPageSnapshot` with `requireLiveSource`), and a
+/// segmented page (NULL body) is refused, because its projection is built from its segments.
+fn refuse_seal(read: &dyn KvRead, page: &PageRecord, slug: &str, source: &str) -> Result<()> {
+    if crate::sources::read_source(read, source)?.is_some_and(|s| s.archived) {
+        return Err(StoreError::new(
+            PAGE_NOT_FOUND,
+            format!("Page not found: {slug} (source={source})"),
+        ));
+    }
+    if page.compiled_truth.is_null() {
+        return Err(StoreError::new(
+            INVALID_STATE,
+            format!(
+                "sealChunks refuses segmented page {slug} (source={source}): its projection is built from its segments"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 impl Store {
     /// `upsertChunks(slug, chunks, opts)`: replaces the page's chunks.
     pub fn upsert_chunks(
@@ -1096,6 +1119,9 @@ impl Store {
                     format!("upsertChunks failed: page \"{slug}\" (source={source}) not found"),
                 ));
             };
+            if options.seal {
+                refuse_seal(&*tx, &page, slug, source)?;
+            }
             if let Some(expected) = &options.expected_revision {
                 if !crate::env::is_uuid(expected) {
                     return Err(StoreError::invalid("expectedRevision must be a UUID revision"));
@@ -1185,8 +1211,10 @@ impl Store {
         chunk_rows(&*read, &page, options.include_embedding)
     }
 
-    /// `deleteChunks(slug, {sourceId})`: removes the page's chunks and, when there were any, clears
-    /// the page's `text_projection_revision` (the seal). The page stays.
+    /// `deleteChunks(slug, {sourceId})`: removes the page's chunks. The page stays. When it removed
+    /// any, the page's text seal (`text_projection_revision`) is cleared, as PGLite's `deleteChunks`
+    /// does: the seal certified the chunks that are gone, so a later unsealed `upsertChunks` stays
+    /// unread until a new seal.
     pub fn delete_chunks(&self, slug: &str, source_id: Option<&str>) -> Result<()> {
         self.write(|tx| {
             let source = source_id.unwrap_or(DEFAULT_SOURCE);
@@ -1758,5 +1786,82 @@ mod chunker_version_tests {
         store.upsert_chunks("a", &[], &sealed_at("2")).unwrap();
         store.upsert_chunks("a", &[same()], &plain).unwrap();
         assert_eq!(record(&store).chunker_version, Some(-1));
+    }
+}
+
+#[cfg(test)]
+mod seal_guard_tests {
+    use super::*;
+    use crate::pages::{PageInput, PageText, PutPageOptions};
+
+    /// A sealed page with one chunk, then turned into a segmented shell (NULL body), as
+    /// `pages::tests::make_shell` does.
+    fn segmented(store: &Store) -> PageRecord {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "Big".into(),
+            compiled_truth: "segment words".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("big", &input, &PutPageOptions::default())
+            .unwrap();
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, "big")?.unwrap();
+                page.compiled_truth = PageText::null();
+                page.timeline = PageText::null();
+                page.content_hash = None;
+                write_page(tx, &page)?;
+                Ok(page)
+            })
+            .unwrap()
+    }
+
+    fn stored_texts(store: &Store, page_id: u64) -> Vec<String> {
+        read_chunks(&*store.read().unwrap(), page_id)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.chunk_text)
+            .collect()
+    }
+
+    #[test]
+    fn seal_refuses_a_segmented_page_before_it_touches_a_chunk() {
+        let store = crate::test_support::store();
+        let page = segmented(&store);
+        let before = stored_texts(&store, page.id);
+        assert!(!before.is_empty());
+        for chunks in [
+            Vec::new(),
+            vec![ChunkInput {
+                chunk_text: "inline".into(),
+                ..ChunkInput::default()
+            }],
+        ] {
+            let err = store
+                .upsert_chunks(
+                    "big",
+                    &chunks,
+                    &UpsertChunksOptions {
+                        seal: true,
+                        ..UpsertChunksOptions::default()
+                    },
+                )
+                .unwrap_err();
+            assert_eq!(err.code, crate::error::INVALID_STATE);
+            assert_eq!(
+                err.message,
+                "sealChunks refuses segmented page big (source=default): its projection is built from its segments"
+            );
+            assert_eq!(stored_texts(&store, page.id), before);
+            let after = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "big")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                after.text_projection_revision,
+                page.text_projection_revision
+            );
+        }
     }
 }

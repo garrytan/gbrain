@@ -79,6 +79,7 @@ const OOS = {
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
+  identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
 } as const;
 
@@ -317,6 +318,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
   'ownerOnlyMarkTriggers': OOS.ownerOnly,
+  'listIdentityDecisions': OOS.identityDecisions,
+  'listRestrictedIdentityMembers': OOS.identityDecisions,
+  'applyIdentityDecisions': OOS.identityDecisions,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,

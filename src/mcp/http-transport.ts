@@ -37,6 +37,7 @@ import { httpInstructionTools } from './initialize-context.ts';
 import { ambientOptsFrom, writebackCaller } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { OWNER_MEMBER_KEY } from '../core/search/private-visibility.ts';
+import { credentialHolders } from '../core/access/owner.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
@@ -311,7 +312,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const grant = await resolveTokenGrant(sql, row);
       const binding = await tokenMemberBinding(sql, row, row.created_at).catch(() => null); // GBRA-218 verify join
       if (!binding) return { ok: false, code: 'access_member_disabled' };
-      const allowList = grant.takesHolders ?? ['world'];
+      const allowList = await credentialHolders(engine, grant.takesHolders, binding.member?.id);
       const { sourceId, allowedSources, hasSourceGrant, ...readShared } = await tokenReadSources(sql, grant, async () => binding.member?.id ?? null);
       const auth: AuthInfo = {
         token,

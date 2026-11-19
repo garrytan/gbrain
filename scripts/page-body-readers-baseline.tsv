@@ -363,6 +363,7 @@ src/core/ops/attribution.ts	get_write_attribution	field	NONE	not the page body: 
 src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline entry id param
 src/core/ops/extraction.ts	reviewDecision	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit; the body is never read
 src/core/ops/get-page-body.ts	bodyBytes	field	META	
+src/core/ops/get-page-body.ts	bodyStripsFor	field	INLINE	GST-3058 room mark: inline pages only (get_page refuses a segmented page whole; a segmented markdown view goes through segmentedBodyStrips)
 src/core/ops/get-page-body.ts	editTarget	field	INLINE	inline branch only (a segmented page maps through the window's segment units); regions read whole within the segmented threshold
 src/core/ops/get-page-body.ts	readPartialBody	call:serializePageToMarkdown	SEGW	
 src/core/ops/get-page-projection.ts	projectGetPage	call:serializePageToMarkdown	STREAM	full content render of an inline page
@@ -665,6 +666,7 @@ src/core/search/read-enrichment.ts	readChainHop	sql	META	SELECT * FROM pages by 
 src/core/search/relational-recall.ts	hydrate	field	LEAD	synopsis from boundedBodyPrefixSql
 src/core/search/safe-chunks.ts	bodyWriteChunkVersion	sql	SEGW	spliced into inline body writes only; a segmented row refuses those writes (CHECK)
 src/core/search/safe-chunks.ts	protectedBodyFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
+src/core/search/safe-chunks.ts	protectedTakesFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
 src/core/secret-store/restore.ts	previewRestore	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
 src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-export.ts	exportInventory	field	INLINE	

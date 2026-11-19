@@ -25,6 +25,7 @@
  * before it returns the stored receipt.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import { OperationError } from '../ops/contract.ts';
 import { registerEngineView, writeSwitchOn } from './switches.ts';
 import { ADMISSION_SOURCE_SQL, type AdmissionSourceRow, WORKTREE_BINDING_SQL, type WorktreeBinding } from '../engine-sql/write-misc.ts';

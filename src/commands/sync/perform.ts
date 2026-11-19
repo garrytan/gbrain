@@ -27,12 +27,14 @@ import type { SyncOpts, SyncResult } from '../sync.ts';
 import type { IdleSkip } from '../../core/persistence/sync-idle-skips.ts';
 import { runConnectorSync } from './connector.ts';
 import { performSyncInner } from './incremental.ts';
+import { syncIdentityDecisions } from '../../core/entities/identity-decisions.ts';
 import { isConnectorSourceKind } from '../../core/persistence/connector-kinds.ts';
 import { ignoredPrivacyLabelRunNotice } from '../../core/search/ignored-privacy-labels.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   const since = opts.dryRun ? null : await syncStartedAt(engine);
   const result = await routeSync(engine, opts);
+  if (!opts.dryRun && result.status !== 'dry_run') await syncIdentityDecisions(engine, opts.sourceId ?? 'default', serr);
   if (!since || result.privacy_label_notice || result.status === 'up_to_date' || result.status === 'dry_run') return result;
   const notice = await ignoredPrivacyLabelRunNotice(engine, opts.sourceId ?? 'default', result.pagesAffected?.length ? { slugs: result.pagesAffected } : { since }, 'sync');
   return notice ? { ...result, privacy_label_notice: notice } : result;

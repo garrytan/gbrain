@@ -97,6 +97,13 @@ describe('OpenClaw assemble() path stays loadable under Node (#6906)', () => {
     expect(bunOnlyChain(boundaryRoots())).toBeNull();
   });
 
+  test('the Postgres engine that the reflex opens under Node reaches no Bun-only import', () => {
+    // The reflex's direct-Postgres rung loads engine-factory.ts, which loads this module lazily (engine-construct.ts),
+    // so the boundary roots above stop one load short of it. If it reaches a Bun-only import, the rung's connect fails
+    // in the host, the reflex fails open and every turn ships with no entity pointers.
+    expect(bunOnlyChain([join(root, 'src/core/postgres-engine.ts')])).toBeNull();
+  });
+
   test('the guard detects a Bun file-asset import', () => {
     expect(bunOnlyChain([join(root, 'src/core/schema-pack/load-active.ts')])).toEqual([
       'src/core/schema-pack/load-active.ts',

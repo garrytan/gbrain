@@ -22,6 +22,7 @@ import type { SearchResult } from '../../src/core/types.ts';
 import { basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks, seedPage } from './chunk-fixtures.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -117,6 +118,25 @@ describe('engine parity: search', () => {
       const multiType = sorted((await engine.searchKeyword(q, { limit: 10, types: ['concept', 'writing'] })).map((r) => r.type));
       expect(multiType).toEqual(['concept', 'writing']);
       return { all, limited, offset, excluded, prefixExcluded, typed, multiType };
+    },
+  );
+
+  parityTest(
+    'searchKeyword hides the prefixes GBRAIN_SEARCH_EXCLUDE names; include_slug_prefixes opts back in',
+    { methods: ['searchKeyword'] },
+    async (engine) => {
+      await seedCorpus(engine);
+      const q = 'fat code thin harness';
+      const slugs = async (opts: Parameters<BrainEngine['searchKeyword']>[1]) => sorted((await engine.searchKeyword(q, opts)).map((r) => r.slug));
+      const plain = await slugs({ limit: 10 });
+      expect(plain.some((s) => s.startsWith('openclaw/'))).toBe(true);
+      return withEnv({ GBRAIN_SEARCH_EXCLUDE: ' openclaw/ ,' }, async () => {
+        const hidden = await slugs({ limit: 10 });
+        expect(hidden.some((s) => s.startsWith('openclaw/'))).toBe(false);
+        const optedIn = await slugs({ limit: 10, include_slug_prefixes: ['openclaw/'] });
+        expect(optedIn).toEqual(plain);
+        return { plain, hidden, optedIn };
+      });
     },
   );
 

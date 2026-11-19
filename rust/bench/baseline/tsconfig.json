@@ -3,5 +3,11 @@
   "compilerOptions": {
     "baseUrl": "../../.."
   },
-  "include": ["./*.ts", "./lib/**/*.ts", "../../scripts/export-corpus.ts"]
+  "include": [
+    "./*.ts",
+    "./lib/**/*.ts",
+    "../../scripts/export-corpus.ts",
+    "../../../src/types/*.d.ts",
+    "../../../src/core/shared-skills/setup-assets.d.ts"
+  ]
 }
