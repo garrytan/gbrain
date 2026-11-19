@@ -552,6 +552,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getWorktreeBinding': OOS.writeMisc,
   'hasExtractedEvents': OOS.writeMisc,
   'listActiveAccessMembers': OOS.writeMisc,
+  'notifierCoverageRecorded': OOS.writeMisc,
   'expireMemoryProposals': OOS.writeMisc,
   'attachSourcePath': OOS.writeMisc,
   'listAwaitingMemoryProposals': OOS.writeMisc,
