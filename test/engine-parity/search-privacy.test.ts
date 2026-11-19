@@ -14,7 +14,9 @@
  *  - Why existing coverage misses it: the searchKeyword excludePrivate case in search.test.ts seeds no owner-only
  *    source, and the other nine members were compared without excludePrivate or not at all.
  *  - Seam: none for the cases (typed methods only). Two further tests read the Rust arm's own engine and the
- *    store-member functions with a brain that throws on any use, because a parity case counts a refusal as a pass.
+ *    store-member functions with a brain that throws on any use, because a parity case counts a refusal as a pass:
+ *    the seven members with a privacy option serve `excludePrivate`, and only the two chunkless members (which have no
+ *    privacy option on PGLite either) and options no member handles still refuse.
  */
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -289,14 +291,8 @@ const refusal = async (run: () => Promise<unknown>): Promise<Refusal> => {
   return { code: error?.code, message: error?.message };
 };
 
-/** The members that refuse `excludePrivate`, each as the call that carries it. */
+/** The members that refuse `excludePrivate` (no privacy option on any arm), each as the call that carries it. */
 const EXCLUDE_PRIVATE_CALLS: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
-  ['searchKeywordChunks', (e) => e.searchKeywordChunks(Q, { excludePrivate: true })],
-  ['countKeywordPages', (e) => e.countKeywordPages(Q, { excludePrivate: true })],
-  ['searchKeywordPages', (e) => e.searchKeywordPages(Q, { excludePrivate: true }, WINDOW)],
-  ['searchTitles', (e) => e.searchTitles(Q, { excludePrivate: true })],
-  ['getChunkPage', (e) => e.getChunkPage('notes/open', { fromIndex: 0, limit: 5, excludePrivate: true })],
-  ['getChunkWindows', (e) => e.getChunkWindows([{ page_id: 1, from_index: 0, to_index: 1, priority: 0 }], { chunkSources: ['compiled_truth'], maxRows: 10, excludePrivate: true } as never)],
   ['countChunklessPagesWithContent', (e) => e.countChunklessPagesWithContent({ excludePrivate: true } as never)],
   ['listChunklessPagesWithContent', (e) => e.listChunklessPagesWithContent({ excludePrivate: true } as never)],
 ];
@@ -304,13 +300,15 @@ const EXCLUDE_PRIVATE_CALLS: Array<[string, (e: BrainEngine) => Promise<unknown>
 describe('the Rust arm answers or refuses each private-page case the way this file says', () => {
   // A parity case counts a typed refusal as a pass, so this test reads the Rust arm's own engine: it says which member is served
   // (and what it returns, hard-coded from PGLite's answer above) and which refuses, with the code and the option named.
-  test('searchKeyword serves excludePrivate and returns exactly the pages PGLite leaves visible; the other members refuse it', async () => {
+  test('every member with a privacy option serves excludePrivate with exactly the pages PGLite leaves visible; the chunkless members refuse it', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');
     if (!rust) return;
     const engine = rust.engine;
     await seedBrain(engine, 'rust', true);
-    const served = await inBrainScope('rust', async () => keys(await engine.searchKeyword(Q, { limit: 50, excludePrivate: true })));
-    expect(served).toEqual(VISIBLE);
+    for (const r of READERS) {
+      const served = await inBrainScope('rust', () => r.run(engine, { excludePrivate: true }));
+      expect({ member: r.member, served }).toEqual({ member: r.member, served: r.visible(VISIBLE) });
+    }
     for (const [member, call] of EXCLUDE_PRIVATE_CALLS) {
       const got = await inBrainScope('rust', () => refusal(() => call(engine)));
       expect({ member, code: got.code, message: got.message })
@@ -328,14 +326,12 @@ describe('the Rust arm answers or refuses each private-page case the way this fi
     const before = keys(await engine.searchKeyword(Q, { limit: 50 }));
     const unhandled: Array<[string, () => Promise<unknown>, string]> = [
       ['searchKeyword', () => engine.searchKeyword(Q, { notAnOption: true } as never), 'notAnOption'],
-      ['searchKeyword', () => engine.searchKeyword(Q, { minTrust: 'medium' } as never), 'minTrust'],
-      ['searchKeywordChunks', () => engine.searchKeywordChunks(Q, { type: 'note' }), 'type'],
       ['searchKeywordChunks', () => engine.searchKeywordChunks(Q, { notAnOption: true } as never), 'notAnOption'],
       ['countKeywordPages', () => engine.countKeywordPages(Q, { notAnOption: true } as never), 'notAnOption'],
       ['searchKeywordPages', () => engine.searchKeywordPages(Q, { notAnOption: true } as never, WINDOW), 'notAnOption'],
       ['searchTitles', () => engine.searchTitles(Q, { notAnOption: true } as never), 'notAnOption'],
-      ['getChunkPage', () => engine.getChunkPage('notes/open', { fromIndex: 0, limit: 5, requireSafeChunks: true }), 'requireSafeChunks'],
-      ['getChunkWindows', () => engine.getChunkWindows([{ page_id: 1, from_index: 0, to_index: 1, priority: 0 }], { chunkSources: ['compiled_truth'], maxRows: 10, requireSafeChunks: true } as never), 'requireSafeChunks'],
+      ['getChunkPage', () => engine.getChunkPage('notes/open', { fromIndex: 0, limit: 5, notAnOption: true } as never), 'notAnOption'],
+      ['getChunkWindows', () => engine.getChunkWindows([{ page_id: 1, from_index: 0, to_index: 1, priority: 0 }], { chunkSources: ['compiled_truth'], maxRows: 10, notAnOption: true } as never), 'notAnOption'],
       ['countChunklessPagesWithContent', () => engine.countChunklessPagesWithContent({ notAnOption: true } as never), 'notAnOption'],
       ['listChunklessPagesWithContent', () => engine.listChunklessPagesWithContent({ notAnOption: true } as never), 'notAnOption'],
     ];
@@ -362,20 +358,12 @@ describe('a member refuses an option it does not handle before it reads the stor
   // came after a store call would fail here, on every run.
   const CASES: Array<[string, unknown[], string]> = [
     ['searchKeyword', [Q, { notAnOption: true }], 'notAnOption'],
-    ['searchKeyword', [Q, { minTrust: 'medium' }], 'minTrust'],
-    ['searchKeyword', [Q, { suppressFlagged: true }], 'suppressFlagged'],
-    ['searchKeywordChunks', [Q, { type: 'note' }], 'type'],
-    ['searchKeywordChunks', [Q, { excludePrivate: true }], 'excludePrivate'],
-    ['countKeywordPages', [Q, { excludePrivate: true }], 'excludePrivate'],
+    ['searchKeywordChunks', [Q, { notAnOption: true }], 'notAnOption'],
     ['countKeywordPages', [Q, { notAnOption: true }], 'notAnOption'],
-    ['searchKeywordPages', [Q, { excludePrivate: true }, WINDOW], 'excludePrivate'],
     ['searchKeywordPages', [Q, { notAnOption: true }, WINDOW], 'notAnOption'],
-    ['searchTitles', [Q, { excludePrivate: true }], 'excludePrivate'],
     ['searchTitles', [Q, { notAnOption: true }], 'notAnOption'],
-    ['getChunkPage', ['notes/open', { fromIndex: 0, limit: 5, excludePrivate: true }], 'excludePrivate'],
-    ['getChunkPage', ['notes/open', { fromIndex: 0, limit: 5, requireSafeChunks: true }], 'requireSafeChunks'],
-    ['getChunkWindows', [[{ page_id: 1, from_index: 0, to_index: 1, priority: 0 }], { chunkSources: ['compiled_truth'], maxRows: 10, excludePrivate: true }], 'excludePrivate'],
-    ['getChunkWindows', [[{ page_id: 1, from_index: 0, to_index: 1, priority: 0 }], { chunkSources: ['compiled_truth'], maxRows: 10, requireSafeChunks: true }], 'requireSafeChunks'],
+    ['getChunkPage', ['notes/open', { fromIndex: 0, limit: 5, notAnOption: true }], 'notAnOption'],
+    ['getChunkWindows', [[{ page_id: 1, from_index: 0, to_index: 1, priority: 0 }], { chunkSources: ['compiled_truth'], maxRows: 10, notAnOption: true }], 'notAnOption'],
     ['countChunklessPagesWithContent', [{ excludePrivate: true }], 'excludePrivate'],
     ['listChunklessPagesWithContent', [{ excludePrivate: true }], 'excludePrivate'],
   ];

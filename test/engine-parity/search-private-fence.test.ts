@@ -73,8 +73,9 @@ describe('protected fence text and the search members', () => {
     },
   );
 
-  // The Rust store does not serve these four under `excludePrivate` yet: each case stops on the typed refusal there (so
-  // no secret can come out), and on both SQL engines the secret stays out.
+  // Every arm serves these four under `excludePrivate`, and the secret stays out on each. The cases declare only the read:
+  // the default put is a typed `putPage` on the SQL arms but the native seam on the Rust arm, which the harness does not
+  // count as a call (the first case declares `putPage` and reaches it through its typed seed).
   const noLeak = async (engine: BrainEngine, backend: ParityBackend, read: (q: string) => Promise<unknown[]>) => {
     await defaultPut(engine, backend);
     const leaked = await served(backend, async () => leaks([...await read('heron'), ...await read(FENCED_WORD)]));
@@ -84,25 +85,25 @@ describe('protected fence text and the search members', () => {
 
   parityTest(
     'searchKeywordChunks under excludePrivate never returns the fenced secret of a default-put page',
-    { methods: ['putPage', 'searchKeywordChunks'] },
+    { methods: ['searchKeywordChunks'] },
     (engine, backend) => noLeak(engine, backend, (q) => engine.searchKeywordChunks(q, { limit: 20, excludePrivate: true })),
   );
 
   parityTest(
     'searchKeywordPages under excludePrivate never returns the fenced secret of a default-put page',
-    { methods: ['putPage', 'searchKeywordPages'] },
+    { methods: ['searchKeywordPages'] },
     (engine, backend) => noLeak(engine, backend, (q) => engine.searchKeywordPages(q, { limit: 20, excludePrivate: true }, { limit: 20 })),
   );
 
   parityTest(
     'searchTitles under excludePrivate never returns the fenced secret of a default-put page',
-    { methods: ['putPage', 'searchTitles'] },
+    { methods: ['searchTitles'] },
     (engine, backend) => noLeak(engine, backend, (q) => engine.searchTitles(q, { limit: 20, excludePrivate: true })),
   );
 
   parityTest(
     'getChunkWindows under excludePrivate never returns the fenced secret of a default-put page',
-    { methods: ['putPage', 'getChunkWindows'] },
+    { methods: ['getChunkWindows'] },
     (engine, backend) => noLeak(engine, backend, async () => engine.getChunkWindows(
       [{ page_id: (await engine.getPage(WORLD))!.id, from_index: 0, to_index: 20, priority: 0 }],
       { chunkSources: ['compiled_truth', 'timeline'], maxRows: 50, excludePrivate: true })),

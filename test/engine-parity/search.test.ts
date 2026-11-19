@@ -586,7 +586,7 @@ describe('engine parity: search', () => {
   // arm that still refused excludePrivate (the arm's tally says how many cases ended on a refusal). This test fails on that
   // arm: it reads the answer, and it asserts the options the store still cannot answer. A refusal caught inside a parity
   // case would fail the arm's check, so both are asserted here on the Rust arm's own engine.
-  test('the Rust arm answers excludePrivate and still refuses the options it cannot answer beside it', async () => {
+  test('the Rust arm answers excludePrivate on every keyword member and still refuses an option no member handles', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');
     if (!rust) return;
     const engine = rust.engine;
@@ -604,22 +604,19 @@ describe('engine parity: search', () => {
       const error = await run().then(() => null, (e: unknown) => e as { code?: string; message?: string });
       return { code: error?.code, message: error?.message };
     };
-    for (const extra of [{ minTrust: 'medium' }, { suppressFlagged: true }, { notAnOption: true }]) {
-      const got = await refusal(() => engine.searchKeyword('periwinkle', { excludePrivate: true, ...extra } as never));
-      expect(got.code).toBe('engine_capability_missing');
-      expect(got.message).toContain(Object.keys(extra)[0]!);
-    }
-    // The other keyword members and the title arm keep refusing excludePrivate: only searchKeyword is served.
-    const others: Array<[string, () => Promise<unknown>]> = [
-      ['searchTitles', () => engine.searchTitles('periwinkle', { excludePrivate: true })],
-      ['searchKeywordChunks', () => engine.searchKeywordChunks('periwinkle', { excludePrivate: true })],
-      ['countKeywordPages', () => engine.countKeywordPages('periwinkle', { excludePrivate: true })],
-      ['searchKeywordPages', () => engine.searchKeywordPages('periwinkle', { excludePrivate: true }, { limit: 5, offset: 0 })],
-    ];
-    for (const [member, run] of others) {
-      const got = await refusal(run);
-      expect({ member, code: got.code, message: got.message }).toMatchObject({ code: 'engine_capability_missing', message: expect.stringContaining('option excludePrivate') });
-    }
+    const got = await refusal(() => engine.searchKeyword('periwinkle', { excludePrivate: true, notAnOption: true } as never));
+    expect(got.code).toBe('engine_capability_missing');
+    expect(got.message).toContain('notAnOption');
+    // The other keyword members and the title arm (which reads titles, so it asks for `refusal`) answer excludePrivate too,
+    // and hide the private page.
+    const pageSlugs = (rows: Array<{ slug: string }>) => [...new Set(rows.map((r) => r.slug))];
+    const others = {
+      searchTitles: pageSlugs(await engine.searchTitles('refusal', { excludePrivate: true })),
+      searchKeywordChunks: pageSlugs(await engine.searchKeywordChunks('periwinkle', { excludePrivate: true })),
+      countKeywordPages: await engine.countKeywordPages('periwinkle', { excludePrivate: true }),
+      searchKeywordPages: pageSlugs(await engine.searchKeywordPages('periwinkle', { excludePrivate: true }, { limit: 5, offset: 0 })),
+    };
+    expect(others).toEqual({ searchTitles: ['notes/refusal-probe'], searchKeywordChunks: ['notes/refusal-probe'], countKeywordPages: 1, searchKeywordPages: ['notes/refusal-probe'] });
   });
 
   parityTest(
@@ -707,9 +704,9 @@ describe('engine parity: search', () => {
   );
 
   parityTest(
-    'keyword search marks a page stale on every arm when a timeline entry is newer than the page',
+    'keyword search marks a page stale as each SQL engine does when a timeline entry is newer than the page',
     { methods: ['searchKeyword', 'searchKeywordChunks', 'searchKeywordPages'] },
-    async (engine) => {
+    async (engine, backend) => {
       for (const slug of ['notes/otter-fresh', 'notes/otter-stale']) {
         const page = { type: 'note' as const, title: slug, compiled_truth: 'otter colony survey', timeline: '' };
         await seedPage(engine, { slug, input: page, chunks: [chunk(0, 'otter colony survey')] });
@@ -723,8 +720,13 @@ describe('engine parity: search', () => {
         chunks: view(await engine.searchKeywordChunks('otter colony', { limit: 10 })),
         pages: view(await engine.searchKeywordPages('otter colony', undefined, { limit: 10 })),
       };
-      const expected = ['notes/otter-fresh false', 'notes/otter-stale true'];
-      expect(out).toEqual({ keyword: expected, chunks: expected, pages: expected });
+      // The SQL engines disagree, and the Rust arm matches PGLite: PGLite's keyword and chunk arms read the newest timeline
+      // entry, Postgres reads no timeline_entries (a read role may have no SELECT on it) and reports false, and the page
+      // search (keyword-statement.ts, shared by both) always reports false.
+      const marked = ['notes/otter-fresh false', 'notes/otter-stale true'];
+      const unmarked = ['notes/otter-fresh false', 'notes/otter-stale false'];
+      const arm = backend === 'postgres' ? unmarked : marked;
+      expect(out).toEqual({ keyword: arm, chunks: arm, pages: unmarked });
       return out;
     },
   );

@@ -14,9 +14,8 @@
 //! keep each page's best chunk (highest score, then lowest chunk id), apply the keyset
 //! `score < s OR (score = s AND page_id > p)`, order by score descending and page id, and take
 //! `LIMIT $limit OFFSET $offset` without clamping. The query is the raw one (no dash-run
-//! collapse). `stale` is true when the page's newest timeline entry is newer than the page
-//! (`p.updated_at < MAX(te.created_at)`), read in the same snapshot as the match. With
-//! `handlesOnly` only the handle arm runs
+//! collapse), and `stale` is always false, as `keyword-statement.ts` reports on both SQL
+//! engines (Postgres reads no `timeline_entries` here). With `handlesOnly` only the handle arm runs
 //! (`searchHandlePages`, the keyword arm's rows for the pages a slug handle names).
 
 use std::collections::BTreeMap;
@@ -168,7 +167,7 @@ impl Store {
         // Keyed by (score descending, page id) so the walk is the final order.
         let mut kept: BTreeMap<(std::cmp::Reverse<OrdF64>, u64), (PageRecord, Best)> =
             BTreeMap::new();
-        self.keyword_pages(query, options, true, |page, best| {
+        self.keyword_pages(query, options, false, |page, best| {
             let passes = after
                 .is_none_or(|(s, p)| best.score < s || (best.score == s && (page.id as f64) > p));
             if passes {
@@ -332,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn a_page_with_a_timeline_entry_newer_than_the_page_is_stale_on_both_arms() {
+    fn page_search_reports_stale_false_even_with_a_newer_timeline_entry_as_the_sql_engines_do() {
         let store = seed();
         std::thread::sleep(std::time::Duration::from_millis(2));
         let entry = crate::timeline::TimelineInput {
@@ -358,7 +357,7 @@ mod tests {
         assert_eq!(
             stale(&text),
             [
-                ("notes/two".to_string(), json!(true)),
+                ("notes/two".to_string(), json!(false)),
                 ("notes/one".to_string(), json!(false)),
                 ("notes/three".to_string(), json!(false)),
             ]
@@ -369,6 +368,6 @@ mod tests {
                 &opts(json!({ "handles": ["two"], "handlesOnly": true })),
             )
             .unwrap();
-        assert_eq!(stale(&handles), [("notes/two".to_string(), json!(true))]);
+        assert_eq!(stale(&handles), [("notes/two".to_string(), json!(false))]);
     }
 }
