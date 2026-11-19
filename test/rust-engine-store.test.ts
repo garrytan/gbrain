@@ -25,7 +25,8 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { addMember, bindCredential, getMember, listMembers } from '../src/core/access/members.ts';
+import { addGroup, addMember, audienceMemberIds, bindCredential, boundCredentials, getMember, legacyTokenByName, listGroups, listMembers, memberByEmail } from '../src/core/access/members.ts';
+import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 import { rescopeArchiveBefore } from '../src/commands/archive-rescope.ts';
 import { rescopeArchiveOnShared } from '../src/core/transcripts/archive.ts';
 
@@ -289,8 +290,9 @@ describe('Rust engine on the store', () => {
     expect(await code(() => engine.writeCredentialReadsUnscoped(target, true))).toBe('engine_capability_missing');
     // bindCredential (gbrain auth rescope --member none) stops at the locked read, so applyAttestSources never runs.
     expect(await code(() => bindCredential(engine, target, { member: null }))).toBe('engine_capability_missing');
-    // gbrain access member add --bind-token looks the token up first, so the command refuses before it writes.
-    expect(await code(() => addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' }))).toBe('engine_capability_missing');
+    // gbrain access member add --bind-token looks the token up first. The store keeps no tokens, so the lookup finds none
+    // and the command refuses before it writes.
+    expect(await code(() => addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' }))).toBe('invalid_params');
     expect(await getMember(engine, 'alice-example')).toBeNull();
     expect(await engine.getConfig('access.restrictions_present')).toBeNull();
     // Without a token the same insert writes the member.
@@ -451,7 +453,7 @@ describe('MCP dispatch caller access on a Rust brain', () => {
 // `gbrain access member add|list` and `access owner set` read members first (access/members.ts getMember, listMembers).
 // On a Rust brain that read is a typed member, so it answers "no members" instead of stopping on raw SQL.
 describe('access member reads on a Rust brain', () => {
-  withAddon('getMember and listMembers read no raw SQL and find no member: the store keeps none', async () => {
+  withAddon('getMember, memberByEmail and listMembers read no raw SQL and find no member: the store keeps none', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -462,6 +464,182 @@ describe('access member reads on a Rust brain', () => {
     expect(await getMember(engine as never, 'alice-example')).toBeNull();
     expect(await listMembers(engine as never)).toEqual([]);
     expect(await listMembers(engine as never, { includeRemoved: true })).toEqual([]);
+    expect(await code(() => memberByEmail(engine as never, 'alice@example.com'))).toBe('not_found');
+    expect(raw).toEqual([]);
+  });
+
+  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential: the store keeps no tokens or clients', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    expect(await code(() => legacyTokenByName(engine as never, 'laptop'))).toBe('invalid_params');
+    expect(await boundCredentials(engine as never, 'alice-example')).toEqual([]);
+    expect(raw).toEqual([]);
+  });
+
+  withAddon('audienceMemberIds reads no raw SQL and finds no audience member: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const listed: string[][] = [];
+    const list = engine.listAudienceAccessMembers.bind(engine);
+    (engine as unknown as { listAudienceAccessMembers: typeof list }).listAudienceAccessMembers = async () => { const ids = await list(); listed.push(ids); return ids; };
+    expect(await audienceMemberIds(engine as never)).toEqual([]);
+    expect({ raw, listed }).toEqual({ raw: [], listed: [[]] });
+  });
+
+  withAddon('memberIdentityFor and stdioMemberIdentity read no raw SQL and find an empty identity: the store keeps no members', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const read: unknown[][] = [];
+    const live = engine.readLiveMember.bind(engine);
+    (engine as unknown as { readLiveMember: typeof live }).readLiveMember = async (via, key) => { read.push([via, key, await live(via, key)]); return live(via, key); };
+    const identities = {
+      token: await memberIdentityFor(engine as never, { principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000c1' } }),
+      client: await memberIdentityFor(engine as never, { principal: { kind: 'oauth_client', id: 'client-alice' } }),
+      stdioConfig: await memberIdentityFor(engine as never, { principal: { kind: 'local_stdio', id: 'stdio' } }),
+      stdioMember: await stdioMemberIdentity(engine as never, 'alice-example'),
+    };
+    expect(identities).toEqual({ token: [], client: [], stdioConfig: [], stdioMember: [] });
+    expect({ raw, read }).toEqual({
+      raw: [],
+      read: [['legacy_token', '00000000-0000-4000-8000-0000000000c1', null], ['oauth_client', 'client-alice', null],
+        ['stdio_config', 'mcp.stdio_member', null], ['member', 'alice-example', null]],
+    });
+  });
+
+  withAddon('listGroups reads no raw SQL and finds no group: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const read: unknown[][] = [];
+    const groups = engine.readAccessGroups.bind(engine);
+    (engine as unknown as { readAccessGroups: typeof groups }).readAccessGroups = async (id) => { const rows = await groups(id); read.push([id, rows]); return rows; };
+    const listed = { all: await listGroups(engine as never), byId: await listGroups(engine as never, 'team-a'), emptyId: await listGroups(engine as never, '') };
+    expect(listed).toEqual({ all: [], byId: [], emptyId: [] });
+    expect({ raw, read }).toEqual({ raw: [], read: [[null, []], ['team-a', []], [null, []]] });
+  });
+
+  withAddon('listPagesNamingReader reads the stored pages, not raw SQL: readers name the principal exactly', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const put = (slug: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', frontmatter });
+    await put('notes/b', { readable_by: ['alice-example', 'group:team-a'] });
+    await put('notes/a', { readable_by: ' Member:Alice-Example ' });
+    await put('notes/open', { owner: 'alice-example' });
+    raw.length = 0;
+    const answers = {
+      member: await engine.listPagesNamingReader('member:alice-example'),
+      group: await engine.listPagesNamingReader('group:team-a'),
+      bare: await engine.listPagesNamingReader('alice-example'),
+    };
+    expect(answers).toEqual({
+      member: [{ slug: 'notes/a', source_id: 'default' }, { slug: 'notes/b', source_id: 'default' }],
+      group: [{ slug: 'notes/b', source_id: 'default' }], bare: [],
+    });
+    expect(raw).toEqual([]);
+  });
+
+  withAddon('forgetting a removed member writes its Wakeshift forget on the store, not through raw SQL', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const wakeUser = 'a'.repeat(32);
+    const id = await engine.openWakeWatch({
+      event: 'gbrain.job.finished', target: '1', targetRef: null, principalKind: 'oauth_client', principalId: 'client-a',
+      memberId: 'alice-example', wakeUser, wsSubscriptionId: 'ws-1', expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    const version = 'b'.repeat(16);
+    await engine.recordWakeTermsAcceptance('member:alice-example', version);
+    const errors: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    let result: unknown;
+    try {
+      const { forgetWakeMember } = await import('../src/core/wakeshift/forget.ts') as Record<string, unknown> as {
+        forgetWakeMember: (e: typeof engine, memberId: string) => Promise<{ ended: number; queued: number }>;
+      };
+      result = await forgetWakeMember(engine, 'alice-example');
+    } finally {
+      console.error = error;
+    }
+    const [watch] = await engine.listWakeWatches({
+      principalKind: 'oauth_client', principalId: 'client-a', memberId: 'alice-example', scope: 'open_or_recent', id,
+    });
+    expect({
+      result, errors, raw,
+      watch: [watch?.state, watch?.last_error],
+      forgets: (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(c => c.wake_user),
+      terms: await engine.hasWakeTermsAcceptance('member:alice-example', version),
+    }).toEqual({
+      result: { ended: 1, queued: 1 }, errors: [], raw: [],
+      watch: ['ended', 'principal_revoked'], forgets: [wakeUser], terms: false,
+    });
+  });
+});
+
+describe('access member reads on a Rust brain with members', () => {
+  withAddon('the member commands and the caller identity read the members and groups the typed writes made, with no raw SQL', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    await addMember(engine, 'zed-example', { kind: 'audience', email: 'zed@example.com', groups: ['team-b', 'team-a'], remote: false });
+    await addMember(engine, 'alice-example', { kind: 'audience', groups: ['team-a'], remote: false });
+    await addMember(engine, 'dave-example', { groups: ['team-c'] });
+    await engine.setAccessMemberDisabled('dave-example', true);
+    expect((await addGroup(engine, 'team-c', ['alice-example'])).created).toBe(false);
+    await engine.setConfig('mcp.stdio_member', ' zed-example ');
+    const out = {
+      byEmail: (await memberByEmail(engine, 'ZED@example.com')).id,
+      audience: await audienceMemberIds(engine),
+      groups: await listGroups(engine),
+      teamA: await listGroups(engine, 'team-a'),
+      stdioConfig: await memberIdentityFor(engine, { principal: { kind: 'local_stdio', id: 'stdio' } }),
+      stdioMember: await stdioMemberIdentity(engine, 'alice-example'),
+      disabled: await stdioMemberIdentity(engine, 'dave-example'),
+      token: await memberIdentityFor(engine, { principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000c1' } }),
+    };
+    expect(out).toEqual({
+      byEmail: 'zed-example',
+      audience: ['alice-example', 'zed-example'],
+      groups: [{ id: 'team-a', members: ['alice-example', 'zed-example'] }, { id: 'team-b', members: ['zed-example'] }, { id: 'team-c', members: ['alice-example', 'dave-example'] }],
+      teamA: [{ id: 'team-a', members: ['alice-example', 'zed-example'] }],
+      stdioConfig: ['group:team-a', 'group:team-b', 'member:zed-example'],
+      stdioMember: ['group:team-a', 'group:team-c', 'member:alice-example'],
+      disabled: [],
+      token: [],
+    });
     expect(raw).toEqual([]);
   });
 });

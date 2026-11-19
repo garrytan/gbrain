@@ -29,8 +29,8 @@ there is no reverse index.
 | `addAccessGroupMembers(groupId, memberIds)` | true when the group was created | the `addGroup` transaction |
 | `removeAccessGroupMembers(groupId, memberIds)` | null | `DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2` per member |
 | `deleteAccessGroup(id)` | null | `DELETE FROM access_groups WHERE id = $1`; its group members go with it (`ON DELETE CASCADE`) |
-| `readAccessMemberIdByEmail(email)` | the member id, or null | `SELECT id FROM access_members WHERE email = $1` |
-| `readAccessMembers({ id } \| { includeRemoved })` | `AccessMemberRow[]` by id, each with its group ids sorted | `engine-sql/access-control.ts` `ACCESS_MEMBER_SQL` |
+| `readAccessGroups(id \| null)` | `AccessGroupRow[]`: every group, or the one with exactly that id, each with its member ids, in byte order | `engine-sql/access-control.ts` `ACCESS_GROUP_SQL` |
+| `readAccessMembers({ id } \| { email } \| { includeRemoved })` | `AccessMemberRow[]` by id, each with its group ids sorted; by email, the member that declares exactly it, removed or not | `engine-sql/access-control.ts` `ACCESS_MEMBER_SQL` |
 | `readAccessGroupIds(ids)` | the ids that name an existing group, each once, in byte order | `engine-sql/access-control.ts` `AUDIENCE_GROUPS_SQL` (`SELECT id FROM access_groups WHERE id = ANY($1)`) |
 | `listActiveAccessMembers()` | the member ids neither disabled nor removed, by id | `engine-sql/write-misc.ts` |
 

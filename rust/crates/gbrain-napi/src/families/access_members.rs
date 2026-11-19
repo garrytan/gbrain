@@ -122,14 +122,14 @@ impl Brain {
         })
     }
 
-    /// `readAccessMemberIdByEmail(email)`: the member id, or null.
+    /// `readAccessGroups(id)`: `{ id, members }[]`, every group or the one `id` names.
     #[napi]
-    pub fn read_access_member_id_by_email<'env>(
+    pub fn read_access_groups<'env>(
         &self,
         env: &'env Env,
-        email: String,
+        id: Option<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_access_member_id_by_email(&email))
+        self.run(env, move |s| s.read_access_groups(id.as_deref()))
     }
 
     /// `readAccessGroupIds(ids)`: the ids that name an existing group, in byte order.

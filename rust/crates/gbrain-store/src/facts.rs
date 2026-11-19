@@ -42,7 +42,7 @@ mod embedding;
 mod fence;
 mod held_cells;
 pub mod loops;
-mod privacy;
+pub(crate) mod privacy;
 pub mod purge;
 pub mod relink;
 pub mod relink_writes;

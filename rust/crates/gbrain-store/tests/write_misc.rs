@@ -4,6 +4,7 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
 
@@ -93,4 +94,97 @@ fn attach_source_path_sets_the_path_and_only_the_passed_fields() {
             .unwrap()
     );
     assert!(store.read_source_state("nope").unwrap().is_none());
+}
+
+fn put(store: &Store, source: &str, slug: &str, frontmatter: Value) {
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter}),
+    )
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": source})).unwrap();
+    store.put_page(slug, &input, &opts).unwrap();
+}
+
+fn naming(store: &Store, principal: &str, limit: u32) -> Vec<(String, String)> {
+    store
+        .list_pages_naming_reader(principal, limit)
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.source_id, r.slug))
+        .collect()
+}
+
+#[test]
+fn pages_naming_reader_match_normalized_readers_exactly_in_every_source() {
+    let dir = TempDir::new("write-misc-pages-naming");
+    let store = open(&dir);
+    source(&store, "other", json!({}));
+    put(
+        &store,
+        "default",
+        "notes/b",
+        json!({"readable_by": ["alice-example", "group:team-a"]}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/a",
+        json!({"readable_by": " Member:Alice-Example "}),
+    );
+    put(
+        &store,
+        "other",
+        "notes/c",
+        json!({"readable_by": ["member:alice-example"]}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/gone",
+        json!({"readable_by": ["alice-example"]}),
+    );
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    put(
+        &store,
+        "default",
+        "notes/bob",
+        json!({"readable_by": ["bob-example"]}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/bad",
+        json!({"readable_by": ["alice-example", 7]}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/open",
+        json!({"title": "alice-example"}),
+    );
+    let pair = |s: &str, p: &str| (s.to_string(), p.to_string());
+    assert_eq!(
+        naming(&store, "member:alice-example", 50),
+        vec![
+            pair("default", "notes/a"),
+            pair("default", "notes/b"),
+            pair("default", "notes/gone"),
+            pair("other", "notes/c"),
+        ]
+    );
+    assert_eq!(
+        naming(&store, "member:alice-example", 2),
+        vec![pair("default", "notes/a"), pair("default", "notes/b")]
+    );
+    assert_eq!(naming(&store, "member:alice-example", 0), vec![]);
+    assert_eq!(
+        naming(&store, "group:team-a", 50),
+        vec![pair("default", "notes/b")]
+    );
+    assert_eq!(naming(&store, "alice-example", 50), vec![]);
+    assert_eq!(naming(&store, "member:Alice-Example", 50), vec![]);
+    assert_eq!(naming(&store, "group:alice-example", 50), vec![]);
+    assert_eq!(naming(&store, "member:carol-example", 50), vec![]);
 }

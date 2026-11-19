@@ -3,7 +3,7 @@
 //!
 //! Members: insertAccessMember, setAccessMemberDisabled, setAccessMemberEmail,
 //! setAccessMemberKind, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
-//! deleteAccessGroup, readAccessMembers, readAccessMemberIdByEmail, listActiveAccessMembers.
+//! deleteAccessGroup, readAccessMembers, readAccessGroupIds, readAccessGroups, listActiveAccessMembers.
 //!
 //! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`):
 //! - `x 0x01 <member id>` -> `MemberRecord` (JSON).
@@ -486,9 +486,41 @@ impl Store {
         Ok(Value::Array(rows))
     }
 
-    /// `readAccessMemberIdByEmail(email)`: the id of the member that declares `email`, or null.
-    pub fn read_access_member_id_by_email(&self, email: &str) -> Result<Option<String>> {
-        email_owner(&*self.read()?, email, "")
+    /// `readAccessGroups(id)`: every group with its member ids, or the one group `id` names
+    /// (exactly that id), each `{ id, members }`; groups and members in byte order.
+    pub fn read_access_groups(&self, id: Option<&str>) -> Result<Value> {
+        let read = self.read()?;
+        let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        match id {
+            Some(id) => {
+                if !id.contains('\0') && read.get(&group_key(id))?.is_some() {
+                    groups.insert(id.to_owned(), Vec::new());
+                }
+            }
+            None => scan_prefix(
+                &*read,
+                &[keys::ACCESS_MEMBERS, GROUP],
+                false,
+                &mut |k, _| {
+                    groups.insert(String::from_utf8_lossy(&k[2..]).into_owned(), Vec::new());
+                    true
+                },
+            )?,
+        }
+        for (group, member) in all_group_members(&*read)? {
+            if let Some(members) = groups.get_mut(&group) {
+                members.push(member);
+            }
+        }
+        Ok(Value::Array(
+            groups
+                .into_iter()
+                .map(|(id, mut members)| {
+                    members.sort();
+                    json!({ "id": id, "members": members })
+                })
+                .collect(),
+        ))
     }
 
     /// `readAccessGroupIds(ids)`: which of `ids` name an existing group, each once, in byte order.

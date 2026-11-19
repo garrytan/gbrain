@@ -7,16 +7,19 @@
  * the Postgres constraint, so it leaves here as the Postgres error would: `code` 23505 (unique), 23514 (check) or
  * 23503 (foreign key) with `constraint_name`, which the member commands read (refuseEmailRace).
  *
- * The member reads (readAccessMembers, readAudiencePrincipals, readAccessMemberIdByEmail, listActiveAccessMembers) read
- * the same records, so a member a write added is visible to the next read.
+ * The member and group reads (readAccessMembers, readAudiencePrincipals, listActiveAccessMembers,
+ * listAudienceAccessMembers, readLiveMember, readAccessGroups) read the same records, so a member a write added is
+ * visible to the next read.
  *
  * The store keeps no access tokens and no OAuth clients, so a token bind on insert and every credential binding
- * member refuse with engine_capability_missing before anything is written.
+ * member refuse with engine_capability_missing before anything is written; readLiveMember finds no member through a
+ * token or a client.
  */
-import type { AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows } from '../../engine-sql/access-control.ts';
+import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, LiveMemberVia } from '../../engine-sql/access-control.ts';
 import type { AccessMemberInsert, AccessMemberKind, CredentialBinding, CredentialBindingRow, CredentialTarget } from '../../engine-sql/access-members.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
+import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 const NO_CREDENTIALS = 'the store keeps no access tokens and no OAuth clients';
@@ -74,23 +77,53 @@ export const deleteAccessGroup: StoreMember<[id: string], void> = async (brain, 
   await write('deleteAccessGroup', () => brain.deleteAccessGroup(id));
 };
 
-export const readAccessMemberIdByEmail: StoreMember<[email: string], string | null> = async (brain, email) => {
-  const id = await storeCall({ member: 'readAccessMemberIdByEmail' }, () => brain.readAccessMemberIdByEmail(email));
-  return typeof id === 'string' ? id : null;
-};
-
 /** The ids of the members neither disabled nor removed, by id. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async (brain) =>
   await storeCall({ member: 'listActiveAccessMembers' }, () => brain.listActiveAccessMembers()) as string[];
 
 const MEMBER_DATES = ['disabled_at', 'tombstoned_at', 'created_at'];
 
-/** The member with this id (any status), or every member by id (removed ones only when asked), each with its groups. */
-export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async (brain, by) => {
-  const lookup = 'id' in by ? { id: by.id } : { includeRemoved: by.includeRemoved };
-  const rows = await storeCall({ member: 'readAccessMembers' }, () => brain.readAccessMembers(lookup)) as AccessMemberRow[];
+async function memberRows(brain: StoreBrain, member: string, lookup: { id: string } | { includeRemoved: boolean }): Promise<AccessMemberRow[]> {
+  const rows = await storeCall({ member }, () => brain.readAccessMembers(lookup)) as AccessMemberRow[];
   return rows.map(row => withDates(row, MEMBER_DATES));
+}
+
+const isLive = (row: AccessMemberRow) => row.disabled_at === null && row.tombstoned_at === null;
+
+/**
+ * The member with this id (any status); the members that declare this email (removed members declare none), by id; or
+ * every member by id (removed ones only when asked). Each carries its groups.
+ */
+export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async (brain, by) => {
+  if ('id' in by) return memberRows(brain, 'readAccessMembers', { id: by.id });
+  if ('email' in by) return (await memberRows(brain, 'readAccessMembers', { includeRemoved: true })).filter(row => row.email === by.email);
+  return memberRows(brain, 'readAccessMembers', { includeRemoved: by.includeRemoved });
 };
+
+/** The ids of the enabled, untombstoned members of kind `audience`, by id. */
+export const listAudienceAccessMembers: StoreMember<[], string[]> = async (brain) =>
+  (await memberRows(brain, 'listAudienceAccessMembers', { includeRemoved: false })).filter(row => row.kind === 'audience' && isLive(row)).map(row => row.id);
+
+/**
+ * The enabled, untombstoned member `via` and `key` name, with its groups, or null: by its id, or by the member the
+ * config key names (edge whitespace trimmed, as Postgres btrims it). The store keeps no access tokens and no OAuth
+ * clients, so no legacy token or client names a member.
+ */
+export const readLiveMember: StoreMember<[via: LiveMemberVia, key: string], LiveMemberRow | null> = async (brain, via, key) => {
+  let id: string | null = key;
+  if (via === 'legacy_token' || via === 'oauth_client') return null;
+  if (via === 'stdio_config') {
+    const value = await storeCall({ member: 'readLiveMember' }, () => brain.getConfig(key)) as string | null;
+    id = typeof value === 'string' ? value.trim() : null;
+  }
+  if (id === null) return null;
+  const [row] = await memberRows(brain, 'readLiveMember', { id });
+  return row && isLive(row) ? { id: row.id, groups: row.groups } : null;
+};
+
+/** Every access group with its member ids, by id; or the one group with exactly this id. A group with no members carries none. */
+export const readAccessGroups: StoreMember<[id: string | null], AccessGroupRow[]> = async (brain, id) =>
+  await storeCall({ member: 'readAccessGroups' }, () => brain.readAccessGroups(id)) as AccessGroupRow[];
 
 /**
  * Which of `memberIds` are enabled, untombstoned members (each with its groups) and which of `groupIds` are existing

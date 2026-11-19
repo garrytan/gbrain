@@ -6,7 +6,6 @@
  * The callers keep every input check and every refusal; these only write.
  */
 import type { SqlExecutor } from './executor.ts';
-import type { LegacyUnscopedRead } from './brands.ts';
 
 export type AccessMemberKind = 'person' | 'audience';
 
@@ -89,12 +88,6 @@ export async function removeAccessGroupMembers(exec: SqlExecutor, groupId: strin
 /** Deletes the group; its memberships go with it (ON DELETE CASCADE). */
 export async function deleteAccessGroup(exec: SqlExecutor, id: string): Promise<void> {
   await exec.executeRaw('DELETE FROM access_groups WHERE id = $1', [id]);
-}
-
-/** The id of the member that declares `email` (removed members have none), or null. */
-export async function readAccessMemberIdByEmail(exec: LegacyUnscopedRead, email: string): Promise<string | null> {
-  const [row] = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE email = $1', [email]);
-  return row?.id ?? null;
 }
 
 // Each credential statement is spelled once per table (access_tokens keyed by id::text, oauth_clients by client_id):

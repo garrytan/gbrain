@@ -16,6 +16,14 @@ fn add(store: &Store, id: &str, email: Option<&str>, groups: &[&str]) -> Value {
     store.insert_access_member(&spec).unwrap()
 }
 
+/// The id of the member (any status) whose row declares `email`, read through `readAccessMembers`.
+fn email_owner(store: &Store, email: &str) -> Option<String> {
+    rows(store, true)
+        .iter()
+        .find(|r| r["email"].as_str() == Some(email))
+        .map(|r| r["id"].as_str().unwrap().to_owned())
+}
+
 fn rows(store: &Store, include_removed: bool) -> Vec<Value> {
     let lookup = AccessMemberLookup {
         id: None,
@@ -92,10 +100,7 @@ fn the_insert_refuses_a_bad_id_a_bad_kind_a_duplicate_and_a_taken_email() {
     // A refused insert leaves nothing behind.
     assert_eq!(rows(&store, true).len(), 1);
     assert_eq!(
-        store
-            .read_access_member_id_by_email("a@example.com")
-            .unwrap()
-            .as_deref(),
+        email_owner(&store, "a@example.com").as_deref(),
         Some("alice-example")
     );
 }
@@ -222,12 +227,7 @@ fn a_tombstone_clears_email_and_groups_and_hides_the_member() {
     assert!(gone["disabled_at"].is_string());
     assert!(gone["email"].is_null());
     assert_eq!(gone["groups"], json!([]));
-    assert_eq!(
-        store
-            .read_access_member_id_by_email("a@example.com")
-            .unwrap(),
-        None
-    );
+    assert_eq!(email_owner(&store, "a@example.com"), None);
     assert_eq!(
         store
             .get_config("access.serves_derived")
@@ -275,4 +275,41 @@ fn group_writes_add_remove_and_cascade() {
     assert!(store.read_access_group_ids(&asked).unwrap().is_empty());
     // The group is gone, so adding to it creates it again.
     assert!(store.add_access_group_members("team-a", &[]).unwrap());
+}
+
+#[test]
+fn read_access_groups_lists_each_group_with_its_members_in_byte_order() {
+    let dir = TempDir::new("access-members");
+    let store = open(&dir);
+    assert_eq!(store.read_access_groups(None).unwrap(), json!([]));
+    add(&store, "bob-example", None, &["team-b", "team-a"]);
+    add(&store, "alice-example", None, &["team-b"]);
+    store.add_access_group_members("Z-empty", &[]).unwrap_err();
+    store.add_access_group_members("empty-team", &[]).unwrap();
+    assert_eq!(
+        store.read_access_groups(None).unwrap(),
+        json!([
+            { "id": "empty-team", "members": [] },
+            { "id": "team-a", "members": ["bob-example"] },
+            { "id": "team-b", "members": ["alice-example", "bob-example"] },
+        ])
+    );
+    assert_eq!(
+        store.read_access_groups(Some("team-b")).unwrap(),
+        json!([{ "id": "team-b", "members": ["alice-example", "bob-example"] }])
+    );
+    // Exactly the id: a member id, another case or a prefix names no group.
+    for id in ["bob-example", "TEAM-A", "team", "team-a\0"] {
+        assert_eq!(store.read_access_groups(Some(id)).unwrap(), json!([]));
+    }
+    // A removed member leaves its groups; a deleted group leaves the list.
+    store.tombstone_access_member("bob-example").unwrap();
+    store.delete_access_group("team-a").unwrap();
+    assert_eq!(
+        store.read_access_groups(None).unwrap(),
+        json!([
+            { "id": "empty-team", "members": [] },
+            { "id": "team-b", "members": ["alice-example"] },
+        ])
+    );
 }

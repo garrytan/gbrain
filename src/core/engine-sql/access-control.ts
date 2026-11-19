@@ -104,26 +104,163 @@ export interface AccessMemberRow {
   groups: string[];
 }
 
-/** Which members to read: the one member with this id (any status), or every member (removed ones only when asked). */
-export type AccessMemberLookup = { id: string } | { includeRemoved: boolean };
+/**
+ * Which members to read: the one member with this id (any status), the members declaring this email (any status), or
+ * every member (removed ones only when asked).
+ */
+export type AccessMemberLookup = { id: string } | { email: string } | { includeRemoved: boolean };
 
-/** The member columns and groups access/members.ts reads (MEMBER_SELECT there is this text). */
-export const ACCESS_MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
-
-/** The statements access/members.ts getMember and listMembers ran through executeRaw. */
+/**
+ * The statements access/members.ts getMember, memberByEmail and listMembers ran through executeRaw, each spelled out
+ * as one literal (the engine-sql dynamic-SQL guard): the member columns and groups, then the filter.
+ */
 export const ACCESS_MEMBER_SQL = {
-  by_id: `${ACCESS_MEMBER_SELECT} WHERE m.id = $1 GROUP BY m.id`,
-  live: `${ACCESS_MEMBER_SELECT} WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
-  all: `${ACCESS_MEMBER_SELECT} GROUP BY m.id ORDER BY m.id`,
+  by_id: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`,
+  by_email: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`,
+  live: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
+  all: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id`,
 } as const;
 
 /**
- * The member rows `by` names, by id: one member by exact id (none when absent), or every member, where a removed
+ * The member rows `by` names, by id: one member by exact id (none when absent), the members whose declared email is
+ * exactly `email` (the caller case-folds it), or every member, where a removed
  * (tombstoned) member is filtered out in the statement unless `includeRemoved`. A failure is thrown unchanged.
  */
 export async function readAccessMembers(exec: MemberLookupRead, by: AccessMemberLookup): Promise<AccessMemberRow[]> {
   if ('id' in by) return exec.executeRaw<AccessMemberRow>(ACCESS_MEMBER_SQL.by_id, [by.id]);
+  if ('email' in by) return exec.executeRaw<AccessMemberRow>(ACCESS_MEMBER_SQL.by_email, [by.email]);
   return exec.executeRaw<AccessMemberRow>(by.includeRemoved ? ACCESS_MEMBER_SQL.all : ACCESS_MEMBER_SQL.live);
+}
+
+/** One live credential: an active (not revoked) legacy token or an OAuth client that is not deleted. */
+export interface AccessCredentialRow {
+  kind: 'token' | 'client';
+  id: string;
+  name: string;
+}
+
+/** Which credentials to read: the active legacy tokens named `tokenName`, or the credentials bound to member `memberId`. */
+export type AccessCredentialLookup = { tokenName: string } | { memberId: string };
+
+/** The statements access/members.ts legacyTokenByName and boundCredentials (tokens, then clients) ran through executeRaw. */
+export const ACCESS_CREDENTIAL_SQL = {
+  token_by_name: 'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at',
+  tokens_by_member: 'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name',
+  clients_by_member: "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id",
+} as const;
+
+/**
+ * The live credentials `by` names: the active legacy tokens whose name is exactly `tokenName` (oldest first), or the
+ * active tokens (by name) and then the clients that are not deleted (by client id) whose stored binding is exactly
+ * `memberId`. Revoked tokens and deleted clients are filtered out in the statement. A failure is thrown unchanged.
+ */
+export async function readAccessCredentials(exec: MemberLookupRead, by: AccessCredentialLookup): Promise<AccessCredentialRow[]> {
+  type Row = { id: string; name: string };
+  if ('tokenName' in by) return (await exec.executeRaw<Row>(ACCESS_CREDENTIAL_SQL.token_by_name, [by.tokenName])).map(r => ({ kind: 'token', id: r.id, name: r.name }));
+  const tokens = await exec.executeRaw<Row>(ACCESS_CREDENTIAL_SQL.tokens_by_member, [by.memberId]);
+  const clients = await exec.executeRaw<Row>(ACCESS_CREDENTIAL_SQL.clients_by_member, [by.memberId]);
+  return [...tokens.map(t => ({ kind: 'token' as const, id: t.id, name: t.name })), ...clients.map(c => ({ kind: 'client' as const, id: c.id, name: c.name }))];
+}
+
+/** The statement access/members.ts audienceMemberIds ran through executeRaw. */
+export const AUDIENCE_KIND_MEMBERS_SQL = "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id";
+
+/**
+ * The ids of the enabled, untombstoned members of kind `audience`, by id. A person, a disabled member and a removed
+ * member are filtered out in the statement. A failure is thrown unchanged; the caller reads it as none.
+ */
+export async function listAudienceAccessMembers(exec: MemberLookupRead): Promise<string[]> {
+  return (await exec.executeRaw<{ id: string }>(AUDIENCE_KIND_MEMBERS_SQL)).map(r => r.id);
+}
+
+/**
+ * How a live member is named: by its id, by the member config mcp.stdio_member names (`key` is the config key), or by
+ * the binding of an active legacy token (`key` is the token id) or of an OAuth client that is not deleted (the client id).
+ */
+export type LiveMemberVia = 'member' | 'stdio_config' | 'legacy_token' | 'oauth_client';
+
+/**
+ * The statements access/caller.ts liveIdentity ran through executeRaw, one per `via`, each spelled out as one literal
+ * (the engine-sql dynamic-SQL guard). The stdio config route trims the value with edgeTrimSql('value') (edge-whitespace.ts).
+ */
+export const LIVE_MEMBER_SQL: Record<LiveMemberVia, string> = {
+  member: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = ($1) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+  stdio_config: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (SELECT btrim(value, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)) FROM config WHERE key = $1) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+  legacy_token: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+  oauth_client: `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`,
+};
+
+/**
+ * The enabled, untombstoned member `via` and `key` name, with its own groups; null when none does (an unknown, disabled
+ * or removed member, a revoked token, a deleted client, an unset config key). A disabled or removed member is filtered
+ * out in the statement. A failure is thrown unchanged; the caller decides what a missing table or a database error means.
+ */
+export async function readLiveMember(exec: MemberLookupRead, via: LiveMemberVia, key: string): Promise<LiveMemberRow | null> {
+  const [row] = await exec.executeRaw<LiveMemberRow>(LIVE_MEMBER_SQL[via], [key]);
+  return row ? { id: row.id, groups: row.groups ?? [] } : null;
+}
+
+/** A group and its member ids, by member id. */
+export interface AccessGroupRow { id: string; members: string[] }
+
+/**
+ * The statements access/members.ts listGroups ran through executeRaw: every group, or the one group `$1` names, each
+ * spelled out as one literal (the engine-sql dynamic-SQL guard).
+ */
+export const ACCESS_GROUP_SQL = {
+  all: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+      GROUP BY g.id ORDER BY g.id`,
+  by_id: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id`,
+} as const;
+
+/**
+ * Every access group with its member ids, by id; or, given an id, the one group with exactly that id (never a member
+ * id, another case or an injected predicate). A group with no members carries none.
+ */
+export async function readAccessGroups(exec: MemberLookupRead, id: string | null): Promise<AccessGroupRow[]> {
+  const rows = id === null ? await exec.executeRaw<AccessGroupRow>(ACCESS_GROUP_SQL.all) : await exec.executeRaw<AccessGroupRow>(ACCESS_GROUP_SQL.by_id, [id]);
+  return rows.map(r => ({ id: r.id, members: r.members ?? [] }));
+}
+
+/** A page by slug and source. */
+export interface PageNamingReaderRow { slug: string; source_id: string }
+
+/** The most pages listPagesNamingReader returns: access/members.ts pagesNaming shows 50 and reads one more to see a cut. */
+export const PAGES_NAMING_READER_LIMIT = 51;
+
+/** The statement access/members.ts pagesNaming ran through executeRaw, spelled out as one literal (LIMIT is PAGES_NAMING_READER_LIMIT). */
+export const PAGES_NAMING_READER_SQL = `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id, slug LIMIT 51`;
+
+/**
+ * The pages, in every source and by (source, slug), whose normalized readers (`gbrain_access_readers`) name exactly
+ * `principal` (`member:<id>` or `group:<id>`), at most PAGES_NAMING_READER_LIMIT of them. Soft-deleted pages count, as
+ * before.
+ */
+export async function listPagesNamingReader(exec: MemberLookupRead, principal: string): Promise<PageNamingReaderRow[]> {
+  const rows = await exec.executeRaw<PageNamingReaderRow>(PAGES_NAMING_READER_SQL, [principal]);
+  return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 }

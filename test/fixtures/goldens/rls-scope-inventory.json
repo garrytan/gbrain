@@ -897,6 +897,17 @@
         ],
         "flagOnScopes": []
       },
+      "forgetWakeMember#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "getAllSlugs#default": {
         "flagOffLanes": [
           "pool"
@@ -2163,6 +2174,17 @@
         ],
         "flagOnScopes": []
       },
+      "listAudienceAccessMembers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChunklessPagesWithContent#afterPageId+sourceId": {
         "flagOffLanes": [
           "pool"
@@ -2648,6 +2670,17 @@
         "flagOnScopes": [
           "*"
         ]
+      },
+      "listPagesNamingReader#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "listPendingSegmentedProjections#default": {
         "flagOffLanes": [
@@ -3164,7 +3197,40 @@
           "default"
         ]
       },
-      "readAccessMemberIdByEmail#default": {
+      "readAccessCredentials#member": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessCredentials#token-name": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessGroups#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessGroups#by-id": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3176,6 +3242,17 @@
         "flagOnScopes": []
       },
       "readAccessMembers#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessMembers#by-email": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3460,6 +3537,50 @@
         "flagOnScopes": []
       },
       "readLedgerSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLiveMember#legacy-token": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLiveMember#member": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLiveMember#oauth-client": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLiveMember#stdio-config": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4998,6 +5119,7 @@
         "findTopologyChanges": "none",
         "findTrajectory": "none",
         "flipBodyGeneration": "none",
+        "forgetWakeMember": "none",
         "generatedPagesIn": "none",
         "getAdjacencyBoosts": "none",
         "getAllConfig": "none",
@@ -5106,6 +5228,7 @@
         "listAllSources": "none",
         "listAmendmentsNotApplied": "none",
         "listAppliedPolicyRevisions": "none",
+        "listAudienceAccessMembers": "none",
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
@@ -5172,6 +5295,7 @@
         "listOwnerProposalRows": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
+        "listPagesNamingReader": "none",
         "listPagesTitledIn": "none",
         "listPendingSegmentedProjections": "none",
         "listPrefixSampledPages": "direct",
@@ -5305,7 +5429,8 @@
         "queueWakeForget": "none",
         "rankEntities": "none",
         "rawTransaction": "none",
-        "readAccessMemberIdByEmail": "none",
+        "readAccessCredentials": "none",
+        "readAccessGroups": "none",
         "readAccessMembers": "none",
         "readAccessTokenMemberGrant": "none",
         "readAccessTokenReceiptGrant": "none",
@@ -5353,6 +5478,7 @@
         "readLedgerSource": "none",
         "readLegacyJobAuthority": "none",
         "readLinkRelationshipEvidence": "none",
+        "readLiveMember": "none",
         "readLivePageBody": "none",
         "readLocalWriterMemberGrant": "none",
         "readLocalWriterRow": "none",

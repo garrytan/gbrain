@@ -51,6 +51,9 @@ async function refusal(fn: () => Promise<unknown>): Promise<unknown> {
   }
 }
 
+/** The id of the member that declares `email`, through lane 12's typed email read (readAccessMembers({ email })). */
+const emailOwner = async (engine: BrainEngine, email: string): Promise<string | null> => (await engine.readAccessMembers({ email }))[0]?.id ?? null;
+
 const serves = async (engine: BrainEngine) => ({
   derived: await engine.getConfig('access.serves_derived'),
   since: (await engine.getConfig('access.serves_since'))?.replace(SINCE, '<since>') ?? null,
@@ -58,7 +61,7 @@ const serves = async (engine: BrainEngine) => ({
 
 describe('access member writes', () => {
   parityTest('a member insert sets the restriction flag and reports only the groups it created', {
-    methods: ['insertAccessMember', 'getConfig', 'listActiveAccessMembers', 'readAccessMemberIdByEmail'],
+    methods: ['insertAccessMember', 'getConfig', 'listActiveAccessMembers', 'readAccessMembers'],
   }, async (engine) => {
     const flagBefore = await engine.getConfig('access.restrictions_present');
     const first = await engine.insertAccessMember(member('alice-example', { displayName: 'Alice', email: 'a@example.com', groups: ['team-a', 'team-b'] }));
@@ -67,8 +70,8 @@ describe('access member writes', () => {
     const out = {
       flagBefore, flagAfter, first, second,
       active: await engine.listActiveAccessMembers(),
-      byEmail: await engine.readAccessMemberIdByEmail('a@example.com'),
-      noEmail: await engine.readAccessMemberIdByEmail('n@example.com'),
+      byEmail: await emailOwner(engine, 'a@example.com'),
+      noEmail: await emailOwner(engine, 'n@example.com'),
     };
     expect(out).toEqual({
       flagBefore: null, flagAfter: '1', first: { groupsCreated: ['team-a', 'team-b'] }, second: { groupsCreated: ['team-c'] },
@@ -126,7 +129,7 @@ describe('access member writes', () => {
   });
 
   parityTest('an email belongs to one member, and email and kind writes skip a removed member', {
-    methods: ['insertAccessMember', 'setAccessMemberEmail', 'setAccessMemberKind', 'tombstoneAccessMember', 'readAccessMemberIdByEmail'],
+    methods: ['insertAccessMember', 'setAccessMemberEmail', 'setAccessMemberKind', 'tombstoneAccessMember', 'readAccessMembers'],
   }, async (engine) => {
     await engine.insertAccessMember(member('alice-example', { email: 'a@example.com' }));
     await engine.insertAccessMember(member('bob-example'));
@@ -134,8 +137,8 @@ describe('access member writes', () => {
       taken: await refusal(() => engine.setAccessMemberEmail('bob-example', 'a@example.com')),
       set: await engine.setAccessMemberEmail('bob-example', 'b@example.com'),
       cleared: await engine.setAccessMemberEmail('alice-example', null),
-      aliceEmail: await engine.readAccessMemberIdByEmail('a@example.com'),
-      bobEmail: await engine.readAccessMemberIdByEmail('b@example.com'),
+      aliceEmail: await emailOwner(engine, 'a@example.com'),
+      bobEmail: await emailOwner(engine, 'b@example.com'),
       unknown: await engine.setAccessMemberEmail('nobody', 'n@example.com'),
       badKind: await refusal(() => engine.setAccessMemberKind('bob-example', 'robot' as never)),
       removedEmail: false as boolean,
@@ -151,7 +154,7 @@ describe('access member writes', () => {
   });
 
   parityTest('a tombstone clears the email, leaves the active list and frees the email', {
-    methods: ['insertAccessMember', 'tombstoneAccessMember', 'listActiveAccessMembers', 'readAccessMemberIdByEmail', 'getConfig'],
+    methods: ['insertAccessMember', 'tombstoneAccessMember', 'listActiveAccessMembers', 'readAccessMembers', 'getConfig'],
   }, async (engine) => {
     await engine.insertAccessMember(member('alice-example', { email: 'a@example.com', groups: ['team-a'] }));
     await engine.insertAccessMember(member('bob-example', { groups: ['team-a'] }));
@@ -159,7 +162,7 @@ describe('access member writes', () => {
     await engine.tombstoneAccessMember('nobody');
     const out = {
       active: await engine.listActiveAccessMembers(),
-      email: await engine.readAccessMemberIdByEmail('a@example.com'),
+      email: await emailOwner(engine, 'a@example.com'),
       ...(await serves(engine)),
       again: await refusal(() => engine.insertAccessMember(member('alice-example'))),
       reuse: await refusal(() => engine.insertAccessMember(member('carol-example', { email: 'a@example.com' }))),
@@ -250,7 +253,7 @@ async function opRefusal(fn: () => Promise<unknown>): Promise<unknown> {
 
 describe('access member commands, end to end', () => {
   parityTest('gbrain access member add, disable, enable, set --email and kind read back through getMember and listMembers', {
-    methods: ['insertAccessMember', 'readAccessMembers', 'readAccessMemberIdByEmail', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind'],
+    methods: ['insertAccessMember', 'readAccessMembers', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind'],
   }, async (engine) => {
     const added = await addMember(engine, 'alice-example', { name: 'Alice', email: 'a@example.com', groups: ['team-a'] });
     const out = {
@@ -301,6 +304,71 @@ describe('access member commands, end to end', () => {
       members: [{ id: 'alice-example', groups: ['team-a', 'team-b'] }],
       groups: ['team-a', 'team-c'],
       empty: { members: [], groups: [] },
+    });
+    return out;
+  });
+});
+
+// The member and group reads lane 12 typed (readAccessMembers by email, listAudienceAccessMembers, readLiveMember,
+// readAccessGroups) answer the members and groups the typed writes made, on every engine: on Rust they read the store.
+describe('access member and group reads after the typed writes', () => {
+  parityTest('the email, audience, live member and group reads name only what the writes made', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'addAccessGroupMembers', 'setConfig',
+      'readAccessMembers', 'listAudienceAccessMembers', 'readLiveMember', 'readAccessGroups'],
+  }, async (engine) => {
+    await engine.insertAccessMember(member('zed-example', { kind: 'audience', email: 'z@example.com', groups: ['team-b', 'team-a'] }));
+    await engine.insertAccessMember(member('alice-example', { kind: 'audience', groups: ['team-a'] }));
+    await engine.insertAccessMember(member('bob-example', { kind: 'audience', email: 'b@example.com', groups: ['team-a'] }));
+    await engine.insertAccessMember(member('carol-example', { kind: 'audience', email: 'c@example.com', groups: ['team-c'] }));
+    await engine.insertAccessMember(member('dave-example', { groups: ['team-c'] }));
+    await engine.setAccessMemberDisabled('bob-example', true);
+    await engine.tombstoneAccessMember('carol-example');
+    await engine.addAccessGroupMembers('team-empty', []);
+    await engine.setConfig('mcp.stdio_member', ' zed-example ');
+    await engine.setConfig('other.key', 'bob-example');
+    const ids = (rows: Awaited<ReturnType<BrainEngine['readAccessMembers']>>) => rows.map(r => [r.id, r.groups]);
+    const out = {
+      byEmail: {
+        declared: ids(await engine.readAccessMembers({ email: 'z@example.com' })),
+        disabled: ids(await engine.readAccessMembers({ email: 'b@example.com' })),
+        removed: ids(await engine.readAccessMembers({ email: 'c@example.com' })),
+        otherCase: ids(await engine.readAccessMembers({ email: 'Z@example.com' })),
+      },
+      audience: await engine.listAudienceAccessMembers(),
+      live: {
+        zed: await engine.readLiveMember('member', 'zed-example'),
+        disabled: await engine.readLiveMember('member', 'bob-example'),
+        removed: await engine.readLiveMember('member', 'carol-example'),
+        group: await engine.readLiveMember('member', 'team-a'),
+        stdioTrimmed: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+        stdioDisabled: await engine.readLiveMember('stdio_config', 'other.key'),
+        stdioUnset: await engine.readLiveMember('stdio_config', 'no.such.key'),
+        token: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c1'),
+        client: await engine.readLiveMember('oauth_client', 'client-alice'),
+      },
+      groups: {
+        all: await engine.readAccessGroups(null),
+        one: await engine.readAccessGroups('team-a'),
+        empty: await engine.readAccessGroups('team-empty'),
+        member: await engine.readAccessGroups('zed-example'),
+        otherCase: await engine.readAccessGroups('Team-A'),
+      },
+    };
+    expect(out).toEqual({
+      byEmail: { declared: [['zed-example', ['team-a', 'team-b']]], disabled: [['bob-example', ['team-a']]], removed: [], otherCase: [] },
+      audience: ['alice-example', 'zed-example'],
+      live: {
+        zed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, disabled: null, removed: null, group: null,
+        stdioTrimmed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, stdioDisabled: null, stdioUnset: null, token: null, client: null,
+      },
+      groups: {
+        all: [
+          { id: 'team-a', members: ['alice-example', 'bob-example', 'zed-example'] }, { id: 'team-b', members: ['zed-example'] },
+          { id: 'team-c', members: ['dave-example'] }, { id: 'team-empty', members: [] },
+        ],
+        one: [{ id: 'team-a', members: ['alice-example', 'bob-example', 'zed-example'] }],
+        empty: [{ id: 'team-empty', members: [] }], member: [], otherCase: [],
+      },
     });
     return out;
   });

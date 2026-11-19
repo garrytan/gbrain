@@ -625,4 +625,61 @@ describe('engine parity: wake watch and forget leases', () => {
       expect(doctor.dead_forgets).toBe(1);
       return answers;
     });
+  parityTest('forgetWakeMember queues a forget of each user the removed member watched under, ends its open watches and drops only its own terms acceptances',
+    { methods: ['forgetWakeMember', 'openWakeWatch', 'endWakeWatches', 'listWakeWatches', 'queueWakeForget', 'claimWakeForgets', 'countPendingWakeForgets', 'recordWakeTermsAcceptance', 'hasWakeTermsAcceptance'] }, async (engine) => {
+      const m1 = { memberId: 'm-1' };
+      const twoSubs = [await engine.openWakeWatch(watch({ ...m1, wakeUser: user(1) })), await engine.openWakeWatch(watch({ ...m1, wakeUser: user(1) }))];
+      const alreadyEnded = await engine.openWakeWatch(watch({ ...m1, wakeUser: user(4) }));
+      await engine.endWakeWatches({ reason: 'unwatched', id: alreadyEnded });
+      const pendingUser = await engine.openWakeWatch(watch({ ...m1, wakeUser: user(5) }));
+      await engine.queueWakeForget(user(5), null);
+      const otherMember = await engine.openWakeWatch(watch({ memberId: 'm-2', wakeUser: user(6) }));
+      const lookalike = await engine.openWakeWatch(watch({ memberId: 'm-10', wakeUser: user(8) }));
+      const noMember = await engine.openWakeWatch(watch({ wakeUser: user(7) }));
+      const v1 = 'a'.repeat(16);
+      const v2 = 'b'.repeat(16);
+      for (const [key, version] of [['member:m-1', v1], ['member:m-1', v2], ['member:m-10', v1], ['member:m-2', v1], ['m-1', v1]] as const) {
+        await engine.recordWakeTermsAcceptance(key, version);
+      }
+      const first = await engine.forgetWakeMember('m-1');
+      const again = await engine.forgetWakeMember('m-1');
+      const nobody = await engine.forgetWakeMember('m-none');
+      const pending = await engine.countPendingWakeForgets();
+      const claimed = (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(c => c.wake_user).sort();
+      const stateOf = async (memberId: string | null, id: number) => {
+        const [row] = await engine.listWakeWatches({ ...mine, memberId, id });
+        return row ? [row.state, row.last_error] : null;
+      };
+      const answers = {
+        first, again, nobody, pending, claimed,
+        watches: {
+          twoSubs: [await stateOf('m-1', twoSubs[0]!), await stateOf('m-1', twoSubs[1]!)],
+          alreadyEnded: await stateOf('m-1', alreadyEnded),
+          pendingUser: await stateOf('m-1', pendingUser),
+          otherMember: await stateOf('m-2', otherMember),
+          lookalike: await stateOf('m-10', lookalike),
+          noMember: await stateOf(null, noMember),
+        },
+        terms: {
+          m1v1: await engine.hasWakeTermsAcceptance('member:m-1', v1),
+          m1v2: await engine.hasWakeTermsAcceptance('member:m-1', v2),
+          m10: await engine.hasWakeTermsAcceptance('member:m-10', v1),
+          m2: await engine.hasWakeTermsAcceptance('member:m-2', v1),
+          bare: await engine.hasWakeTermsAcceptance('m-1', v1),
+        },
+      };
+      // users 1 and 4 are queued (4's watch had already ended); user 5 had a forget pending; the three open m-1 watches end
+      expect(first).toEqual({ ended: 3, queued: 2 });
+      expect(again).toEqual({ ended: 0, queued: 0 });
+      expect(nobody).toEqual({ ended: 0, queued: 0 });
+      expect(pending).toBe(3);
+      expect(claimed).toEqual([user(1), user(4), user(5)]);
+      const revoked = ['ended', 'principal_revoked'];
+      expect(answers.watches).toEqual({
+        twoSubs: [revoked, revoked], alreadyEnded: ['ended', 'unwatched'], pendingUser: revoked,
+        otherMember: ['open', null], lookalike: ['open', null], noMember: ['open', null],
+      });
+      expect(answers.terms).toEqual({ m1v1: false, m1v2: false, m10: true, m2: true, bare: true });
+      return answers;
+    });
 });

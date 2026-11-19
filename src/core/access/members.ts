@@ -21,9 +21,9 @@
  * sets it (`gbrain access member kind`, `member add --kind`); a remote caller is refused.
  */
 import type { BrainEngine } from '../engine.ts';
-import { ACCESS_MEMBER_SELECT, type AccessMemberRow } from '../engine-sql/access-control.ts';
-import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
-import { forgetWakePrincipal } from '../wakeshift/forget.ts';
+import type { AccessMemberRow } from '../engine-sql/access-control.ts';
+import type { SqlQuery } from '../sql-query.ts';
+import { forgetWakeMember } from '../wakeshift/forget.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
@@ -117,8 +117,6 @@ function toRecord(row: AccessMemberRow): MemberRecord {
   };
 }
 
-const MEMBER_SELECT = ACCESS_MEMBER_SELECT;
-
 export async function getMember(engine: BrainEngine, id: string): Promise<MemberRecord | null> {
   const [row] = await engine.readAccessMembers({ id });
   return row ? toRecord(row) : null;
@@ -140,10 +138,10 @@ export async function existingMember(engine: BrainEngine, raw: unknown, action: 
 }
 
 async function assertEmailFree(engine: BrainEngine, email: string, memberId: string): Promise<void> {
-  const owner = await engine.readAccessMemberIdByEmail(email);
-  if (owner === null || owner === memberId) return;
-  throw memberInvalid(`Member "${owner}" already declares that email.`, 'email_taken',
-    `Check the address, or clear it there first: gbrain access member set ${owner} --email none.`,
+  const [row] = await engine.readAccessMembers({ email });
+  if (!row || row.id === memberId) return;
+  throw memberInvalid(`Member "${row.id}" already declares that email.`, 'email_taken',
+    `Check the address, or clear it there first: gbrain access member set ${row.id} --email none.`,
     'An email finds exactly one member, so it is unique per brain.');
 }
 
@@ -157,7 +155,7 @@ async function refuseEmailRace(engine: BrainEngine, error: unknown, email: strin
 /** GST-1158: the one member whose declared email is `raw`; not_found when none, refused when several. Never creates one. */
 export async function memberByEmail(engine: BrainEngine, raw: unknown): Promise<MemberRecord> {
   const email = assertMemberEmail(raw);
-  const rows = await engine.executeRaw<AccessMemberRow>(`${MEMBER_SELECT} WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`, [email]);
+  const rows = await engine.readAccessMembers({ email });
   if (rows.length === 1) return toRecord(rows[0]!);
   if (!rows.length) {
     throw opError('not_found', 'No member declares that email.',
@@ -186,9 +184,8 @@ export async function memberIdentity(engine: BrainEngine, raw: unknown): Promise
 
 /** The one active legacy token named `name`; refuses none or several. */
 export async function legacyTokenByName(engine: BrainEngine, name: string): Promise<CredentialRef> {
-  const rows = await engine.executeRaw<{ id: string; name: string }>(
-    'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at', [name]);
-  if (rows.length === 1) return { kind: 'token', id: rows[0]!.id, name: rows[0]!.name };
+  const rows = await engine.readAccessCredentials({ tokenName: name });
+  if (rows.length === 1) return rows[0]!;
   throw opError('invalid_params', rows.length === 0 ? `No active token named "${name}".` : `${rows.length} active tokens are named "${name}".`,
     rows.length === 0 ? 'List tokens with gbrain auth list, then bind one by name.' : 'Bind one of them by id: gbrain auth rescope --id <uuid> --member <id> (ids from gbrain auth list).',
     { why: 'A binding names exactly one credential.' });
@@ -275,11 +272,9 @@ export async function setMemberKind(engine: BrainEngine, rawId: unknown, rawKind
 }
 
 /** GBRA-108 design 2: the enabled audience members, sorted; empty when none or unreadable (nothing widens). */
-export async function audienceMemberIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
+export async function audienceMemberIds(engine: Pick<BrainEngine, 'listAudienceAccessMembers'>): Promise<string[]> {
   try {
-    const rows = await engine.executeRaw<{ id: string }>(
-      "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id");
-    return rows.map(r => r.id).filter(id => ACCESS_ID_RE.test(id));
+    return (await engine.listAudienceAccessMembers()).filter(id => ACCESS_ID_RE.test(id));
   } catch {
     return [];
   }
@@ -287,18 +282,12 @@ export async function audienceMemberIds(engine: Pick<BrainEngine, 'executeRaw'>)
 
 /** Credentials whose stored binding names `id` (active tokens, clients not deleted). */
 export async function boundCredentials(engine: BrainEngine, id: string): Promise<CredentialRef[]> {
-  const tokens = await engine.executeRaw<{ id: string; name: string }>(
-    'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name', [id]);
-  const clients = await engine.executeRaw<{ id: string; name: string }>(
-    "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id", [id]);
-  return [...tokens.map(t => ({ kind: 'token' as const, ...t })), ...clients.map(c => ({ kind: 'client' as const, ...c }))];
+  return engine.readAccessCredentials({ memberId: id });
 }
 
 /** Pages whose readers name `principal` (member:<id> or group:<g>), bounded. */
 async function pagesNaming(engine: BrainEngine, principal: string): Promise<{ pages: PageRef[]; truncated: boolean }> {
-  const rows = await engine.executeRaw<PageRef>(
-    `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id, slug LIMIT ${PREVIEW_PAGE_LIMIT + 1}`, [principal]);
+  const rows = await engine.listPagesNamingReader(principal);
   return { pages: rows.slice(0, PREVIEW_PAGE_LIMIT), truncated: rows.length > PREVIEW_PAGE_LIMIT };
 }
 
@@ -314,22 +303,19 @@ export async function previewRemoveMember(engine: BrainEngine, rawId: unknown): 
 export async function removeMember(engine: BrainEngine, rawId: unknown): Promise<MemberRemovalPreview> {
   const preview = await previewRemoveMember(engine, rawId);
   if (preview.member.status === 'removed') {
-    await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+    await forgetWakeMember(engine, preview.member.id);
     return preview;
   }
   await engine.tombstoneAccessMember(preview.member.id);
-  await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+  await forgetWakeMember(engine, preview.member.id);
   return { ...preview, member: (await getMember(engine, preview.member.id))! };
 }
 
 export interface GroupRecord { id: string; members: string[] }
 
 export async function listGroups(engine: BrainEngine, id?: string): Promise<GroupRecord[]> {
-  const rows = await engine.executeRaw<{ id: string; members: string[] }>(
-    `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
-     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-     ${id ? 'WHERE g.id = $1' : ''} GROUP BY g.id ORDER BY g.id`, id ? [id] : []);
-  return rows.map(r => ({ id: r.id, members: r.members ?? [] }));
+  // An empty id lists every group, as before.
+  return engine.readAccessGroups(id ? id : null);
 }
 
 async function existingGroup(engine: BrainEngine, raw: unknown): Promise<GroupRecord> {
