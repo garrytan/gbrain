@@ -48,6 +48,9 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     : sql === 'SELECT archived FROM sources WHERE id=$1' ? [{ archived: false }]
     : sql.includes('FROM persistence_brain') ? [{ enabled: false }]
     : executeRaw(sql, params);
+  // The projection installs read the source's archived flag through the typed member; the mock answers it as the
+  // statement above does: every source exists and is live.
+  overrides.readSourceRow ??= async (sourceId: string) => ({ id: sourceId, local_path: null, config: {}, archived: false });
   // indexingContext reads the page's indexing state through the typed member; the mock answers it from the two
   // statements the member runs, so a test that models `SELECT chunker_version` keeps its answer.
   overrides.readPageIndexingState ??= async (pageId: number) => {
@@ -73,14 +76,15 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
 }
 
 /**
- * Vector writes installPageEmbeddings issued, one entry per updated row. Its
- * batched statement binds `[page_id, rows]`; each row is expanded to the
- * positional layout `[id, vector, image, model, page_id, chunk_text, input_hash]`.
+ * Vector writes installPageEmbeddings issued, one entry per updated row. Each
+ * `installChunkEmbeddings(pageId, column, batch)` call is one batch; each row is
+ * expanded to the positional layout `[id, vector, image, model, page_id, chunk_text, input_hash]`.
+ * Any other `UPDATE content_chunks SET` statement counts as itself.
  */
 export function embeddingUpdates(engine: BrainEngine) {
-  return (engine as any)._calls.filter((call: any) => call.method === 'executeRaw'
-    && /^UPDATE content_chunks SET/.test(call.args[0]))
-    .flatMap((call: any) => !call.args[0].includes('jsonb_to_recordset') ? [call]
-      : (JSON.parse(call.args[1][1]) as any[]).map(row => ({ ...call,
-        args: [call.args[0], [row.id, row.embedding, row.image, row.model, call.args[1][0], row.chunk_text, row.input_hash]] })));
+  return (engine as any)._calls.filter((call: any) => call.method === 'installChunkEmbeddings'
+    || (call.method === 'executeRaw' && /^UPDATE content_chunks SET/.test(call.args[0])))
+    .flatMap((call: any) => call.method === 'executeRaw' ? [call]
+      : (JSON.parse(call.args[2]) as any[]).map(row => ({ ...call,
+        args: ['installChunkEmbeddings', [row.id, row.embedding, row.image, row.model, call.args[0], row.chunk_text, row.input_hash]] })));
 }

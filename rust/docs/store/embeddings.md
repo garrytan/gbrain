@@ -100,6 +100,23 @@ millisecond later than the one it replaces. An unlimited cap crosses the addon a
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
 stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 
+## Embedding install
+
+The embedding effect installs a page's vectors through four members (`gbrain_store::embedding_install`;
+the SQL copy is `src/core/engine-sql/embedding-install.ts`, the callers `src/core/persistence/effects.ts`
+and `src/core/page-state/projections.ts`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readEmbeddingCompletion(pageId, { signature, model })` | one row per visible chunk: `{ id, chunk_text, chunk_source, embedding_input_hash, embedded, stamped }`. `embedded` is a vector computed from the current text under `model`; `stamped` is the page's signature equal to `signature` | the completion read |
+| `brain.lockEffectClaimRow(effectId)` | the effect's `{ state, execution_token }`, or null when no effect has the id | `SELECT ... FOR UPDATE` on `persistence_effects` |
+| `lockEmbeddingSwitch()` | nothing: the store write that installs is exclusive, so the switch cannot flip inside it | `SELECT ... FOR SHARE` on the `embedding_disabled` config row |
+| `brain.installChunkEmbeddings(pageId, rows)` | stores each row's vector on the page's chunk with that id while the chunk still holds the row's text; any other row is skipped. A row with no model keeps the chunk's old one | the batch `UPDATE ... FROM jsonb_to_recordset` |
+
+The store has one vector column, `embedding`, and no image vectors. The members refuse another column, an
+image row and a row with no vector, so a vector never lands in the wrong space. The store keeps a sha256
+text hash where PGLite keeps md5; both answer "the text has not changed since the vector was computed".
+
 ## Known edges
 
 - The stale queue keeps a held or capped page (`budgetLimited` is not kept). The plan then refuses the page
@@ -112,3 +129,5 @@ stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 - Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
+- The install path's zero-norm chunk update (`page-state/projections.ts`) is still raw SQL, so a Rust brain
+  refuses a page with a zero-norm vector (`engine_capability_missing`).

@@ -61,6 +61,7 @@ import * as effectScans from './effect-scans.ts';
 import * as effectWorker from './effect-worker.ts';
 import * as noopSettle from './noop-settle.ts';
 import * as pageEmbeddingBudget from './page-embedding-budget.ts';
+import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as linkTemporal from './link-temporal.ts';
@@ -111,6 +112,7 @@ export const STORE_MEMBERS = {
   ...persistence, ...housekeeping, ...effectScans, ...effectWorker, ...noopSettle,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
   ...pageEmbeddingBudget,
+  ...embeddingInstall,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,

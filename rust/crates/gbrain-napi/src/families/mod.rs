@@ -36,6 +36,7 @@ mod chunk_queries;
 mod code_edges;
 mod contradictions;
 mod dream;
+mod embedding_install;
 mod embeddings;
 mod eval_capture;
 mod extraction;

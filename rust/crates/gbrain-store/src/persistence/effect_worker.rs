@@ -457,6 +457,15 @@ impl Store {
         )
     }
 
+    /// `lockEffectClaimRow(effectId)`: the effect's `{ state, execution_token }`, or null when no
+    /// effect has the id. The store write is exclusive, so the row lock PGLite takes is the read.
+    pub fn lock_effect_claim_row(&self, effect_id: i64) -> Result<Value> {
+        Ok(effect_by_id(&*self.read()?, effect_id)?.map_or(
+            Value::Null,
+            |e| json!({ "state": e.state, "execution_token": e.execution_token }),
+        ))
+    }
+
     /// `stampEffectClaim(claim)`: the claimed row, or null when no effect has the id.
     pub fn stamp_effect_claim(&self, claim: &EffectClaim) -> Result<Option<Value>> {
         self.write(|tx| stamp_effect_claim_in(tx, &*self.env, claim))

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 675/675
+# covered: 679/679
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -15,7 +15,7 @@
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 42/42
+# chunks: 46/46
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -71,15 +71,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	53	no	yes	yes	serves
+transaction	lifecycle	yes	54	no	yes	yes	serves
 transactionDirect	lifecycle	yes	9	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	77	yes	yes	yes	serves
+getPage	pages	yes	79	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	304	yes	yes	yes	serves
+putPage	pages	yes	306	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -174,13 +174,13 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
 upsertChunks	chunks	yes	24	yes	yes	yes	serves
-sealChunks	chunks	yes	41	no	yes	yes	serves
-getChunks	chunks	yes	27	yes	yes	yes	serves
+sealChunks	chunks	yes	43	no	yes	yes	serves
+getChunks	chunks	yes	29	yes	yes	yes	serves
 getChunkPage	chunks	yes	5	no	yes	yes	serves
 getChunkWindows	chunks	yes	3	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
 sumStaleChunkChars	chunks	yes	2	no	yes	yes	serves
-setPageEmbeddingSignature	chunks	yes	2	no	yes	yes	serves
+setPageEmbeddingSignature	chunks	yes	3	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
 invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
 listStaleChunks	chunks	yes	2	no	yes	yes	serves
@@ -199,6 +199,10 @@ recordPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
 openPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
 reservePageEmbedding	chunks	yes	4	no	yes	yes	serves
 settlePageEmbeddingReservation	chunks	yes	1	no	yes	yes	serves
+readEmbeddingCompletion	chunks	yes	2	no	yes	yes	serves
+lockEffectClaimRow	chunks	yes	1	no	yes	yes	serves
+lockEmbeddingSwitch	chunks	yes	1	no	yes	yes	serves
+installChunkEmbeddings	chunks	yes	1	no	yes	yes	serves
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
