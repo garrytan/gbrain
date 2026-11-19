@@ -29,6 +29,7 @@ use crate::embeddings::{
 };
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::keyword::frontmatter_holds;
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
@@ -88,6 +89,10 @@ pub struct VectorSearchOptions {
     pub page_type: Option<String>,
     pub types: Option<Vec<String>>,
     pub exclude_slugs: Option<Vec<String>>,
+    /// `frontmatterWhereClauses`: every entry must hold; an entry holds when the top-level field
+    /// equals one of its values or is a list holding one (`keyword::frontmatter_holds`).
+    #[serde(rename = "where")]
+    pub where_fields: Vec<(String, Vec<Value>)>,
     /// `resolveHardExcludes(exclude_slug_prefixes, include_slug_prefixes)`. Absent: the defaults.
     pub hard_excludes: Option<Vec<String>>,
     pub detail: Option<String>,
@@ -411,6 +416,10 @@ fn page_passes(
             .source_ids
             .as_ref()
             .is_some_and(|ids| !ids.contains(&page.source_id))
+        || !options
+            .where_fields
+            .iter()
+            .all(|(key, values)| frontmatter_holds(&page.frontmatter, key, values))
         // A store page that records no version was chunked by this store's chunker, which seals (as
         // `chunk_queries` reads it); only a recorded version below the safe fence chunker is unsafe.
         || (options.require_safe_chunks
@@ -1143,6 +1152,86 @@ mod tests {
         assert_eq!(
             top(json!({"exclude_private": policy, "exclude_slugs": ["a-exact"], "limit": 2})),
             ["o-public", "d-multi"]
+        );
+    }
+
+    /// `where` (`frontmatterWhereClauses`): every key holds, a key's values OR together, a list
+    /// field holds a value it contains, and the filter applies before the limit.
+    #[test]
+    fn where_keeps_the_pages_whose_frontmatter_holds_every_key() {
+        let s = corpus();
+        let fm = |v: Value| json!({ "frontmatter": v });
+        page(
+            &s,
+            "default",
+            "m-draft",
+            &[axis(0, 4)],
+            fm(json!({"status": "draft"})),
+        );
+        page(
+            &s,
+            "default",
+            "n-listed",
+            &[axis(0, 4)],
+            fm(json!({"status": ["active", "x"]})),
+        );
+        page(
+            &s,
+            "default",
+            "o-ranked",
+            &[axis(0, 4)],
+            fm(json!({"status": "active", "rank": 3})),
+        );
+        page(
+            &s,
+            "default",
+            "p-pinned",
+            &[axis(0, 4)],
+            fm(json!({"pinned": true})),
+        );
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let all = ["a-exact", "m-draft", "n-listed", "o-ranked", "p-pinned"];
+        assert_eq!(top(json!({"limit": 5})), all);
+        assert_eq!(top(json!({"limit": 5, "where": []})), all);
+        assert_eq!(
+            top(json!({"where": [["status", ["active"]]]})),
+            ["n-listed", "o-ranked"]
+        );
+        // The limit counts kept pages only: the dropped pages tie at the top score and take no slot.
+        assert_eq!(
+            top(json!({"limit": 1, "where": [["status", ["active"]]]})),
+            ["n-listed"]
+        );
+        assert_eq!(
+            top(json!({"limit": 1, "offset": 1, "where": [["status", ["active"]]]})),
+            ["o-ranked"]
+        );
+        assert_eq!(
+            top(json!({"where": [["status", ["draft", "x"]]]})),
+            ["m-draft", "n-listed"]
+        );
+        // The member sends a string's numeric and boolean readings beside it.
+        assert_eq!(top(json!({"where": [["rank", ["3", 3]]]})), ["o-ranked"]);
+        assert_eq!(
+            top(json!({"where": [["rank", ["3"]]]})),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            top(json!({"where": [["pinned", ["true", true]]]})),
+            ["p-pinned"]
+        );
+        assert_eq!(
+            top(json!({"where": [["status", ["active"]], ["rank", [3]]]})),
+            ["o-ranked"]
+        );
+        assert_eq!(
+            top(json!({"where": [["missing", ["x"]]]})),
+            Vec::<String>::new()
         );
     }
 

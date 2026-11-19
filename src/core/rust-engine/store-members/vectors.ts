@@ -19,17 +19,19 @@ import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import { whereFields } from './search-filters.ts';
 
 /** The `SearchOpts` keys the vector statement reads and the store applies. */
 const VECTOR_FILTERS = [
   'limit', 'offset', 'type', 'types', 'exclude_slugs', 'exclude_slug_prefixes', 'include_slug_prefixes', 'detail',
   'language', 'symbolKind', 'sourceId', 'sourceIds', 'source_boosts', 'embeddingColumn', 'requireSafeChunks', 'excludePrivate',
+  'where',
 ] as const;
 
 /**
  * Keys the vector statement never reads, or reads only to steer its HNSW candidate pool (`vectorLegacyGuard`,
  * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. A date bound's `*Inclusive` flag does
- * nothing without the bound. `where`, `afterDate`, `beforeDate`, `minTrust` and `suppressFlagged` are absent: the store
+ * nothing without the bound. `afterDate`, `beforeDate`, `minTrust` and `suppressFlagged` are absent: the store
  * applies none of them, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
  */
 const VECTOR_IGNORED = [
@@ -79,15 +81,8 @@ function guardModel(column: SearchOpts['embeddingColumn']): string | null {
   return resolved.embeddingModel || null;
 }
 
-/** An empty `where` adds no clause; any other refuses (the store applies no frontmatter predicates). */
-function refuseUnapplied(opts: SearchOpts): SearchOpts {
-  const { where, ...rest } = opts;
-  if (where && Object.keys(where).length > 0) refuseMember('searchVector', 'option where');
-  return rest;
-}
-
 export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOpts], SearchResult[]> = async (brain, embedding, opts = {}) => {
-  const o = takeOptions('searchVector', refuseUnapplied(opts), VECTOR_FILTERS, VECTOR_IGNORED) as SearchOpts;
+  const o = takeOptions('searchVector', opts, VECTOR_FILTERS, VECTOR_IGNORED) as SearchOpts;
   const model = guardModel(o.embeddingColumn);
   // The store keeps one vector column, `embedding`; a brain whose config routes vectors to another column is refused
   // as the embedding members refuse it, not answered from the wrong space.
@@ -107,6 +102,8 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     type: o.type || null,
     types: o.types?.length ? o.types : null,
     exclude_slugs: o.exclude_slugs?.length ? o.exclude_slugs : null,
+    // `frontmatterWhereClauses`: an absent or empty `where` adds no clause.
+    where: o.where ? whereFields('searchVector', o.where) : [],
     hard_excludes: resolveHardExcludes(o.exclude_slug_prefixes, o.include_slug_prefixes),
     detail: o.detail === 'low' ? 'low' : null,
     language: o.language || null,

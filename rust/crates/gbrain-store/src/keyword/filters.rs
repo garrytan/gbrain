@@ -283,7 +283,11 @@ fn jsonb_eq(a: &Value, b: &Value) -> bool {
 }
 
 /// `frontmatter @> {key: v} OR frontmatter @> {key: [v]}` for any `v` of `values`.
-fn frontmatter_holds(frontmatter: &Map<String, Value>, key: &str, values: &[Value]) -> bool {
+pub(crate) fn frontmatter_holds(
+    frontmatter: &Map<String, Value>,
+    key: &str,
+    values: &[Value],
+) -> bool {
     let Some(field) = frontmatter.get(key) else {
         return false;
     };
