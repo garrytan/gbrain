@@ -181,8 +181,8 @@ A store written before those checks may hold a page SQL can never hold. `searchT
 nothing (`titles::readable_page_vector`, which skips only the size error) rather than failing every search in its
 scope. The refusal is a parity case (`test/engine-parity/page-vector-overflow.test.ts`; the arm's `putPage` always writes
 with `index: false`); the chunking path, the repeated `putPage` that no longer fits and the stored page are Rust unit tests in
-`keyword/titles.rs` (the SQL engines cannot hold a title that large: `idx_pages_source_title_lower` refuses a title of
-about 8 KB first).
+`keyword/titles.rs` (before #9779 the SQL engines refused a title of about 8 KB in the btree `idx_pages_source_title_lower`;
+the hash index `idx_pages_title_lower_hash` that replaced it holds a title of any length).
 
 ## The page filter
 
