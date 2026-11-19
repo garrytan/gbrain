@@ -5311,6 +5311,7 @@
         "readMcpLifetimeUsage": "none",
         "readMcpLogPruneCutoff": "none",
         "readMcpRollupPrunedBefore": "none",
+        "readMentionIndexStatus": "none",
         "readMentionLastPass": "none",
         "readOldestWaitingAge": "none",
         "readOwnerOnlySourceConfig": "none",

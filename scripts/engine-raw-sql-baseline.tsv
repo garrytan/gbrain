@@ -522,7 +522,7 @@ src/core/loops/loops-store.ts	execute_raw	11
 src/core/maintenance/run.ts	execute_raw	1
 src/core/maintenance/status.ts	execute_raw	1
 src/core/meetings/meetings-source.ts	execute_raw	3
-src/core/mentions/coverage.ts	execute_raw	4
+src/core/mentions/coverage.ts	execute_raw	3
 src/core/mentions/newer-mentions.ts	execute_raw	1
 src/core/mentions/pass.ts	execute_raw	33
 src/core/mentions/referrers.ts	execute_raw	6

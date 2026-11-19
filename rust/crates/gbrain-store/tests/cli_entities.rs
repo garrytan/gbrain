@@ -5,7 +5,9 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
-use gbrain_store::cli_reads::entities::{MentionDueQuery, SiblingCandidateQuery};
+use gbrain_store::cli_reads::entities::{
+    MentionDueQuery, MentionIndexStatusQuery, SiblingCandidateQuery,
+};
 use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
@@ -135,6 +137,21 @@ fn mention_state_is_absent_so_every_live_page_is_due() {
     assert_eq!(due(Some("other")), 1);
     assert_eq!(due(Some("ghost")), 0);
     assert_eq!(due(None), 12);
+}
+
+#[test]
+fn mention_coverage_reads_see_no_status_rows() {
+    let dir = TempDir::new("cli-mention-coverage");
+    let store = seeded(&dir);
+    let status = |ids: &[&str]| {
+        store
+            .read_mention_index_status(&MentionIndexStatusQuery {
+                source_ids: ids.iter().map(|s| s.to_string()).collect(),
+            })
+            .unwrap()
+    };
+    assert!(status(&["default", "other", "ghost"]).is_empty());
+    assert!(status(&[]).is_empty());
 }
 
 #[test]

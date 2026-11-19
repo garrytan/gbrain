@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -14,6 +14,10 @@ import { ownerOnlyFormIn, storePagePolicy, storePageTextPolicy, type StorePrivac
 
 export const readMentionLastPass: StoreMember<[sourceId?: string | null], string | null> = (brain, sourceId) =>
   storeCall({ member: 'readMentionLastPass', sourceId: sourceId ?? undefined }, () => brain.readMentionLastPass(sourceId ?? null));
+
+/** The store keeps no mention-index status, so every source reads as having no row (coverage counts its live pages). */
+export const readMentionIndexStatus: StoreMember<[sourceIds: readonly string[]], MentionIndexStatusRow[]> = (brain, sourceIds) =>
+  storeCall({ member: 'readMentionIndexStatus' }, () => brain.readMentionIndexStatus({ sourceIds: [...sourceIds] }));
 
 export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number> = async (brain, q) => {
   const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases']);

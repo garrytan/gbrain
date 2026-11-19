@@ -202,6 +202,11 @@ const PINS: Pin[] = [
     case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
     texts: ['SELECT config FROM sources WHERE id = $1'],
   },
+  {
+    from: 'src/core/mentions/coverage.ts:43 readMentionCoverage',
+    case: { method: 'readMentionIndexStatus', variant: 'default', run: e => e.readMentionIndexStatus(['default', 'other']) },
+    texts: [`SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

@@ -19,6 +19,24 @@ const PRIVACY_LABEL_KEYS: &[&str] = &["access", "confidentiality"];
 /// The frontmatter key that marks a quarantined page (`QUARANTINE_KEY`).
 const QUARANTINE_KEY: &str = "quarantine";
 
+/// `readMentionIndexStatus(sourceIds)`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionIndexStatusQuery {
+    pub source_ids: Vec<String>,
+}
+
+/// One `mention_index_status` row as `readMentionIndexStatus` returns it. The store writes none.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MentionIndexStatusRow {
+    pub source_id: String,
+    pub state: String,
+    pub pending: i64,
+    pub counted_at: Option<String>,
+    pub last_pass_at: Option<String>,
+    pub policy_fingerprint: Option<String>,
+}
+
 /// `countPagesDueForMentions(q)`: only the scope matters, since every page is due.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,6 +137,16 @@ impl Store {
     /// it is always `None`.
     pub fn read_mention_last_pass(&self, _source_id: Option<&str>) -> Result<Option<String>> {
         Ok(None)
+    }
+
+    /// `readMentionIndexStatus(sourceIds)`: the status rows of those sources. The store keeps no
+    /// mention-index status, so it is always empty and mention coverage counts each source's live
+    /// pages, as on a PGLite brain where the pass never ran.
+    pub fn read_mention_index_status(
+        &self,
+        _q: &MentionIndexStatusQuery,
+    ) -> Result<Vec<MentionIndexStatusRow>> {
+        Ok(Vec::new())
     }
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is
