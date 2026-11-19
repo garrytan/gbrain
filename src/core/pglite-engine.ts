@@ -200,6 +200,7 @@ import * as filesOpsImpl from './engine-sql/files-ops.ts';
 import * as contradictionsCycleImpl from './engine-sql/contradictions-cycle.ts';
 import * as ontologyRepairImpl from './engine-sql/ontology-repair.ts';
 import * as adminReadsImpl from './engine-sql/admin-reads.ts';
+import * as factsRecallImpl from './engine-sql/facts-recall.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import * as factsConversationImpl from './engine-sql/facts-conversation.ts';
 import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
@@ -1739,6 +1740,43 @@ export class PGLiteEngine implements BrainEngine {
   lockPageById(pageId: number) { return factsConversationImpl.lockPageById(this.rawRead, pageId); }
   listClearedRelinkedFacts(sourceId: string, slug: string) { return factsConversationImpl.listClearedRelinkedFacts(this.rawRead, sourceId, slug); }
   countEmbeddedFactsAmong(sourceId: string, ids: number[]) { return factsConversationImpl.countEmbeddedFactsAmong(this.rawRead, sourceId, ids); }
+  // Facts statements, write path and recall pool reads (engine-sql/facts-trust.ts, facts-recall.ts)
+  readPendingWriteReceipt(principalKind: string, principalId: string, requestId: string) { return factsTrustImpl.readPendingWriteReceipt(this.rawRead, principalKind, principalId, requestId); }
+  lockSourceShared(sourceId: string) { return factsTrustImpl.lockSourceShared(this.rawRead, sourceId); }
+  listOversizedStaleFacts(opts: { sourceId?: string; model: string; dims: number; maxTokens: number }) { return factsTrustImpl.listOversizedStaleFacts(this.rawRead, opts); }
+  listLivePersonTitles(sourceId: string, slugs: string[]) { return factsTrustImpl.listLivePersonTitles(this.rawRead, sourceId, slugs); }
+  readLiveFactEntityPage(sourceId: string, slug: string, excludePrivate?: boolean) { return factsTrustImpl.readLiveFactEntityPage(this.rawRead, sourceId, slug, excludePrivate); }
+  lockAgentWritebackSetting(key: string) { return factsTrustImpl.lockAgentWritebackSetting(this.rawRead, key); }
+  listFactsToRetireFromPage(sourceId: string, session: string, slug: string, pattern: string) { return factsTrustImpl.listFactsToRetireFromPage(this.rawRead, sourceId, session, slug, pattern); }
+  listContestedProposalPairs(ids: number[], policy: factsTrustImpl.ContestedReadPolicy) { return factsTrustImpl.listContestedProposalPairs(this.rawRead, ids, policy); }
+  listFactProvenance(sourceId: string, ids: number[]) { return factsTrustImpl.listFactProvenance(this.rawRead, sourceId, ids); }
+  recordDerivationEdges(derived: factsTrustImpl.DerivationEdgeRef, sourceId: string | null, edges: readonly factsTrustImpl.DerivationEdgeRef[]) { return factsTrustImpl.recordDerivationEdges(this.rawRead, derived, sourceId, edges); }
+  listDerivedRows(frontier: readonly factsTrustImpl.DerivationEdgeRef[], limit: number) { return factsTrustImpl.listDerivedRows(this.rawRead, frontier, limit); }
+  expireDerivedFacts(ids: number[], sourceId: string) { return factsTrustImpl.expireDerivedFacts(this.rawRead, ids, sourceId); }
+  deactivateDerivedTakes(ids: number[], sourceId: string) { return factsTrustImpl.deactivateDerivedTakes(this.rawRead, ids, sourceId); }
+  softDeleteDerivedPages(ids: number[], sourceId: string) { return factsTrustImpl.softDeleteDerivedPages(this.rawRead, ids, sourceId); }
+  markNeedsRederive(table: string, ids: string[], sourceId: string, requestId: string | null, reason: string) { return factsTrustImpl.markNeedsRederive(this.rawRead, table, ids, sourceId, requestId, reason); }
+  readMemberPageWithdrawal(q: factsTrustImpl.MemberPageWithdrawalQuery) { return factsTrustImpl.readMemberPageWithdrawal(this.rawRead, q); }
+  readFactVisibility(id: number, sourceId: string) { return factsTrustImpl.readFactVisibility(this.rawRead, id, sourceId); }
+  readReplacementTarget(q: factsTrustImpl.ReplacementTargetQuery) { return factsTrustImpl.readReplacementTarget(this.rawRead, q); }
+  readPairFactRow(id: number, lock?: boolean) { return factsTrustImpl.readPairFactRow(this.rawRead, id, lock); }
+  expireSupersededFact(q: { oldId: number; sourceId: string; newId: number; until: string | null }) { return factsTrustImpl.expireSupersededFact(this.rawRead, q); }
+  restoreSupersededFact(q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }) { return factsTrustImpl.restoreSupersededFact(this.rawRead, q); }
+  readFactForForget(id: number) { return factsTrustImpl.readFactForForget(this.rawRead, id); }
+  expireFactSuperseded(factId: number, validUntil: string | null) { return factsTrustImpl.expireFactSuperseded(this.rawRead, factId, validUntil); }
+  expireFactAtDate(factId: number, today: string) { return factsTrustImpl.expireFactAtDate(this.rawRead, factId, today); }
+  readWithdrawalAnchor(factId: number, sourceId: string) { return factsTrustImpl.readWithdrawalAnchor(this.rawRead, factId, sourceId); }
+  readFactActivity(id: number, sourceId: string) { return factsTrustImpl.readFactActivity(this.rawRead, id, sourceId); }
+  readReviewAcceptedMark(id: number, sourceId: string, mark: string) { return factsTrustImpl.readReviewAcceptedMark(this.rawRead, id, sourceId, mark); }
+  readFactsFtsIndexState(name: string) { return factsTrustImpl.readFactsFtsIndexState(this.rawRead, name); }
+  swapFactsFtsIndex() { return factsTrustImpl.swapFactsFtsIndex(this.rawRead); }
+  readFactsEmbeddingColumn() { return factsRecallImpl.readFactsEmbeddingColumn(this.rawRead); }
+  listNearestFacts(q: factsRecallImpl.NearestFactsQuery) { return factsRecallImpl.listNearestFacts(this.rawRead, this.rawTransaction, q); }
+  listSlotRows(scope: factsTrustImpl.FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>) { return factsRecallImpl.listSlotRows(this.rawRead, scope, slots); }
+  listPoolUnbackedKeys(scope: factsTrustImpl.FactPoolScope, keys: readonly string[], limit: number) { return factsRecallImpl.listPoolUnbackedKeys(this.rawRead, scope, keys, limit); }
+  listCallOffCueFacts(scope: factsTrustImpl.FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>) { return factsRecallImpl.listCallOffCueFacts(this.rawRead, scope, pairs); }
+  listPoolEntityPairs(scope: factsTrustImpl.FactPoolScope, filters: factsTrustImpl.FactPoolFilters) { return factsRecallImpl.listPoolEntityPairs(this.rawRead, scope, filters); }
+  listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]) { return factsRecallImpl.listFactRowsByIds(this.rawRead, sourceIds, ids); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }

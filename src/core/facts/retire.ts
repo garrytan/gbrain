@@ -24,13 +24,9 @@ export interface RetireFactsResult { retired: number; pages: string[]; failed: n
 /** The backstop session id a connector page's facts are extracted under. */
 export const connectorFactsSession = (sourceId: string, slug: string) => `connector:${sourceId}:${slug}`;
 
-interface FactRow { id: number; row_num: number | null; source_markdown_slug: string | null; entity_slug: string | null }
-
 export async function retireFactsFromPage(engine: BrainEngine, input: { sourceId: string; slug: string; reason: string; managed: boolean; ctx?: OperationContext }): Promise<RetireFactsResult> {
   const pattern = `${input.slug.replace(/[\\%_]/g, m => `\\${m}`)} %`;
-  const rows = await engine.executeRaw<FactRow>(`SELECT id,row_num,source_markdown_slug,entity_slug FROM facts
-    WHERE source_id=$1 AND expired_at IS NULL AND (source_session=$2 OR context=$3 OR context LIKE $4)
-    ORDER BY id`, [input.sourceId, connectorFactsSession(input.sourceId, input.slug), input.slug, pattern]);
+  const rows = await engine.listFactsToRetireFromPage(input.sourceId, connectorFactsSession(input.sourceId, input.slug), input.slug, pattern);
   const result: RetireFactsResult = { retired: 0, pages: [], failed: 0 };
   if (!rows.length) return result;
   if (!input.managed) {

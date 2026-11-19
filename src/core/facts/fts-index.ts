@@ -24,8 +24,7 @@ const OLD = 'idx_facts_fts_old';
 export type FactsFtsSwapStep = 'built' | 'renamed';
 
 async function indexState(engine: BrainEngine, name: string, lang: string): Promise<'missing' | 'current' | 'stale'> {
-  const [row] = await engine.executeRaw<{ valid: boolean; def: string }>(
-    'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def FROM pg_index i WHERE i.indexrelid = to_regclass($1)', [name]);
+  const row = await engine.readFactsFtsIndexState(name);
   if (!row) return 'missing';
   return row.valid && row.def.includes(`to_tsvector('${lang}'::regconfig`) && row.def.includes('entity_slug') ? 'current' : 'stale';
 }
@@ -50,10 +49,7 @@ export async function ensureFactsFtsIndex(
   if (built === 'building') throw new Error(`${NEXT} is being built by another session; rerun once it finishes`);
   await opts.onStep?.('built');
   await dropIndex(engine, version, OLD);
-  await engine.transaction(async tx => {
-    await tx.executeRaw(`ALTER INDEX IF EXISTS ${FACTS_FTS_INDEX} RENAME TO ${OLD}`);
-    await tx.executeRaw(`ALTER INDEX ${NEXT} RENAME TO ${FACTS_FTS_INDEX}`);
-  });
+  await engine.transaction(tx => tx.swapFactsFtsIndex());
   await opts.onStep?.('renamed');
   await dropIndex(engine, version, OLD);
   return 'swapped';

@@ -25,6 +25,7 @@ import type * as FilesOpsSql from './engine-sql/files-ops.ts';
 import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
 import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
 import type * as AdminReadsSql from './engine-sql/admin-reads.ts';
+import type * as FactsRecallSql from './engine-sql/facts-recall.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
@@ -3870,6 +3871,79 @@ export interface BrainEngine {
   listClearedRelinkedFacts(sourceId: string, slug: string): Promise<FactsConversationSql.ClearedRelinkedFactRow[]>;
   /** How many of the facts `ids` carry an embedding. */
   countEmbeddedFactsAmong(sourceId: string, ids: number[]): Promise<number>;
+  // Facts statements, write path and recall pool reads (engine-sql/facts-trust.ts, facts-recall.ts)
+  /** The durable receipt of a write still queued, running or recovering, or null. */
+  readPendingWriteReceipt(principalKind: string, principalId: string, requestId: string): Promise<{ request_id: string; state: string } | null>;
+  /** Takes a shared row lock on the source for the rest of the transaction. */
+  lockSourceShared(sourceId: string): Promise<void>;
+  /** The stale, embeddable facts for `model` and `dims` longer than `maxTokens` bytes, in id order. */
+  listOversizedStaleFacts(opts: { sourceId?: string; model: string; dims: number; maxTokens: number }): Promise<FactsTrustSql.OversizedStaleFactRow[]>;
+  /** The slug and title of each named live, non-retired person page of the source. */
+  listLivePersonTitles(sourceId: string, slugs: string[]): Promise<Array<{ slug: string; title: string | null }>>;
+  /** The live page `slug` of the source, with the remote read floor when `excludePrivate`, or null. */
+  readLiveFactEntityPage(sourceId: string, slug: string, excludePrivate?: boolean): Promise<{ slug: string; type: string | null } | null>;
+  /** Takes the advisory lock that serializes changes to one memory setting for the rest of the transaction. */
+  lockAgentWritebackSetting(key: string): Promise<void>;
+  /** The active facts of the source extracted under `session` or whose context names the page, in id order. */
+  listFactsToRetireFromPage(sourceId: string, session: string, slug: string, pattern: string): Promise<FactsTrustSql.RetireFactRow[]>;
+  /** The pending decide proposals naming any of `ids`, both facts readable under `policy`, in proposal order. */
+  listContestedProposalPairs(ids: number[], policy: FactsTrustSql.ContestedReadPolicy): Promise<FactsTrustSql.ContestedProposalPairRow[]>;
+  /** The stored provenance (`facts.source`) of these facts of the source. */
+  listFactProvenance(sourceId: string, ids: number[]): Promise<Array<{ id: number | string; source: string | null }>>;
+  /** Records every input of one derived row (idempotent), in the transaction that writes the row. */
+  recordDerivationEdges(derived: FactsTrustSql.DerivationEdgeRef, sourceId: string | null, edges: readonly FactsTrustSql.DerivationEdgeRef[]): Promise<void>;
+  /** The rows derived from any of `frontier`, sorted by table and id, at most `limit`. */
+  listDerivedRows(frontier: readonly FactsTrustSql.DerivationEdgeRef[], limit: number): Promise<Array<{ derived_table: string; derived_id: string }>>;
+  /** Expires these facts of the source; returns how many rows it touched. */
+  expireDerivedFacts(ids: number[], sourceId: string): Promise<number>;
+  /** Deactivates these takes on pages of the source; returns how many rows it touched. */
+  deactivateDerivedTakes(ids: number[], sourceId: string): Promise<number>;
+  /** Soft-deletes these pages of the source; returns how many rows it touched. */
+  softDeleteDerivedPages(ids: number[], sourceId: string): Promise<number>;
+  /** Marks each derived row of `table` as needing re-derivation. */
+  markNeedsRederive(table: string, ids: string[], sourceId: string, requestId: string | null, reason: string): Promise<void>;
+  /** The withdrawal a remote save onto a member page meets, or null (GST-2346). */
+  readMemberPageWithdrawal(q: FactsTrustSql.MemberPageWithdrawalQuery): Promise<FactsTrustSql.WithdrawalRow | null>;
+  /** The visibility of one fact of the source, or null. */
+  readFactVisibility(id: number, sourceId: string): Promise<{ visibility: string } | null>;
+  /** The fact a `remember.replaces` names, with whether the withdrawal ledger covers it, or null. */
+  readReplacementTarget(q: FactsTrustSql.ReplacementTargetQuery): Promise<FactsTrustSql.ReplacementTargetRow | null>;
+  /** One fact of a supersede pair by id, `lock` taking the row lock; the raw row, or null. */
+  readPairFactRow(id: number, lock?: boolean): Promise<Record<string, unknown> | null>;
+  /** Expires the old fact of an accepted supersede pair and links it to the new one; returns how many rows it touched. */
+  expireSupersededFact(q: { oldId: number; sourceId: string; newId: number; until: string | null }): Promise<number>;
+  /** Puts the old fact of an undone supersede pair back as it was; returns how many rows it touched. */
+  restoreSupersededFact(q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }): Promise<number>;
+  /** The columns a forget decides on, for one fact by id, or null. */
+  readFactForForget(id: number): Promise<FactsTrustSql.ForgetFactRow | null>;
+  /** Expires an active fact for a supersession or retirement (`validUntil` or now ends it). */
+  expireFactSuperseded(factId: number, validUntil: string | null): Promise<void>;
+  /** Ends an active fact on `today` and expires it. */
+  expireFactAtDate(factId: number, today: string): Promise<void>;
+  /** Whether the withdrawal ledger covers this fact of the source, or null when the fact is not there. */
+  readWithdrawalAnchor(factId: number, sourceId: string): Promise<{ withdrawn: boolean } | null>;
+  /** Whether this fact of the source is active, and the md5 of its text, or null. */
+  readFactActivity(id: number, sourceId: string): Promise<{ active: boolean; text_hash: string } | null>;
+  /** The fact, when it is expired and its context carries `mark`, or null. */
+  readReviewAcceptedMark(id: number, sourceId: string, mark: string): Promise<{ id: number } | null>;
+  /** Whether index `name` is valid, and its definition; null when there is no such index. */
+  readFactsFtsIndexState(name: string): Promise<{ valid: boolean; def: string } | null>;
+  /** Swaps the built `idx_facts_fts_next` into place (two renames), in the caller's transaction. */
+  swapFactsFtsIndex(): Promise<void>;
+  /** The type and declared dimensions of the facts embedding column, or null. */
+  readFactsEmbeddingColumn(): Promise<{ type: string; dims: number } | null>;
+  /** The pool facts nearest a query embedding by cosine distance under the pool read policy. */
+  listNearestFacts(q: FactsRecallSql.NearestFactsQuery): Promise<FactsRecallSql.PoolFactRow[]>;
+  /** Every active conversation slot row of the given slots under the pool read policy, by valid_from, id. */
+  listSlotRows(scope: FactsTrustSql.FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<FactsRecallSql.SlotFactRow[]>;
+  /** The (source, entity) pairs among `keys` that hold an active pool fact and have no live page. */
+  listPoolUnbackedKeys(scope: FactsTrustSql.FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>>;
+  /** The newest cue facts that retract or call off a fact, per (source, entity) pair, under the pool read policy. */
+  listCallOffCueFacts(scope: FactsTrustSql.FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>): Promise<FactsRecallSql.CueFactRow[]>;
+  /** The distinct (source, entity) pairs with a fact in the authorized, filtered pool. */
+  listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
+  /** The whole fact rows of these ids within these sources. */
+  listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

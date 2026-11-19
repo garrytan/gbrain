@@ -53,10 +53,18 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
   UNBACKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-on-an-unbacked-name-key predicate over the facts alias f (unbackedEntitySql plus LIVE_FACT_SQL); no input',
   ACTIVE_UNLINKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-with-no-entity predicate over the facts alias f; no input',
+  FACT_POOL_COLUMNS: 'src/core/engine-sql/facts-trust.ts: constant select list of the facts pool columns (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  // facts-rest-sites builders (facts-trust.ts, facts-recall.ts)
+  oversizedEligibleSql: 'src/core/engine-sql/facts-trust.ts: returns the constant eligibleFactEmbedding predicate (embedding-identity.ts, placeholder $2 audit sources bound by the caller); no values',
+  oversizedStaleSql: 'src/core/engine-sql/facts-trust.ts: returns the constant staleFactEmbedding predicate (embedding-identity.ts, placeholders $3 model and $4 width bound by the caller); no values',
+  oversizedScanCapSql: 'src/core/engine-sql/facts-trust.ts: the OVERSIZED_SCAN_CAP module constant as text (a fixed integer, no input)',
+  contestedReadableSql: 'src/core/engine-sql/facts-trust.ts: constant active and readable predicate over a caller-given constant facts alias; the policy picks among constant fragments (privateFactFilterForCaller, projectionEligibleSql) and binds no value',
+  memberReadsSql: 'src/core/engine-sql/facts-trust.ts: ownerReadPolicyFragment or readPolicyFragment over a constant page alias; identities and rule ids are checked by validIdentity and validQualifiedRuleId before they are quoted in (see those entries)',
+  withdrawalReachedFactSql: 'src/core/access/member-facts.ts: constant withdrawal-reached-fact predicate over caller withdrawal and fact aliases; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
   relinkTriedSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationTriedSql EXISTS predicate (conversation-memo.ts; code-constant outcome and reason codes) or the literal false; no values',

@@ -103,9 +103,7 @@ const iso = (v: unknown): string | null => v === null || v === undefined ? null 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export async function loadPairFact(engine: BrainEngine, id: number, lock = false): Promise<PairFact | null> {
-  const [r] = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT id, source_id, entity_slug, visibility, fact, expired_at, valid_from, valid_until, superseded_by, row_num, source_markdown_slug
-       FROM facts WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id]);
+  const r = await engine.readPairFactRow(id, lock);
   if (!r) return null;
   return {
     id: Number(r.id), source_id: String(r.source_id), entity_slug: (r.entity_slug as string | null) ?? null, visibility: String(r.visibility),
@@ -179,11 +177,8 @@ export function undoRefusal(state: { before: SupersedeState; after: SupersedeSta
 async function expireOld(tx: BrainEngine, proposal: PairProposal): Promise<void> {
   const [oldF, newF] = await Promise.all([loadPairFact(tx, proposal.old_fact_id), loadPairFact(tx, proposal.new_fact_id)]);
   const until = oldF && newF ? acceptedUntil(oldF, newF) ?? null : null;
-  const rows = await tx.executeRaw<{ id: number }>(
-    `UPDATE facts SET expired_at = now(), valid_until = COALESCE($4::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), superseded_by = $3
-      WHERE id = $1 AND source_id = $2 AND expired_at IS NULL RETURNING id`,
-    [proposal.old_fact_id, proposal.source_id, proposal.new_fact_id, until?.toISOString() ?? null]);
-  if (rows.length !== 1) throw new ProposalConflictError('the old fact changed during accept');
+  const touched = await tx.expireSupersededFact({ oldId: proposal.old_fact_id, sourceId: proposal.source_id, newId: proposal.new_fact_id, until: until?.toISOString() ?? null });
+  if (touched !== 1) throw new ProposalConflictError('the old fact changed during accept');
   noteBelief({ kind: 'superseded', oldId: proposal.old_fact_id, newId: proposal.new_fact_id });
 }
 
@@ -198,11 +193,9 @@ async function finishAccept(tx: BrainEngine, proposal: PairProposal, before: Sup
 }
 
 async function applyUndoDb(tx: BrainEngine, proposal: PairProposal, before: SupersedeState, after: SupersedeState, store: PairProposalStore): Promise<void> {
-  const rows = await tx.executeRaw<{ id: number }>(
-    `UPDATE facts SET expired_at = $3::timestamptz, valid_until = $4::timestamptz, superseded_by = $5
-      WHERE id = $1 AND source_id = $2 AND superseded_by IS NOT DISTINCT FROM $6 RETURNING id`,
-    [proposal.old_fact_id, proposal.source_id, before.old.expired_at, before.old.valid_until, before.old.superseded_by, after.old.superseded_by]);
-  if (rows.length !== 1) throw new ProposalConflictError('the old fact changed during undo');
+  const touched = await tx.restoreSupersededFact({ oldId: proposal.old_fact_id, sourceId: proposal.source_id, expiredAt: before.old.expired_at,
+    validUntil: before.old.valid_until, supersededBy: before.old.superseded_by, expectedSupersededBy: after.old.superseded_by });
+  if (touched !== 1) throw new ProposalConflictError('the old fact changed during undo');
   if (!await store.transition(tx, proposal.id, 'accepted', 'undone')) throw new ProposalConflictError('the proposal is no longer accepted');
   await store.onUndo?.(tx, proposal);
 }
@@ -461,7 +454,7 @@ async function submitManaged(engine: BrainEngine, proposal: PairProposal, action
   assertPersistenceAccepting(engine);
   await initializeLocalPersistence(ctx as never);
   const principal = await requestPrincipalForContext(ctx as never);
-  const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation, archived FROM sources WHERE id = $1', [sourceId]);
+  const source = await engine.readSourceWriteRow(sourceId);
   if (!source || source.archived) {
     throw opError('source_changed', 'The proposal source is not active.',
       `Proposal ${proposal.id} belongs to source ${sourceId}, which is archived or missing, so nothing changed. Restore the source to decide it (the user's call), or reject the proposal.`,

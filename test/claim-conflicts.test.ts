@@ -103,21 +103,21 @@ describe('typed claims (pure)', () => {
     const trustLabel = { proposal_ref: 'tp3', role: 'challenged' as const };
     type Row = { id: number; contested?: Contested };
     let reads = 0;
-    const none = { executeRaw: async () => { reads++; return []; } } as unknown as Pick<BrainEngine, 'executeRaw'>;
+    const none = { listContestedProposalPairs: async () => { reads++; return []; } } as unknown as Pick<BrainEngine, 'listContestedProposalPairs'>;
     expect(await withDecideContested<Row>(none, [{ id: 1, contested: trustLabel }], policy, {})).toEqual([{ id: 1, contested: trustLabel }]);
     expect(reads).toBe(0);
-    const pairs = { executeRaw: async () => [
+    const pairs = { listContestedProposalPairs: async () => [
       { id: '7', delivered: '1', new_fact_id: '1', old_fact_id: '2' },
       { id: '9', delivered: '1', new_fact_id: '1', old_fact_id: '5' },
       { id: '7', delivered: '2', new_fact_id: '1', old_fact_id: '2' },
-    ] } as unknown as Pick<BrainEngine, 'executeRaw'>;
+    ] } as unknown as Pick<BrainEngine, 'listContestedProposalPairs'>;
     expect(await withDecideContested<Row>(pairs, [{ id: 1 }, { id: 2 }, { id: 3 }], policy, {})).toEqual([
       { id: 1, contested: { proposal_ref: 'dp7', role: 'challenger', fact_id: '2' } },
       { id: 2, contested: { proposal_ref: 'dp7', role: 'challenged', fact_id: '1' } },
       { id: 3 },
     ]);
     const state: ContestedLookup = {};
-    const failing = { executeRaw: async () => { throw new Error('relation missing'); } } as unknown as Pick<BrainEngine, 'executeRaw'>;
+    const failing = { listContestedProposalPairs: async () => { throw new Error('relation missing'); } } as unknown as Pick<BrainEngine, 'listContestedProposalPairs'>;
     expect(await withDecideContested<Row>(failing, [{ id: 1 }], policy, state)).toEqual([{ id: 1 }]);
     expect(state.degraded).toEqual({ reason: 'contested_unavailable' });
   });
@@ -457,7 +457,7 @@ for (const kind of testBackends()) {
       expect(await withdrawn(false)).toBeUndefined();
 
       const failing = new Proxy(engine, { get(target, prop) {
-        if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => sql.includes('unnest($1::bigint[]) AS x(id)') ? Promise.reject(new Error('lookup failed')) : target.executeRaw(sql, params);
+        if (prop === 'listContestedProposalPairs') return () => Promise.reject(new Error('lookup failed'));
         const v = (target as unknown as R)[prop as string];
         return typeof v === 'function' ? v.bind(target) : v;
       } }) as BrainEngine;
