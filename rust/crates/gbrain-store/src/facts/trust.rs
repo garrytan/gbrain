@@ -12,11 +12,10 @@
 //! - `worldOnly`: `visibility = 'world'`;
 //! - `excludePrivate`: the private-provenance policy (`facts/privacy.rs`);
 //! - `projectionEligibleSql('facts')`: a soft-deleted page hides the row. The quarantine clause
-//!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause is
-//!   not modelled: the store has no re-derive queue, so no row is ever hidden by it (the takes
-//!   family does the same, rust/docs/store/takes.md). Its trust floor (`minTrust`) and flagged-fact
-//!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
-//!   (`trust::TrustPolicy`).
+//!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause hides
+//!   a row a purge marked (`generations/needs_rederive.rs`), even with `includeExpired`. Its trust
+//!   floor (`minTrust`) and flagged-fact filter (`suppressFlagged`) read the row's stamped
+//!   `trust_tier` and its write-gate receipts (`trust::TrustPolicy`).
 //!
 //! Refused (no store member): `matchSavedFacts`, `readFactForOwnerAction`,
 //! `listStandingPreferences`, `listLexicalContestCandidates`, `listRestatedPrivateCopies` and
@@ -30,7 +29,7 @@
 use super::embedding::{cosine_distance, md5_hex, parse_vector, to_halfvec};
 use super::{
     AUDIT_ROW_SOURCES, FactRecord, count_arg, entity_rows, hidden_by_deleted_page,
-    hidden_by_policy, invalid, like, opt_time, source_rows,
+    hidden_by_policy, hidden_by_rederive, invalid, like, opt_time, source_rows,
 };
 use super::{PrivacyPolicy, QUARANTINE_KEY};
 use crate::Store;
@@ -165,7 +164,10 @@ impl<'a> Pool<'a> {
         if a.world_only && row.visibility != "world" {
             return Ok(false);
         }
-        if hidden_by_policy(read, row, &a.exclude_private)? || hidden_by_deleted_page(read, row)? {
+        if hidden_by_policy(read, row, &a.exclude_private)?
+            || hidden_by_deleted_page(read, row)?
+            || hidden_by_rederive(read, row)?
+        {
             return Ok(false);
         }
         if !self.trust.admits(read, "facts", row.id, row.tier())? {

@@ -384,8 +384,8 @@ fn a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts() {
 #[test]
 fn an_older_build_refuses_a_brain_in_the_new_format() {
     // What an older build does with this build's brains: `check_version` refuses any version it
-    // does not list. This build lists 1 to 6; the oldest one is 1.
-    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4, 5, 6]);
+    // does not list. This build lists 1 to 7; the oldest one is 1.
+    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4, 5, 6, 7]);
     assert_eq!(gbrain_store::FORMAT_VERSIONS.first(), Some(&1));
     assert_eq!(gbrain_store::FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
 }
@@ -804,7 +804,7 @@ fn a_format_4_brain_upgrades_to_the_current_format_and_keeps_its_takes_and_its_k
 }
 
 #[test]
-fn a_format_5_brain_upgrades_to_format_6_and_keeps_every_record() {
+fn a_format_5_brain_upgrades_to_the_current_format_and_keeps_every_record() {
     use gbrain_store::pages::{PageInput, PutPageOptions};
     let dir = TempDir::new("format-5-upgrade");
     let brain = dir.path().join("brain");
@@ -821,9 +821,8 @@ fn a_format_5_brain_upgrades_to_format_6_and_keeps_every_record() {
     }
     stamp_format(&brain, 5);
     let store = open_without_builder(&dir);
-    assert_eq!(FORMAT_VERSION, 6, "derivation inputs are store format 6");
-    assert_eq!(store.info().format_version, 6);
-    // 5 to 6 rewrites nothing: the page and its keyword index are as they were.
+    assert_eq!(store.info().format_version, FORMAT_VERSION);
+    // 5 to 6 and 6 to 7 rewrite nothing: the page and its keyword index are as they were.
     assert_eq!(
         store
             .read_page_title("default", "notes/pear")
@@ -835,5 +834,65 @@ fn a_format_5_brain_upgrades_to_format_6_and_keeps_every_record() {
     store.close();
     let file: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(brain.join("FORMAT")).unwrap()).unwrap();
-    assert_eq!(file["format_version"], 6);
+    assert_eq!(file["format_version"], FORMAT_VERSION);
+}
+
+#[test]
+fn a_format_6_brain_upgrades_to_format_7_and_keeps_every_record() {
+    use gbrain_store::generations::DerivationInputsArgs;
+    use gbrain_store::pages::{PageInput, PutPageOptions, VersionsOptions};
+    let dir = TempDir::new("format-6-upgrade");
+    let brain = dir.path().join("brain");
+    let page: PageInput = serde_json::from_value(serde_json::json!({
+        "type": "concept", "title": "Plum", "compiled_truth": "plum body",
+    }))
+    .unwrap();
+    let edge: DerivationInputsArgs = serde_json::from_value(serde_json::json!({
+        "derived": {"table": "pages", "id": "1"},
+        "sourceId": "default",
+        "inputs": [{"table": "facts", "id": "9"}],
+    }))
+    .unwrap();
+    let before;
+    {
+        let store = open_without_builder(&dir);
+        store
+            .put_page("concepts/plum", &page, &PutPageOptions::default())
+            .unwrap();
+        store.record_derivation_inputs(&edge).unwrap();
+        before = store
+            .get_versions("concepts/plum", &VersionsOptions::default())
+            .unwrap();
+        store.close();
+    }
+    stamp_format(&brain, 6);
+    let store = open_without_builder(&dir);
+    assert_eq!(FORMAT_VERSION, 7, "needs_rederive rows are store format 7");
+    assert_eq!(store.info().format_version, 7);
+    // 6 to 7 rewrites nothing: the page, its versions, its keyword index and its edge stay, and
+    // no row awaits rederive.
+    assert_eq!(
+        store
+            .read_page_title("default", "concepts/plum")
+            .unwrap()
+            .as_deref(),
+        Some("Plum")
+    );
+    assert_eq!(
+        store
+            .get_versions("concepts/plum", &VersionsOptions::default())
+            .unwrap(),
+        before
+    );
+    assert!(store.keyword_index_state().unwrap().unwrap().complete);
+    assert!(!store.page_awaits_rederive(1).unwrap());
+    let walk: gbrain_store::facts::purge::DerivedRowsQuery = serde_json::from_value(
+        serde_json::json!({"frontier": [{"table": "facts", "id": "9"}], "limit": 10}),
+    )
+    .unwrap();
+    assert_eq!(store.list_derived_rows(&walk).unwrap().len(), 1);
+    store.close();
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(brain.join("FORMAT")).unwrap()).unwrap();
+    assert_eq!(file["format_version"], 7);
 }

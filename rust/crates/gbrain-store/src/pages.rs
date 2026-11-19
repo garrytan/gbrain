@@ -1247,7 +1247,7 @@ pub(crate) fn put_page_in(
     Ok(record)
 }
 
-fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
+pub(crate) fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
     page.knowledge_revision = env.new_uuid();
     page.text_projection_revision = None;
     write_page(tx, page)
@@ -1792,6 +1792,10 @@ impl Store {
         let sources = scope_sources(&*read, &options.source_id, &options.source_ids)?;
         for id in sources {
             if let Some(page) = read_page(&*read, &id, &slug)? {
+                // `rederiveHiddenSql('pages', 'p')`: a page a purge hid shows no versions.
+                if crate::generations::awaits_rederive(&*read, "pages", &page.id.to_string())? {
+                    continue;
+                }
                 let policy = options.exclude_private.as_ref();
                 if let Some(policy) = policy
                     && crate::facts::page_hidden(&*read, &page, policy)?

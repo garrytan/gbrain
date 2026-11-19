@@ -46,8 +46,9 @@ the record as it is.
 | `brain.deleteTakeRows(pageId, rowNums)` | null. Deletes the page's takes at those row numbers with the evidence rows that cite them and their vectors; a null entry or a number with no take deletes nothing, an empty list writes nothing | `deleteTakeRows` |
 
 Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of soft-deleted pages, of pages
-whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge
-writes `needs_rederive` and `executeRaw` refuses on Rust, so that clause never hides a row here. The
+whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. The store keeps those
+marks (`hideDerivedRows`, `h 0x0C`, store format 7), but the takes reads do not apply that clause yet; a
+take a purge hid is already inactive, so only a marked active take of another source still reads. The
 members send `eligible_only: true` for any eligibility object and the store applies the first two clauses.
 `eligibility.floor` and `eligibility.suppressFlagged` refuse with `engine_capability_missing`.
 

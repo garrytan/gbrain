@@ -8,6 +8,7 @@
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
@@ -16,7 +17,14 @@ use gbrain_store::facts::purge::{
     SingleFactQuery, SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
 use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
-use gbrain_store::generations::DerivationInputsArgs;
+use gbrain_store::generations::{DerivationInputsArgs, HideDerivedRowsArgs};
+
+/// `releaseHiddenMoment(pageId)` and `pageAwaitsRederive(pageId)`: the one page id each reads.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PageIdArgs {
+    page_id: i64,
+}
 
 #[napi]
 impl Brain {
@@ -239,6 +247,46 @@ impl Brain {
         self.run(env, move |s| {
             let a: DrainArgs = required(args, "selectFactsReconcileDrain args")?;
             s.select_facts_reconcile_drain(&a)
+        })
+    }
+
+    /// `hideDerivedRows({ rows, sourceId, requestId, reason })`: hides the rows of `sourceId`,
+    /// marks every row `needs_rederive` and resolves `{ hidden, markedOnly }`.
+    #[napi]
+    pub fn hide_derived_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: HideDerivedRowsArgs = required(args, "hideDerivedRows args")?;
+            s.hide_derived_rows(&a)
+        })
+    }
+
+    /// `releaseHiddenMoment({ pageId })`: moves the page's mark off its delete time; resolves null.
+    #[napi]
+    pub fn release_hidden_moment<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageIdArgs = required(args, "releaseHiddenMoment args")?;
+            s.release_hidden_moment(a.page_id)
+        })
+    }
+
+    /// `pageAwaitsRederive({ pageId })`: resolves whether a purge marked the page.
+    #[napi]
+    pub fn page_awaits_rederive<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageIdArgs = required(args, "pageAwaitsRederive args")?;
+            s.page_awaits_rederive(a.page_id)
         })
     }
 }

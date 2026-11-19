@@ -558,8 +558,9 @@ pub(crate) struct StoredFormat {
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
 /// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier reads
-/// `unknown`), so a format-4 brain keeps its postings, and 5 to 6 rewrites nothing (a format-5
-/// brain holds no `derivation_inputs` rows). The format record is re-read inside the transaction:
+/// `unknown`), so a format-4 brain keeps its postings, 5 to 6 rewrites nothing (a format-5
+/// brain holds no `derivation_inputs` rows), and 6 to 7 rewrites nothing (a format-6 brain holds no
+/// `needs_rederive` rows and no owner-only marks outside pages). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -586,6 +587,9 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // Format 6 keeps the `derivation_inputs` rows (`generations/derivation_inputs.rs`). A format-5
     // brain holds none, so the step rewrites nothing; the number keeps an older build, which does
     // not read them, from opening a brain that has them.
+    // Format 7 keeps the `needs_rederive` rows (`generations/needs_rederive.rs`) and the owner-only
+    // marks of every derived table (`owner_only_marks.rs`). A format-6 brain holds neither, so the
+    // step rewrites nothing; the number keeps an older build from showing a row a purge hid.
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
@@ -834,18 +838,27 @@ mod older_build_tests {
         let dir = fresh_dir(name).join("brain");
         let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
         store
+            .write(|tx| tx.put(&keys::meta("test/older-build"), b"kept"))
+            .unwrap();
+        drop(store);
+        stamp(&dir, version);
+        dir
+    }
+
+    /// Stamps the closed brain at `dir` with `version`, in `FORMAT` and in its format record.
+    fn stamp(dir: &Path, version: u32) {
+        let store = Store::open_dir(dir, OpenOptions::default()).unwrap();
+        store
             .write(|tx| {
-                tx.put(&keys::meta("test/older-build"), b"kept")?;
                 let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?.unwrap();
                 stored.format_version = version;
                 put_json(tx, &keys::meta("format"), &stored)
             })
             .unwrap();
         drop(store);
-        let mut record = format::read(&dir).unwrap().unwrap();
+        let mut record = format::read(dir).unwrap().unwrap();
         record.format_version = version;
-        format::write(&dir, &record).unwrap();
-        dir
+        format::write(dir, &record).unwrap();
     }
 
     fn assert_refused(dir: &Path, known: &[u32], version: u32) {
@@ -906,7 +919,7 @@ mod older_build_tests {
 
     #[test]
     fn a_format_5_build_refuses_a_format_6_brain_with_derivation_inputs_and_changes_no_byte() {
-        assert_eq!(FORMAT_VERSION, 6, "derivation inputs are store format 6");
+        const { assert!(FORMAT_VERSION >= 6, "derivation inputs are store format 6") };
         let dir = fresh_dir("older-5-vs-6").join("brain");
         let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
         let args: generations::DerivationInputsArgs = serde_json::from_value(serde_json::json!({
@@ -916,8 +929,8 @@ mod older_build_tests {
         }))
         .unwrap();
         store.record_derivation_inputs(&args).unwrap();
-        assert_eq!(store.info().format_version, 6);
         drop(store);
+        stamp(&dir, 6);
         assert_refused(&dir, &[1, 2, 3, 4, 5], 6);
         // Without FORMAT the format record decides, still before any write.
         fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
@@ -934,6 +947,33 @@ mod older_build_tests {
         )
         .unwrap();
         assert_eq!(hop, [("pages".to_string(), "2".to_string())]);
+        drop(store);
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    #[test]
+    fn a_format_6_build_refuses_a_format_7_brain_with_needs_rederive_rows_and_changes_no_byte() {
+        assert_eq!(FORMAT_VERSION, 7, "needs_rederive rows are store format 7");
+        let dir = fresh_dir("older-6-vs-7").join("brain");
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        let args: generations::HideDerivedRowsArgs = serde_json::from_value(serde_json::json!({
+            "rows": [{"table": "timeline_entries", "id": "4"}],
+            "sourceId": "default",
+            "reason": "purge",
+        }))
+        .unwrap();
+        store.hide_derived_rows(&args).unwrap();
+        assert_eq!(store.info().format_version, 7);
+        drop(store);
+        assert_refused(&dir, &[1, 2, 3, 4, 5, 6], 7);
+        // Without FORMAT the format record decides, still before any write.
+        fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+        assert_refused(&dir, &[1, 2, 3, 4, 5, 6], 7);
+        // This build opens it and still reads the mark.
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        assert!(
+            generations::awaits_rederive(&*store.read().unwrap(), "timeline_entries", "4").unwrap()
+        );
         drop(store);
         let _ = fs::remove_dir_all(dir.parent().unwrap());
     }

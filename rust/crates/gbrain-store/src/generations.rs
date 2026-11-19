@@ -73,10 +73,13 @@ mod activations;
 mod derivation_inputs;
 mod fence_evidence;
 mod fence_restore;
+mod needs_rederive;
 mod repair;
 pub use activations::ActivationRecordInput;
 pub use derivation_inputs::DerivationInputsArgs;
 pub(crate) use derivation_inputs::{derived_from, hop_limit, lineage_owner_only};
+pub use needs_rederive::HideDerivedRowsArgs;
+pub(crate) use needs_rederive::awaits_rederive;
 pub use repair::RepairFilter;
 
 const RECORD: u8 = 0x01;
@@ -111,6 +114,7 @@ const H_SUB_BYTES: &[(u8, &str)] = &[
         derivation_inputs::BY_INPUT,
         "derivation_inputs by input row",
     ),
+    (needs_rederive::BY_ROW, "needs_rederive"),
 ];
 
 /// The id counter (`pages::next_id`).
@@ -1405,6 +1409,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     }
     activations::remove_source_activations(tx, source_id)?;
     derivation_inputs::remove_source_edges(tx, source_id)?;
+    needs_rederive::remove_source_marks(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;

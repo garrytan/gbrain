@@ -79,6 +79,10 @@ impl Env for TransactionClock {
         self.started_us
     }
 
+    fn clock_micros(&self) -> i64 {
+        self.inner.clock_micros()
+    }
+
     fn new_uuid(&self) -> String {
         self.inner.new_uuid()
     }

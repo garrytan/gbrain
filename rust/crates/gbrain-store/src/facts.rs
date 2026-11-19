@@ -1241,6 +1241,17 @@ pub(crate) fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Resul
         .is_some_and(|p| p.deleted_at_us.is_none() && p.frontmatter.contains_key(QUARANTINE_KEY)))
 }
 
+/// `rederiveHiddenSql('facts')`: a purge hid the row until it is derived again (`needs_rederive`).
+pub(crate) fn hidden_by_rederive(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    crate::generations::awaits_rederive(read, "facts", &row.id.to_string())
+}
+
+/// `projectionEligibleSql('facts')` past the deleted-page clause: the quarantine and rederive
+/// clauses.
+pub(crate) fn hidden_by_projection(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    Ok(hidden_by_quarantine(read, row)? || hidden_by_rederive(read, row)?)
+}
+
 fn listed(list: &Option<Vec<String>>, value: &str) -> bool {
     list.as_ref().is_none_or(|l| l.iter().any(|v| v == value))
 }
@@ -1279,7 +1290,7 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
-            && !(self.eligible && hidden_by_quarantine(read, row)?)
+            && !(self.eligible && hidden_by_projection(read, row)?)
             && !hidden_by_policy(read, row, &self.exclude_private)?)
     }
 
@@ -1522,8 +1533,8 @@ impl Store {
 
     /// `listSupersessions`: rows with a successor, by `COALESCE(expired_at, valid_until)` (NULL
     /// first) then id, both descending. With a read eligibility it also hides a row whose live
-    /// provenance page is quarantined and applies the trust floor and flag suppression; the store
-    /// keeps no `needs_rederive` queue, so that clause hides nothing.
+    /// provenance page is quarantined or that a purge hid until it is derived again
+    /// (`needs_rederive`), and applies the trust floor and flag suppression.
     pub fn list_supersessions(&self, q: &SupersessionQuery) -> Result<Vec<Value>> {
         const OP: &str = "listSupersessions";
         no_nul(OP, &[("sourceId", &q.source_id)])?;
@@ -1539,7 +1550,7 @@ impl Store {
                 || !listed(&q.visibility, &row.visibility)
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
-                || (q.eligible && hidden_by_quarantine(&*read, &row)?)
+                || (q.eligible && hidden_by_projection(&*read, &row)?)
                 || !trust.admits(&*read, "facts", row.id, row.tier())?
             {
                 continue;
@@ -1734,7 +1745,7 @@ impl Store {
                     || since.is_some_and(|s| row.valid_from_us < s)
                     || until.is_some_and(|u| row.valid_from_us > u)
                     || hidden_by_deleted_page(&*read, &row)?
-                    || hidden_by_quarantine(&*read, &row)?
+                    || hidden_by_projection(&*read, &row)?
                     || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 {
                     continue;

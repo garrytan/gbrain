@@ -32,9 +32,13 @@ use std::path::Path;
 ///   row; `generations/derivation_inputs.rs`). Nothing is rewritten: a format-5 brain holds none. A
 ///   build without them refuses a format-6 brain, as its owner-only walk would show a non-owner a row
 ///   derived from an owner-only input and its source delete would leave stale rows.
-pub const FORMAT_VERSION: u32 = 6;
+/// - 7: the store keeps the `needs_rederive` rows (`h 0x0C`; `generations/needs_rederive.rs`) and
+///   the owner-only marks of every derived table (`owner_only_marks.rs`). Nothing is rewritten: a
+///   format-6 brain holds none. A build without them refuses a format-7 brain, as its reads would
+///   show a row a purge hid and its owner-only walk would miss a marked row.
+pub const FORMAT_VERSION: u32 = 7;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

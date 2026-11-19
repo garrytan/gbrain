@@ -13,7 +13,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `expireFact` | Expires an unexpired row; `supersededBy` must name an existing row (`facts_superseded_by_fkey`); `successorFrom` closes validity. |
 | `listFactsByEntity`, `listFactsSince`, `listFactsBySession` | Filtered lists, newest first, with `limit` and `offset`. `grep` is a pre-built ILIKE pattern, folded with Postgres `lower()` one code point at a time. |
 | `listFactsKeyset` | Oldest first by `(created_at, id)` after a microsecond ISO cursor. |
-| `listSupersessions` | Superseded rows, newest supersession first. With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) it applies `projectionEligibleSql('facts')`: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row (`trust::TrustPolicy`). The store keeps no `needs_rederive` queue, so that clause hides nothing. |
+| `listSupersessions` | Superseded rows, newest supersession first. With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) it applies `projectionEligibleSql('facts')`: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row (`trust::TrustPolicy`). A row a purge marked `needs_rederive` (`h 0x0C`) is hidden too. |
 | `countUnconsolidatedFacts`, `getFactsHealth` | Counts of active rows (and the five entities with the most). |
 | `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector('english', fact)` matches the OR of the claim's `plainto_tsquery` lexemes (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The cosine arm (`embedding`, no `keyword`): the same rows less audit checkpoints, kept when comparable (a vector from `embeddingModel`, `embedded_text_hash = md5(fact)`, the query's width), ordered by `halfvec` cosine distance to the query (cast to `halfvec` too; NaN last; equal distances by id). The keyword arm with an `embedding` keeps only the comparable rows and does not read the vector. An `embedding` with no (or an empty) `embeddingModel` finds nothing. The member refuses the keyword arm when `GBRAIN_FTS_LANGUAGE` is not `english`. |
 | `consolidateFact` | Stamps `consolidated_at` and `consolidated_into`. |
@@ -239,7 +239,7 @@ Each member is one store call (a scan of the fact rows, no SQL). The TypeScript 
 | `findBulkFactDays` | the bulk days of unarchived sources under a `rule`, with top sources and self-dated claims | served; refused when a count threshold is not an integer or the share is not finite |
 | `maxFenceRowNum` | the largest `row_num` of a page coordinate, 0 for none | served |
 | `listStoredFenceFactRows` | the numbered rows of a page coordinate, oldest id first | served |
-| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; a trust floor (`eligibility.floor`) and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its write-gate receipts; `excludePrivate` serves a caller with a reader identity and a private-readable grant (`callerReaders`) and refuses any other caller whose rendering is not the store's policy. Deleted and quarantined pages are always hidden, and `needs_rederive` is treated as empty, as in `takes.rs` |
+| `countWorldFacts` | the entity card's unexpired fact count under its visibility and privacy | served; a trust floor (`eligibility.floor`) and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its write-gate receipts; `excludePrivate` serves a caller with a reader identity and a private-readable grant (`callerReaders`) and refuses any other caller whose rendering is not the store's policy. Deleted and quarantined pages, and facts a purge marked `needs_rederive`, are always hidden |
 
 ## Group 5: purge, withdrawal, relink and fence repair (`facts/purge.rs`)
 
@@ -263,6 +263,8 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `listWithdrawalSlugs` | Sorted distinct `COALESCE(source_markdown_slug, entity_slug)` of the active rows with the fingerprint and visibility that the subject covers: `*`, the subject's entity, an unbacked-entity row unless the subject is an owned memory page, or a row on that page. |
 | `listDerivedRows` | One hop of the derivation walk (`derivedRowsFrom`): the rows derived from a frontier of `{ table, id }` inputs, read from the input index `h 0x0B`, distinct, in byte order of (derived_table, derived_id), at most `limit`. A NUL in a table or id is `invalid_argument`, as is a negative limit. |
 | `recordDerivationInputs` | Stores each `derived <- input` edge of one derived row once (`ON CONFLICT DO NOTHING`: a repeated edge keeps its first source) under `h 0x0A` (by derived row) with its mirror under `h 0x0B` (by input row); a named source must exist. A source delete removes that source's edges. The owner-only `fn` test follows these edges at any depth (`gbrain_owner_only_lineage_strict`). Store format 6. |
+| `hideDerivedRows` | Hides each derived row of the mark's source through its table's own inactive state (a fact expires, a take goes inactive, a live page is soft-deleted) and marks every named row `needs_rederive` under `h 0x0C` (`generations/needs_rederive.rs`); a row of another table or source is only marked. Resolves `{ hidden, markedOnly }`, the counts per table. A page hidden now keeps `marked_at` equal to its `deleted_at`, and a later mark keeps that moment (`KEEP_HIDDEN_AT`). A row named twice, a missing source and a page id past `integer` are refused. A source delete removes its marks. Store format 7. |
+| `releaseHiddenMoment` | Moves a page's mark off its delete time when the two are equal, so the automatic purge's hold on it ends. |
 | `expireFactsByWithdrawal` | The write: stamps `expired_at` now and `valid_until` at the lesser of its value and now on the same rows (by the text's fingerprint) and answers `[{ id }]` in id order. Run it on the engine, outside a transaction. |
 
 `SELECT *` rows (`findActiveSingleFact`) carry the stored `trust_tier` and `write_origin`, and null for
@@ -380,8 +382,8 @@ provenance page carries no `quarantine` key (a soft-deleted page still counts, a
 provenance page hides the row; then the entity, session, `since` (on `valid_from`) and `grep` filters.
 
 - A `minTrust` floor and `suppressFlagged` apply `trust::TrustPolicy` to the fact's stamped tier and its
-  write-gate receipts, as the SQL's trust floor and suppression clauses do. The `needs_rederive` anti-join is not modelled, so no row is hidden by it (the
-  takes family does the same).
+  write-gate receipts, as the SQL's trust floor and suppression clauses do. A fact a purge marked `needs_rederive` is hidden, even with
+  `includeExpired`.
 - `similarity` is `1 - cosine distance` for a row whose vector has the query's model and length and whose
   `embedded_text_hash` is `md5(fact)`, else NULL. Distances are `f32` sums as `facts/embedding.rs`
   computes them, so values equal PGLite's to about 1e-6, not bit for bit. A `vector`-typed (not
