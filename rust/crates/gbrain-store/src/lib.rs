@@ -30,6 +30,7 @@ pub mod redb_kv;
 pub mod search;
 pub mod shared_skill_catalog;
 pub mod shared_skill_members;
+pub mod shared_skill_publication;
 pub mod sources;
 #[cfg(test)]
 mod test_support;

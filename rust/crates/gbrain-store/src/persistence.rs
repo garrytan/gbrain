@@ -386,6 +386,103 @@ pub(crate) fn read_counter_rows_in(read: &dyn KvRead, names: &[String]) -> Resul
     Ok(rows)
 }
 
+/// `state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL`: a request that
+/// keeps a brain from quiescing.
+fn blocks_quiescence(r: &RequestRecord) -> bool {
+    matches!(
+        r.state.as_str(),
+        "queued" | "deferred" | "running" | "recovering"
+    ) || !extra_is_null(r, "recovery")
+}
+
+/// What keeps shared-skill activation from passing, in the order the SQL engines check it
+/// (activation.ts, then skill-activation.ts): the first blocking request by sequence, then the
+/// first effect holding a recovery record (both `managed`), then the first queued or running
+/// effect (`skill`). Effects come in id order; `source_id` is the effect's, else its request's.
+pub(crate) fn activation_blocker(read: &dyn KvRead) -> Result<Option<Value>> {
+    let mut requests: Vec<RequestRecord> = all_requests(read)?
+        .into_iter()
+        .filter(blocks_quiescence)
+        .collect();
+    requests.sort_by_key(|r| r.sequence);
+    if let Some(r) = requests.first() {
+        return Ok(Some(json!({
+            "phase": "managed",
+            "kind": "request",
+            "request_id": r.request_id,
+            "source_id": r.source_id,
+            "slug": r.slug,
+            "operation": r.operation,
+            "state": r.state,
+        })));
+    }
+    let effects = effects::all_effects(read)?;
+    let blocking = |recovering_only: bool| -> Result<Option<Value>> {
+        for e in &effects {
+            let recovering = e.recovery.is_some();
+            if !(recovering || !recovering_only && matches!(e.state.as_str(), "queued" | "running"))
+            {
+                continue;
+            }
+            let Some(r) = request_by_id(read, &e.request_id)? else {
+                continue;
+            };
+            return Ok(Some(json!({
+                "kind": "effect",
+                "effect_id": e.id.to_string(),
+                "effect_kind": e.kind,
+                "state": e.state,
+                "recovering": recovering,
+                "source_id": e.source_id.clone().unwrap_or(r.source_id),
+                "slug": r.slug,
+                "request_id": r.request_id,
+                "attempts": e.attempts,
+                "next_attempt_at": iso(e.next_attempt_at_us),
+            })));
+        }
+        Ok(None)
+    };
+    if let Some(mut v) = blocking(true)? {
+        v["phase"] = json!("managed");
+        return Ok(Some(v));
+    }
+    Ok(blocking(false)?.map(|mut v| {
+        v["phase"] = json!("skill");
+        v
+    }))
+}
+
+/// The revisions a pending shared-skill publication of the source incarnation names
+/// (retention.ts `publication_revisions`): each skill_bundle request that is queued, running or
+/// recovering, or holds a recovery record, gives its `intent.expected_revision` and every
+/// `intent.affected[].revision`.
+pub(crate) fn pending_skill_revisions(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut out = std::collections::BTreeSet::new();
+    for r in all_requests(read)? {
+        let target = r.extra.get("target_kind").and_then(Value::as_str);
+        if r.source_id != source_id
+            || r.source_incarnation != incarnation
+            || target != Some("skill_bundle")
+            || !(matches!(r.state.as_str(), "queued" | "running" | "recovering")
+                || !extra_is_null(&r, "recovery"))
+        {
+            continue;
+        }
+        let text = |v: Option<&Value>| v.and_then(Value::as_str).map(str::to_string);
+        if let Some(rev) = text(r.intent.get("expected_revision")) {
+            out.insert(rev);
+        }
+        if let Some(Value::Array(affected)) = r.intent.get("affected") {
+            out.extend(affected.iter().filter_map(|a| text(a.get("revision"))));
+        }
+    }
+    Ok(out)
+}
+
 fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
     get_json(read, &keys::request(&uuid_param(id, "id")?))
 }

@@ -160,8 +160,8 @@ impl Brain {
         })
     }
 
-    /// `writeSharedSkillRevision(write)`: resolves null. Fixtures only: the engine member refuses
-    /// publication on a Rust brain.
+    /// `writeSharedSkillRevision(write)`: resolves null. The engine member refuses it while shared
+    /// publication is disabled (`readSharedSkillPublication`).
     #[napi]
     pub fn write_shared_skill_revision<'env>(
         &self,

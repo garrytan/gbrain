@@ -23,6 +23,7 @@ mod page_visibility;
 mod pages;
 mod search;
 mod shared_skill_members;
+mod shared_skill_publication;
 mod sources;
 mod tags;
 mod timeline;

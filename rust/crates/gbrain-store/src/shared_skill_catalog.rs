@@ -13,10 +13,10 @@
 //!   `LeaseRecord` (JSON).
 //!
 //! The SQL engines guard heads and revisions with the publication trigger (an activated brain,
-//! skill bundles enabled, a coordinated write of the source). A Rust brain cannot activate shared
-//! publication, so the engine member that publishes refuses before it reaches the store;
-//! `write_shared_skill_revision` serves fixtures that seed a catalog the way a trigger-bypassing
-//! fixture transaction seeds the SQL engines.
+//! skill bundles enabled, a coordinated write of the source). On a Rust brain the engine member
+//! that publishes checks the activation flag (shared_skill_publication.rs) before it reaches the
+//! store; `write_shared_skill_revision` itself also serves fixtures that seed a catalog the way a
+//! trigger-bypassing fixture transaction seeds the SQL engines.
 //!
 //! The head list orders by byte order of its key; Postgres orders text by the database collation,
 //! which agrees for the lowercase ids skill packs use.
@@ -31,15 +31,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-const POLICY: u8 = 0x07;
+pub(crate) const POLICY: u8 = 0x07;
 const POLICY_AUDIT: u8 = 0x08;
-const HEAD: u8 = 0x09;
-const REVISION: u8 = 0x0a;
-const LEASE: u8 = 0x0b;
+pub(crate) const HEAD: u8 = 0x09;
+pub(crate) const REVISION: u8 = 0x0a;
+pub(crate) const LEASE: u8 = 0x0b;
 
-const DAY_US: i64 = 24 * 3_600_000_000;
+pub(crate) const DAY_US: i64 = 24 * 3_600_000_000;
 
-fn key(tag: u8, parts: &[&str]) -> Vec<u8> {
+pub(crate) fn key(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![keys::ACCESS_MEMBERS, tag];
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
@@ -74,47 +74,47 @@ struct PolicyAuditRecord {
 
 /// One `shared_skill_heads` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HeadRecord {
-    source_id: String,
-    source_incarnation: String,
-    pack_id: String,
-    name: String,
-    revision: String,
-    metadata: Value,
-    deleted: bool,
-    policy_epoch: String,
-    updated_at_us: i64,
+pub(crate) struct HeadRecord {
+    pub(crate) source_id: String,
+    pub(crate) source_incarnation: String,
+    pub(crate) pack_id: String,
+    pub(crate) name: String,
+    pub(crate) revision: String,
+    pub(crate) metadata: Value,
+    pub(crate) deleted: bool,
+    pub(crate) policy_epoch: String,
+    pub(crate) updated_at_us: i64,
 }
 
 /// One `shared_skill_revisions` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct RevisionRecord {
-    source_id: String,
-    source_incarnation: String,
-    pack_id: String,
-    name: String,
-    revision: String,
-    metadata: Value,
-    files: Value,
-    deleted: bool,
-    policy_epoch: String,
-    request_id: String,
-    created_at_us: i64,
+pub(crate) struct RevisionRecord {
+    pub(crate) source_id: String,
+    pub(crate) source_incarnation: String,
+    pub(crate) pack_id: String,
+    pub(crate) name: String,
+    pub(crate) revision: String,
+    pub(crate) metadata: Value,
+    pub(crate) files: Value,
+    pub(crate) deleted: bool,
+    pub(crate) policy_epoch: String,
+    pub(crate) request_id: String,
+    pub(crate) created_at_us: i64,
 }
 
 /// One `shared_skill_revision_leases` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LeaseRecord {
-    lease_kind: String,
-    lease_id: String,
-    source_id: String,
-    source_incarnation: String,
-    pack_id: String,
-    name: String,
-    revision: String,
-    principal_kind: String,
-    principal_id: String,
-    expires_at_us: i64,
+pub(crate) struct LeaseRecord {
+    pub(crate) lease_kind: String,
+    pub(crate) lease_id: String,
+    pub(crate) source_id: String,
+    pub(crate) source_incarnation: String,
+    pub(crate) pack_id: String,
+    pub(crate) name: String,
+    pub(crate) revision: String,
+    pub(crate) principal_kind: String,
+    pub(crate) principal_id: String,
+    pub(crate) expires_at_us: i64,
 }
 
 /// `writeSharedSkillPolicy(write)`.
@@ -170,7 +170,7 @@ pub struct SharedSkillHeadQuery {
     pub hide_private: bool,
 }
 
-fn scan_json<T: DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<T>> {
+pub(crate) fn scan_json<T: DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<T>> {
     let mut out = Vec::new();
     let mut bad = None;
     scan_prefix(read, prefix, false, &mut |_, v| {
@@ -276,6 +276,63 @@ pub(crate) fn lease_delivery_revisions(
     Ok(())
 }
 
+/// Inserts one revision (an existing one is the primary key's refusal), then inserts or replaces
+/// the head of its skill, inside the caller's write.
+pub(crate) fn write_revision_in(
+    tx: &mut dyn KvWrite,
+    now_us: i64,
+    w: &SharedSkillRevisionWrite,
+) -> Result<()> {
+    let incarnation = uuid(&w.incarnation)?;
+    let revision = uuid(&w.revision)?;
+    let request_id = uuid(&w.request_id)?;
+    let rkey = key(
+        REVISION,
+        &[&w.source_id, &incarnation, &w.pack_id, &w.name, &revision],
+    );
+    if tx.get(&rkey)?.is_some() {
+        return Err(refused(
+            "shared_skill_revisions_pkey",
+            format!(
+                "duplicate key value violates unique constraint \"shared_skill_revisions_pkey\": Key (source_id, source_incarnation, pack_id, name, revision)=({}, {incarnation}, {}, {}, {revision}) already exists.",
+                w.source_id, w.pack_id, w.name
+            ),
+        ));
+    }
+    put_json(
+        tx,
+        &rkey,
+        &RevisionRecord {
+            source_id: w.source_id.clone(),
+            source_incarnation: incarnation.clone(),
+            pack_id: w.pack_id.clone(),
+            name: w.name.clone(),
+            revision: revision.clone(),
+            metadata: w.metadata.clone(),
+            files: w.files.clone(),
+            deleted: w.deleted,
+            policy_epoch: w.policy_epoch.clone(),
+            request_id: request_id.clone(),
+            created_at_us: now_us,
+        },
+    )?;
+    put_json(
+        tx,
+        &key(HEAD, &[&w.source_id, &incarnation, &w.pack_id, &w.name]),
+        &HeadRecord {
+            source_id: w.source_id.clone(),
+            source_incarnation: incarnation.clone(),
+            pack_id: w.pack_id.clone(),
+            name: w.name.clone(),
+            revision: revision.clone(),
+            metadata: w.metadata.clone(),
+            deleted: w.deleted,
+            policy_epoch: w.policy_epoch.clone(),
+            updated_at_us: now_us,
+        },
+    )
+}
+
 impl Store {
     /// `writeSharedSkillPolicy(write)`, in one write: the source incarnation's policy under the
     /// new epoch (inserted, or replacing the stored one with `updated_at` now), then its audit row.
@@ -328,57 +385,7 @@ impl Store {
     /// `writeSharedSkillRevision(write)`, in one write: inserts the revision (an existing one is
     /// the primary key's refusal), then inserts or replaces the head of its skill.
     pub fn write_shared_skill_revision(&self, w: &SharedSkillRevisionWrite) -> Result<()> {
-        let incarnation = uuid(&w.incarnation)?;
-        let revision = uuid(&w.revision)?;
-        let request_id = uuid(&w.request_id)?;
-        self.write(|tx| {
-            let now_us = now(self);
-            let rkey = key(
-                REVISION,
-                &[&w.source_id, &incarnation, &w.pack_id, &w.name, &revision],
-            );
-            if tx.get(&rkey)?.is_some() {
-                return Err(refused(
-                    "shared_skill_revisions_pkey",
-                    format!(
-                        "duplicate key value violates unique constraint \"shared_skill_revisions_pkey\": Key (source_id, source_incarnation, pack_id, name, revision)=({}, {incarnation}, {}, {}, {revision}) already exists.",
-                        w.source_id, w.pack_id, w.name
-                    ),
-                ));
-            }
-            put_json(
-                tx,
-                &rkey,
-                &RevisionRecord {
-                    source_id: w.source_id.clone(),
-                    source_incarnation: incarnation.clone(),
-                    pack_id: w.pack_id.clone(),
-                    name: w.name.clone(),
-                    revision: revision.clone(),
-                    metadata: w.metadata.clone(),
-                    files: w.files.clone(),
-                    deleted: w.deleted,
-                    policy_epoch: w.policy_epoch.clone(),
-                    request_id: request_id.clone(),
-                    created_at_us: now_us,
-                },
-            )?;
-            put_json(
-                tx,
-                &key(HEAD, &[&w.source_id, &incarnation, &w.pack_id, &w.name]),
-                &HeadRecord {
-                    source_id: w.source_id.clone(),
-                    source_incarnation: incarnation.clone(),
-                    pack_id: w.pack_id.clone(),
-                    name: w.name.clone(),
-                    revision: revision.clone(),
-                    metadata: w.metadata.clone(),
-                    deleted: w.deleted,
-                    policy_epoch: w.policy_epoch.clone(),
-                    updated_at_us: now_us,
-                },
-            )
-        })
+        self.write(|tx| write_revision_in(tx, now(self), w))
     }
 
     /// `readSharedSkillRevision(key)`: the stored revision that is not deleted, or null.
