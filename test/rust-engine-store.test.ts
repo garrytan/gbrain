@@ -136,6 +136,7 @@ describe('Rust engine on the store', () => {
     // findOrphanPages takes no trust floor on Rust: no production caller sends one, so it refuses.
     const refused = await code(() => engine.findOrphanPages({ minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
+    expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
   withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
@@ -250,6 +251,15 @@ describe('Rust engine on the store', () => {
     const unlabeled = { chunk_index: 0, chunk_text: 'Labeled.', chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.25) } as never;
     await engine.upsertChunks('notes/a', [unlabeled], { embeddingColumn: column({ embeddingModel: 'm:column' }) });
     expect((await engine.getChunks('notes/a', { includeUnsealed: true })).map((c) => [c.chunk_text, c.model])).toEqual([['Labeled.', 'm:column']]);
+  });
+
+  withAddon('a chunk that carries an image vector refuses chunks, and writes nothing', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const before = await engine.getChunks('notes/a');
+    const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding_image: new Float32Array(4) } as never;
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('engine_capability_missing');
+    expect(await engine.getChunks('notes/a')).toEqual(before);
   });
 
   withAddon('getStats and getHealth refuse a brain whose config selects another embedding column', async () => {

@@ -23,7 +23,7 @@ import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadSco
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
+import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -36,11 +36,12 @@ function checkBatch(member: string, n: number): void {
  * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
  * private-readable grant included; `minTrust` and `suppressFlagged`
  * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
- * nothing on these reads.
+ * nothing on these reads. The marker reads (every member that uses this) are handed hybridSearch's whole option bag as
+ * their policy, so they also accept and ignore the bag's own keys (`HYBRID_BAG_KEYS`); any other key still refuses.
  */
 function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...HYBRID_BAG_KEYS]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,

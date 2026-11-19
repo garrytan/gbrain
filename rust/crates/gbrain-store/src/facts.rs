@@ -60,7 +60,8 @@ pub use fence::{FenceContext, FenceTarget};
 use privacy::hidden_by_private_provenance;
 pub use privacy::{OwnerOnly, PrivacyPolicy};
 pub(crate) use privacy::{
-    OwnerOnlySources, hidden_by_provenance_page, page_hidden, page_hidden_with, version_hidden,
+    OwnerOnlyCache, OwnerOnlySources, hidden_by_provenance_page, page_hidden, page_hidden_with,
+    version_hidden,
 };
 
 use crate::chunks::embedding_dimensions;

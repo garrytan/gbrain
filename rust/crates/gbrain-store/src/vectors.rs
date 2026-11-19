@@ -28,7 +28,7 @@ use crate::embeddings::{
     StoredVector, scan_chunk_vectors, scan_take_vectors, text_hash, vector_generation,
 };
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
@@ -39,23 +39,6 @@ use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-/// The page policy test of the scan. This line has no owner-only sources yet, so the test is the
-/// plain page policy (`facts::page_hidden`); the store line that adds owner-only sources replaces
-/// this with its cached owner-only read.
-#[derive(Debug, Default)]
-struct OwnerOnlyCache(());
-
-impl OwnerOnlyCache {
-    fn page_hidden(
-        &mut self,
-        read: &dyn KvRead,
-        page: &PageRecord,
-        policy: &PrivacyPolicy,
-    ) -> Result<bool> {
-        page_hidden(read, page, policy)
-    }
-}
 
 /// `limit` default of `searchVector` (`clampSearchLimit(opts.limit, 20, cap)`).
 const DEFAULT_VECTOR_LIMIT: u64 = 20;
@@ -290,7 +273,8 @@ fn js_number(value: f64) -> String {
     }
 }
 
-/// pgvector's parse of the query vector: at least one dimension, every value finite.
+/// pgvector's parse of the query vector: at least one dimension, every value finite and within float4 range (pgvector
+/// reads each value as a float4 and refuses one out of range; a plain cast would turn it into an infinity).
 pub(crate) fn check_query(query: &[f64]) -> Result<Vec<f32>> {
     if query.is_empty() {
         return Err(StoreError::invalid("vector must have at least 1 dimension"));
@@ -301,6 +285,12 @@ pub(crate) fn check_query(query: &[f64]) -> Result<Vec<f32>> {
         }
         if value.is_infinite() {
             return Err(StoreError::invalid("infinite value not allowed in vector"));
+        }
+        // Rounds as strtof does: a value that rounds past f32::MAX overflows (ERANGE in pgvector).
+        if (*value as f32).is_infinite() {
+            return Err(StoreError::invalid(format!(
+                "\"{value}\" is out of range for type vector"
+            )));
         }
     }
     Ok(query.iter().map(|v| *v as f32).collect())
@@ -411,12 +401,12 @@ fn page_passes(
             .source_ids
             .as_ref()
             .is_some_and(|ids| !ids.contains(&page.source_id))
-        // A store page that records no version was chunked by this store's chunker, which seals (as
-        // `chunk_queries` reads it); only a recorded version below the safe fence chunker is unsafe.
+        // `safeChunksFilter` is `chunker_version >= 4`: a page that records no version is not safe (the SQL
+        // comparison is NULL), the same rule as the keyword gate and the relational evidence gate.
         || (options.require_safe_chunks
-            && page
+            && !page
                 .chunker_version
-                .is_some_and(|v| v < SAFE_FENCE_CHUNKER_VERSION));
+                .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION));
     if hidden {
         return Ok(false);
     }
@@ -744,6 +734,19 @@ mod tests {
     use crate::takes::TakeInput;
     use crate::test_support::store;
 
+    #[test]
+    fn a_query_value_beyond_float4_range_is_refused_not_turned_into_infinity() {
+        // pgvector parses each value as a float4 and refuses one out of its range; a cast would make it infinite.
+        for value in [1e39, -1e39, f64::from(f32::MAX) * 2.0] {
+            let error = check_query(&[0.5, value]).expect_err("out of range");
+            assert_eq!(error.code, crate::error::INVALID_ARGUMENT, "{value}");
+        }
+        assert_eq!(
+            check_query(&[f64::from(f32::MAX), f64::from(f32::MIN)]).unwrap(),
+            vec![f32::MAX, f32::MIN]
+        );
+    }
+
     const MODEL: &str = "openai:text-embedding-3-large";
 
     /// A sealed page whose chunk `i` holds `vectors[i]` (no vector for an empty one), written by
@@ -1042,19 +1045,29 @@ mod tests {
             .search_vector(&q(&axis(0, 4)), &opts(json!({"detail": "low"})))
             .unwrap();
         assert!(names(&low).contains(&"d-multi#0 0.0000".to_string()));
-        // A page that records no version was chunked by this store and counts as safe; a page recorded as
-        // chunked before the safe fence chunker drops out when safe chunks are required.
+        // Safe readers see a page only when its recorded chunker is at or above the safe fence chunker. A page
+        // that records no version (a store written before chunks were stamped) is not certified safe: SQL's
+        // `chunker_version >= 4` is NULL, and the keyword gate refuses it too.
         assert_eq!(
             top(json!({"require_safe_chunks": true, "limit": 1})),
             ["a-exact"]
         );
-        s.write(|tx| {
-            let mut p = crate::pages::read_page(&*tx, "default", "a-exact")?.unwrap();
-            p.chunker_version = Some(3);
-            crate::pages::write_page(tx, &p)?;
-            Ok(())
-        })
-        .unwrap();
+        let stamp = |version: Option<i16>| {
+            s.write(|tx| {
+                let mut p = crate::pages::read_page(&*tx, "default", "a-exact")?.unwrap();
+                p.chunker_version = version;
+                crate::pages::write_page(tx, &p)?;
+                Ok(())
+            })
+            .unwrap();
+        };
+        stamp(None);
+        assert_eq!(
+            top(json!({"require_safe_chunks": true, "limit": 1})),
+            ["f-srcb"]
+        );
+        // A page recorded as chunked before the safe fence chunker drops out too.
+        stamp(Some(3));
         assert_eq!(
             top(json!({"require_safe_chunks": true, "limit": 1})),
             ["f-srcb"]
@@ -1144,6 +1157,60 @@ mod tests {
             top(json!({"exclude_private": policy, "exclude_slugs": ["a-exact"], "limit": 2})),
             ["o-public", "d-multi"]
         );
+    }
+
+    /// The owner-only part of the page policy: a page of an owner-only source never takes a result slot, nor (under the
+    /// lineage form) a concept synthesized from one; under the closed form no page is served while the brain holds an
+    /// owner-only source. A relaxed privacy part keeps it.
+    #[test]
+    fn exclude_private_hides_owner_only_pages_and_what_is_derived_from_them() {
+        let s = corpus();
+        let source: crate::sources::SourceInput =
+            serde_json::from_value(json!({"id": "vault", "config": {"owner_only": true}})).unwrap();
+        s.upsert_source(&source).unwrap();
+        page(&s, "vault", "q-vault", &[axis(0, 4)], json!({}));
+        let derived = json!({"frontmatter": {"synthesized_by": "dream", "visibility": "world"}, "type": "concept"});
+        page(
+            &s,
+            "default",
+            "r-from-vault",
+            &[axis(0, 4)],
+            derived.clone(),
+        );
+        page(&s, "default", "s-from-open", &[axis(0, 4)], derived);
+        let link = |from: &str, to: &str, to_source: &str| {
+            let options = crate::links::AddLinkOptions {
+                link_type: Some("synthesized_from".into()),
+                link_source: Some("concept-provenance".into()),
+                to_source_id: Some(to_source.into()),
+                ..Default::default()
+            };
+            s.add_link(from, to, &options).unwrap();
+        };
+        link("r-from-vault", "q-vault", "vault");
+        link("s-from-open", "a-exact", "default");
+        let top = |form: &str, privacy: bool| -> Vec<String> {
+            let policy = json!({"honorAliases": true, "entityPrivacy": privacy, "ownerOnly": form});
+            let o = opts(json!({"limit": 20, "exclude_private": policy}));
+            let rows = s.search_vector(&q(&axis(0, 4)), &o).unwrap();
+            let mut slugs: Vec<String> = rows
+                .iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect();
+            slugs.sort();
+            slugs
+        };
+        let plain = opts(json!({"limit": 20}));
+        let every = s.search_vector(&q(&axis(0, 4)), &plain).unwrap();
+        let has = |slug: &str| every.iter().any(|r| r["slug"] == slug);
+        assert!(has("q-vault") && has("r-from-vault"));
+        for privacy in [true, false] {
+            let served = top("lineage", privacy);
+            assert!(!served.iter().any(|x| x == "q-vault" || x == "r-from-vault"));
+            assert!(served.iter().any(|x| x == "a-exact"));
+            assert!(served.iter().any(|x| x == "s-from-open"));
+            assert!(top("closed", privacy).is_empty());
+        }
     }
 
     /// The feeder's guard cases that edit `content_chunks` with SQL: a chunk's model label and its

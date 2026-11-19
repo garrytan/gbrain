@@ -16,8 +16,10 @@
 //! A take records the source of its page (`source_id`) and an evidence row the source of its
 //! synthesis page, so `remove_source_rows` can sweep a deleted source without its pages.
 //!
-//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; the
-//! embeddings family stores the rev with the vector and treats a vector with another rev as stale.
+//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; so does
+//! `addTakesBatch` here (`embeddings::remove_take_vector`, which also raises the vector generation the
+//! warm vector index is keyed by). The embeddings family stores the rev with the vector and treats a
+//! vector with another rev as stale, so a vector written for an older claim never counts.
 //! A claim edited A -> B -> A is then stale, as it is in Postgres (an md5 compare would miss it).
 
 use crate::env::iso;
@@ -836,6 +838,9 @@ impl Store {
                     }
                     if existing.claim != claim {
                         existing.claim_rev += 1;
+                        // Postgres nulls the embedding in this upsert. Dropping the vector also raises the vector
+                        // generation, so a warm vector index rebuilds instead of ranking the old claim's vector.
+                        crate::embeddings::remove_take_vector(tx, existing.id)?;
                     }
                     existing.claim = claim;
                     existing.kind = kind;

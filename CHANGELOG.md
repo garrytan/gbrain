@@ -10,6 +10,75 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.743.0] - 2026-11-19
+
+**OpenClaw's skill resolver now suggests skills for the message the user just sent.**
+
+### Fixed
+- The `gbrain-skill-resolver` plugin read the user's text from fields a real OpenClaw gateway does not send. OpenClaw 2026.10.33 and 2026.11.5 pass it as `event.prompt` and keep only earlier turns in `event.messages`. So the first turn of every session got no suggestions (`skipped_empty`), and each later turn was ranked on the message before it, in live and in shadow mode. The plugin now reads `event.prompt` first.
+- The plugin now finds OpenClaw's `assertActive` check under `ctx.hookInvocation`, so a run that OpenClaw already ended no longer counts toward the session.
+- `gbrain setup openclaw` now parses `openclaw skills list --json` from stdout only. A warning OpenClaw printed on stderr used to make the list read as failed. Setup then skipped the hidden-skill filter and the `skill_resolver_host_load_cut` note.
+- An upgrade does not rewrite the plugin on its own. To install the fixed plugin, run `gbrain setup openclaw --skill-loading resolve` (or `shadow`) again, then restart the gateway.
+
+**Changing GBrain Helper's send settings at the Mac no longer holds up sends, and a Touch ID approval applies only to the settings it was shown for.**
+
+### Fixed
+- Turning sending on, adding a send key and raising a limit ask for Touch ID. The helper used to hold its settings lock for the whole dialog, which can take up to two minutes, so any send arriving then waited. It now asks with no lock held, and sends keep working while the dialog is open.
+- After the owner approves, the helper takes the lock, reads the settings again and applies the change only if they still match what the dialog was built from. If another change landed in the meantime it applies nothing and answers `overloaded`, and the owner runs the command again.
+- A send now reads its settings, checks the kill switch and its key, and takes the limits under the same lock admin uses to save. A send that arrives while a key is being replaced is checked against the new key.
+- `send-setup --off`, `send-key remove` and lowering a limit always write the keychain item in one step, so a failed write is reported as an error rather than taken as done, and a Touch ID approval still open from an earlier command is refused instead of undoing them. `send-setup --off` exits with an error when the helper answers but can't save.
+- `send-key add` and `send-limits set` wait for the helper's Touch ID wait plus a minute.
+
+**The secret store now backs itself up, encrypted, to your storage bucket, and `gbrain doctor` reports its health.**
+
+### Added
+- `gbrain secrets backup` uploads an encrypted export of the secret store to the storage backend you already configured for files (Supabase, S3 or local), and maintenance does it after new entries. The bucket gets no value, page name, path or rule in clear, and never the key; `gbrain secrets backup --restore <object>` adds back the entries a brain lacks, only where the key is. With no backend, the database backup carries the store and nothing is needed.
+- `gbrain doctor` has a `secret_store` check: entries, the last backup, keys entries need that this host lacks (`secret_store_key_forked`), a key whose escrow copy was never exported, originals waiting in the spool, held-back publish commits and local refs that still hold commits from before a redaction rebuild.
+
+### Known limits
+- Purging a page does not yet remove its sealed originals from the secret store. They stay encrypted, and `gbrain doctor`'s `secret_store` check still counts them. Removing them with the page follows in a later release.
+
+## [0.60.742.0] - 2026-11-19
+
+**The PostgreSQL unit tests run on 28 shards, so new test files no longer push them past their time budget.**
+
+### Changed
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 28. In `.github/workflows/persistence-validation.yml`, the `unit-postgres-arms` matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose 570 s budget is unchanged). `scripts/postgres-arm-weights.json` is re-mined from the arms jobs of the five newest complete full runs, so every listed file has a measured weight. The largest shard drops from 557.4 s on 24 shards to 478.4 s on 28. Check names become `Unit-lane PostgreSQL arms N/28 / Bun …`, and none of them is a required check.
+
+**A consented page purge now commits even when the page has many facts, a purge that is still committing is reported as pending instead of failed, and `gbrain forget` refuses several fact ids instead of forgetting only the first.**
+
+### Fixed
+- Purging a page deletes the leftover segment texts that still hold one of its facts. That sweep lowered every leftover text once for every fact form, so with a few MB of leftover text it outlasted the 5-second statement limit on every attempt and the purge never committed. It now lowers each text once per 4 MiB chunk, deletes exactly the same texts, and finishes in about a second.
+- `gbrain pages purge-deleted --yes` and the `purge_deleted_pages` operation counted a purge that was accepted but had not committed yet as failed, reported `managed_purge_failed`, and parked the page after five runs although every request committed later. The purge is now deferred like the automatic purge's: it is reported as pending with its request id and `gbrain write-request` command, never counted failed or parked, and the next run checks it before submitting more in that source. With `dream.write_deferral.enabled=false` it is reported pending with code `write_pending`.
+- `gbrain forget 1 2 3` withdrew only the first fact, printed success and exited 0. It now refuses before changing anything and says to run one `gbrain forget` per fact id. The `--purge` form refuses several ids the same way, and neither form takes a number that is a flag's value (`--reason 42`, `--reason-scan-limit 1000`) for the fact id any more, wherever it sits on the line.
+
+**Renaming a page no longer changes the trust tier of the page or of the facts filed under it.**
+
+### Fixed
+- A slug move (a sync rename, a file or frontmatter repair, an import that moves a page) used to stamp the page and every fact filed under it with the tier of whoever ran the move. An owner-run rename could promote an agent-written page and its facts to operator-curated without anyone reading them, and a rename with no declared tier demoted them to unknown. The move now keeps each row's stored tier on both PGLite and Postgres; edits made after the move still stamp the writer's tier as before. Rows that past renames already re-stamped are not changed by upgrading.
+
+**The automatic purge no longer permanently deletes a concept that was hidden only because one of its inputs was purged.**
+
+<!-- behavior-change: automatic_purge_keeps_rederive_concepts_9653 -->
+
+### Fixed
+- When an atom was purged, the concept built from it was hidden for rebuilding, but no rebuild came, and the automatic purge removed the concept about 72 hours later with its history and incoming links. The cycle's purge phase, `gbrain maintain` and the purge job now keep such a concept until it is rebuilt. A concept a person or a sync deleted still expires on time, and an explicit `gbrain pages purge-deleted --yes` or `gbrain delete --purge` still removes it (#9653).
+
+**The experimental Rust engine's store now answers keyword search, title search, fuzzy title lookup and chunk reads the way PGLite does, but nothing selects it yet; PGLite and Postgres brains are unchanged.**
+
+### Added
+- The Rust engine serves `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`, `searchTitles` and `findByTitleFuzzy`, so it now reports the `keyword_search` capability. The store carries its own copy of PostgreSQL's English text search (word splitting, stemming, stop words, `websearch_to_tsquery`, `ts_rank` and `ts_rank_cd`) and returns PGLite's scores and order. Search hides the same pages PGLite hides. With `excludePrivate`, `searchKeyword` also hides pages that belong to an owner-only source, and a page that came from an owner-only page stays hidden after that page is deleted for good. `rust/docs/store/keyword.md` lists what each member accepts and refuses.
+- The Rust engine serves the chunk reads `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent` and `listChunklessPagesWithContent`, including for pages stored in segments (`rust/docs/store/chunk_queries.md`).
+- A put that would store a chunk or a page whose search vector is too large for PostgreSQL's limit is refused with PostgreSQL's own "string is too long for tsvector" message and stores nothing, and a repeated `putPage` is refused when the page no longer fits.
+- A search query with more than 131,072 items is refused with `invalid_argument`, where PGLite runs out of stack on a few thousand. Searches reuse the vectors they have already built, so a repeated query is much faster than the first (about 20 ms against about 350 ms on a 4,000-chunk test brain).
+
+### Changed
+- Keyword search on the Rust engine ranks with the ported `ts_rank`, not BM25, so its scores and order match PGLite's. A search with an offset, a `where` filter or an ISO date window is served instead of refused. A Chinese, Japanese or Korean query, a text search language other than English, `requireSafeChunks`, `minTrust`, `suppressFlagged`, a date that is not an ISO date, and `excludePrivate` on any search but `searchKeyword` still refuse `engine_capability_missing` and write nothing.
+- The Rust engine's documentation in `docs/ENGINES.md`, `rust/README.md` and the design notes now says which search and chunk members are served. The parity suite's opt-in Rust arm now has a how-to in `docs/TESTING.md`.
+
+### For contributors
+- The PostgreSQL and Snowball sources the search port is built from are credited under `third-party/`, and the checked generators that rebuild its tables and its PostgreSQL 18.6 goldens are in `rust/scripts/`. Reviewers leave the generated golden files out of their diffs.
+
 ## [0.60.741.0] - 2026-11-19
 
 **You can now confirm or reject the duplicate people and companies `gbrain dedupe --preview` finds, and a confirmed group counts as one person in rankings and enrichment.**

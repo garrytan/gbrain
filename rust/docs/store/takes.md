@@ -19,7 +19,7 @@ Keys (tag `A`, `keys::TAKE`):
 
 `<row>` is `(row_num as u32 ^ 0x8000_0000)` big-endian, so negative row numbers sort first. A take keeps
 the `source_id` of its page and a `claim_rev` that moves each time the claim text changes (for the
-embedding staleness check owned by core).
+embedding staleness check owned by core). `addTakesBatch` that changes a take's claim drops the take's stored vector (`embeddings::remove_take_vector`, which also raises the vector generation), as Postgres nulls the embedding in that upsert; deleting a take deletes its vector too.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

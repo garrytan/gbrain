@@ -837,7 +837,7 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Store and binding:** `allocateBodyOccurrenceIds` (`allocate_body_occurrence_ids`), `stageSegmentTexts` (`stage_segment_texts`), `readSegmentTexts` (`read_segment_texts`), `stageManifestRows` (`stage_manifest_rows`), `readManifest` (`read_manifest`), `stageSegmentChunks` (`stage_segment_chunks`), `createSegmentedPageShell` (`create_segmented_page_shell`), `flipBodyGeneration` (`flip_body_generation`), `sealSegmentedPage` (`read_segmented_seal_lead`, `seal_segmented_page`), `openBodyStaging` (`open_body_staging`), `setBodyStagingState` (`set_body_staging_state`), `sweepSegments` (`sweep_segments`), `readSegmentDerivations` (`read_segment_derivations`), `upsertSegmentDerivations` (`upsert_segment_derivations`), `retireSegmentDerivations` (`retire_segment_derivations`), `refreshPageBody` (`refresh_page_body`).
 - **Postgres tables:** `page_segment_texts`, `page_body_manifest`, `page_body_stagings`, `page_segment_derivations`, `page_derivation_spend`.
 - **Keys:** `b 0x01 <source> 0x00 <sha256>` segment text; `b 0x02 <page id> <occurrence id> <gen_from> <staging id>` manifest row (ids big-endian); `b 0x03 <staging id>` staging; `b 0x04 <page id> ...` derivations; `M next_body_occurrence_id` for occurrence ids. Page-keyed rows go in `remove_page_rows`; segment texts are kept until `sweepSegments`, as in PGLite.
-- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration`, `sealSegmentedPage` and `refreshPageBody` (page record writes go through `write_page`; the seal records the sanitized lead with `record_search_timeline`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
+- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration`, `sealSegmentedPage` and `refreshPageBody` (page record writes go through `write_page`; the seal records the sanitized lead with `record_search_timeline`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries a vector (`engine_capability_missing`). The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
 - **Segment storage probe:** `hasSegmentStorage` (capability `page_body`, in `write_guards.rs`) is true when any segment text (`b 0x01`) or body staging (`b 0x03`) exists. The journal reads it before it looks for segmented pages.
@@ -878,7 +878,7 @@ Facts and their supersession chains.
     The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
     rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
     a member page or a private-facts grant widens, and a remote provenance floor that is not the no-caller one. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`.
-- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
+- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding needs core vectors (built); the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
 - **Parity cases (22, in `facts.test.ts`, `sync-aliases.test.ts`):**
@@ -934,7 +934,7 @@ Takes and synthesis evidence.
 - **Store and binding:** `addTakesBatch` (`add_takes_batch`), `listTakes` (`list_takes`), `searchTakes` (`search_takes`), `updateTake` (`update_take`), `supersedeTake` (`supersede_take`), `resolveTake` (`resolve_take`), `getScorecard` (`get_scorecard`), `getCalibrationCurve` (`get_calibration_curve`), `addSynthesisEvidence` (`add_synthesis_evidence`), `listActiveTakesForPages` (`list_active_takes_for_pages`), `matchTakeRows` (`match_take_rows`), `deleteTakeRows` (`delete_take_rows`).
 - **Postgres tables:** `takes` (unique `(page_id, row_num)`), `synthesis_evidence`, read of `take_grade_cache` for `ungradedFirst`.
 - **Keys:** `A 0x01 <take id>` row; `A 0x02 <page id> <row_num u32>` to the take id (unique); `A 0x03 <synthesis page id> <take page id> <row_num>` evidence; `A 0x04 <take page id> <row_num> <synthesis page id>` reverse evidence. `M next_take_id`. `remove_page_rows` deletes the page's takes and every evidence row that names it.
-- **Depends on:** Core page helpers for slug and visibility joins. Vector search over takes and take embeddings belong to core (vectors, embeddings); the `takes` capability is reported only after those land.
+- **Depends on:** Core page helpers for slug and visibility joins. Vector search over takes and take embeddings belong to core (vectors, embeddings; both built), so the `takes` capability is reported.
 - **Estimate:** about 4 days.
 - **Notes:** `weight` is REAL: clamp and round as `buildTakeRows` does, then store as `f32`. `since_date` is text compared after padding, not a date. `searchTakes` is a trigram `word_similarity` score: share the keyword family's trigram code once it exists, or build `pg_trgm` scoring in this family and let keyword call it.
 - **Parity cases (21, in `code-eval-salience.test.ts`, `facts.test.ts`, `links.test.ts`, `takes.test.ts`):**
@@ -1081,7 +1081,7 @@ Brain statistics, health and the ingest log.
 - **Store and binding:** `getStats` (`get_stats`), `getHealth` (`get_health`), `countOnboardSignal` (`count_onboard_signal`), `logIngest` (`log_ingest`), `getIngestLog` (`get_ingest_log`), `listEnrichCandidates` (`list_enrich_candidates`), `findAnomalies` (`find_anomalies`).
 - **Postgres tables:** Counts over every table; `ingest_log`.
 - **Keys:** `n <created_at us> <id>` ingest log row; `M next_ingest_log_id`.
-- **Depends on:** Reads every family. `getHealth` reads extraction stamps and embedding coverage, so finish it last; the embedding counts refuse until the embeddings family lands, unless the store has no chunks. `listEnrichCandidates` and `findAnomalies` read salience and timeline.
+- **Depends on:** Reads every family. `getHealth` reads extraction stamps and embedding coverage, so finish it last. The embedding counts read the stored vectors of the active column; a brain whose config names another column refuses (`rust/docs/store/stats.md`). `listEnrichCandidates` and `findAnomalies` read salience and timeline.
 - **Estimate:** about 2 to 3 days.
 - **Notes:** Health lists order with `COLLATE "C"` (byte order). `getStats` counts links only when both ends are in scope. `countOnboardSignal` is served because a production caller reaches it on a Rust brain: the MCP onboarding coach (`src/core/onboard/mcp-onboarding.ts:72`, started by `src/mcp/server.ts:551` and read by `src/mcp/dispatch.ts:1464`). It counts brain-wide, with no source scope.
 - **Parity cases (7, in `code-eval-salience.test.ts`, `config-ingest.test.ts`, `search-reads.test.ts`):**
@@ -1224,7 +1224,7 @@ Chunk reads of the chunks capability (served; the capability stays unreported wh
 - **Store and binding:** `getChunkPage` (`get_chunk_page`), `getChunkWindows` (`get_chunk_windows`), `countChunklessPagesWithContent` (`count_chunkless_pages_with_content`), `listChunklessPagesWithContent` (`list_chunkless_pages_with_content`).
 - **Postgres tables:** `content_chunks`, `pages`.
 - **Keys:** Reads core chunk rows (`K`) through `chunks.rs` helpers; `c` only if a read needs an index.
-- **Depends on:** Core chunk helpers. Two cases also read embeddings (core).
+- **Depends on:** Core chunk helpers. Two cases also read embeddings (core, built).
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Chunkless pages exclude quarantined and `embed_skip` pages.
 - **Parity cases (6, in `chunks.test.ts`):**
@@ -1245,9 +1245,9 @@ Chunk vectors and vector search.
 - **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`).
 - **Postgres tables:** Chunk and take vectors (`embedding` columns), the vector index.
 - **Keys:** `X` (core sub-layout).
-- **Depends on:** The coming vector store work (HNSW or exact scan choice, design phase 2).
-- **Estimate:** core.
-- **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector.
+- **Depends on:** Nothing. The store serves both members with an exact scan over the stored vectors (`rust/docs/store/vectors.md`).
+- **Estimate:** built.
+- **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector. A query value outside the float4 range refuses with `invalid_argument`. A safe reader (`requireSafeChunks` or `excludePrivate`) sees a page only when its `chunker_version` is 4 or more.
 - **Store field:** `Store` holds one `pub(crate) vectors: crate::vectors::VectorCache`, made with `Default` in
   `open_kv`, so a search passes `Some(&self.vectors)` to `load_index` and reuses the decoded vectors across reads.
   Core defines `VectorCache` as an empty struct at the end of `vectors.rs`. Git merges it into the family's file with
@@ -1270,9 +1270,9 @@ Embedding state of chunks and pages.
 - **Store and binding:** `getEmbeddingsByChunkIds` (`get_embeddings_by_chunk_ids`), `countStaleChunks` (`count_stale_chunks`), `sumStaleChunkChars` (`sum_stale_chunk_chars`), `setPageEmbeddingSignature` (`set_page_embedding_signature`), `invalidateStaleSignatureEmbeddings` (`invalidate_stale_signature_embeddings`), `invalidateContentDriftEmbeddings` (`invalidate_content_drift_embeddings`), `listStaleChunks` (`list_stale_chunks`), `readEmbeddingStateCounts` (`read_embedding_state_counts`), `listEmbeddingStateRows` (`list_embedding_state_rows`), `getChunksWithEmbeddings` (`get_chunks_with_embeddings`), `updateTakeEmbeddings` (`update_take_embeddings`), `getTakeEmbeddings` (`get_take_embeddings`), `countStaleTakes` (`count_stale_takes`), `listStaleTakes` (`list_stale_takes`).
 - **Postgres tables:** Embedding columns and state on `content_chunks`, `pages.embedding_signature`, take embeddings.
 - **Keys:** `B` (core sub-layout).
-- **Depends on:** vectors.
-- **Estimate:** core.
-- **Notes:** Reports the active embedding column the way the registry does.
+- **Depends on:** vectors (built).
+- **Estimate:** built (`rust/docs/store/embeddings.md`).
+- **Notes:** Reports the active embedding column the way the registry does. A brain whose config names a vector column other than `embedding`, and a chunk that carries an image vector, still refuse with `engine_capability_missing`.
 - **Parity cases (9, in `chunks.test.ts`, `search.test.ts`, `takes.test.ts`):**
   - `chunks.test.ts`: getChunks includeEmbedding returns stored vectors; getChunksWithEmbeddings reads the full rows
   - `chunks.test.ts`: countStaleChunks, sumStaleChunkChars and listStaleChunks agree on which chunks lack a vector
@@ -1881,10 +1881,10 @@ member lands. Within a group, build in the order shown.
 |---|---|---|---|---|
 | 1. Page reads and deletes | page_ops | yes | about 9 days | nothing to start; `deletePages` calls the eval_capture helper, which group 5 builds first (about half a day) |
 | 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` uses the core rename helper (built) |
-| 3. Page bodies | page_body | yes | about 7 to 8 days | vector input to `stageSegmentChunks` refuses until embeddings; one case needs transactions |
+| 3. Page bodies | page_body | yes | about 7 to 8 days | `stageSegmentChunks` refuses a chunk that carries a vector; one case needs transactions |
 | 4. Memory records | dream, contradictions, facts, ontology, raw_files, stats | yes | about 9 days | three facts cases need takes (group 5); `getHealth` last |
-| 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges uses the core chunk-delete hook (built) |
-| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings |
+| 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core, built); code_edges uses the core chunk-delete hook (built) |
+| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings (core, built) |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
 done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. `sweepSegments` is served: it reads the version and journal
@@ -1910,8 +1910,8 @@ brain; then the first persistence slice (about 4 days, core) comes first.
 | Page projection hook (`page_projection::queue_page_projection`, called by `write_page` and `remove_page`) | built; the family fills in the body | persistence (`page_projection_jobs`) |
 | Tags `d`, `m`, `t` (`PERSISTENCE`, `JOBS`, `TRUST`) and the empty `persistence.rs`, `jobs.rs` and `trust.rs` | built | persistence, jobs, trust |
 | Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
-| vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
-| embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
+| vectors (`X`): chunk and take vectors, vector search | built (exact scan) | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
+| embeddings (`B`): stale counts, signatures, embedding state | built | stats `getHealth`, chunk_queries shared cases, takes capability |
 | transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction; link_temporal (one transaction for the link refresh and the derived-link steps) |
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |

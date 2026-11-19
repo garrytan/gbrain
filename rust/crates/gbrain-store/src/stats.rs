@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::chunks::read_chunks;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::{in_links, no_nul, out_links};
 use crate::pages::{PageRecord, all_pages, next_id};
@@ -662,6 +662,7 @@ impl Store {
         let mut baseline: [BTreeMap<String, Days>; 2] = [BTreeMap::new(), BTreeMap::new()];
         type Today = BTreeMap<String, (BTreeSet<u64>, BTreeSet<String>)>;
         let mut today: [Today; 2] = [BTreeMap::new(), BTreeMap::new()];
+        let mut owner_only = OwnerOnlyCache::default();
         for page in all_pages(&*read)? {
             if !live(&page)
                 || quarantined(&page)
@@ -675,7 +676,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &input.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && owner_only.page_hidden(&*read, &page, policy)?
             {
                 continue;
             }

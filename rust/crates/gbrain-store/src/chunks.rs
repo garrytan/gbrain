@@ -15,7 +15,7 @@ use crate::sources::DEFAULT_SOURCE;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 const NEXT_CHUNK_ID: &str = "next_chunk_id";
 const STATS: &str = "chunk_stats";
@@ -429,12 +429,7 @@ fn remove_chunk_record(
 }
 
 /// Replaces a page's chunks with `chunks` (an empty list removes them all), at the page's
-/// `updated_at` (see `replace_chunks_at`). A `certified` seal (the caller sends chunks it ran
-/// through the protected-fence sanitizer: `sealChunks`) also stamps the page `chunker_version` at
-/// `SAFE_FENCE_CHUNKER_VERSION` (PGLite's `sealChunkerVersion`). A seal that is not certified (the
-/// store's own raw split of a body that no sanitizer read) stamps it -1 when it changes what the
-/// page holds or the page is below the fence (`chunkWriteInvalidations`), so an explicit certified
-/// seal is the only thing that makes chunks safe.
+/// `updated_at` (see `replace_chunks_at`). `certified` is the safe-fence flag of `replace_chunks_at`.
 pub(crate) fn replace_chunks(
     tx: &mut dyn KvWrite,
     page: &mut PageRecord,
@@ -483,9 +478,13 @@ pub(crate) fn embedding_dimensions(read: &dyn KvRead) -> Result<usize> {
 
 /// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
 /// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When
-/// `seal` is set the page's `text_projection_revision` becomes its `knowledge_revision`: the chunks
-/// now describe the current text. A `certified` seal also stamps its `chunker_version` at the safe
-/// fence version (see `replace_chunks`).
+/// `seal` is set the page's `text_projection_revision` becomes its `knowledge_revision`: the
+/// chunks now describe the current text. A `certified` seal (the caller sends chunks it ran
+/// through the protected-fence sanitizer: `sealChunks`) also stamps the page `chunker_version`
+/// at `SAFE_FENCE_CHUNKER_VERSION` (PGLite's `sealChunkerVersion`). A write that is not certified
+/// (a plain upsert, or the store's own raw split of a body that no sanitizer read) stamps it -1
+/// when it changes what the page holds or the page is below the fence (`chunkWriteInvalidations`),
+/// so an explicit certified seal is the only thing that makes chunks safe.
 ///
 /// Vectors follow PGLite's upsert. A chunk written fresh (`merge` false, or a new index) takes
 /// the write's vector, or none and a pending stamp of `now_us`. On a merge, a chunk whose text
@@ -530,9 +529,25 @@ pub(crate) fn replace_chunks_at(
     } else {
         drop_chunks(tx, page.id)?;
     }
+    // `chunkWriteInvalidations` runs on the stored rows before any move: a stored index the write leaves out changes
+    // the page.
+    let leaves_out = previous
+        .values()
+        .any(|old| !by_index.contains_key(&old.chunk_index));
+    // The rows the write lands on: on a merge, embedded rows first follow their exact chunk to its new index.
+    let placed = if merge {
+        move_displaced_chunks(&previous, &mut old_vectors, chunks, &by_index)
+    } else {
+        previous
+            .iter()
+            .filter(|(index, _)| by_index.contains_key(index))
+            .map(|(index, old)| (*index, old.clone()))
+            .collect()
+    };
+    let kept_ids: HashSet<u64> = placed.values().map(|old| old.id).collect();
     let mut removed: Vec<u64> = previous
         .values()
-        .filter(|old| !by_index.contains_key(&old.chunk_index))
+        .filter(|old| !kept_ids.contains(&old.id))
         .map(|old| old.id)
         .collect();
     removed.sort_unstable();
@@ -550,16 +565,16 @@ pub(crate) fn replace_chunks_at(
     let mut stats = StatsDelta::default();
     let view_generation = segment_view_generation(&*tx, page.id)?;
     // `chunkWriteInvalidations`: a stored chunk the write leaves out (or an empty write that removes any) changes the page.
-    let mut changes_chunks = !removed.is_empty();
+    let mut changes_chunks = leaves_out;
     for (index, input) in by_index {
         let source = checked_source(input)?;
-        let text = input.chunk_text.replace('\0', "");
+        let text = stored_text(input);
         changes_chunks |= previous
             .get(&index)
             .is_none_or(|old| chunk_differs(old, input, &text, &source));
         let length = term_frequencies(&text).1;
         let new_vector = input_vector(input, dims)?;
-        let old = previous.get(&index);
+        let old = placed.get(&index);
         let id = match old {
             Some(old) => old.id,
             None => next_chunk_id(tx)?,
@@ -685,6 +700,103 @@ pub(crate) fn replace_chunks_at(
         write_page(tx, page)?;
     }
     Ok(())
+}
+
+/// The text a chunk write stores (NUL bytes dropped).
+fn stored_text(input: &ChunkInput) -> String {
+    input.chunk_text.replace('\0', "")
+}
+
+/// `moveDisplacedChunksAndPrune` (`src/core/engine-sql/chunks.ts`): a merge write matches a stored row to the new set by
+/// its exact chunk (source and text), not its index. A movable row (one with a vector whose text hash is its current
+/// text: `movableChunkSql`) whose chunk the new set holds at another index, where that index does not already hold it,
+/// moves there with its id, vector, metadata, timestamps and input provenance; a row the write leaves out or that sits
+/// on a move target is dropped. Movable rows are taken in index order and the new indexes in the order the write first
+/// names them, as the SQL's queue and `Map` do. Returns the rows by the index they land on; `old_vectors` is rekeyed.
+fn move_displaced_chunks(
+    previous: &HashMap<u32, ChunkRecord>,
+    old_vectors: &mut HashMap<u32, crate::embeddings::StoredVector>,
+    chunks: &[ChunkInput],
+    by_index: &BTreeMap<u32, &ChunkInput>,
+) -> HashMap<u32, ChunkRecord> {
+    let key = |source: &str, text: &str| (source.to_string(), crate::embeddings::text_hash(text));
+    let movable = |old: &ChunkRecord| {
+        old.embed.has_vector()
+            && old.embed.text_hash.as_deref()
+                == Some(crate::embeddings::text_hash(&old.chunk_text).as_str())
+    };
+    let mut targets: Vec<(u32, u32)> = Vec::new();
+    if previous.values().any(movable) {
+        let mut order: Vec<u32> = Vec::new();
+        for chunk in chunks {
+            if !order.contains(&chunk.chunk_index) {
+                order.push(chunk.chunk_index);
+            }
+        }
+        let incoming: HashMap<u32, (String, String)> = by_index
+            .iter()
+            .map(|(index, input)| {
+                let source = input.chunk_source.as_deref().unwrap_or("compiled_truth");
+                (*index, key(source, &stored_text(input)))
+            })
+            .collect();
+        let mut stored: Vec<&ChunkRecord> = previous.values().collect();
+        stored.sort_unstable_by_key(|old| old.chunk_index);
+        let mut candidates: HashMap<(String, String), VecDeque<u32>> = HashMap::new();
+        for old in stored.iter().filter(|old| movable(old)) {
+            let own = key(&old.chunk_source, &old.chunk_text);
+            if incoming.get(&old.chunk_index) == Some(&own) {
+                continue;
+            }
+            candidates
+                .entry(own)
+                .or_default()
+                .push_back(old.chunk_index);
+        }
+        for index in order {
+            let wanted = &incoming[&index];
+            if previous
+                .get(&index)
+                .is_some_and(|old| key(&old.chunk_source, &old.chunk_text) == *wanted)
+            {
+                continue;
+            }
+            if let Some(from) = candidates
+                .get_mut(wanted)
+                .and_then(|queue| queue.pop_front())
+            {
+                targets.push((from, index));
+            }
+        }
+    }
+    let target_indexes: HashSet<u32> = targets.iter().map(|(_, to)| *to).collect();
+    let moved_from: HashSet<u32> = targets.iter().map(|(from, _)| *from).collect();
+    let mut placed: HashMap<u32, ChunkRecord> = previous
+        .iter()
+        .filter(|(index, _)| {
+            !moved_from.contains(index)
+                && by_index.contains_key(index)
+                && !target_indexes.contains(index)
+        })
+        .map(|(index, old)| (*index, old.clone()))
+        .collect();
+    let mut vectors: HashMap<u32, crate::embeddings::StoredVector> = old_vectors
+        .iter()
+        .filter(|(index, _)| placed.contains_key(index))
+        .map(|(index, v)| (*index, v.clone()))
+        .collect();
+    for (from, to) in targets {
+        let mut row = previous[&from].clone();
+        row.chunk_index = to;
+        placed.insert(to, row);
+        if let Some(vector) = old_vectors.get(&from) {
+            let mut vector = vector.clone();
+            vector.chunk_index = to;
+            vectors.insert(to, vector);
+        }
+    }
+    *old_vectors = vectors;
+    placed
 }
 
 /// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page sealed at this version or later holds only
@@ -817,12 +929,44 @@ impl ChunkRecord {
     }
 }
 
+/// True for a segmented shell page: its body columns are NULL (PGLite's `body_storage = 'segmented'`).
+pub(crate) fn segmented(page: &PageRecord) -> bool {
+    page.compiled_truth.is_null() && page.timeline.is_null()
+}
+
+/// `chunkGenerationFilter`: a chunk of the page's live body. An inline chunk belongs to a page that is not segmented; a
+/// segmented chunk is at or below the page's generation and its occurrence has a live manifest row (the segment view
+/// keeps one offset per live occurrence). A staged chunk, one of a retired occurrence and an inline chunk left on a
+/// segmented page are not. `visible_at` is the looser `chunkVisibleFilter` (generation only) of the sealed reads.
+pub(crate) fn in_live_body(chunk: &ChunkRecord, segmented_page: bool, view: &SegmentView) -> bool {
+    match chunk.segment {
+        None => !segmented_page,
+        Some(place) => {
+            place.body_generation <= view.generation
+                && view.offsets.contains_key(&place.occurrence_id)
+        }
+    }
+}
+
 /// The page's visible chunks in document order (see the contract above).
 pub(crate) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>> {
+    ordered_chunks(read, page_id, None)
+}
+
+/// The page's chunks in document order, filtered by `chunkVisibleFilter` (`live_body` None) or by
+/// `chunkGenerationFilter` (`live_body` Some(page is segmented)).
+fn ordered_chunks(
+    read: &dyn KvRead,
+    page_id: u64,
+    live_body: Option<bool>,
+) -> Result<Vec<ChunkRecord>> {
     let view = read_segment_view(read, page_id)?;
     let mut chunks: Vec<ChunkRecord> = read_chunks(read, page_id)?
         .into_iter()
-        .filter(|c| c.visible_at(view.generation))
+        .filter(|c| match live_body {
+            None => c.visible_at(view.generation),
+            Some(segmented_page) => in_live_body(c, segmented_page, &view),
+        })
         .collect();
     // ORDER BY m.byte_start, cc.local_ordinal, cc.chunk_index, NULLs last.
     chunks.sort_by_key(|c| {
@@ -1042,14 +1186,17 @@ pub struct GetChunksOptions {
     pub include_unsealed: bool,
 }
 
-/// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`.
+/// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`. A sealed read takes
+/// `chunkVisibleFilter`'s chunks; an `includeUnsealed` read (`unsealed`) takes `chunkGenerationFilter`'s, the live
+/// body's only.
 pub(crate) fn chunk_rows(
     read: &dyn KvRead,
     page: &PageRecord,
     with_vectors: bool,
+    unsealed: bool,
 ) -> Result<Vec<Value>> {
     let mut out = Vec::new();
-    for chunk in visible_chunks(read, page.id)? {
+    for chunk in ordered_chunks(read, page.id, unsealed.then(|| segmented(page)))? {
         let stored = if with_vectors && chunk.embed.has_vector() {
             crate::embeddings::read_chunk_vector(read, page.id, chunk.chunk_index)?
         } else {
@@ -1303,7 +1450,12 @@ impl Store {
         {
             return Ok(Vec::new());
         }
-        chunk_rows(&*read, &page, options.include_embedding)
+        chunk_rows(
+            &*read,
+            &page,
+            options.include_embedding,
+            options.include_unsealed,
+        )
     }
 
     /// `deleteChunks(slug, {sourceId})`: removes the page's chunks. The page stays. When it removed

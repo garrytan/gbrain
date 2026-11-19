@@ -58,12 +58,13 @@ the shape `searchTakes` returns, with the cosine as `score`.
 - **`excludePrivate`.** A truthy one hides the pages the page policy hides, as `facts/privacy.rs`
   `page_hidden` reads it (`privatePagesFilterForCaller('p')`: private visibility or access, derived pages
   whose origin is private, the member-access rules). The policy is checked per page before ranking, so a
-  hidden page never takes a result slot and a limit counts only visible pages. This line has no owner-only
-  sources, so the policy carries no owner-only rule and `page_hidden` reads only the rules above.
-  The TypeScript member sends the policy (`honorAliases`, `entityPrivacy`) as `exclude_private`; a caller whose policy is wider than the
+  hidden page never takes a result slot and a limit counts only visible pages. The policy also carries the owner-only rule
+  (`ownerOnly`, as `page_hidden` reads it): a page of an owner-only source never takes a slot, nor does a concept
+  synthesized from one, and under the closed form no page is served while the brain holds an owner-only source. A page named in `owner_only_marks` (a hard delete of an owner-only input, `keyword.md`) stays hidden on every page-reading member, because the cache reads the sources and the marks together.
+  The TypeScript member sends the policy (`honorAliases`, `entityPrivacy`, `ownerOnly`) as `exclude_private`; a caller whose policy is wider than the
   store's refuses (`private-provenance.ts`). `excludePrivate` also turns on the safe-chunk rule, as in
-  PGLite (`requiresSafeChunks`). A page that records no `chunker_version` counts as safe: this store's
-  chunker seals, and `chunk_queries` reads such a page as sealed. Only a recorded version below 4 is unsafe.
+  PGLite (`requiresSafeChunks`). A safe reader sees a page only when its `chunker_version` is 4 or more,
+  as in SQL (`chunker_version >= 4`) and the keyword gate: a page that records no version is not safe.
 - **Refused options.** The store applies neither `where`, `afterDate`, `beforeDate`, `minTrust` nor
   `suppressFlagged`, so a set one refuses with `engine_capability_missing` and nothing runs, even beside
   `excludePrivate` (an empty `where` object is ignored). `searchTakesVector` refuses `excludePrivate`,

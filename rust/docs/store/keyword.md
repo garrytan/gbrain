@@ -46,17 +46,21 @@ engines do.
 
 `excludePrivate`, `requireSafeChunks`, `minTrust` and `suppressFlagged` are served by every keyword member except
 `findByTitleFuzzy`, as `buildVisibilityClause` (`src/core/search/sql-ranking.ts`) adds them, before any rank, limit
-or count:
+or count. The policy is part of every statement of a member (the matching and rare-term arms, the handles retry and
+the fallback arms), so a hidden page never takes a result slot and a limit counts only visible pages:
 
 - `excludePrivate`: the TS member sends the store page policy (`storePagePolicy`), and the page filter drops a page
   `facts/privacy.rs` `page_hidden` hides (`privatePagesFilterForCaller('p')`). A caller whose record holds only a
   reader identity and a private-readable grant is served with both (the `callerReaders` opt-in); any other caller
   whose policy differs (folder grants, lineage, an owner read) refuses.
-- `requireSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise (`requiresSafeChunks`): the
-  page filter drops a page whose `chunker_version` is short of `SAFE_FENCE_CHUNKER_VERSION` or not recorded
-  (`safeChunksFilter('p')`).
-- A safe-chunk `searchTitles` runs every attempt as the `title` kind, as `buildSearchTitlesStatement` makes the
-  statement title-only and uncapped: no attempt matches a page on its timeline and none is cut.
+- `requireSafeChunks`, which an `excludePrivate` read asks for unless it says otherwise (`requireSafeChunks ??
+  excludePrivate`, `requiresSafeChunks`): the page filter drops a page whose `chunker_version` is short of
+  `SAFE_FENCE_CHUNKER_VERSION` or not recorded (`safeChunksFilter('p')`).
+- `searchTitles` applies the policy to every attempt of its title statement. A safe-chunk `searchTitles` runs every
+  attempt as the `title` kind, as `buildSearchTitlesStatement` makes the statement title-only and uncapped (every row
+  is a `title` match, as `title-statement.ts` renders it): no attempt matches a page on its timeline and none is cut, so
+  a page whose only match is its timeline is not returned, and a page limit and the page count read only visible
+  pages. A hybrid search with `excludePrivate` therefore reaches its title arm without a refusal.
 - `minTrust` (`trustFloorSql('p')`): the page filter drops a page whose stamped trust tier (`PageRecord::trust_tier`,
   `unknown` when none) ranks below the floor. An empty floor keeps every tier; a name that is no tier refuses.
 - `suppressFlagged` (`activationSuppressedSql('pages', 'p')`): the page filter drops a page at or below
@@ -76,6 +80,14 @@ deleted is itself owner-only lineage (strict form), it marks that page and each 
 good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
 only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
 store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it.
+
+The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
+SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
+4 when `sealChunks` seals a page's chunks (a put's own chunks are not certified and never stamp 4) and -1 when a later `upsertChunks` changes them (`chunk_queries.md`).
+
+The origin checks of the policy follow slug aliases and rename history as PGLite does (`facts/privacy.rs` reads them
+through `aliases.rs`), so an origin that a rename moved still reaches its page.
+`keywordRareTermPages` takes no options; PGLite's rare-term statement applies no privacy filter, so neither does the store.
 
 Ignored, as in the SQL statements: the vector, reranking, recency and reporting options (`onVectorPoolMeta`,
 `cjkKeyword`, `embeddingColumn`, `recencyBoost`, `tokenBudget`, `reranker`, `relationalRetrieval` and the rest of

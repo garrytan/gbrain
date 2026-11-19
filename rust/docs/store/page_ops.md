@@ -12,7 +12,12 @@ wins over a non-empty `sourceId`; with neither, every source. `live: true` also 
 pages whose frontmatter has a `quarantine` key and pages of a missing or archived source. The
 TypeScript members send `live: true` whenever the caller passes a scope object. `excludePrivate` applies the page
 policy of `facts/privacy.rs`, a caller's reader identity and private-readable grant included (`storePagePolicy`
-with `callerReaders`; it refuses a caller whose policy the store does not model).
+with `callerReaders`; it refuses a caller whose policy the store does not model): the policy is
+`{ honorAliases, entityPrivacy, ownerOnly }`, as `resolveAliases` takes it, and a page it hides is not read, an
+owner-only page (a page of an owner-only source, or under the closed form any page of a brain that holds one) included.
+The TypeScript members `getContentFlagsByPageIds`, `getUnverifiedExtractionPageIds` and `getEffectiveDates` also accept
+and ignore the other keys of hybrid search's option bag (its settings, callbacks and `takesHoldersAllowList`), because
+hybrid search hands them that whole bag as their policy; any other key still refuses.
 `minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. `requireSafeChunks` is ignored, as these statements never read it.
 
 | JS | Resolves | Mirrors |
