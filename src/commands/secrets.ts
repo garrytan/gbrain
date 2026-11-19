@@ -126,15 +126,9 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
     }
   }
   if (sub === 'backup') {
-<<<<<<< ours
-    const { backupStore, configuredStorage, restoreBackup } = await import('../core/secret-store/backup.ts');
+    const { backupStore, configuredStorage, restoreBackup, SKIPPED_NO_PAGE_NEXT, SKIPPED_NO_PAGE_TEXT } = await import('../core/secret-store/backup.ts');
     const configured = await configuredStorage();
     if (!configured) {
-=======
-    const { backupStore, configuredStorage, restoreBackup, SKIPPED_NO_PAGE_NEXT, SKIPPED_NO_PAGE_TEXT } = await import('../core/secret-store/backup.ts');
-    const storage = await configuredStorage();
-    if (!storage) {
->>>>>>> theirs
       print(json, { backend: null, carried_by: 'database_backup' }, 'No storage backend is configured, so nothing was uploaded: the brain\'s database backup carries the secret store.');
       return;
     }

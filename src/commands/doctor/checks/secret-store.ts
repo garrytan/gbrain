@@ -44,11 +44,7 @@ export async function secretStoreCheck(ctx: DoctorContext): Promise<Check> {
 
 async function inspectSecretStore(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
-<<<<<<< ours
-  const [{ countsByRule, keysInUse }, { keyringStatus, keyById, escrowExported }, { undrainedCount }, { readBackupStatus, storageIdentity }, { HELD_TRAILER, BACKUP_REF_PREFIX }] = await Promise.all([
-=======
-  const [{ countsByRule, keysInUse, unreferencedEntryCount }, { keyringStatus, keyById, escrowExported }, { undrainedCount }, { readBackupStatus }, { HELD_TRAILER, BACKUP_REF_PREFIX }] = await Promise.all([
->>>>>>> theirs
+  const [{ countsByRule, keysInUse, unreferencedEntryCount }, { keyringStatus, keyById, escrowExported }, { undrainedCount }, { readBackupStatus, storageIdentity }, { HELD_TRAILER, BACKUP_REF_PREFIX }] = await Promise.all([
     import('../../../core/secret-store/store.ts'), import('../../../core/secret-store/keyring.ts'), import('../../../core/secret-store/spool.ts'),
     import('../../../core/secret-store/backup.ts'), import('../../../core/git/redact-unpushed.ts')]);
   let rules: Record<string, { entries: number; occurrences: number }>;
