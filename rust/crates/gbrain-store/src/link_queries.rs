@@ -13,6 +13,7 @@
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
 //! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
 //! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
 //! listPagesTitledIn, wordLexemes.
 //!
@@ -68,8 +69,8 @@ pub use retrieval_coverage::{
 };
 mod site_reads;
 pub use site_reads::{
-    EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
-    JunkHubsInput, TitledInput,
+    EndpointsInput, EntityPagesInput, FeatureCoverageInput, ForeignEdgesInput, InboundCountInput,
+    InboundCoverageInput, JunkHubsInput, TitledInput,
 };
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).

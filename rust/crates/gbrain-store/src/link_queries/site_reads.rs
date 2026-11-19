@@ -3,6 +3,7 @@
 //! stages ran through `engine.executeRaw`.
 //!
 //! Members: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
 //! listPagesTitledIn, wordLexemes.
 //!
@@ -13,7 +14,7 @@
 use super::{GraphScope, Pages, QUARANTINE_KEY, all_links, not_mentions, touching};
 use crate::Store;
 use crate::chunks::read_chunks;
-use crate::error::Result;
+use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
@@ -55,6 +56,15 @@ pub struct EntityPagesInput {
     pub filter: EntityTypeFilter,
     pub source_id: Option<String>,
     pub exclude_quarantined: bool,
+}
+
+/// `entityFeatureCoverage(filter, feature)`: `feature` is `links` (an inbound link) or `timeline`
+/// (a timeline entry). The store has no TABLESAMPLE; the TypeScript member refuses a sample.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct FeatureCoverageInput {
+    pub filter: EntityTypeFilter,
+    pub feature: String,
 }
 
 /// `countForeignEdges(slug, sourceId, direction)`.
@@ -266,6 +276,50 @@ impl Store {
             }
         }
         Ok(json!({"entities": entities, "connected": connected, "withTimeline": timeline}))
+    }
+
+    /// `entityFeatureCoverage`: `{ sampleSize, matched }` over the live unquarantined entity
+    /// pages: how many there are and how many are the target of a link (`links`) or have a
+    /// timeline entry (`timeline`). Any other feature is invalid.
+    pub fn entity_feature_coverage(&self, input: &FeatureCoverageInput) -> Result<Value> {
+        let links = match input.feature.as_str() {
+            "links" => true,
+            "timeline" => false,
+            other => {
+                return Err(StoreError::invalid(format!(
+                    "entityFeatureCoverage: unknown feature {other:?}"
+                )));
+            }
+        };
+        let read = self.read()?;
+        let (mut sample_size, mut matched) = (0u64, 0u64);
+        for page in all_pages(&*read)? {
+            if !live(&page)
+                || !is_entity(&input.filter, &page)
+                || page.frontmatter.contains_key(QUARANTINE_KEY)
+            {
+                continue;
+            }
+            sample_size += 1;
+            let has = if links {
+                !in_links(&*read, page.id)?.is_empty()
+            } else {
+                has_timeline(&*read, page.id)?
+            };
+            if has {
+                matched += 1;
+            }
+        }
+        Ok(json!({"sampleSize": sample_size, "matched": matched}))
+    }
+
+    /// `countDatedMeetingPages`: live pages of type `meeting` with an effective date.
+    pub fn count_dated_meeting_pages(&self) -> Result<u64> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .iter()
+            .filter(|p| live(p) && p.page_type == "meeting" && p.effective_date_us.is_some())
+            .count() as u64)
     }
 
     /// `countForeignEdges`: the links of the page (`sourceId`, `slug`), soft-deleted or not,

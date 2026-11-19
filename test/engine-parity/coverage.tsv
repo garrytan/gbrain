@@ -6,12 +6,12 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 851/851
+# covered: 853/853
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
 # search_reads: 9/9
-# link_reads: 10/10
+# link_reads: 12/12
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
@@ -95,13 +95,13 @@ getPage	pages	yes	95	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	440	yes	yes	yes	serves
+putPage	pages	yes	442	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	16	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	143	yes	yes	yes	serves
+softDeletePage	pages	yes	144	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -147,6 +147,8 @@ inboundLinkCoverage	link_reads	yes	1	no	yes	yes	serves
 listJunkEntityHubs	link_reads	yes	1	no	yes	yes	serves
 countEntityPages	link_reads	yes	1	no	yes	yes	serves
 entityGraphCoverage	link_reads	yes	1	no	yes	yes	serves
+entityFeatureCoverage	link_reads	yes	2	no	yes	yes	serves
+countDatedMeetingPages	link_reads	yes	1	no	yes	yes	serves
 countForeignEdges	link_reads	yes	1	no	yes	yes	serves
 listLivePageSummaries	link_reads	yes	3	no	yes	yes	serves
 countInboundLinks	link_reads	yes	3	no	yes	yes	serves
@@ -218,7 +220,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	97	yes	yes	yes	serves
+addLink	links	yes	99	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -255,7 +257,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	42	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	43	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	18	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves

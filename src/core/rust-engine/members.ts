@@ -233,6 +233,8 @@ export const RUST_ENGINE_MEMBERS = {
   listJunkEntityHubs: 'links',
   countEntityPages: 'links',
   entityGraphCoverage: 'links',
+  entityFeatureCoverage: 'links',
+  countDatedMeetingPages: 'links',
   countForeignEdges: 'links',
   listLivePageSummaries: 'links',
   countInboundLinks: 'links',

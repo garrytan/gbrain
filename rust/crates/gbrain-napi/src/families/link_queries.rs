@@ -5,7 +5,7 @@
 //! and findOrphanPages, and the search-reads link reads hasSupersedeEdges, supersedingPageSlugs
 //! and pagesLinkingTo. rewriteLinks needs no store call. The link reads of
 //! src/core/engine-sql/link-reads.ts: inboundLinkCoverage, listJunkEntityHubs, countEntityPages,
-//! entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
+//! entityGraphCoverage, entityFeatureCoverage, countDatedMeetingPages, countForeignEdges, listLivePageSummaries, countInboundLinks,
 //! listLinkEndpointPages, listPagesTitledIn and wordLexemes, each with one JSON input.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -224,6 +224,26 @@ impl Brain {
                 arg(input, "entityGraphCoverage input")?;
             s.entity_graph_coverage(&input)
         })
+    }
+
+    /// `entityFeatureCoverage(input)`: `{ sampleSize, matched }`.
+    #[napi]
+    pub fn entity_feature_coverage<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::FeatureCoverageInput =
+                arg(input, "entityFeatureCoverage input")?;
+            s.entity_feature_coverage(&input)
+        })
+    }
+
+    /// `countDatedMeetingPages()`: a count.
+    #[napi]
+    pub fn count_dated_meeting_pages<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_dated_meeting_pages())
     }
 
     /// `countForeignEdges(input)`: a count.

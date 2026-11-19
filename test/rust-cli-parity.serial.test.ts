@@ -458,7 +458,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
       // warns on both engines: the fixture's pages are file-backed and the default source has no local path.
-      warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
+      // timeline_coverage warns on both engines: the fixture's entity pages are 73% covered, which the store now counts.
+      warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available', 'timeline_coverage'],
       okWhileRefused: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;

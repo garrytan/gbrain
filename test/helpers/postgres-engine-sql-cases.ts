@@ -421,6 +421,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'inboundLinkCoverage': OOS.linkReads,
   'countEntityPages': OOS.linkReads,
   'entityGraphCoverage': OOS.linkReads,
+  'entityFeatureCoverage': OOS.linkReads,
+  'countDatedMeetingPages': OOS.linkReads,
   'listJunkEntityHubs': OOS.linkReads,
   'countForeignEdges': OOS.linkReads,
   'listLivePageSummaries': OOS.linkReads,
