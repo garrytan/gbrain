@@ -399,9 +399,9 @@ describe('a page write sent whole to an owner that reports persistence_journal',
 // A real Rust owner, built from the addon `bun run rust:build` writes (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing
 // addon an error). The store holds persistence_journal back (store-capabilities.ts HELD_FOR_CALLERS), so a client
 // refuses a whole write at once (the describe below). This block lifts that one capability on one owner instance, so a
-// forwarded put_page runs the real Rust journal and the test pins where it stops today: the journal admits the write,
-// the page store writes inside the publication transaction, and the publication's effects step asks the owner for
-// executeRaw, which the store refuses with engine_capability_missing (raw_sql). Nothing commits and the page is absent.
+// forwarded put_page runs the real Rust journal end to end: the journal admits the write, the page store writes inside
+// the publication transaction, the store keeps the publication's effects (insertPublicationEffects), and the request
+// commits. No raw SQL is asked for inside the publication.
 const ADDON_TARGET = detectAddonTarget();
 const ADDON_BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${ADDON_TARGET ?? 'unsupported'}.node`);
 const HAVE_ADDON = ADDON_TARGET !== null && existsSync(ADDON_BUILT);
@@ -445,33 +445,17 @@ describe.skipIf(!HAVE_ADDON)('a page write sent whole to a real Rust owner on th
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
 
-  test('put_page reaches the journal, meets a capability refusal, and ends failed with that typed refusal; never pending or committed', async () => {
+  test('put_page reaches the journal and commits through the real Rust owner; no raw SQL inside the publication', async () => {
     const { engine, close } = await clientOf(socketPath);
     try {
       const { operationsByName } = await import('../src/core/operations.ts');
       const requestId = crypto.randomUUID();
-      const error = await operationsByName.put_page!.handler(localCtx(engine), { slug: 'journal/rust', content: wholePage('Rust'), request_id: requestId })
-        .then(() => null, e => e) as OperationError | null;
-      // A capability refusal repeats on every attempt, so the caller gets it typed, never write_pending or committed.
-      expect(error).toBeInstanceOf(OperationError);
-      expect(error?.code).toBe('engine_capability_missing');
-      // Ember ruling A: the envelope's write_error names the refusal, never the generic storage_error.
-      expect(error?.writeError).toBe('engine_capability_missing');
-      const receipt = (error as unknown as { writeRequest?: Record<string, unknown> }).writeRequest;
-      expect(receipt).toMatchObject({ request_id: requestId, state: 'failed', write_error: 'engine_capability_missing',
-        write_error_detail: { origin: 'engine_capability', stage: 'publication' } });
-      // The write was admitted by the real journal and stopped on a typed capability refusal inside the publication.
-      // Keyed on the refusal, not its site: when the engine serves that member, the stop moves to the next one.
-      const refused = refusals.find(r => r.inTransaction);
-      expect(refused).toMatchObject({ inTransaction: true, code: 'engine_capability_missing' });
-      // The owner's own row names the refusal's code and site; the member and capability stay owner-side.
-      const fields = (error as unknown as { receiptFields: { principal_kind: Parameters<RustEngine['readWriteRequest']>[0]; principal_id: string } }).receiptFields;
-      const row = await owner.readWriteRequest(fields.principal_kind, fields.principal_id, requestId);
-      expect(row).toMatchObject({ state: 'failed', error_code: 'engine_capability_missing',
-        error_detail: { origin: 'engine_capability', capability: refused!.reason, stage: 'publication' } });
-      expect(String((row!.error_detail as { member?: unknown }).member)).toMatch(/^[A-Za-z]+$/);
-      // The publication rolled back: no page.
-      expect(await owner.getPage('journal/rust')).toBeNull();
+      const result = await operationsByName.put_page!.handler(localCtx(engine), { slug: 'journal/rust', content: wholePage('Rust'), request_id: requestId }) as Record<string, unknown>;
+      // The caller gets the committed receipt, never write_pending or a capability refusal.
+      expect(result).toMatchObject({ slug: 'journal/rust', state: 'committed', noop: false });
+      // The publication ran on typed members only: nothing inside it asked the owner for raw SQL.
+      expect(refusals.filter(r => r.inTransaction)).toEqual([]);
+      expect((await owner.getPage('journal/rust'))?.title).toBe('Rust');
     } finally { close(); }
   }, 120_000);
 });
@@ -791,25 +775,17 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
       rmSync(served.home, { recursive: true, force: true });
     }, 60_000);
 
-    test('gbrain call put_page goes to the owner\'s persistence socket, is admitted, and ends failed with the typed capability refusal', async () => {
+    test('gbrain call put_page goes to the owner\'s persistence socket and commits on the real Rust journal', async () => {
       expect(binding).not.toBeNull();
       const result = await cli(served.home, ['call', 'put_page', JSON.stringify({ slug: 'notes/rust-journal', content: page('Rust journal') })],
         { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT });
-      // Not exit 10 (accepted, still pending): the refusal repeats on every attempt, so the request ended failed.
-      expect(result.code).not.toBe(10);
-      expect(result.code).toBe(1);
+      // Exit 0: the write committed. Not exit 10 (still pending) and not a capability refusal.
+      expect(result.code).toBe(0);
       expect(result.output).not.toContain('write_pending');
-      expect(result.output).toMatch(/Request: [0-9a-f-]{36} \(failed\)/);
-      // The JSON refusal envelope every typed caller error carries.
-      const envelope = JSON.parse(result.stdout.slice(result.stdout.indexOf('{'), result.stdout.lastIndexOf('}') + 1)) as Record<string, unknown>;
-      expect(envelope).toMatchObject({ error: 'engine_capability_missing', code: 'engine_capability_missing', class: 'caller', retryable: false,
-        contract_version: 1, docs_cmd: ['gbrain', 'errors', 'engine_capability_missing'], write_request: { state: 'failed' },
-        // Ember ruling A: the envelope's write_error names the capability refusal, not the generic storage_error.
-        write_error: 'engine_capability_missing' });
-      expect(result.output).not.toContain('storage_error');
+      expect(result.output).not.toContain('engine_capability_missing');
       expect(dispatched).toEqual(['put_page']);
-      expect(refusals[0]).toMatchObject({ code: 'engine_capability_missing' });
-      expect(await owner.getPage('notes/rust-journal')).toBeNull();
+      expect(refusals).toEqual([]);
+      expect((await owner.getPage('notes/rust-journal'))?.title).toBe('Rust journal');
     }, 120_000);
   });
 

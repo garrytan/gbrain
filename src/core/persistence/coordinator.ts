@@ -387,8 +387,9 @@ export async function releaseChargedInterruption(engine: BrainEngine, row: Write
 export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown,
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
   // An engine that cannot yet record a publication step refused before anything published: the write goes back to
-  // queued under its own name, so no claim stays running and a later engine that has the step publishes it.
-  if (isEngineCapabilityRefusal(error)) {
+  // queued under its own name, so no claim stays running and a later engine that has the step publishes it. A refusal
+  // in preparation is not a publication step: it ends failed below, typed, in one attempt.
+  if (stage === 'publication' && isEngineCapabilityRefusal(error)) {
     await releaseUnpublishedClaim(engine, row, 'engine_capability_missing');
     return (await getWriteRequestById(engine, row.id))!;
   }
