@@ -697,13 +697,7 @@ async function tryUnambiguousPrefixExpansion(
   try {
     const dirs = await engine.readPrefixDirs(source_id, patterns);
     if (dirs.length !== 1) return null;
-    const rows = await engine.executeRaw<{ slug: string; title: string | null }>(
-      `SELECT slug, title FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')}
-          AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
-        LIMIT 3`,
-      [source_id, patterns, raw.trim()],
-    );
+    const rows = await engine.readPrefixTitleMatches(source_id, patterns, raw.trim());
     const exact = rows.filter(r => sameEntityName(raw, r.title, r.slug));
     return exact.length === 1 ? exact[0].slug : null;
   } catch {

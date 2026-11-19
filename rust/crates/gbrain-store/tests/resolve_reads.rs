@@ -290,3 +290,34 @@ fn the_prefix_directory_read_names_at_most_two_directories() {
     );
     assert!(dirs(&["people/gone"]).is_empty());
 }
+
+#[test]
+fn the_prefix_title_read_matches_the_name_ignoring_case() {
+    let dir = TempDir::new("resolve-prefix-title");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "companies/acme-0",
+        page("company", "ACME", json!({})),
+    );
+    let slugs = |title: &str| -> Vec<String> {
+        let mut out: Vec<String> = store
+            .read_prefix_title_matches(
+                "default",
+                &strings(&["companies/acme", "companies/acme-%", "organizations/%"]),
+                title,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect();
+        out.sort();
+        out
+    };
+    assert_eq!(
+        slugs("acme"),
+        strings(&["companies/acme", "companies/acme-0"])
+    );
+    assert!(slugs("Acme Organization").is_empty());
+}

@@ -348,6 +348,14 @@ const PINS: Pin[] = [
         WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')} AND slug LIKE ANY($2::text[])
         LIMIT 2`],
   },
+  {
+    from: 'src/core/entities/resolve.ts:739 tryUnambiguousPrefixExpansion exact titles',
+    case: { method: 'readPrefixTitleMatches', variant: 'default', run: e => e.readPrefixTitleMatches('default', ['companies/acme', 'companies/acme-%'], 'Acme') },
+    texts: () => [`SELECT slug, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')}
+          AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
+        LIMIT 3`],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

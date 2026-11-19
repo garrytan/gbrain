@@ -34,6 +34,13 @@ pub struct TrigramCandidateRow {
     pub score: Option<f64>,
 }
 
+/// One `readPrefixTitleMatches` row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PrefixTitleRow {
+    pub slug: String,
+    pub title: String,
+}
+
 /// One `readPrefixCandidates` row.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PrefixCandidateRow {
@@ -221,5 +228,36 @@ impl Store {
             }
         }
         Ok(dirs.into_iter().take(2).collect())
+    }
+
+    /// `readPrefixTitleMatches(sourceId, patterns, title)`: the live, non-retired pages of the
+    /// source whose slug matches any LIKE pattern and whose lowered title equals the lowered
+    /// `title`, at most three (the SQL sets no order; these come in page order).
+    pub fn read_prefix_title_matches(
+        &self,
+        source_id: &str,
+        patterns: &[String],
+        title: &str,
+    ) -> Result<Vec<PrefixTitleRow>> {
+        let read = self.read()?;
+        let wanted = pg_lower(title);
+        let mut rows = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.source_id == source_id
+                && page.deleted_at_us.is_none()
+                && !retired(&page.frontmatter)
+                && patterns.iter().any(|p| sql_like(&page.slug, p))
+                && pg_lower(&page.title) == wanted
+            {
+                rows.push(PrefixTitleRow {
+                    slug: page.slug,
+                    title: page.title,
+                });
+                if rows.len() == 3 {
+                    break;
+                }
+            }
+        }
+        Ok(rows)
     }
 }

@@ -52,7 +52,7 @@ import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp
 import type { CallerPageAccessRow, PagePolicyPart } from './engine-sql/page-visibility.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow } from './engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -3551,6 +3551,8 @@ export interface BrainEngine {
   readPrefixCandidates(sourceId: string, q: PrefixCandidateQuery): Promise<PrefixCandidateRow[]>;
   /** The distinct entity directories of the resolver's live, non-retired prefix pages, at most two. */
   readPrefixDirs(sourceId: string, patterns: readonly string[]): Promise<string[]>;
+  /** The resolver's live, non-retired prefix pages whose title is `title` ignoring case, at most three. */
+  readPrefixTitleMatches(sourceId: string, patterns: readonly string[], title: string): Promise<PrefixTitleRow[]>;
   /**
    * One hop of a retirement chain (entities/resolve.ts `followRetirement`): the live page at `slug`, whether it is
    * retired (`retiredPageSql`) and its trimmed `superseded_by` (else `merged_into`) target; null when no live page sits

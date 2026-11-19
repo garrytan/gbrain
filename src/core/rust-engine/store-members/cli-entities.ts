@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -71,6 +71,10 @@ export const readLivePageTypes: StoreMember<[sourceId: string, slugs: readonly s
     const policy = retirementHopPolicy(privacy, 'readLivePageTypes');
     return storeCall({ member: 'readLivePageTypes', sourceId }, () => brain.readLivePageTypes(sourceId, [...slugs], policy ?? null)) as Promise<LivePageTypeRow[]>;
   };
+
+/** entities/resolve.ts: the prefix pages titled the bare name, ignoring case, at most three. */
+export const readPrefixTitleMatches: StoreMember<[sourceId: string, patterns: readonly string[], title: string], PrefixTitleRow[]> = (brain, sourceId, patterns, title) =>
+  storeCall({ member: 'readPrefixTitleMatches', sourceId }, () => brain.readPrefixTitleMatches(sourceId, [...patterns], title)) as Promise<PrefixTitleRow[]>;
 
 /** entities/resolve.ts: the distinct entity directories of the prefix pages, at most two. */
 export const readPrefixDirs: StoreMember<[sourceId: string, patterns: readonly string[]], string[]> = (brain, sourceId, patterns) =>

@@ -344,3 +344,18 @@ export async function readPrefixDirs(exec: LegacyUnscopedRead, sourceId: string,
         LIMIT 2`);
   return (await exec.executeRaw<{ dir: string }>(text, params)).map(r => r.dir);
 }
+
+/** A prefix page whose title is the bare name. */
+export interface PrefixTitleRow { slug: string; title: string | null }
+
+/**
+ * The live, non-retired pages of the source whose slug matches any LIKE pattern and whose lowered title equals the
+ * lowered `title`, at most three and in no set order (tryUnambiguousPrefixExpansion keeps only an exact single match).
+ */
+export async function readPrefixTitleMatches(exec: LegacyUnscopedRead, sourceId: string, patterns: readonly string[], title: string): Promise<PrefixTitleRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title FROM pages
+        WHERE source_id = ${sourceId} AND deleted_at IS NULL AND NOT ${trustedSql(retiredPageSql('pages'))}
+          AND slug LIKE ANY(${[...patterns]}::text[]) AND lower(title) = lower(${title})
+        LIMIT 3`);
+  return exec.executeRaw<PrefixTitleRow>(text, params);
+}

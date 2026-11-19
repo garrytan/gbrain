@@ -13,6 +13,7 @@ its page records (`crates/gbrain-store/src/cli_reads/resolve_reads.rs`) and has 
 | `brain.readTrigramCandidates(sourceId, arm, titleLc, slugFragment, policy)` | `{ slug, title, type }` for the live, non-retired pages of the source whose lowered title is trigram-similar to `titleLc` or whose slug contains `slugFragment`, best similarity first, then by slug; five rows for `same_name` and `fuzzy`, twenty for `near`; only `fuzzy` adds `score` | `readTrigramCandidates` |
 | `brain.readPrefixCandidates(sourceId, patterns, limit)` | `{ slug, connection_count }` for the live, non-retired pages of the source whose slug matches any LIKE pattern, most connected first (inbound plus outbound ranking links plus content chunks), then by slug, at most `limit` (ten for a pattern list, five for one pattern) | `readPrefixCandidates` |
 | `brain.readPrefixDirs(sourceId, patterns)` | the distinct first slug segments (`split_part(slug, '/', 1)`) of the live, non-retired pages of the source whose slug matches any LIKE pattern, at most two (the SQL sets no order; the store answers in byte order) | `readPrefixDirs` |
+| `brain.readPrefixTitleMatches(sourceId, patterns, title)` | `{ slug, title }` for the live, non-retired pages of the source whose slug matches any LIKE pattern and whose lowered title equals the lowered `title`, at most three (the SQL sets no order) | `readPrefixTitleMatches` |
 
 ## Rules the store keeps from the SQL
 
@@ -23,7 +24,7 @@ its page records (`crates/gbrain-store/src/cli_reads/resolve_reads.rs`) and has 
 - **Similarity.** `lower(title) % $2` is the pg_trgm similarity (f32) against the 0.3 threshold, and
   `slug ILIKE '%' || $3 || '%'` keeps `%` and `_` in the fragment as wildcards. The rank is the larger of the title and
   slug similarities as a `real`, and `score` is that `real` as JavaScript reads it.
-- **Retired pages.** `readTrigramCandidates`, `readPrefixCandidates` and `readPrefixDirs` skip retired pages (`retiredPageSql`): canonical false or no, a
+- **Retired pages.** `readTrigramCandidates`, `readPrefixCandidates`, `readPrefixDirs` and `readPrefixTitleMatches` skip retired pages (`retiredPageSql`): canonical false or no, a
   `superseded_by` or `merged_into` value, or an alias or redirect status.
 - **Connection count.** A link counts when it may feed a ranking signal (`rankingLinkSql`: not an `amends` link), once
   inbound and once outbound, whatever the state of the page at its other end; every content chunk of the page counts.

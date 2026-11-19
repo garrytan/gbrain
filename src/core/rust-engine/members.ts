@@ -601,6 +601,7 @@ export const RUST_ENGINE_MEMBERS = {
   readTrigramCandidates: 'pages',
   readPrefixCandidates: 'pages',
   readPrefixDirs: 'pages',
+  readPrefixTitleMatches: 'pages',
   readRetirementHop: 'pages',
   readEntityCardRows: 'pages',
   readExtractionLagCounts: 'pages',

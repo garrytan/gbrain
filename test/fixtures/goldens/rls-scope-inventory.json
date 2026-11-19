@@ -5471,6 +5471,7 @@
         "readPlainSyncSource": "none",
         "readPrefixCandidates": "none",
         "readPrefixDirs": "none",
+        "readPrefixTitleMatches": "none",
         "readPrivateQueueState": "none",
         "readProjectionReadiness": "none",
         "readProjectionReadinessGeneration": "none",

@@ -149,6 +149,21 @@ impl Brain {
         self.run(env, move |s| s.read_prefix_dirs(&source_id, &patterns))
     }
 
+    /// `readPrefixTitleMatches(sourceId, patterns, title)`: the prefix pages titled `title`,
+    /// ignoring case, at most three.
+    #[napi]
+    pub fn read_prefix_title_matches<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+        title: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_prefix_title_matches(&source_id, &patterns, &title)
+        })
+    }
+
     /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
     /// target, or `null`; a `null` policy reads every page.
     #[napi]

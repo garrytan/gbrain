@@ -192,4 +192,26 @@ describe('engine parity: entity resolver reads', () => {
       };
       expect(result).toEqual({ one: ['people'], capped: 2, retired: [], deleted: [], other: ['orgs'] });
     });
+
+  parityTest('readPrefixTitleMatches reads the live, non-retired prefix pages whose title is the name, ignoring case',
+    { methods: ['readPrefixTitleMatches'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const extra: Array<[string, PageInput]> = [
+        ['companies/acme-0', page('company', 'ACME')],
+        ['companies/acme-labs-50', page('company', 'Acme Labs')],
+        ['companies/acme-old', page('company', 'Acme', { status: 'redirect' })],
+      ];
+      for (const [slug, input] of extra) await engine.putPage(slug, input, { sourceId: 'default' });
+      const patterns = ['companies/acme', 'companies/acme-%'];
+      const result = {
+        named: sorted(await engine.readPrefixTitleMatches('default', patterns, 'acme'), r => r.slug),
+        none: await engine.readPrefixTitleMatches('default', patterns, 'Widget'),
+        other: await engine.readPrefixTitleMatches('other', ['orgs/%'], 'WIDGET'),
+      };
+      expect(result).toEqual({
+        named: [{ slug: 'companies/acme', title: 'Acme' }, { slug: 'companies/acme-0', title: 'ACME' }],
+        none: [],
+        other: [{ slug: 'orgs/widget', title: 'Widget' }],
+      });
+    });
 });
