@@ -61,6 +61,17 @@ describe('gbrain get with several slugs', () => {
     expect(calls.length).toBe(3);
   });
 
+  test('a page the host cut to its batch share is read whole on its own, so gbrain get prints every page whole', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const out = await readBatchRemote(async p => {
+      calls.push(p);
+      if (p.slug) return { slug: p.slug, compiled_truth: 'Whole body.' };
+      return { pages: [{ requested_slug: 'a', page: { slug: 'a', window: { text: 'Part' }, truncated: true, auto_reason: 'batch_share' } }, { requested_slug: 'b', page: { slug: 'b', compiled_truth: 'B.' } }] };
+    }, { slugs: ['a', 'b'], include_deleted: true, token_budget: 500 });
+    expect(out.pages.map((e: { page: Record<string, unknown> }) => e.page)).toEqual([{ slug: 'a', compiled_truth: 'Whole body.' }, { slug: 'b', compiled_truth: 'B.' }]);
+    expect(calls[1]).toEqual({ include_deleted: true, slug: 'a' });
+  });
+
   test('against a host older than slugs, each page is read on its own and a miss stays an entry', async () => {
     const out = await readBatchRemote(async p => {
       if (p.slugs) throw new RemoteMcpError('tool_error', 'Remote tool get_page failed', { code: 'invalid_params', message: 'Missing required parameter: slug' } as never);

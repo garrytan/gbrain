@@ -44,6 +44,9 @@ const BIG = 'notes/big-plan';
 const ESCAPED_A = 'notes/escaped-a';
 const ESCAPED_B = 'notes/escaped-b';
 const QUARANTINED = 'notes/junk-plan';
+const AMENDMENT = 'notes/lease-amendment';
+const AMENDMENT_B = 'notes/office-amendment';
+const THIRD = 'notes/third-plan';
 const MISSING = 'notes/never-written';
 const note = (title: string, body: string, extra: string[] = []) => ['---', 'type: note', ...extra, 'title: ' + title, '---', '# ' + title, '', body].join('\n');
 const swap = <T,>(v: T, from: string): T => JSON.parse(JSON.stringify(v).replaceAll(from, MISSING));
@@ -86,6 +89,10 @@ for (const kind of testBackends()) {
       for (const slug of [ESCAPED_A, ESCAPED_B]) await importFromContent(engine, slug, note('Escaped ' + slug, '\\'.repeat(30_000)), { sourceId: SRC, noEmbed: true });
       await importFromContent(engine, BIG, note('Big plan', 'Long planning notes. '.repeat(4000)), { sourceId: SRC, noEmbed: true });
       await importFromContent(engine, QUARANTINED, note('Junk plan', 'Junk planning notes.'), { sourceId: SRC, noEmbed: true });
+      const clauses = Array.from({ length: 30 }, (_, i) => `## Clause ${i + 1}\n\n` + `Clause ${i + 1} amends the lease terms. `.repeat(28)).join('\n\n');
+      await importFromContent(engine, AMENDMENT, note('Lease amendment', clauses), { sourceId: SRC, noEmbed: true });
+      await importFromContent(engine, AMENDMENT_B, note('Office amendment', clauses.replaceAll('lease', 'office')), { sourceId: SRC, noEmbed: true });
+      await importFromContent(engine, THIRD, note('Third plan', 'Third planning notes.'), { sourceId: SRC, noEmbed: true });
       await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine":{"reason":"junk_pattern","detail":"test","assessed_at":"2026-10-07T00:00:00Z"}}'::jsonb WHERE slug = $1 AND source_id = $2`, [QUARANTINED, SRC]);
       for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
       for (const [name, member] of [['reader', null], ['bob', 'bob-example'], ['alice', 'alice-example']] as const) {
@@ -179,19 +186,54 @@ for (const kind of testBackends()) {
       expect((await local({ slugs: Array.from({ length: 50 }, () => OPEN) })).json.pages.length).toBe(50);
     }, 120_000);
 
-    test('the token budget stops at the first page that does not fit, and every omitted.next makes progress', async () => {
-      const out = await call('reader', { slugs: [OPEN, BIG, SECOND, MISSING], token_budget: 2000 });
-      expect(out.json.pages.map((e: { requested_slug: string }) => e.requested_slug)).toEqual([OPEN]);
-      expect(out.json.omitted).toEqual({ slugs: [BIG, SECOND, MISSING], reason: 'token_budget', token_budget: 2000,
-        next: { tool: 'get_page', args: { token_budget: 2000, slugs: [BIG, SECOND, MISSING] } } });
+    test('slugs past what a minimum share can hold go to omitted, and every omitted.next makes progress', async () => {
+      const out = await call('reader', { slugs: [BIG, OPEN, SECOND, MISSING], token_budget: 900 });
+      expect(out.json.pages.map((e: { requested_slug: string }) => e.requested_slug)).toEqual([BIG]);
+      expect(out.json.pages[0].page.auto_reason).toBe('batch_share');
+      expect(out.json.omitted).toEqual({ slugs: [OPEN, SECOND, MISSING], reason: 'token_budget', token_budget: 900,
+        next: { tool: 'get_page', args: { token_budget: 900, slugs: [OPEN, SECOND, MISSING] } } });
       const next = await call('reader', out.json.omitted.next.args);
-      expect(next.json.pages.map((e: { requested_slug: string }) => e.requested_slug)).toEqual([BIG]);
-      expect(next.json.pages[0].page.compiled_truth).toContain('Long planning notes.');
-      expect(next.json.omitted.slugs).toEqual([SECOND, MISSING]);
-      const last = await call('reader', next.json.omitted.next.args);
-      expect({ read: last.json.pages.map((e: { requested_slug: string }) => e.requested_slug), omitted: last.json.omitted }).toEqual({ read: [SECOND, MISSING], omitted: undefined });
+      expect({ read: next.json.pages.map((e: { requested_slug: string }) => e.requested_slug), omitted: next.json.omitted }).toEqual({ read: [OPEN, SECOND, MISSING], omitted: undefined });
+      const whole = await call('reader', { slugs: [OPEN, BIG], token_budget: 32_000 });
+      expect(whole.json.pages[1].page.compiled_truth).toContain('Long planning notes.');
       const capped = await call('reader', { slugs: [OPEN], token_budget: 1_000_000 });
       expect(capped.json.pages.length).toBe(1);
+    }, 120_000);
+
+    test('one long page cannot fill the batch: it is cut to its fair share with an outline, and the small pages come back whole', async () => {
+      const tokens = (v: unknown) => Math.ceil(JSON.stringify(v).length / 4);
+      const single = await call('reader', { slug: AMENDMENT });
+      expect(String(single.json.compiled_truth ?? '').length).toBeGreaterThan(28_000);
+      const out = await call('reader', { slugs: [AMENDMENT, OPEN, SECOND, THIRD], token_budget: 4000 });
+      expect(out.isError).toBe(false);
+      expect(out.json.omitted).toBeUndefined();
+      const [big, ...small] = out.json.pages as Array<{ requested_slug: string; page: Record<string, any> }>;
+      expect([big!.requested_slug, ...small.map(e => e.requested_slug)]).toEqual([AMENDMENT, OPEN, SECOND, THIRD]);
+      for (const e of small) expect(e.page.compiled_truth).toContain('planning notes.');
+      expect(tokens(out.json)).toBeLessThanOrEqual(4000);
+      expect(big!.page.compiled_truth).toBeUndefined();
+      expect(big!.page.truncated).toBe(true);
+      expect(big!.page.outline.entries.map((h: { heading: string }) => h.heading)).toContain('Clause 30');
+      expect(big!.page.window.text).toContain('Clause 1 amends');
+      expect(big!.page.next).toMatchObject({ tool: 'get_page', arguments: { slug: AMENDMENT, source_id: SRC } });
+      const on = await call('reader', big!.page.next.arguments);
+      expect(on.isError).toBe(false);
+      expect(on.json.window.byte_start).toBe(big!.page.window.byte_end);
+    }, 120_000);
+
+    test('several long pages share the budget evenly, each cut with its outline and a next that reads on', async () => {
+      const tokens = (v: unknown) => Math.ceil(JSON.stringify(v).length / 4);
+      const out = await call('reader', { slugs: [AMENDMENT, AMENDMENT_B, OPEN], token_budget: 6000 });
+      expect(out.json.omitted).toBeUndefined();
+      expect(tokens(out.json)).toBeLessThanOrEqual(6000);
+      const [a, b, open] = out.json.pages as Array<{ requested_slug: string; page: Record<string, any> }>;
+      expect(open!.page.compiled_truth).toContain('Open planning notes.');
+      for (const e of [a!, b!]) {
+        expect(e.page.truncated).toBe(true);
+        expect(e.page.auto_reason).toBe('batch_share');
+        expect(Math.abs(tokens(a) - tokens(b))).toBeLessThan(tokens(a) / 2);
+      }
+      expect(out.json.summary).toContain('2 cut');
     }, 120_000);
 
     test('a hidden page and a missing one leave the same omitted list and budget accounting', async () => {

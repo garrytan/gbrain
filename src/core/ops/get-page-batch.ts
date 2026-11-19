@@ -10,8 +10,11 @@
  * Entries are `{requested_slug, page}` or `{requested_slug, error, message, suggestion, fix, ...}`. The key is not
  * `slug`, so the guest stamp and the room marker, which read every object naming a slug, only ever see pages.
  * Remote callers get lean pages (resultRowsFor); `fields: "full"` and trusted local callers get the whole result.
- * Reading stops at the first entry past `token_budget` or the connection's egress cap; it and every later slug go to
- * `omitted` with a `next` call. The first remaining entry is always delivered, so every `next` makes progress.
+ * `token_budget` is shared fairly (D1): each delivered entry gets an equal share, and what a short entry leaves goes to
+ * the longer ones. A page longer than its share comes back as the single read's window from its start, with the page
+ * outline and `next` to read on (`auto_reason: 'batch_share'`), so one long page never fills the batch. Slugs past
+ * what a minimum share can hold, or past the connection's egress cap, go to `omitted` with a `next` call; the first
+ * remaining entry is always delivered, so every `next` makes progress.
  */
 
 import { OperationError, opError, type OperationContext, type ParamDef } from './contract.ts';
@@ -27,6 +30,9 @@ export const GET_PAGE_BATCH_MAX = 50;
 export const BATCH_READ_TOKEN_BUDGET_KEY = 'mcp.batch_read_token_budget';
 export const DEFAULT_BATCH_READ_TOKEN_BUDGET = 12_000;
 export const REMOTE_BATCH_READ_TOKEN_BUDGET_MAX = 32_000;
+/** The smallest share a cut page gets: room for its metadata, outline and a first window worth reading. */
+export const MIN_BATCH_SHARE_TOKENS = 800;
+const MIN_WINDOW_BYTES = 512;
 
 const REFUSED_IN_BATCH = ['fuzzy', 'as_of', 'known_as_of', ...Object.keys(GET_PAGE_BODY_PARAMS)];
 const CARRIED_TO_NEXT = ['include_content', 'content_only', 'include_deleted', 'include_timeline_entries', 'grammar_diagnostics', 'include_quarantined', 'source_id', 'min_trust', 'fields', 'token_budget'];
@@ -119,42 +125,87 @@ async function getPagesBatch(ctx: OperationContext, p: Record<string, unknown>, 
   const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config });
   const { slugs: _slugs, token_budget: _budget, fields: _fields, ...shared } = p;
   const read = new Map<string, Entry>();
-  const pages: Entry[] = [];
-  let used = 0;
-  let stop: { at: number; reason: 'token_budget' | 'egress_cap' } | null = null;
-  for (let i = 0; i < slugs.length; i++) {
-    const slug = slugs[i]!;
-    let entry = read.get(slug);
-    if (!entry) {
-      try {
-        const result = await readOne(ctx, { ...shared, slug }) as Record<string, unknown>;
-        const strips = roomBodyOf(result);
-        const shown = lean ? leanPage(result) : { ...result };
-        entry = { requested_slug: slug, page: strips ? keepRoomBody(shown, strips) : shown };
-      } catch (e) {
-        if (!isMiss(e)) throw e;
-        entry = { requested_slug: slug, ...renderMiss(ctx, e) };
-      }
-      read.set(slug, entry);
+  for (const slug of slugs) {
+    if (read.has(slug)) continue;
+    try { read.set(slug, pageEntry(slug, await readOne(ctx, { ...shared, slug }) as Record<string, unknown>, lean)); }
+    catch (e) {
+      if (!isMiss(e)) throw e;
+      read.set(slug, { requested_slug: slug, ...renderMiss(ctx, e) });
     }
-    const tokens = estimateTokens(JSON.stringify(entry));
-    if (pages.length > 0 && used + tokens > budget) { stop = { at: i, reason: 'token_budget' }; break; }
+  }
+  let floor = 0;
+  const over = Number.isFinite(budget) ? slugs.findIndex(slug => (floor += Math.min(tokensOf(read.get(slug)!), MIN_BATCH_SHARE_TOKENS)) > budget) : -1;
+  const admitted = over < 0 ? slugs : slugs.slice(0, Math.max(1, over));
+  const cut = new Set<string>();
+  if (Number.isFinite(budget)) {
+    const share = fairShare(admitted.map(slug => tokensOf(read.get(slug)!)), budget);
+    const long = admitted.filter(slug => 'page' in read.get(slug)! && tokensOf(read.get(slug)!) > share);
+    let left = budget - admitted.filter(slug => !long.includes(slug)).reduce((n, slug) => n + tokensOf(read.get(slug)!), 0);
+    const order = [...new Set(long)].sort((a, b) => tokensOf(read.get(a)!) - tokensOf(read.get(b)!));
+    let waiting = long.length;
+    for (const slug of order) {
+      const times = long.filter(s => s === slug).length;
+      read.set(slug, await cutEntry(ctx, readOne, shared, slug, Math.max(MIN_BATCH_SHARE_TOKENS, Math.floor(left / waiting)), lean));
+      cut.add(slug);
+      left -= tokensOf(read.get(slug)!) * times;
+      waiting -= times;
+    }
+  }
+  const pages: Entry[] = [];
+  let stop: { at: number; reason: 'token_budget' | 'egress_cap' } | null = admitted.length < slugs.length ? { at: admitted.length, reason: 'token_budget' } : null;
+  for (let i = 0; i < admitted.length; i++) {
+    const entry = read.get(admitted[i]!)!;
     if (pages.length > 0 && Number.isFinite(cap)
       && encodedFrameBytes({ content: [{ type: 'text', text: JSON.stringify({ pages: [...pages, entry] }) }] }) + ENVELOPE_RESERVE_BYTES - FRAME_RESERVE_BYTES > cap) {
       stop = { at: i, reason: 'egress_cap' };
       break;
     }
     pages.push(entry);
-    used += tokens;
   }
   const missing = pages.filter(e => !('page' in e)).map(e => e.requested_slug);
+  const shortened = pages.filter(e => cut.has(e.requested_slug)).length;
   const rest = stop ? slugs.slice(stop.at) : [];
   const carried = Object.fromEntries(CARRIED_TO_NEXT.filter(k => p[k] !== undefined).map(k => [k, p[k]]));
   const omitted = stop ? { slugs: rest, reason: stop.reason, ...(Number.isFinite(budget) ? { token_budget: budget } : {}), next: { tool: 'get_page', args: { ...carried, slugs: rest } } } : undefined;
-  const summary = missing.length || omitted
+  const summary = missing.length || omitted || shortened
     ? [`${pages.length - missing.length} of ${slugs.length} pages read`,
+        ...(shortened ? [`${shortened} cut to fit ${budget} tokens; read on with each page's next`] : []),
         ...(missing.length ? [`${missing.length} not found: ${missing.join(', ')}`] : []),
         ...(omitted ? [`${rest.length} left for omitted.next (${stop!.reason})`] : [])].join('; ') + '.'
     : undefined;
   return { ...(summary ? { summary } : {}), pages, ...(omitted ? { omitted } : {}) };
+}
+
+const tokensOf = (entry: Entry) => estimateTokens(JSON.stringify(entry));
+
+function pageEntry(slug: string, result: Record<string, unknown>, lean: boolean): Entry {
+  const strips = roomBodyOf(result);
+  const shown = lean ? leanPage(result) : { ...result };
+  return { requested_slug: slug, page: strips ? keepRoomBody(shown, strips) : shown };
+}
+
+/** The per-entry share: entries under an equal split keep their size and the rest is split again among the longer ones. */
+export function fairShare(costs: number[], budget: number): number {
+  let left = budget;
+  let count = costs.length;
+  for (const cost of [...costs].sort((a, b) => a - b)) {
+    if (cost > left / count) break;
+    left -= cost;
+    count--;
+  }
+  return count === 0 ? budget : Math.max(MIN_BATCH_SHARE_TOKENS, Math.floor(left / count));
+}
+
+/** A page longer than its share: the single read's first window plus the outline, shrunk until the entry fits the share. */
+async function cutEntry(ctx: OperationContext, readOne: ReadOne, shared: Record<string, unknown>, slug: string, share: number, lean: boolean): Promise<Entry> {
+  const outline = (await readOne(ctx, { ...shared, slug, body: 'outline' }) as Record<string, unknown>).outline as { entries?: Array<Record<string, unknown>> } | undefined;
+  const brief = outline && { ...outline, entries: (outline.entries ?? []).map(({ byte_start: _s, byte_end: _e, ...rest }) => rest) };
+  let maxBytes = Math.max(MIN_WINDOW_BYTES, share * 4);
+  for (;;) {
+    const window = await readOne(ctx, { ...shared, slug, body: 'window', max_bytes: maxBytes }) as Record<string, unknown>;
+    const entry = pageEntry(slug, { ...window, ...(brief ? { outline: brief } : {}), truncated: true, auto_reason: 'batch_share' }, lean);
+    const over = tokensOf(entry) - share;
+    if (over <= 0 || maxBytes <= MIN_WINDOW_BYTES) return entry;
+    maxBytes = Math.max(MIN_WINDOW_BYTES, maxBytes - over * 4 - 64);
+  }
 }

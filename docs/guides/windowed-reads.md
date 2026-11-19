@@ -35,19 +35,25 @@ contract in `get_brain_identity` as `capabilities: ["large_pages_v1"]`.
   fields. `fields: "full"` returns each page exactly as a single read does; the
   local CLI and gbrain's thin client always get full pages.
 - `token_budget` (default `mcp.batch_read_token_budget`, 12,000; at most 32,000
-  over MCP) caps the reply. Reading stops at the first page that doesn't fit, or
-  that would pass the connection's egress cap, and that page and every later
-  slug are listed in `omitted {slugs, reason, next}`; `next` is the call that
-  reads on. The first page is always delivered (a large one as outline plus
-  window, as above), so every `next` makes progress.
+  over MCP) is shared fairly: each page gets an equal share, and what a short
+  page doesn't use goes to the longer ones. A page longer than its share comes
+  back as its first window plus its outline, with `truncated: true`,
+  `auto_reason: "batch_share"` and `next` to read on (or read one section with
+  a single call), so one long page never crowds out the others. `summary` says
+  how many pages were cut.
+- Slugs past what the budget can give a minimum share (800 tokens), or past the
+  connection's egress cap, are listed in `omitted {slugs, reason, next}`; `next`
+  is the call that reads on. The first page is always delivered, so every
+  `next` makes progress.
 - `fuzzy`, `as_of`, `known_as_of` and the window parameters below are refused
   with `slugs`; read one page's part with a single call. `include_content`,
   `include_deleted`, `min_trust` and `source_id` apply to every slug.
 - Over MCP, a batch where every page missed is an error result, as one missed
   read is; a partial batch is not, and its `summary` names the misses.
 - `gbrain get a b c` prints the pages in order on stdout, each miss on stderr,
-  and exits 1 when any slug was not read. Against a host older than `slugs`,
-  the thin client reads each page on its own.
+  and exits 1 when any slug was not read. The thin client reads a page the host
+  cut to its share whole on its own, and against a host older than `slugs` it
+  reads each page on its own.
 
 ## get_page body modes
 

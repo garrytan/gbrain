@@ -159,6 +159,10 @@ export async function readBatchRemote(call: (p: Record<string, unknown>) => Prom
     if (!Array.isArray(more.pages) || more.pages.length === 0) break;
     result = { pages: [...result.pages, ...more.pages], ...(more.omitted ? { omitted: more.omitted } : {}) };
   }
+  const { slugs: _s, token_budget: _t, fields: _fl, ...single } = params;
+  for (const entry of result.pages ?? []) {
+    if (entry?.page?.auto_reason === 'batch_share') entry.page = await call({ ...single, slug: entry.requested_slug });
+  }
   return result;
 }
 
