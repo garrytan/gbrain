@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, expireMemoryProposals,
+ *    listAppliedPolicyRevisions, readLiveMember, readFolderAccess, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -17,10 +17,12 @@
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
 import { describe, expect } from 'bun:test';
+import type { FolderAccessRows } from '../../src/core/engine-sql/access-control.ts';
 import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { folderAccessFor, folderAccessForAll, memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -176,6 +178,122 @@ describe('engine parity: write misc', () => {
     const revisions = await engine.listAppliedPolicyRevisions();
     expect(revisions).toEqual([{ source_id: 'quiet', rev: null }, { source_id: 'work', rev: 2 }]);
     return { revisions };
+  });
+
+  parityTest('readLiveMember finds no member through any binding on a brain with no access members', { methods: ['readLiveMember'] }, async (engine) => {
+    const answers = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      legacyToken: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000aa'),
+      oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
+    };
+    expect(answers).toEqual({ member: null, stdioConfig: null, legacyToken: null, oauthClient: null });
+    return answers;
+  });
+
+  // The MCP write tools resolve the writer's member through memberIdentityFor (access/caller.ts liveIdentity); on a
+  // brain with no members every binding reads as unbound, and a Rust brain answers it without raw SQL.
+  parityTest('memberIdentityFor and stdioMemberIdentity read every binding as unbound on a brain with no access members', { methods: ['readLiveMember'] }, async (engine) => {
+    const identities = {
+      legacyToken: await memberIdentityFor(engine, { principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000aa' } }),
+      oauthClient: await memberIdentityFor(engine, { principal: { kind: 'oauth_client', id: 'client-example' } }),
+      stdioConfig: await memberIdentityFor(engine, { principal: { kind: 'local_stdio', id: 'stdio' } }),
+      stdioRegistered: await stdioMemberIdentity(engine, 'alice-example'),
+    };
+    expect(identities).toEqual({ legacyToken: [], oauthClient: [], stdioConfig: [], stdioRegistered: [] });
+    return identities;
+  });
+
+  // readLiveMember is constant null on Rust only because no Rust brain can hold an access member: the member write (raw
+  // SQL here, the access member commands' statements in production) must stop on the typed raw_sql refusal there.
+  parityTest('readLiveMember finds a live member with its groups through each binding, and none once it is disabled', { methods: ['readLiveMember'] }, async (engine, backend) => {
+    const write = await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example'), ('bob-example')").then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readLiveMember('member', 'alice-example')).toBeNull();
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw("INSERT INTO access_groups (id) VALUES ('team-b'), ('team-a')");
+    await engine.executeRaw("INSERT INTO access_group_members (group_id, member_id) VALUES ('team-b', 'alice-example'), ('team-a', 'alice-example')");
+    await engine.setConfig('mcp.stdio_member', ' bob-example\t');
+    const [token] = await engine.executeRaw<{ id: string }>(
+      "INSERT INTO access_tokens (name, token_hash, member_id) VALUES ('t', 'hash-example', 'alice-example') RETURNING id::text AS id");
+    await engine.executeRaw("INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ('client-example', 'c', 'bob-example')");
+    const alice = { id: 'alice-example', groups: ['team-a', 'team-b'] };
+    const bob = { id: 'bob-example', groups: [] };
+    const live = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      legacyToken: await engine.readLiveMember('legacy_token', token!.id),
+      oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
+      unknown: await engine.readLiveMember('member', 'carol-example'),
+    };
+    expect(live).toEqual({ member: alice, stdioConfig: bob, legacyToken: alice, oauthClient: bob, unknown: null });
+    await engine.executeRaw("UPDATE access_members SET disabled_at = now() WHERE id = 'alice-example'");
+    await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-example'");
+    const after = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      legacyToken: await engine.readLiveMember('legacy_token', token!.id),
+      oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
+      stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+    };
+    expect(after).toEqual({ member: null, legacyToken: null, oauthClient: null, stdioConfig: bob });
+    return { live, after };
+  });
+
+  parityTest('readFolderAccess finds no rule and no coverage on a brain with no folder access state', { methods: ['readFolderAccess'] }, async (engine) => {
+    const answers = {
+      noReaders: await engine.readFolderAccess([]),
+      readers: await engine.readFolderAccess(['member:alice-example', 'group:team-a']),
+    };
+    expect(answers).toEqual({ noReaders: { rules: [], coverage: [] }, readers: { rules: [], coverage: [] } });
+    return answers;
+  });
+
+  // On Rust, folderAccessFor used to read a refused statement and fall back to fail closed (`!unreadable` covering
+  // everything); with no folder state anywhere the answer is nothing satisfied and nothing covered, as on PGLite.
+  parityTest('folderAccessFor and folderAccessForAll satisfy no rule and cover no prefix on a brain with no folder access state', { methods: ['readFolderAccess'] }, async (engine) => {
+    const answers = {
+      one: await folderAccessFor(engine, ['member:alice-example']),
+      guest: await folderAccessFor(engine, []),
+      audience: await folderAccessForAll(engine, [['member:alice-example'], ['member:bob-example', 'group:team-a']]),
+    };
+    const none = { satisfiedRuleIds: [], folderCoverage: [] };
+    expect(answers).toEqual({ one: none, guest: none, audience: none });
+    return answers;
+  });
+
+  parityTest('readFolderAccess reads the rules the readers meet and every pending prefix, and folderAccessForAll keeps the rules every identity meets', { methods: ['readFolderAccess'] }, async (engine, backend) => {
+    const seeded = await engine.executeRaw("INSERT INTO access_policy_state (source_id) VALUES ('default') ON CONFLICT (source_id) DO NOTHING").then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.readFolderAccess(['member:alice-example'])).toEqual({ rules: [], coverage: [] });
+      throw seeded;
+    }
+    expect(seeded).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES
+      ('default', 'team', 'team/', ARRAY['member:alice-example', 'group:team-a'], 1), ('default', 'bob', 'bob/', ARRAY['member:bob-example'], 1)`);
+    await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ('default', 'drafts/', 'pending'), ('default', 'drafts/', 'invalid')");
+    const byRule = (r: FolderAccessRows): FolderAccessRows => ({ ...r, rules: [...r.rules].sort((a, b) => a.rule_id.localeCompare(b.rule_id)) });
+    const answers = {
+      alice: byRule(await engine.readFolderAccess(['member:alice-example'])),
+      both: byRule(await engine.readFolderAccess(['member:alice-example', 'member:bob-example'])),
+      noReaders: await engine.readFolderAccess([]),
+      audience: await folderAccessForAll(engine, [['member:alice-example'], ['member:bob-example', 'group:team-a']]),
+      bob: await folderAccessFor(engine, ['member:bob-example']),
+    };
+    const team = { source_id: 'default', rule_id: 'team', readable_by: ['member:alice-example', 'group:team-a'] };
+    const bob = { source_id: 'default', rule_id: 'bob', readable_by: ['member:bob-example'] };
+    const coverage = [{ source_id: 'default', prefix: 'drafts/' }];
+    expect(answers).toEqual({
+      alice: { rules: [team], coverage },
+      both: { rules: [bob, team], coverage },
+      noReaders: { rules: [], coverage },
+      audience: { satisfiedRuleIds: ['default:team'], folderCoverage: coverage },
+      bob: { satisfiedRuleIds: ['default:bob'], folderCoverage: coverage },
+    });
+    return answers;
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
