@@ -49,3 +49,14 @@ export function requireTransactions(engine: object, step: string, why: string): 
   const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
   if (caps && !caps.has('transactions')) throw capabilityMissing('transactions', `${step} (${why})`);
 }
+
+/**
+ * The named refusal of a managed-checkout persistence step (worktree admission, the refresh barrier, an import hold,
+ * grouped admission, the background owner check) on an engine without `managed_persistence` (the Rust engine). The
+ * step calls it before it reads or locks anything, so nothing of the write ran. PGLite, Postgres and transaction
+ * handles (no capability set) pass.
+ */
+export function requireManagedPersistence(engine: object, step: string, why: string): void {
+  const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
+  if (caps && !caps.has('managed_persistence')) throw capabilityMissing('managed_persistence', `${step} (${why})`);
+}

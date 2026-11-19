@@ -33,6 +33,7 @@ const { parityTest } = parityArms(testBackends());
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROTOCOL = 'gbrain.persistence_protocol';
 const REQUESTS = ['b0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-0000000000b2'];
+const WORKTREE = 'd0000000-0000-4000-8000-0000000000d1';
 
 /** Admits one put_page request for `slug` on `sourceId` through the real admission path, as a CLI put does. */
 async function admitPut(engine: BrainEngine, slug: string, requestId: string, sourceId = 'default') {
@@ -176,5 +177,28 @@ describe('engine parity: persistence declaration', () => {
       }
     }
     return out;
+  });
+
+  parityTest('a write to a managed worktree refuses on an engine without managed persistence, naming that capability', {
+    methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    requires: 'managed_persistence',
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const source = await engine.readSourceMembership('default');
+    const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, 'notes/parity-worktree');
+    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, slug: 'notes/parity-worktree', requestId: REQUESTS[0]!, worktreeId: WORKTREE, topologyGeneration: 1,
+      callerIntent: { body: 'x' }, intent: { body: 'x' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // An engine without the capability stops here, before any worktree read: the refusal names it, not raw SQL.
+    if (refusal?.code === 'engine_capability_missing') {
+      expect({ reason: refusal.reason, step: refusal.message?.includes('admitWrite') }).toEqual({ reason: 'managed_persistence', step: true });
+      throw refusal;
+    }
+    // An engine with it reads the worktree binding; this worktree is not bound to the source, so nothing is accepted.
+    expect(refusal?.code).toBe('source_changed');
+    return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
   });
 });
