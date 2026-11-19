@@ -40,7 +40,7 @@ import { audienceMemberIds, parseMayActFor } from './members.ts';
 import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { readFolderAccess as readFolderAccessOver, readLiveMember as readLiveMemberOver, type LiveMemberRow, type MemberBindingVia } from '../engine-sql/access-control.ts';
+import type { LiveMemberRow, MemberBindingVia } from '../engine-sql/access-control.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
@@ -88,15 +88,15 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
 }
 
 /**
- * An engine the member lookup reads through: an engine (its typed readLiveMember, which a Rust brain serves), or an
- * executeRaw-only view of one (persistence SqlEngine), which runs the same statement over that view's executeRaw.
+ * An engine the member lookup reads through: its typed readLiveMember, which every engine serves (a Rust brain without
+ * raw SQL) and every persistence SqlEngine view carries.
  */
-export type MemberLookupEngine = Pick<BrainEngine, 'readLiveMember'> | Pick<BrainEngine, 'executeRaw'>;
+export type MemberLookupEngine = Pick<BrainEngine, 'readLiveMember'>;
 
 async function liveIdentity(engine: MemberLookupEngine, via: MemberBindingVia, param: string): Promise<string[]> {
   let row: LiveMemberRow | null;
   try {
-    row = 'readLiveMember' in engine ? await engine.readLiveMember(via, param) : await readLiveMemberOver(engine, via, param);
+    row = await engine.readLiveMember(via, param);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
     if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
@@ -150,10 +150,10 @@ export async function stdioMemberIdentity(engine: BrainEngine, registered?: stri
 }
 
 /**
- * An engine the folder access read goes through: an engine (its typed readFolderAccess, which a Rust brain serves), or
- * an executeRaw-only view of one (persistence SqlEngine), which runs the same statements over that view's executeRaw.
+ * An engine the folder access read goes through: its typed readFolderAccess, which every engine serves (a Rust brain
+ * without raw SQL) and every persistence SqlEngine view carries.
  */
-export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'> | Pick<BrainEngine, 'executeRaw'>;
+export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'>;
 
 /**
  * GBRA-218 (A2): the folder-rule part of a caller's record, read live from the applied rulebook: the
@@ -173,7 +173,7 @@ export async function folderAccessForAll(engine: FolderAccessEngine, identities:
   try {
     const union = [...new Set(identities.flat())];
     const readers = union.length && identities.length && identities.every(id => id.length > 0) ? union : [];
-    const { rules, coverage } = 'readFolderAccess' in engine ? await engine.readFolderAccess(readers) : await readFolderAccessOver(engine, readers);
+    const { rules, coverage } = await engine.readFolderAccess(readers);
     const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
     return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {
