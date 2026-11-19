@@ -34,7 +34,7 @@
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
 import { currentWriteTrust } from '../persistence/context.ts';
-import { WRITER_RANK_SQL as WRITER_RANK } from '../engine-sql/trust-fence.ts';
+import { OPEN_CONTEST_SQL, WRITER_RANK_SQL as WRITER_RANK, type HeldTable } from '../engine-sql/trust-fence.ts';
 import type { WriteGateConfig } from '../write-gate.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../write-gate-store.ts';
 import { gateInput } from './gate-outcomes.ts';
@@ -190,23 +190,20 @@ export async function factsAboveWriter(tx: BrainEngine, sourceId: string, slug: 
 
 /** What a lower-tier write would have done to a held take or timeline row. */
 export type HeldChange = 'removed' | 'replaced' | 'deactivated' | 'detail_changed';
-export type HeldTable = 'takes' | 'timeline_entries';
+export type { HeldTable } from '../engine-sql/trust-fence.ts';
 export interface HeldRow { id: number; tier: TrustTier; change: HeldChange }
 
-const OPEN_CONTEST = (table: HeldTable) => `EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'
-  AND tp.target_table = '${table}' AND tp.target_id = x.id)`;
+const OPEN_CONTEST = OPEN_CONTEST_SQL;
 
 /**
- * Of `ids`, the rows a write may not delete or overwrite, locked: rows more trusted than `writer` (the transaction's
- * declared tier when omitted) and, with `pending`, rows an open contest already holds. A reconcile that restates the
- * page text passes `pending`: the held row is absent from that text by design.
+ * Of the page's rows `ids`, the rows a write may not delete or overwrite, locked: rows more trusted than `writer` (the
+ * transaction's declared tier when omitted) and, with `pending`, rows an open contest already holds. A reconcile that
+ * restates the page text passes `pending`: the held row is absent from that text by design. The read is the typed
+ * engine member `listHeldRows` (engine-sql/trust-fence.ts).
  */
-export async function heldRows(tx: BrainEngine, table: HeldTable, ids: readonly number[], opts: { writer?: TrustTier; pending?: boolean } = {}): Promise<Map<number, TrustTier>> {
+export async function heldRows(tx: BrainEngine, table: HeldTable, pageId: number, ids: readonly number[], opts: { writer?: TrustTier; pending?: boolean } = {}): Promise<Map<number, TrustTier>> {
   if (!ids.length) return new Map();
-  const writer = opts.writer ? trustRankSql('$2::text') : WRITER_RANK;
-  const rows = await tx.executeRaw<{ id: number; trust_tier: string }>(`SELECT x.id, x.trust_tier FROM ${table} x WHERE x.id = ANY($1::bigint[])
-      AND (${trustRankSql('x.trust_tier')} > ${writer}${opts.pending ? ` OR ${OPEN_CONTEST(table)}` : ''}) ORDER BY x.id FOR UPDATE`,
-  opts.writer ? [[...ids], opts.writer] : [[...ids]]);
+  const rows = await tx.listHeldRows({ table, pageId, ids, ...(opts.writer ? { writer: opts.writer } : {}), ...(opts.pending ? { pending: true } : {}) });
   return new Map(rows.map(r => [Number(r.id), storedTrustTier(r.trust_tier)]));
 }
 

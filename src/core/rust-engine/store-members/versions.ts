@@ -1,6 +1,6 @@
 /**
- * Page version members (BrainEngine createVersion, getVersions, and the change-reason pair readLatestVersionId and
- * stampVersionChangeReason, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
+ * Page version members (BrainEngine createVersion, getVersions, the change-reason pair readLatestVersionId and
+ * stampVersionChangeReason, readLatestVersionIdAtTier, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
  * engine-sql/version-prune.ts). A segmented page's snapshot references its body
  * generation and keeps content_hash, as insertSegmentedVersion does. A version keeps the reason a write stamped on it:
  * getVersions reads it as `replaced_because` (the trusted read; `excludePrivate` is refused). `revertToVersion` is not
@@ -53,6 +53,14 @@ export const pruneHoldingPageVersions: StoreMember<[pageId: number], number> = a
   const member = 'pruneHoldingPageVersions';
   requireInteger(member, 'page id', pageId);
   return storeCall({ member }, () => brain.pruneHoldingPageVersions(pageId));
+};
+
+/** The page's newest version id stamped with `tier`, or null (engine-sql/version-reasons.ts readLatestVersionIdAtTier). */
+export const readLatestVersionIdAtTier: StoreMember<[pageId: number, tier: string], number | null> = async (brain, pageId, tier) => {
+  const member = 'readLatestVersionIdAtTier';
+  requireInteger(member, 'page id', pageId);
+  if (typeof tier !== 'string') refuseMember(member, 'a tier that is not text');
+  return storeCall({ member }, () => brain.readLatestVersionIdAtTier(pageId, tier));
 };
 
 export const stampVersionChangeReason: StoreMember<[spec: { pageId: number; afterVersionId: number; reason: string }], number> = async (brain, spec) => {

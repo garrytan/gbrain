@@ -81,6 +81,7 @@ export const RUST_ENGINE_MEMBERS = {
   readCallerPageAccess: 'pages',
   readWriteVisibilityProbe: 'pages',
   readStoredBodyBytes: 'pages',
+  readPageBodySizes: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',
@@ -194,6 +195,7 @@ export const RUST_ENGINE_MEMBERS = {
   createVersion: 'page_versions',
   getVersions: 'page_versions',
   readLatestVersionId: 'page_versions',
+  readLatestVersionIdAtTier: 'page_versions',
   stampVersionChangeReason: 'page_versions',
   pruneHoldingPageVersions: 'page_versions',
   revertToVersion: 'page_versions',
@@ -392,6 +394,7 @@ export const RUST_ENGINE_MEMBERS = {
   restorePageTrust: 'pages',
   listHeldFenceCells: 'facts',
   readFenceOverlayRows: 'facts',
+  listHeldRows: 'timeline',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
   findTrajectory: 'facts',
@@ -460,6 +463,7 @@ export const RUST_ENGINE_MEMBERS = {
   listWithdrawalSlugs: 'facts',
   expireFactsByWithdrawal: 'facts',
   insertFactPurge: 'facts',
+  listDerivedRows: 'facts',
 
   // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
   loopFactDrift: 'facts',

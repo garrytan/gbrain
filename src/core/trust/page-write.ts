@@ -304,11 +304,10 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
     await propagateTierLowering(tx, [{ table: 'pages', id: pageId }]);
   }
   // GST-2518: a held write that changed nothing has no edit to revert.
-  const [version] = snapshot.revision === prior.revision ? [] : await tx.executeRaw<{ id: number }>(
-    'SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY id DESC LIMIT 1', [pageId, prior.tier]);
+  const versionId = snapshot.revision === prior.revision ? null : await tx.readLatestVersionIdAtTier(pageId, prior.tier);
   const proposal = await insertTrustProposal(tx, {
     action: 'lower_page', sourceId: row.source_id, target: { table: 'pages', id: pageId }, proposer: proposer ?? (derived ? `derived_page:${row.operation}` : `agent_page_edit:${row.operation}`),
-    before: { slug: row.slug, prior_tier: prior.tier, page_tier: prior.pageTier ?? prior.tier, prior_revision: prior.revision, version_id: version ? Number(version.id) : null }, after,
+    before: { slug: row.slug, prior_tier: prior.tier, page_tier: prior.pageTier ?? prior.tier, prior_revision: prior.revision, version_id: versionId }, after,
   });
   if (!proposal.created) await updatePendingTrustProposalAfter(tx, proposal.id, after);
   return { proposal_ref: `tp${proposal.id}` };

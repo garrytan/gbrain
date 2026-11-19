@@ -164,6 +164,22 @@ pub struct RelinkQuery {
     pub limit: f64,
 }
 
+/// One row a derivation walk starts from or reaches (`derivation_inputs.input_table`/`input_id`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DerivationRef {
+    pub table: String,
+    pub id: String,
+}
+
+/// `listDerivedRows(frontier, limit)`'s arguments.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct DerivedRowsQuery {
+    pub frontier: Vec<DerivationRef>,
+    pub limit: i64,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceArgs {
@@ -240,6 +256,18 @@ impl Store {
             }
         }
         Ok(n)
+    }
+
+    /// `listDerivedRows(frontier, limit)`: the rows one hop of the derivation walk reaches from
+    /// the frontier (`derivation_inputs` rows whose input is a frontier row). The store keeps no
+    /// `derivation_inputs`: every SQL writer of it (`recordDerivationInputs`) goes through
+    /// `executeRaw`, which this engine refuses, so no row here has a recorded derivation and the walk
+    /// answers no rows. A NUL in a table or id is refused as a text column refuses it.
+    pub fn list_derived_rows(&self, q: &DerivedRowsQuery) -> Result<Vec<Value>> {
+        for r in &q.frontier {
+            no_nul("listDerivedRows", &[("table", &r.table), ("id", &r.id)])?;
+        }
+        Ok(Vec::new())
     }
 
     /// `loadPurgeTarget(id, sourceId)`: the fact row `id` of the source unless it is an outcome
@@ -630,6 +658,38 @@ mod tests {
     fn vector_text_writes_each_element_as_float4out() {
         assert_eq!(vector_text(&[1.0, 0.0, 0.5, -0.25]), "[1,0,0.5,-0.25]");
         assert_eq!(vector_text(&[]), "[]");
+    }
+
+    /// The store keeps no `derivation_inputs`, so the derivation walk from any stored row answers
+    /// no rows: a page and a fact derived in SQL from it would be linked only by that table.
+    #[test]
+    fn list_derived_rows_answers_no_rows_because_the_store_keeps_no_derivation_inputs() {
+        let store = crate::test_support::store();
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": "Input", "compiled_truth": "input body", "frontmatter": {},
+        }))
+        .unwrap();
+        let options: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({ "sourceId": "default" })).unwrap();
+        let page = store.put_page("notes/input", &input, &options).unwrap();
+        let page_id = page["id"].to_string();
+        let q: DerivedRowsQuery = serde_json::from_value(json!({
+            "frontier": [{ "table": "pages", "id": page_id }, { "table": "facts", "id": "1" }],
+            "limit": 1001,
+        }))
+        .unwrap();
+        assert_eq!(store.list_derived_rows(&q).unwrap(), Vec::<Value>::new());
+        let empty: DerivedRowsQuery =
+            serde_json::from_value(json!({ "frontier": [], "limit": 1 })).unwrap();
+        assert_eq!(
+            store.list_derived_rows(&empty).unwrap(),
+            Vec::<Value>::new()
+        );
+        let nul: DerivedRowsQuery = serde_json::from_value(
+            json!({ "frontier": [{ "table": "pages", "id": "1\u{0}" }], "limit": 1 }),
+        )
+        .unwrap();
+        assert!(store.list_derived_rows(&nul).is_err());
     }
 
     #[test]

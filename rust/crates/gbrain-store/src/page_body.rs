@@ -907,6 +907,21 @@ pub(crate) fn segmented_reference(
         .map(|state| (state.body_generation, state.body_bytes)))
 }
 
+/// Whether a page body is segmented, its `body_bytes` and its `truth_bytes`.
+pub(crate) type BodySizes = (bool, Option<i64>, Option<i64>);
+
+/// The size columns of page `page_id`'s body state: whether it is segmented, `body_bytes` and
+/// `truth_bytes`. `None` when the page has no body state (an inline page that was never segmented).
+pub(crate) fn body_sizes(read: &dyn KvRead, page_id: u64) -> Result<Option<BodySizes>> {
+    Ok(read_body_state(read, page_id)?.map(|state| {
+        (
+            state.body_storage == "segmented",
+            state.body_bytes,
+            state.truth_bytes,
+        )
+    }))
+}
+
 /// PGLite's `liveStagingIds`: stagings in a live state, plus the stagings an outstanding request
 /// names (`held`, whatever their state).
 fn live_staging_ids(read: &dyn KvRead, held: &HashSet<String>) -> Result<HashSet<String>> {

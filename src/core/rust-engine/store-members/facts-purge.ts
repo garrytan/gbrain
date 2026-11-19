@@ -7,6 +7,7 @@
  * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
  * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `listDerivedRows` answers no rows: the store keeps no `derivation_inputs`.
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy) and
  * `listSimilarActiveFacts` serves `excludePrivate`; each refuses a caller whose policy the store does not model
  * (private-provenance.ts).
@@ -16,7 +17,7 @@ import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibil
 import { withDates } from '../store-codec.ts';
 import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
 import { FACTLESS_SETTLE_LIMIT } from '../../engine-sql/facts-purge.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -95,3 +96,15 @@ export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain
 
 export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
   storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));
+
+/**
+ * The store keeps no `derivation_inputs` (its only writer, recordDerivationInputs, goes through `executeRaw`, which this
+ * engine refuses), so one hop of the walk reaches no rows (facts/purge.rs list_derived_rows). A limit or id that is not
+ * what PGLite binds is refused rather than answered.
+ */
+export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limit) => {
+  const member = 'listDerivedRows';
+  if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
+  for (const ref of frontier) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a frontier row whose table or id is not text');
+  return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map(f => ({ table: f.table, id: f.id })), limit }));
+};

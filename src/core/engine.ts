@@ -58,8 +58,9 @@ import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } 
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
-import type { FenceFactRow, FenceRowsTarget, PageTrustRestore } from './engine-sql/trust-fence.ts';
+import type { FenceFactRow, FenceRowsTarget, HeldRowsQuery, PageTrustRestore } from './engine-sql/trust-fence.ts';
 import type { FenceHoldRow } from './engine-sql/fence-holds.ts';
+import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3045,6 +3046,8 @@ export interface BrainEngine {
   getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>>;
   /** The page's newest version id (`max(page_versions.id)`), or null when it keeps none (engine-sql/version-reasons.ts). */
   readLatestVersionId(pageId: number): Promise<number | null>;
+  /** The page's newest version whose snapshot `trust_tier` is `tier`, or null when none is (engine-sql/version-reasons.ts). */
+  readLatestVersionIdAtTier(pageId: number, tier: string): Promise<number | null>;
   /** Sets `change_reason` on the page's versions with an id over `afterVersionId`; answers how many took it. */
   stampVersionChangeReason(spec: { pageId: number; afterVersionId: number; reason: string }): Promise<number>;
   /**
@@ -3227,6 +3230,8 @@ export interface BrainEngine {
   readWriterSlugFence(principal: { kind: string; id: string }): Promise<unknown>;
   /** A live page's stored body size (segmented `body_bytes`, else the UTF-8 bytes of its body columns), or null (engine-sql/large-page.ts). */
   readStoredBodyBytes(slug: string, sourceId: string): Promise<number | null>;
+  /** Page `pageId`'s body and truth sizes (deleted or not), append_page's read after its write, or null (engine-sql/large-page.ts). */
+  readPageBodySizes(pageId: number): Promise<PageBodySizes | null>;
   /**
    * The page's live fence facts the writer may not simply expire (engine-sql/trust-fence.ts), by row number and locked until
    * the transaction ends: more trusted than the writer's declared tier, held narrower by a widening proposal the incoming
@@ -3238,6 +3243,12 @@ export interface BrainEngine {
    * trust_tier and write_origin back. The tier trigger still applies, so a raise needs the caller's promotion.
    */
   restorePageTrust(spec: PageTrustRestore): Promise<void>;
+  /**
+   * Of the page's take or timeline rows `ids`, the rows a write may not delete or overwrite (engine-sql/trust-fence.ts), by
+   * id and locked until the transaction ends: more trusted than `writer` (the declared tier when omitted) and, with
+   * `pending`, held by an open `forget` contest. Each row carries its stored `trust_tier`.
+   */
+  listHeldRows(q: HeldRowsQuery): Promise<Array<{ id: number; trust_tier: string }>>;
   /**
    * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
    * for the same (action, target, related) with `created: false`. The proposer principal and request come from the
@@ -3528,6 +3539,8 @@ export interface BrainEngine {
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
   /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
   insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
+  /** One hop of the derivation walk: the rows a `derivation_inputs` edge derives from a frontier row, distinct, by (table, id), at most `limit`. */
+  listDerivedRows(frontier: ReadonlyArray<{ table: string; id: string }>, limit: number): Promise<Array<{ derived_table: string; derived_id: string }>>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */

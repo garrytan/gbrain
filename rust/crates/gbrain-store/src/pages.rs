@@ -1951,6 +1951,23 @@ impl Store {
         self.write(|tx| crate::version_prune::prune_holding(tx, &*self.env, page_id))
     }
 
+    /// `readLatestVersionIdAtTier(pageId, tier)`: the page's newest version whose snapshot tier is
+    /// `tier`, or none (`SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY
+    /// id DESC LIMIT 1`). A version keeps the page's tier as `trust::stamp` stored it, where no tier
+    /// is `unknown` as PGLite's column default reads; a NUL in the tier is refused as text refuses it.
+    pub fn read_latest_version_id_at_tier(&self, page_id: i64, tier: &str) -> Result<Option<u64>> {
+        crate::links::no_nul("readLatestVersionIdAtTier", &[("tier", tier)])?;
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        Ok(versions_of(&*read, page_id)?
+            .iter()
+            .filter(|v| crate::trust::TrustTier::stored(v.trust_tier.as_deref()).as_str() == tier)
+            .map(|v| v.id)
+            .max())
+    }
+
     /// `stampVersionChangeReason({ pageId, afterVersionId, reason })`: sets the reason on every
     /// version of the page with an id over `afterVersionId` (the snapshots one write archived), and
     /// answers how many it set.
@@ -2271,6 +2288,59 @@ mod tests {
                 Ok(page)
             })
             .unwrap()
+    }
+
+    /// The newest version stamped with the tier answers; another page's versions, another tier and a
+    /// page with no version answer none, and a version with no stored tier reads as `unknown`.
+    #[test]
+    fn read_latest_version_id_at_tier_answers_the_newest_version_stamped_with_the_tier() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/tiered");
+        let other = put(&store, "notes/other");
+        let version = |id: u64, page_id: u64, tier: Option<&str>| -> VersionRecord {
+            serde_json::from_value(json!({
+                "id": id, "page_id": page_id, "compiled_truth": "body", "timeline": "", "title": "T", "type": "note",
+                "tags": [], "frontmatter": {}, "source_path": null, "content_hash": "abc", "knowledge_revision": "r1",
+                "is_deleted": false, "snapshot_at_us": 3, "trust_tier": tier,
+            }))
+            .unwrap()
+        };
+        store
+            .write(|tx| {
+                for v in [
+                    version(1, page.id, Some("user_confirmed")),
+                    version(2, page.id, Some("agent_written")),
+                    version(3, page.id, Some("user_confirmed")),
+                    version(4, page.id, None),
+                    version(5, other.id, Some("user_confirmed")),
+                ] {
+                    put_json(tx, &keys::version(v.page_id, v.id), &v)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let at = |page_id: u64, tier: &str| {
+            store
+                .read_latest_version_id_at_tier(i64::try_from(page_id).unwrap(), tier)
+                .unwrap()
+        };
+        assert_eq!(at(page.id, "user_confirmed"), Some(3));
+        assert_eq!(at(page.id, "agent_written"), Some(2));
+        assert_eq!(at(page.id, "unknown"), Some(4));
+        assert_eq!(at(page.id, "tool_observed"), None);
+        assert_eq!(at(other.id, "agent_written"), None);
+        assert_eq!(at(page.id + other.id + 100, "user_confirmed"), None);
+        assert_eq!(
+            store
+                .read_latest_version_id_at_tier(-1, "user_confirmed")
+                .unwrap(),
+            None
+        );
+        assert!(
+            store
+                .read_latest_version_id_at_tier(1, "user\u{0}")
+                .is_err()
+        );
     }
 
     #[test]

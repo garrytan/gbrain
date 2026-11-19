@@ -2,7 +2,7 @@
  * BrainEngine parity — versions + raw_files families.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: page version snapshots (create / list / revert), raw sidecar
+ *  - Contract: page version snapshots (create / list / revert / newest at a tier), raw sidecar
  *    data and file metadata rows (listFiles' order included) behave identically on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; a Rust arm later through
  *    test/engine-parity/harness.ts).
@@ -96,6 +96,43 @@ describe('engine parity: versions', () => {
       expect(plain).toEqual({ tier: 'unknown', origin: null });
       const listed = (await engine.getVersions('notes/trusted')).map(v => 'trust_tier' in v);
       return { curated, byAgent, plain, listed };
+    },
+  );
+
+  parityTest(
+    'readLatestVersionIdAtTier answers the page\'s newest version stamped with the tier, or null',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'getPage', 'createVersion', 'readLatestVersionIdAtTier'] },
+    async (engine) => {
+      const body = { type: 'note' as const, title: 'Tiered', compiled_truth: 'Body.', timeline: '' };
+      await engine.putPage('notes/tiered', body);
+      const plain = await engine.createVersion('notes/tiered');
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(
+          ['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+          ['operator_curated', 'operator_curated', JSON.stringify({ channel: 'import' })],
+        );
+        await tx.putPage('notes/tiered', { ...body, compiled_truth: 'Curated body.' });
+      });
+      const curatedOne = await engine.createVersion('notes/tiered');
+      const curatedTwo = await engine.createVersion('notes/tiered');
+      await engine.putPage('notes/other', { ...body, title: 'Other' });
+      await engine.createVersion('notes/other');
+      const pageId = (await engine.getPage('notes/tiered'))!.id;
+      const otherId = (await engine.getPage('notes/other'))!.id;
+      const curated = await engine.readLatestVersionIdAtTier(pageId, 'operator_curated');
+      const unknown = await engine.readLatestVersionIdAtTier(pageId, 'unknown');
+      expect(curated).toBe(curatedTwo.id);
+      // putPage may snapshot the prior body too, so the newest unknown version is the plain snapshot or a later one.
+      expect(unknown).not.toBeNull();
+      expect(unknown!).toBeGreaterThanOrEqual(plain.id);
+      expect(unknown!).toBeLessThan(curatedOne.id);
+      return {
+        curatedIsNewest: curated === curatedTwo.id,
+        unknownBeforeCurated: unknown !== null && unknown >= plain.id && unknown < curatedOne.id,
+        agentWritten: await engine.readLatestVersionIdAtTier(pageId, 'agent_written'),
+        otherCurated: await engine.readLatestVersionIdAtTier(otherId, 'operator_curated'),
+        missingPage: await engine.readLatestVersionIdAtTier(pageId + otherId + 1000, 'operator_curated'),
+      };
     },
   );
 
