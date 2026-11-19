@@ -44,7 +44,7 @@ final class MemoryStore: SendStateStore {
     }
 }
 
-final class WatchedLock: NSRecursiveLock {
+final class WatchedLock: NSRecursiveLock, @unchecked Sendable {
     var waiting: DispatchSemaphore?
     override func lock() {
         waiting?.signal()
@@ -623,10 +623,10 @@ final class Harness {
         let group = DispatchGroup()
         var reply: (Int, [String: Any]) = (0, [:])
         group.enter()
-        DispatchQueue.global().async {
+        Thread {
             reply = self.admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic])
             group.leave()
-        }
+        }.start()
         #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         h.switchedOn = false
         #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
@@ -645,18 +645,18 @@ final class Harness {
         h.store.saveGate = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
         group.enter()
-        DispatchQueue.global().async {
+        Thread {
             _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
             group.leave()
-        }
+        }.start()
         #expect(h.store.saving?.wait(timeout: .now() + 10) == .success)
         h.lock.waiting = DispatchSemaphore(value: 0)
         var code: String?
         group.enter()
-        DispatchQueue.global().async {
+        Thread {
             code = h.send(h.request(h.body())).json["code"] as? String
             group.leave()
-        }
+        }.start()
         #expect(h.lock.waiting?.wait(timeout: .now() + 10) == .success)
         h.store.release()
         #expect(group.wait(timeout: .now() + 10) == .success)
@@ -672,10 +672,10 @@ final class Harness {
         h.presence.entered = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
         group.enter()
-        DispatchQueue.global().async {
+        Thread {
             _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
             group.leave()
-        }
+        }.start()
         #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         #expect(h.send(h.request(h.body())).status == 200)
         #expect(h.messages.count == 1)
@@ -692,10 +692,10 @@ final class Harness {
         let group = DispatchGroup()
         var reply: (Int, [String: Any]) = (0, [:])
         group.enter()
-        DispatchQueue.global().async {
+        Thread {
             reply = self.admin(h, ["action": "add_key", "name": "second", "public_key": other])
             group.leave()
-        }
+        }.start()
         #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         #expect(admin(h, ["action": "remove_key", "name": "box"]).0 == 200)
         h.presence.gate?.signal()
