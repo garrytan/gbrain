@@ -26,6 +26,14 @@ pub(crate) struct SourceRecord {
     /// `None` before the first stamp. Records written before the field existed read as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunker_version: Option<String>,
+    /// The commit the source's last sync advanced to (`sources.last_commit`), or `None` before the
+    /// first advance. Records written before the field existed read as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_commit: Option<String>,
+    /// When the newest content of the source's last sync was written (`sources.newest_content_at`),
+    /// in microseconds, or `None`. Records written before the field existed read as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub newest_content_at_us: Option<i64>,
 }
 
 /// A source as JavaScript sees it: `SourceRow` of `src/core/engine.ts`, with `last_sync_at` as an
@@ -54,9 +62,10 @@ impl From<SourceRecord> for SourceRow {
 }
 
 /// One source as `getSource` returns it: `SourceDetailRow` of `src/core/engine.ts`, dates as ISO
-/// strings. The store keeps no `last_commit`, `contextual_retrieval_mode` or
-/// `trust_frontmatter_overrides`: only the sync anchor and source admin SQL write those columns,
-/// and neither runs on a Rust brain, so they read as the column defaults (null, null, false).
+/// strings. `last_commit` is the one the sync anchor advanced (`advance_source_last_commit`). The
+/// store keeps no `contextual_retrieval_mode` or `trust_frontmatter_overrides`: only source admin
+/// SQL writes those columns, and it does not run on a Rust brain, so they read as the column
+/// defaults (null, false).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceDetailRow {
     pub id: String,
@@ -76,7 +85,7 @@ impl From<SourceRecord> for SourceDetailRow {
             id: r.id,
             name: r.name,
             local_path: r.local_path,
-            last_commit: None,
+            last_commit: r.last_commit,
             last_sync_at: r.last_sync_at_us.map(iso),
             config: r.config,
             created_at: iso(r.created_at_us),
@@ -143,6 +152,8 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         archived: false,
         created_at_us: env.now_micros(),
         chunker_version: None,
+        last_commit: None,
+        newest_content_at_us: None,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
@@ -216,6 +227,8 @@ impl Store {
                     archived: false,
                     created_at_us: self.env.now_micros(),
                     chunker_version: None,
+                    last_commit: None,
+                    newest_content_at_us: None,
                 },
             };
             if input.name.is_some() {
@@ -258,6 +271,37 @@ impl Store {
                 return Ok(false);
             };
             record.archived = archived;
+            put_json(tx, &source_key(id), &record)?;
+            Ok(true)
+        })
+    }
+
+    /// `advanceSourceLastCommit(id, value, newestContentAt?)`: stamps `last_commit` and
+    /// `last_sync_at` (the process clock), and `newest_content_at` when `newest` is given
+    /// (`Some(None)` clears it). Archived sources advance too, as the UPDATE does not filter them.
+    /// Returns whether the source exists; an unknown source changes nothing.
+    pub fn advance_source_last_commit(
+        &self,
+        id: &str,
+        value: &str,
+        newest: Option<Option<&str>>,
+    ) -> Result<bool> {
+        let newest = match newest {
+            Some(Some(text)) => Some(Some(parse_iso(text).ok_or_else(|| {
+                StoreError::invalid("newestContentAt must be an ISO timestamp ending in Z")
+            })?)),
+            Some(None) => Some(None),
+            None => None,
+        };
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(false);
+            };
+            record.last_commit = Some(value.to_string());
+            record.last_sync_at_us = Some(self.env.now_micros());
+            if let Some(newest) = newest {
+                record.newest_content_at_us = newest;
+            }
             put_json(tx, &source_key(id), &record)?;
             Ok(true)
         })

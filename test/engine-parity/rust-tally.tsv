@@ -62,6 +62,7 @@ test/engine-parity/retrieval-coverage.test.ts	12	1
 test/engine-parity/search-reads.test.ts	15	1
 test/engine-parity/search.test.ts	17	2
 test/engine-parity/segmented-body.test.ts	15	0
+test/engine-parity/source-last-commit.test.ts	1	0
 test/engine-parity/source-resolver-reads.test.ts	13	0
 test/engine-parity/stats-vectors.test.ts	2	0
 test/engine-parity/stats.test.ts	9	0

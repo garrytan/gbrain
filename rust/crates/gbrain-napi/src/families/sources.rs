@@ -63,6 +63,31 @@ impl Brain {
         self.run(env, move |s| s.set_source_archived(&id, archived))
     }
 
+    /// `advanceSourceLastCommit(id, value, { newestContentAt? })`: whether the source exists. An
+    /// absent `newestContentAt` keeps the stored one; `null` clears it.
+    #[napi]
+    pub fn advance_source_last_commit<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        value: String,
+        options: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let newest = match options.get("newestContentAt") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(Value::String(text)) => Some(Some(text.as_str())),
+                Some(_) => {
+                    return Err(gbrain_store::StoreError::invalid(
+                        "advanceSourceLastCommit newestContentAt must be a string or null",
+                    ));
+                }
+            };
+            s.advance_source_last_commit(&id, &value, newest)
+        })
+    }
+
     /// `getSource(id)`: the `SourceDetailRow` or `null`.
     #[napi]
     pub fn get_source<'env>(&self, env: &'env Env, id: String) -> napi::Result<Object<'env>> {

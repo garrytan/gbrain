@@ -21,6 +21,15 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
+    "advanceSourceLastCommit#default": {
+      "raw": 1
+    },
+    "advanceSourceLastCommit#newest-cleared": {
+      "raw": 1
+    },
+    "advanceSourceLastCommit#newest-content": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "bumpLastRetrieved#default": {

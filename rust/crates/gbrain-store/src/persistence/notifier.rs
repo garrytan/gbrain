@@ -19,9 +19,8 @@
 //! deletes its row (`remove_source_rows`, the `ON DELETE CASCADE`).
 //!
 //! The host source list reads the source records and the classic syncer host of each row. This
-//! engine keeps no managed worktree bindings, and a source keeps no `last_commit`, so every row
-//! reads `bound` false and `last_commit`, `owner` and `root` null, as Postgres reads a source with
-//! none of those rows.
+//! engine keeps no managed worktree bindings, so every row reads `bound` false and `owner` and
+//! `root` null, as Postgres reads a source with none of those rows; `last_commit` is the source's.
 //!
 //! The wanted markers are one `sync_wanted_markers` row per source and intent: the
 //! `upsertWantedMarker`, `attachWantedMarkerJob`, `readWantedMarkers`, `readDueWantedMarkers`,
@@ -32,10 +31,11 @@
 //! one is given, and keeps `first_due_at` unless the source was re-created (another
 //! incarnation). Deleting the source deletes its markers (`remove_source_rows`).
 //!
-//! A source on this engine keeps no `last_commit` (the sync anchor does not run here), so every
-//! marker term that compares with it reads the column as NULL, as Postgres reads a source that
-//! never synced: a freshness marker that names a head is always due, the prune deletes nothing,
-//! and the settle deletes only a freshness marker that names no head.
+//! A source keeps the `last_commit` its sync anchor advanced (`advance_source_last_commit`), or
+//! `None` before the first advance, which every marker term reads as Postgres reads a NULL column:
+//! a freshness marker stays due while it names no head or another head, the prune deletes a
+//! freshness or pull marker that names the source's head, and the settle deletes a freshness
+//! marker that names no head or the source's head, or when the checkout head equals it.
 //!
 //! The status rows join each source that is not archived to its notifier row, to the lease of
 //! the row's owner host and to the count of its due markers.
@@ -527,7 +527,7 @@ pub(crate) fn read_notifier_status_rows_in(
         let n = get_json::<NotifierSourceRecord>(read, &source_row_key(&s.id))?;
         let due_markers = source_markers(read, &s.id)?
             .iter()
-            .filter(|m| is_due(m))
+            .filter(|m| is_due(m, last_commit_of(&s)))
             .count();
         let lease = match n.as_ref().and_then(|n| n.owner_host_id.as_deref()) {
             Some(host) => lease_of(read, host)?,
@@ -536,7 +536,7 @@ pub(crate) fn read_notifier_status_rows_in(
         let n = n.as_ref();
         out.push(json!({
             "id": s.id,
-            "last_commit": Value::Null,
+            "last_commit": s.last_commit,
             "state": n.map(|n| n.state.clone()),
             "reason": n.and_then(|n| n.reason.clone()),
             "first_due_at": n.and_then(|n| n.first_due_at_us).map(iso),
@@ -669,10 +669,10 @@ fn markers_of(read: &dyn KvRead, ids: Option<&[String]>) -> Result<Vec<Marker>> 
 }
 
 /// `m.intent <> 'freshness' OR m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM
-/// s.last_commit`, with `last_commit` NULL on this engine: only a freshness marker can be
-/// settled, and it stays due while it names a head or none (`'x' IS DISTINCT FROM NULL`).
-fn is_due(_m: &Marker) -> bool {
-    true
+/// s.last_commit`: a pull or full marker is due until a run clears it, a freshness marker while
+/// `freshness_due` holds.
+fn is_due(m: &Marker, last_commit: Option<&str>) -> bool {
+    m.intent != "freshness" || freshness_due(m, last_commit)
 }
 
 /// A freshness marker still asks for work while its `wanted_head` is null or differs from the
@@ -681,9 +681,9 @@ fn freshness_due(m: &Marker, last_commit: Option<&str>) -> bool {
     m.record.wanted_head.is_none() || m.record.wanted_head.as_deref() != last_commit
 }
 
-/// The source's `last_commit`. The store keeps none yet, so every source reads null.
-fn last_commit_of(_source: &SourceRecord) -> Option<&str> {
-    None
+/// The source's `last_commit`, or `None` before its sync anchor first advanced.
+fn last_commit_of(source: &SourceRecord) -> Option<&str> {
+    source.last_commit.as_deref()
 }
 
 /// A marker row as `SELECT *` returns it.
@@ -797,20 +797,42 @@ pub(crate) fn read_due_wanted_markers_in(
         if out.len() == MARKER_LIMIT {
             break;
         }
-        if is_due(&m) && read_source(read, &m.source_id)?.is_some() {
+        if let Some(source) = read_source(read, &m.source_id)?
+            && is_due(&m, last_commit_of(&source))
+        {
             out.push(marker_row(&m));
         }
     }
     Ok(out)
 }
 
-/// The DELETE of `pruneSatisfiedWantedMarkers` deletes a freshness or pull marker whose head
-/// equals the source's `last_commit`. No source keeps one here (`wanted_head = NULL` is never
-/// true), so it deletes nothing; the ids are not read.
+/// The DELETE of `pruneSatisfiedWantedMarkers`: each freshness or pull marker of an existing
+/// source of `ids` whose head is set and equals the source's `last_commit`.
 pub(crate) fn prune_satisfied_wanted_markers_in(
-    _tx: &mut dyn KvWrite,
-    _ids: &[String],
+    tx: &mut dyn KvWrite,
+    ids: &[String],
 ) -> Result<()> {
+    let mut seen: Vec<&String> = ids.iter().collect();
+    seen.sort();
+    seen.dedup();
+    for id in seen {
+        let Some(source) = read_source(&*tx, id)? else {
+            continue;
+        };
+        let Some(last_commit) = last_commit_of(&source) else {
+            continue;
+        };
+        for intent in ["freshness", "pull"] {
+            let Some(key) = marker_key(id, intent) else {
+                continue;
+            };
+            if get_json::<WantedMarkerRecord>(&*tx, &key)?
+                .is_some_and(|r| r.wanted_head.as_deref() == Some(last_commit))
+            {
+                tx.delete(&key)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -835,22 +857,27 @@ pub(crate) fn clear_wanted_marker_in(
 
 /// The DELETE of `settleFreshnessMarker`: the source's freshness marker at `generation` when
 /// `wanted_head IS NULL OR wanted_head IS NOT DISTINCT FROM s.last_commit OR s.last_commit =
-/// checkoutHead`. With `last_commit` NULL only the first term can hold, so `checkoutHead` is
-/// not read.
+/// checkoutHead` (a null `last_commit` never equals the checkout head).
 pub(crate) fn settle_freshness_marker_in(
     tx: &mut dyn KvWrite,
     source_id: &str,
     generation: i64,
-    _checkout_head: Option<&str>,
+    checkout_head: Option<&str>,
 ) -> Result<()> {
     let Some(key) = marker_key(source_id, "freshness") else {
         return Ok(());
     };
-    if let Some(r) = get_json::<WantedMarkerRecord>(&*tx, &key)?
-        && r.generation == generation
-        && r.wanted_head.is_none()
-        && read_source(&*tx, source_id)?.is_some()
-    {
+    let Some(r) = get_json::<WantedMarkerRecord>(&*tx, &key)? else {
+        return Ok(());
+    };
+    let Some(source) = read_source(&*tx, source_id)? else {
+        return Ok(());
+    };
+    let last_commit = last_commit_of(&source);
+    let satisfied = r.wanted_head.is_none()
+        || r.wanted_head.as_deref() == last_commit
+        || (checkout_head.is_some() && last_commit.is_some() && last_commit == checkout_head);
+    if r.generation == generation && satisfied {
         tx.delete(&key)?;
     }
     Ok(())
@@ -891,7 +918,7 @@ pub(crate) fn list_notifier_host_source_rows_in(read: &dyn KvRead) -> Result<Vec
             Ok(json!({
                 "id": r.id,
                 "local_path": r.local_path,
-                "last_commit": Value::Null,
+                "last_commit": r.last_commit,
                 "bound": false,
                 "owner": Value::Null,
                 "root": Value::Null,

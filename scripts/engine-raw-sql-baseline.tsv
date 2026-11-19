@@ -1009,7 +1009,7 @@ src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
 src/core/sweep.ts	execute_raw	3
-src/core/sync-anchor.ts	execute_raw	5
+src/core/sync-anchor.ts	execute_raw	3
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-dispatch-read.ts	execute_raw	1

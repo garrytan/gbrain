@@ -121,6 +121,24 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
 }
 
 /**
+ * Advances the source's sync anchor: stamps last_commit and last_sync_at (the database clock), and newest_content_at
+ * too when `newestContentAt` is given (null clears it; undefined keeps it). An unknown source changes nothing.
+ */
+export async function advanceSourceLastCommit(exec: SqlExecutor, sourceId: string, value: string, newestContentAt?: string | null): Promise<void> {
+  if (newestContentAt !== undefined) {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+      [value, sourceId, newestContentAt],
+    );
+  } else {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+      [value, sourceId],
+    );
+  }
+}
+
+/**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.
  */

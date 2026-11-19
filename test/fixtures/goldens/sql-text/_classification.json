@@ -64,7 +64,7 @@
       "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)": 12,
       "pages": 41,
       "salience": 5,
-      "sources": 16,
+      "sources": 17,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -86,6 +86,7 @@
       "addTimelineEntry": "timeline",
       "addWakeCron": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "admitJob": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
+      "advanceSourceLastCommit": "sources",
       "aliasCanonicalRefs": "out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)",
       "aliasFanoutRead": "out-of-scope:internal-helper (private; exercised through public callers)",
       "allocateBodyOccurrenceIds": "out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)",
