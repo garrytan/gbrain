@@ -3310,8 +3310,8 @@ export class PostgresEngine implements BrainEngine {
     // correctly. Pure string work — stays outside the retried thunk.
     const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const pattern = `${escaped}%`;
-    return this.connRetry(async () => {
-      const rows = await this.sql<{ key: string }[]>`
+    return this.configRead(async sql => {
+      const rows = await sql<{ key: string }[]>`
         SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key
       `;
       return rows.map(r => r.key);
