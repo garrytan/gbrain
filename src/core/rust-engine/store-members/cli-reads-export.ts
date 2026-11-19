@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -46,3 +46,7 @@ export const readExportPageRows: StoreMember<[ids: readonly string[]], ExportPag
 /** Each body and timeline normalized line by line, as Postgres does it (`cli_reads::export::normalize_fence_lines`). */
 export const normalizeFenceLines: StoreMember<[bodies: readonly string[], timelines: readonly string[]], NormalizedFenceLines[]> = (brain, bodies, timelines) =>
   storeCall({ member: 'normalizeFenceLines' }, () => brain.normalizeFenceLines([...bodies], [...timelines]));
+
+/** A segmented body read: the page's body columns and revision, deleted or not (`cli_reads::export::read_segmented_page_head`). */
+export const readSegmentedPageHead: StoreMember<[pageId: number], SegmentedPageHead | undefined> = async (brain, pageId) =>
+  (await storeCall({ member: 'readSegmentedPageHead' }, () => brain.readSegmentedPageHead(pageId))) ?? undefined;

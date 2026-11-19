@@ -15,7 +15,7 @@ use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::links::no_nul;
-use crate::page_body::segmented_reference;
+use crate::page_body::{page_u64, read_body_state, segmented_reference};
 use crate::pages::read_page_by_id;
 use crate::raw_files::page_raw_rows;
 use crate::trust::withdrawals::source_withdrawals;
@@ -85,6 +85,23 @@ pub struct NormalizedFenceLines {
     pub i: i64,
     pub body: Option<String>,
     pub timeline: Option<String>,
+}
+
+/// One row of `readSegmentedPageHead`: the page's segmented-body columns and revision. A page with
+/// no body record reads as Postgres's column defaults: `inline`, generation 0, the rest NULL.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SegmentedPageHead {
+    pub id: i64,
+    pub source_id: String,
+    pub slug: String,
+    pub body_storage: String,
+    pub body_generation: i64,
+    pub body_bytes: Option<i64>,
+    pub body_lines: Option<i64>,
+    pub truth_bytes: Option<i64>,
+    pub body_flags: Option<Value>,
+    pub segmenter_version: Option<i64>,
+    pub revision: Option<String>,
 }
 
 /// `string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)` over
@@ -310,6 +327,34 @@ impl Store {
             })
             .collect())
     }
+
+    /// `readSegmentedPageHead(pageId)`: `SELECT ... FROM pages WHERE id=$1`, deleted pages included.
+    /// `None` when no page has that id.
+    pub fn read_segmented_page_head(&self, page_id: i64) -> Result<Option<SegmentedPageHead>> {
+        let read = self.read()?;
+        let Some(page) = page_u64(page_id)
+            .map(|id| read_page_by_id(&*read, id))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(None);
+        };
+        let state = read_body_state(&*read, page.id)?;
+        let state = state.as_ref();
+        Ok(Some(SegmentedPageHead {
+            id: page_id,
+            source_id: page.source_id.clone(),
+            slug: page.slug.clone(),
+            body_storage: state.map_or_else(|| "inline".into(), |s| s.body_storage.clone()),
+            body_generation: state.map_or(0, |s| s.body_generation),
+            body_bytes: state.and_then(|s| s.body_bytes),
+            body_lines: state.and_then(|s| s.body_lines),
+            truth_bytes: state.and_then(|s| s.truth_bytes),
+            body_flags: state.and_then(|s| s.body_flags.clone()),
+            segmenter_version: state.and_then(|s| s.segmenter_version),
+            revision: Some(page.knowledge_revision.clone()),
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -388,5 +433,35 @@ mod tests {
             normalize_lines("a\u{85}b\u{a0}c").as_deref(),
             Some("a b\u{a0}c")
         );
+    }
+
+    #[test]
+    fn an_inline_page_head_reads_the_column_defaults() {
+        let s = store();
+        page(&s, "notes/a", "abc");
+        let id: i64 = s.list_export_page_keys(&query("0")).unwrap()[0]
+            .id
+            .parse()
+            .unwrap();
+        let head = s.read_segmented_page_head(id).unwrap().unwrap();
+        assert_eq!(
+            (
+                head.slug.as_str(),
+                head.body_storage.as_str(),
+                head.body_generation
+            ),
+            ("notes/a", "inline", 0)
+        );
+        assert_eq!(
+            (
+                head.body_bytes,
+                head.body_flags.clone(),
+                head.segmenter_version
+            ),
+            (None, None, None)
+        );
+        assert!(head.revision.is_some());
+        assert_eq!(s.read_segmented_page_head(id + 1000).unwrap(), None);
+        assert_eq!(s.read_segmented_page_head(-1).unwrap(), None);
     }
 }

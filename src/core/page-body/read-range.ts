@@ -161,7 +161,7 @@ const bytesOf = (v: unknown): Uint8Array => { const b = v as Uint8Array; return 
 const newlines = (s: string) => { let n = 0; for (let i = s.indexOf('\n'); i !== -1; i = s.indexOf('\n', i + 1)) n++; return n; };
 
 /** The page row a pin was taken at: same revision and, when pinned, the same body generation. */
-async function checkPin(pin: BodyPin, page: Record<string, unknown> | undefined, pageId: number): Promise<void> {
+async function checkPin(pin: BodyPin, page: { slug?: unknown; body_generation?: unknown; revision?: unknown } | undefined, pageId: number): Promise<void> {
   const revision = page?.revision == null ? REVISION_BACKFILL_PENDING : String(page.revision);
   if (!page || revision !== pin.revision || (pin.generation !== undefined && Number(page.body_generation) !== pin.generation)) {
     const slug = page?.slug == null ? String(pageId) : String(page.slug);
@@ -196,8 +196,7 @@ export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: num
   expect?: { slug: string; sourceId: string }; hideHeld?: boolean }, attempt = 1): Promise<SegmentedBody> {
   const requested = opts.pin?.generation ?? opts.generation ?? null;
   const [[page], read, expected] = await Promise.all([
-    engine.executeRaw<Record<string, unknown>>(`SELECT id, source_id, slug, body_storage, body_generation, body_bytes, body_lines, truth_bytes,
-      body_flags, segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1`, [opts.pageId]),
+    engine.readSegmentedPageHead(opts.pageId).then(page => [page]),
     manifestRows(engine, opts.pageId, requested),
     opts.ledger || !opts.expect ? undefined : readBodyLedger(engine, opts.expect.sourceId, opts.expect.slug),
   ]);

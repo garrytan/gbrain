@@ -92,3 +92,25 @@ export async function normalizeFenceLines(tx: Raw, bodies: readonly string[], ti
     FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(body, timeline, i)`,
   [bodies, timelines]);
 }
+
+/** A segmented page's head row. Bigint columns come back as numbers on PGLite and strings on Postgres. */
+export interface SegmentedPageHead {
+  id: number | string;
+  source_id: string;
+  slug: string;
+  body_storage: string;
+  body_generation: number | string;
+  body_bytes: number | string | null;
+  body_lines: number | string | null;
+  truth_bytes: number | string | null;
+  body_flags: unknown;
+  segmenter_version: number | null;
+  revision: string | null;
+}
+
+/** Page `pageId`'s segmented-body columns and revision, whether or not it is deleted, or undefined when there is no such page. */
+export async function readSegmentedPageHead(tx: Raw, pageId: number): Promise<SegmentedPageHead | undefined> {
+  const [page] = await tx.executeRaw<SegmentedPageHead>(`SELECT id, source_id, slug, body_storage, body_generation, body_bytes, body_lines, truth_bytes,
+      body_flags, segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1`, [pageId]);
+  return page;
+}

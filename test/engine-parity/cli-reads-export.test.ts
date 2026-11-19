@@ -15,8 +15,37 @@
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { flipInput, manifestRow, pageMeta, segmentText, stagingInput } from '../helpers/page-body-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+const SEGMENTS = [segmentText('# Intro\nfirst segment\n'), segmentText('## Next\nsecond segment\n')];
+
+/** Publish SEGMENTS as generation 1 of segmented page `slug`, through typed members only. */
+async function publishSegmented(engine: BrainEngine, slug: string) {
+  const { id: pageId } = await engine.createSegmentedPageShell(slug, pageMeta('Big page'), { sourceId: 'default' });
+  const occurrences = await engine.allocateBodyOccurrenceIds(SEGMENTS.length);
+  const staging = stagingInput({ slug, pageId, mode: 'create' });
+  await engine.transaction(async (tx) => {
+    await tx.openBodyStaging(staging);
+    await tx.stageSegmentTexts('default', SEGMENTS, { stagingId: staging.id });
+    let byteStart = 0;
+    await tx.stageManifestRows(SEGMENTS.map((text, seq) => {
+      const row = manifestRow({ pageId, occurrenceId: occurrences[seq]!, genFrom: 1, seq, text, byteStart, stagingId: staging.id });
+      byteStart += text.body.byteLength;
+      return row;
+    }));
+  });
+  await engine.transaction(async (tx) => {
+    await tx.flipBodyGeneration(flipInput(pageId, 0, staging.id, SEGMENTS));
+    await tx.setBodyStagingState(staging.id, 'committed');
+  });
+  return { pageId, occurrences };
+}
+
+/** Bigint columns as numbers: Postgres answers them as strings. */
+const num = (v: unknown) => (v === null || v === undefined ? v : Number(v));
 
 describe('engine parity: export reads', () => {
   // The export bounds its snapshot transaction to 60 s. The store has no statement timeout, so the Rust member does
@@ -120,5 +149,32 @@ describe('engine parity: export reads', () => {
     const timelines = ['', 'A\n\nB', 'x', ''];
     const rows = await engine.normalizeFenceLines(bodies, timelines);
     return [...rows].map(r => ({ ...r, i: Number(r.i) })).sort((a, b) => a.i - b.i);
+  });
+
+  // A segmented body read opens with the page row: its body columns and revision. An inline page reads the column
+  // defaults, a deleted page still reads, and an id no page has reads nothing.
+  parityTest('readSegmentedPageHead reads the body columns and revision of a page', {
+    methods: ['readSegmentedPageHead', 'putPage', 'getPage', 'softDeletePage', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds',
+      'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
+  }, async (engine) => {
+    const { pageId } = await publishSegmented(engine, 'notes/big');
+    await engine.putPage('notes/small', { type: 'note', title: 'Small', compiled_truth: 'inline body' });
+    await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'deleted' });
+    const small = Number((await engine.getPage('notes/small'))!.id);
+    const gone = Number((await engine.getPage('notes/gone'))!.id);
+    await engine.softDeletePage('notes/gone');
+    const view = (head: Awaited<ReturnType<typeof engine.readSegmentedPageHead>>) => head && ({
+      ...head, id: num(head.id), body_generation: num(head.body_generation), body_bytes: num(head.body_bytes),
+      body_lines: num(head.body_lines), truth_bytes: num(head.truth_bytes), segmenter_version: num(head.segmenter_version),
+      revision: typeof head.revision === 'string' && /^[0-9a-f-]{36}$/.test(head.revision),
+    });
+    const big = view(await engine.readSegmentedPageHead(pageId));
+    expect(big?.id).toBe(pageId);
+    return {
+      big: { ...big, id: 'big' },
+      small: { ...view(await engine.readSegmentedPageHead(small)), id: 'small' },
+      gone: { ...view(await engine.readSegmentedPageHead(gone)), id: 'gone' },
+      missing: await engine.readSegmentedPageHead(pageId + small + gone + 1000) ?? null,
+    };
   });
 });

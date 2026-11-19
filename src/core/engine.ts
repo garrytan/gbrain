@@ -1,4 +1,4 @@
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines } from './engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
@@ -3222,6 +3222,8 @@ export interface BrainEngine {
   readExportPageRows(ids: readonly string[]): Promise<ExportPageRow[]>;
   /** gbrain export: each body and timeline lower-cased with whitespace runs made one space, line by line (engine-sql/export-reads.ts). */
   normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]): Promise<NormalizedFenceLines[]>;
+  /** A segmented body read: page `pageId`'s body columns and revision, deleted or not, or undefined (engine-sql/export-reads.ts). */
+  readSegmentedPageHead(pageId: number): Promise<SegmentedPageHead | undefined>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
   /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */

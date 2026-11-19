@@ -75,4 +75,14 @@ impl Brain {
             )
         })
     }
+
+    /// `readSegmentedPageHead(pageId)`: the page's segmented-body columns and revision, or null.
+    #[napi]
+    pub fn read_segmented_page_head<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_page_head(page_id))
+    }
 }

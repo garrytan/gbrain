@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 734/734
+# covered: 735/735
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -39,7 +39,7 @@
 # minion_queue: 80/80
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_export: 6/6
+# cli_reads_export: 7/7
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
@@ -77,21 +77,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	70	no	yes	yes	serves
+transaction	lifecycle	yes	71	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	85	yes	yes	yes	serves
+getPage	pages	yes	86	yes	yes	yes	serves
 readPageSnapshot	pages	yes	18	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	333	yes	yes	yes	serves
+putPage	pages	yes	334	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	105	yes	yes	yes	serves
+softDeletePage	pages	yes	106	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -314,17 +314,17 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	3	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	4	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	4	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	5	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	6	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	12	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	13	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	13	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	14	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	7	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	6	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
@@ -557,6 +557,7 @@ readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
 listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	1	no	yes	yes	serves
 setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves

@@ -16,6 +16,7 @@ of `src/core/access/policy-transfer.ts`). PGLite and Postgres run the same SQL a
 | `brain.listExportWithdrawals(sourceId)` | the source's withdrawals by `visibility`, `fact_hash`, `subject` (byte order): `{ visibility, fact_hash, withdrawn_at, subject, purged }`, `withdrawn_at` an ISO string (the member makes it a `Date`), `purged` always `false` | `listExportWithdrawals` |
 | `brain.readExportPageRows(ids)` | the live pages among `ids` (decimal strings), in the order given, each `{ page, tags }`: `page` as `getPage` gives it, `tags` in byte order. An id that is not an integer refuses | `readExportPageRows` |
 | `brain.normalizeFenceLines(bodies, timelines)` | one `{ i, body, timeline }` per position (`i` from 1): each text split on `\n`, every line lower-cased (`lower`) with each run of `[[:space:]]` made one space, joined with `\n`; an empty text gives `null` | `normalizeFenceLines` |
+| `brain.readSegmentedPageHead(pageId)` | page `pageId`'s `{ id, source_id, slug, body_storage, body_generation, body_bytes, body_lines, truth_bytes, body_flags, segmenter_version, revision }`, deleted pages included, or `null` when no page has the id. A page with no body record reads as the SQL column defaults: `inline`, generation 0, the rest `null` | `readSegmentedPageHead` |
 
 ## What the store does not keep
 
