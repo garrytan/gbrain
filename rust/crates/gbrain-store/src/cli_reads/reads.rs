@@ -20,6 +20,7 @@ use crate::alias_fanout_reads::reject_nul;
 use crate::aliases::alias_row_slugs;
 use crate::chunks::{read_chunks, read_segment_view};
 use crate::error::{INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::links::out_links;
 use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
@@ -168,11 +169,14 @@ impl EntityTypeFilter {
     }
 }
 
-/// `remote: { excludePrivate }` of the whois and rank_entities statements.
+/// `remote: { excludePrivate, policy? }` of the whois and rank_entities statements.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RemoteCaller {
     pub exclude_private: bool,
+    /// The caller's page policy (`privatePagesFilterForCaller('p')`) when the member serves
+    /// `excludePrivate`. `exclude_private` with no policy refuses.
+    pub policy: Option<PrivacyPolicy>,
 }
 
 fn refuse_private(remote: &Option<RemoteCaller>, member: &str) -> Result<()> {
@@ -594,7 +598,10 @@ impl Store {
         input: &ExactIdentityInput,
     ) -> Result<Vec<ExactIdentityRow>> {
         const MEMBER: &str = "listExactIdentityCandidates";
-        refuse_private(&input.remote, MEMBER)?;
+        let policy = input.remote.as_ref().and_then(|r| r.policy.as_ref());
+        if policy.is_none() {
+            refuse_private(&input.remote, MEMBER)?;
+        }
         let limit = row_count(input.limit, "LIMIT")?;
         let probes = &input.probes;
         reject_nul(
@@ -640,6 +647,12 @@ impl Store {
                 || sources.archived(&page.source_id)? != Some(false)
                 || !input.types.admits(&page)
                 || (input.remote.is_some() && has_key(&page, "quarantine"))
+            {
+                continue;
+            }
+            // The privacy filter is a WHERE clause: it runs before LIMIT.
+            if let Some(policy) = policy
+                && page_hidden(&*read, &page, policy)?
             {
                 continue;
             }

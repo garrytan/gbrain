@@ -9,6 +9,7 @@ import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../../engine-
 import type { RankEntitiesStatementOpts, RankEntityRow } from '../../engine-sql/graph-rank.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../../search/exact-scan.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /**
  * One batch of the exact-phrase scan. The words split as `phrasePattern` splits them; the store matches them joined
@@ -32,9 +33,16 @@ export const scanExactBatch: StoreMember<[opts: ExactScanOpts, afterPageId: numb
 export const nextLivePageAfter: StoreMember<[afterPageId: number], { id: number; slug: string; source_id: string } | null> =
   (brain, afterPageId) => storeCall({ member: 'nextLivePageAfter' }, () => brain.nextLivePageAfter(afterPageId));
 
+/**
+ * Exact whois candidates. A remote caller with `excludePrivate` reads under its page policy (`storePagePolicy`, the
+ * statement's `privatePagesFilterForCaller('p')`, with the caller's readers); the store filters before LIMIT.
+ */
 export const listExactIdentityCandidates: StoreMember<[opts: ExactIdentityStatementOpts], ExactIdentityRow[]> = (brain, opts) => {
-  if (opts.remote?.excludePrivate) refuseMember('listExactIdentityCandidates', 'remote.excludePrivate');
-  return storeCall({ member: 'listExactIdentityCandidates' }, () => brain.listExactIdentityCandidates(opts));
+  const policy = opts.remote?.excludePrivate
+    ? storePagePolicy('listExactIdentityCandidates', true, { callerReaders: true })
+    : undefined;
+  const input = policy ? { ...opts, remote: { excludePrivate: true, policy } } : opts;
+  return storeCall({ member: 'listExactIdentityCandidates' }, () => brain.listExactIdentityCandidates(input));
 };
 
 export const rankEntities: StoreMember<[opts: RankEntitiesStatementOpts, timeoutMs: number], RankEntityRow[]> = (brain, opts) => {
