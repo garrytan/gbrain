@@ -9,17 +9,46 @@ let boxPublic = Base64URL.encode(Array(boxKey.publicKey.rawRepresentation))
 let sendPeer = IPv4.parse("100.102.0.7")!
 
 final class MemoryStore: SendStateStore {
+    let lock = NSLock()
     var state: SendState?
     var saves = 0
     var failure: Problem?
+    var saveFailure: Problem?
+    var saving: DispatchSemaphore?
+    var saveGate: DispatchSemaphore?
     init(_ state: SendState?) { self.state = state }
     func load() throws -> SendState? {
+        lock.lock()
+        defer { lock.unlock() }
         if let failure { throw failure }
         return state
     }
     func save(_ state: SendState) throws {
+        saving?.signal()
+        lock.lock()
+        let gate = saveGate
+        lock.unlock()
+        gate?.wait()
+        lock.lock()
+        defer { lock.unlock() }
+        if let saveFailure { throw saveFailure }
         self.state = state
         saves += 1
+    }
+    func release() {
+        lock.lock()
+        let gate = saveGate
+        saveGate = nil
+        lock.unlock()
+        gate?.signal()
+    }
+}
+
+final class WatchedLock: NSRecursiveLock, @unchecked Sendable {
+    var waiting: DispatchSemaphore?
+    override func lock() {
+        waiting?.signal()
+        super.lock()
     }
 }
 
@@ -88,8 +117,10 @@ final class FakePresence: OwnerPresence {
     var answer = Presence.confirmed
     var reasons: [String] = []
     var gate: DispatchSemaphore?
+    var entered: DispatchSemaphore?
     func confirm(reason: String) -> Presence {
         reasons.append(reason)
+        entered?.signal()
         gate?.wait()
         return answer
     }
@@ -110,8 +141,9 @@ final class Harness {
     let clock = Clock()
     var switchedOn = true
     lazy var audit = SendAudit(directory: directory)
+    let lock = WatchedLock()
     lazy var service = SendService(store: store, switchedOn: { self.switchedOn }, audit: audit, messages: messages, ledger: ledger, banner: banner,
-                                   presence: presence, clock: clock.clock, confirmWindow: 30, pollInterval: 0.5)
+                                   presence: presence, clock: clock.clock, confirmWindow: 30, pollInterval: 0.5, stateLock: lock)
 
     init(limits: SendLimits = SendLimits(), enabled: Bool = true) {
         store = MemoryStore(SendState(enabled: enabled, keys: [SendKey(name: "box", publicKey: boxPublic)], limits: limits))
@@ -611,29 +643,157 @@ final class Harness {
         #expect(admin(h, ["action": "add_key", "name": "bad", "public_key": "abc"]).1["code"] as? String == "bad_param")
     }
 
-    @Test func aSendSeeingTheSwitchOffKeepsAKeyAddedMeanwhile() {
+    @Test func aSendSeeingTheSwitchOffDuringTouchIDMakesTheOwnerRerunTheChange() {
         let h = Harness()
         h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
         group.enter()
-        DispatchQueue.global().async {
-            _ = self.admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic])
+        Thread {
+            reply = self.admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic])
             group.leave()
-        }
-        let deadline = Date().addingTimeInterval(10)
-        while h.presence.reasons.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         h.switchedOn = false
-        group.enter()
-        DispatchQueue.global().async {
-            _ = h.send(h.request(h.body()))
-            group.leave()
-        }
-        Thread.sleep(forTimeInterval: 0.3)
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
         h.presence.gate?.signal()
-        group.wait()
-        #expect(h.store.state?.keys.map(\.name).sorted() == ["box", "second"])
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.store.state?.keys.map(\.name) == ["box"])
         #expect(h.store.state?.enabled == false)
         #expect(h.messages.count == 0)
+    }
+
+    @Test func aSendWaitingOnAKeyReplacementChecksTheNewKey() {
+        let h = Harness()
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.store.saving = DispatchSemaphore(value: 0)
+        h.store.saveGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        group.enter()
+        Thread {
+            _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.store.saving?.wait(timeout: .now() + 10) == .success)
+        h.lock.waiting = DispatchSemaphore(value: 0)
+        var code: String?
+        group.enter()
+        Thread {
+            code = h.send(h.request(h.body())).json["code"] as? String
+            group.leave()
+        }.start()
+        #expect(h.lock.waiting?.wait(timeout: .now() + 10) == .success)
+        h.store.release()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+        #expect(code == "unknown_send_key")
+        #expect(h.messages.count == 0)
+    }
+
+    @Test func aSendDuringAPendingTouchIDDoesNotWaitForIt() {
+        let h = Harness()
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0000")).status == 200)
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        group.enter()
+        Thread {
+            _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(h.send(h.request(h.body())).status == 200)
+        #expect(h.messages.count == 2)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+    }
+
+    @Test func aSendDuringAKeyReplacementDialogGoesOutUnderTheCurrentKeyOnly() {
+        let h = Harness()
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0000")).status == 200)
+        let replacement = Curve25519.Signing.PrivateKey()
+        let other = Base64URL.encode(Array(replacement.publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0002", signer: replacement)).status != 200)
+        #expect(h.messages.count == 1)
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0001")).status == 200)
+        #expect(h.messages.count == 2)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.0 == 200)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0003")).status != 200)
+        #expect(h.messages.count == 2)
+    }
+
+    @Test func anAdminChangeLandingDuringTouchIDIsRefused() {
+        let h = Harness()
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "add_key", "name": "second", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "remove_key", "name": "box"]).0 == 200)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.presence.reasons.count == 1)
+        #expect(h.store.state?.keys.isEmpty == true)
+    }
+
+    @Test func anOffDuringAPendingSetupIsNotUndoneByTheSetup() {
+        let h = Harness()
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "setup"])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.store.state?.enabled == false)
+    }
+
+    @Test(arguments: [["action": "off"], ["action": "remove_key", "name": "box"], ["action": "set_limits", "max_per_day": "50"]])
+    func aChangeThatCannotBeSavedIsReported(fields: [String: String]) {
+        let h = Harness()
+        h.store.saveFailure = .sendKeysUnreadable
+        #expect(admin(h, fields).1["code"] as? String == "send_keys_unreadable")
+        #expect(h.presence.reasons.isEmpty)
+    }
+
+    @Test func offIsSavedEvenWhenTheSwitchAlreadyLooksOff() {
+        let h = Harness()
+        h.switchedOn = false
+        h.store.saveFailure = .sendKeysUnreadable
+        #expect(admin(h, ["action": "off"]).1["code"] as? String == "send_keys_unreadable")
+        #expect(h.store.state?.enabled == true)
     }
 
     @Test func turningSendingBackOnAfterTheConfigSwitchNeedsTheOwner() {
