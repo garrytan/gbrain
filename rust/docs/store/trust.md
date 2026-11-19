@@ -66,6 +66,8 @@ hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting 
 | `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |
 | `hasFactWithdrawalForSubject` | `has_fact_withdrawal_for_subject`: a scan of the source | `SELECT 1 … subject=$2 LIMIT 1` |
 | `listFactWithdrawalKeys` | `list_fact_withdrawal_keys`: sorted by visibility, fact_hash and subject in byte order, then cut to `limit` | `ORDER BY visibility, fact_hash, subject LIMIT $2` |
+| `readFactCacheWatermark` | `read_fact_cache_watermark`: a scan of the source's withdrawals for the count and the newest time (ISO, microseconds); the access digest is `md5('')` twice, because the store keeps no folder access rules or pending coverage | `SELECT count(*)::int, to_char(max(withdrawn_at) AT TIME ZONE 'UTC', …), md5(… access_rules) \|\| ':' \|\| md5(… access_pending_coverage) FROM fact_withdrawals WHERE source_id = $1` |
+| `readTrustGeneration` | `read_trust_generation`: the store's commit sequence as decimal text; it moves on every commit, a superset of the trigger events that bump the SQL generation, so a cache keyed on it rebuilds after any write | `SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1`, bumped by deferred WHEN-guarded triggers (eligibility/generation-schema.ts) |
 
 ## Trust proposals (`trust::proposals`)
 
@@ -170,13 +172,31 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals and the history counts, plus `history_unpruned` | the `WITH rows AS (…)` pick |
+| `listAmendmentsNotApplied` | `list_amendments_not_applied` (`link_queries/link_temporal.rs`): the live pages with an `amends` link to the page whose relationship start in the scope is after the edition and on or before the date, or absent; under the source and page-policy filters, by slug then source, bytewise | `SELECT f.slug, … min(lr.first_start) … GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C" …` |
+| `readPageVersionEdition` | `read_page_version_edition` (`trust/valid_time.rs`): the page's `V` version record with the fields an edition reads, `body_storage` `inline` unless the snapshot is segmented; null for another page or an unknown id | `SELECT id, title, … FROM page_versions WHERE id = $1 AND page_id = $2` |
+| `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
+| `pageAwaitsRederive` | none: the store keeps no `needs_rederive` queue (only a raw-SQL purge writes one, and `executeRaw` refuses), so the member answers false | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
 
-- The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
+- `beginSnapshotRead` has no store method: a store transaction holds the one writer from its start, so its reads see
+  one state. It does not enforce `READ ONLY`; a write in that transaction lands.
+- `listCorePageRows` serves a caller with a reader identity or a private-readable grant: with `forCaller` its
+  `excludePrivate` policy carries them (`callerReaders`), and the remote floor is the no-reader policy (`noReaders`).
+  Pinned by `test/engine-parity/core-page-member-reads.test.ts`.
+- `listValidTimeIdentities` serves a caller with a reader identity or a private-readable grant: its `excludePrivate`
+  policy carries them (`callerReaders`), and the `world` mark, which never reads the caller's readers, is the
+  no-reader policy (`noReaders`). `pickValidTimeEdition` serves the same callers when the caller's snapshot policy is
+  the canonical one for those readers: a version that names readers is visible when one of them is in the policy's
+  identity, and a private version when the page's source is a private-readable source and the page is not a pinned
+  question. Both pinned by `test/engine-parity/valid-time-member-reads.test.ts` and `tests/valid_time.rs`.
+- The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
   members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
   one (TODOS.md `rust-belief-ledger`).
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
+  whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
+  (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
   (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
   kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and

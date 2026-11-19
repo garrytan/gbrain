@@ -526,8 +526,9 @@ store keeps the same rule in `pages.rs`.
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
-  pages it reads, and a stored writer's slug fence are typed engine members (`readPageHiddenFromCaller`,
-  `readCallerPageAccess`, capability `pages`; `readWriterSlugFence`, capability `persistence_journal`; SQL in
+  pages it reads, the opening probe of its visibility check, and a stored writer's slug fence are typed engine members
+  (`readPageHiddenFromCaller`, `readCallerPageAccess`, `readWriteVisibilityProbe`, capability `pages`;
+  `readWriterSlugFence`, capability `persistence_journal`; SQL in
   `engine-sql/page-visibility.ts`). The store answers the page reads in `page_visibility.rs` and the fence from
   its local writer registration; an OAuth client's fence and an unrendered caller policy refuse. See
   [`rust/docs/store/page-visibility.md`](../../rust/docs/store/page-visibility.md).
@@ -1625,7 +1626,9 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   `ENGINE_CAPABILITIES`) for the policy, tier, gate, withdrawal and review members, and the existing
   `belief_ledger` for the belief members, so the belief part can ship later without holding the rest.
 - **Store and binding:** the Rust method is the member name in snake_case.
-  - Policy and gate: `readTrustGeneration`, `readWriteGateReceipt`, `clearStalePageGateReceipts`,
+  - Policy and gate: `readTrustGeneration` (the other half of the hot-memory cache identity; the store keeps no
+    `trust_policy_state` and answers its commit sequence, which moves on every commit, a superset of the SQL
+    generation's trigger events, so a Rust cache rebuilds after any write), `readWriteGateReceipt`, `clearStalePageGateReceipts`,
     `listWriteGateHolds`, `listTrustAllowRules`, `insertTrustProposal`, `listTrustProposals`.
   - Page tiers: `readPageTrustRows` (one read for the four sites that read page tiers), `readTrustTierCounts`,
     `lowerPageTrustTiers`, `relowerClaimedRows`, `readTaintInputPages`, `findPageVersionByTier`, `listFlaggedPages`,
@@ -1633,7 +1636,10 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
     `guardFenceFactRows`.
   - Withdrawal: `insertFactWithdrawal`, `isFactWithdrawn` (one member for the current and v1 forms), `isFactPurged`,
     `planFactWithdrawal`, `listWithdrawals` (one filtered list for the discovery, dates and export readers),
-    `hasSourcePurges`.
+    `hasSourcePurges`, `readFactCacheWatermark` (the hot-memory cache watermark: the source's withdrawal count, the
+    newest withdrawal in UTC with microseconds, and the folder access digest, which the store reports as the digest of
+    two empty tables because it keeps no folder rules; the newest withdrawal is UTC ISO text, not `::text`, which
+    followed the session time zone; the text is a cache key only, so no answer changed).
   - Review: `insertWithdrawReviewItem`, `countPurgeReviewQueueRefs`.
   - Beliefs (`belief_ledger`): `readCoverageIntervals`, `listCoveredSources`, `readOpenLifetimes`,
     `mintBeliefLifetime`, `resolveBeliefLifetimes`, `readBeliefRedactions`, `readBeliefState`.
@@ -1745,20 +1751,26 @@ and write provenance on content rows, and the trust records.
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
   - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
-    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
+    (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
+    caller's eligibility) honour a read eligibility.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
     `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`), and the valid-time page lookup
-    `listValidTimeIdentities` and `pickValidTimeEdition` (`trust/valid_time.rs`); it refuses the takes and timeline
+    `listValidTimeIdentities`, `pickValidTimeEdition`, `readPageVersionEdition`, `readCursorEdition` (`trust/valid_time.rs`)
+    and `listAmendmentsNotApplied`
+    (`link_queries/link_temporal.rs`). `pageAwaitsRederive`, the purge check of `get_page`, `fetch` and `known_as_of`,
+    answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
+    fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets nothing, because a
+    store transaction holds the one writer from its start, and it does not enforce `READ ONLY`. It refuses the takes and timeline
     scan tables and a pick over a history PGLite would have pruned (TODOS.md `rust-version-prune`), and the belief
     history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
     refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search
     fan-out reads that refusal as no aliases.
-  - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, the valid-time
-    transaction isolation, amendment, edition and pinned-ordinal reads, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
+  - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
     their refusal.
   - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.
 

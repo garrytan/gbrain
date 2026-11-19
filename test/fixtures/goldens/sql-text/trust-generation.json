@@ -1,0 +1,7 @@
+{
+  "golden": {
+    "params": [],
+    "text": "SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1"
+  },
+  "normalizer": "trust-generation-sql-v1"
+}

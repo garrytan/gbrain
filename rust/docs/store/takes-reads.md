@@ -22,8 +22,9 @@ Differences from PGLite and PostgreSQL:
 - `countMcpResolvedTakes` with `excludePrivate` skips the takes of pages the page policy hides, the way the SQL
   fragment does, in every source and holder scope. The TypeScript member reads the policy the way the salience reads
   do (`storePagePolicy` in `store-members/private-provenance.ts`: `honorAliases`, `entityPrivacy`) and the store runs
-  `page_hidden` per page. A caller whose member pages, grants or lineage widen the policy still gets the typed
-  `engine_capability_missing` refusal, as a SQL fragment keyed to the caller's identity is not modelled. The take's
+  `page_hidden` per page. The policy carries the caller's reader identity and private-readable grant
+  (`callerReaders`), so a member reads the takes on pages whose readers name it and on private pages of a source it
+  holds a grant for, as the SQL's `privatePagesFilterForCaller` does. The take's
   page is read whether or not it is soft-deleted, as the SQL joins `pages` without a deleted filter.
 - The weight grid check is exact integer arithmetic on the six-significant-digit decimal that `weight::numeric` of a
   `real` prints, so it agrees with Postgres at the 0.001 boundary and at half-way rounding. A weight with more than 30

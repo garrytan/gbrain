@@ -19,12 +19,16 @@
  * (its member id and groups) and a private-readable grant: the member renders the page policy for a fresh record of
  * just those two, and when the caller's text equals it, the store reads the identity and the granted sources from
  * the policy (`readers_allowed` and `orPrivateReadableSource` in privacy.rs). Folder rules, pending coverage,
- * audiences, lineage, owner-only sources, labelled-only grants and relaxed reads still refuse.
+ * audiences, lineage, owner reads (whose text has no owner-only test), labelled-only grants and relaxed reads still refuse.
+ *
+ * Every text the store serves ends with the owner-only test (access/owner-only.ts), in the `fn` or the `closed` form
+ * by the schema version the context carries; `ownerOnly` sends the form the text holds (owner_only.rs).
  *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
 import {
+  type CallerAccess,
   currentCallerAccess,
   privacyAliasSql,
   privatePagesFilterForCaller,
@@ -33,8 +37,10 @@ import {
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
   privateFactFilterForCaller,
+  remoteProvenanceFloorSql,
 } from '../../search/private-visibility.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
+import { ANY_OWNER_ONLY_SQL, ownerOnlyFactSql, ownerOnlyPageSql } from '../../access/owner-only.ts';
 import { refuseMember } from './common.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
@@ -47,6 +53,23 @@ export interface StorePrivacyPolicy {
   privateReadableSources?: string[];
   /** The fact policy's member-page case: the caller's own member page, the one provenance page judged by `identity`. */
   memberPage?: string;
+  /** The remote floor (`remoteProvenanceFloorSql`): the provenance page only, with no entity or holding-page gate. */
+  provenanceOnly?: boolean;
+  /** The owner-only test the text ends with (ownerOnlyAllowedSql / ownerOnlyFactAllowedSql), by form; 'off' when it has none. */
+  ownerOnly: StoreOwnerOnlyForm;
+}
+
+/** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
+export type StoreOwnerOnlyForm = 'fn' | 'closed' | 'off';
+
+/**
+ * The form of the owner-only test in a rendered policy whose row alias is `alias` (`pages` for a page policy, `facts`
+ * for a fact policy): the v320 function call, the closed test, or none. The same text never holds two forms (one
+ * schema version renders both conjuncts), so the first match decides.
+ */
+export function ownerOnlyFormIn(sql: string, table: 'pages' | 'facts', alias: string): StoreOwnerOnlyForm {
+  if (sql.includes(table === 'pages' ? ownerOnlyPageSql(alias, 'fn') : ownerOnlyFactSql(alias, 'fn'))) return 'fn';
+  return sql.includes(ANY_OWNER_ONLY_SQL) ? 'closed' : 'off';
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -91,7 +114,9 @@ const FACT_FORMS = [
  * The store serves the read when that text equals one of the two forms with no caller record or, for a family that opts
  * in with `callerReaders`, for a fresh record of just the caller's reader identity and private-readable grant. Under
  * that record the first form judges the caller's own member page by the identity (`memberPage`); the second has no
- * member-page case. Any other caller refuses.
+ * member-page case. The caller is judged by judgeWidenedCaller, so a caller on a brain that never named readers
+ * (`restricted` false), anonymous or with a member identity, is also served under the restricted rendering. Any other
+ * caller refuses.
  */
 export function storePrivacyPolicy(
   member: string,
@@ -100,32 +125,49 @@ export function storePrivacyPolicy(
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy | undefined {
   if (excludePrivate !== true) return undefined;
-  const text = normalizeConceptInputs(rendered());
-  for (const form of FACT_FORMS) {
-    const baseline = withoutCallerAccess(() => form.sql('facts'));
-    if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
-  }
-  if (opts.callerReaders) {
-    const access = currentCallerAccess();
-    const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+  const policy = judgeWidenedCaller<StorePrivacyPolicy>(readers => {
+    const text = normalizeConceptInputs(rendered());
+    for (const form of FACT_FORMS) {
+      const baseline = renderForStoreCaller({}, () => form.sql('facts'));
+      if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
+    }
+    if (!opts.callerReaders) return undefined;
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
     for (const form of FACT_FORMS) {
-      const canonical = withoutCallerAccess(() =>
-        withCallerAccess({ ...readers, hidePrivate: true }, () => form.sql('facts')));
+      const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => form.sql('facts'));
       if (text !== normalizeConceptInputs(canonical)) continue;
       const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
       const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
       return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}) };
     }
-  }
+    return undefined;
+  });
+  if (policy) return policy;
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
 
-/** The process-setting flags of a rendered fact policy. */
+/**
+ * The store policy for the remote provenance floor, remoteProvenanceFloorSql('facts'): the provenance page judged by
+ * privatePagesFilterFragment('pp', true), which reads no caller identity, plus the owner-only conjunct. The store serves
+ * it when the text equals the no-caller rendering (judgeWidenedCaller); a labelled-only caller (its own conjunct) or an
+ * owner read refuses.
+ */
+export function storeFloorPolicy(member: string): StorePrivacyPolicy {
+  const policy = judgeWidenedCaller<StorePrivacyPolicy>(() => {
+    const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
+    const baseline = renderForStoreCaller({}, () => remoteProvenanceFloorSql('facts'));
+    return text === normalizeConceptInputs(baseline) ? { ...factPolicyFlags(baseline), entityPrivacy: false, provenanceOnly: true } : undefined;
+  });
+  if (policy) return policy;
+  refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant or owner read changes it');
+}
+
+/** The process-setting flags of a rendered fact policy, and its owner-only form. */
 function factPolicyFlags(sql: string): StorePrivacyPolicy {
   return {
     honorAliases: sql.includes(privacyAliasSql('pp')),
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('entity_pp')),
+    ownerOnly: ownerOnlyFormIn(sql, 'facts', 'facts'),
   };
 }
 
@@ -146,30 +188,88 @@ export function storePagePolicy(
  * The store page policy for a read whose page fragment over `p` is `rendered` in the current context: the caller's
  * page policy, or the remote read floor (`remoteReadFloorSql('p')`, which with no labelled-only caller is the
  * no-caller page policy). A family that opts in with `callerReaders` also serves the caller's reader identities and
- * private-readable sources when the fragment is the canonical one for them. Any other fragment refuses.
+ * private-readable sources when the fragment is the canonical one for them. A family whose fragment never reads the
+ * caller's readers (`privatePagesFilterFragment`, the no-caller policy a `world` mark reports) opts in with
+ * `noReaders`: inside a caller record that fragment renders as the canonical policy of a record with no readers, which
+ * it is served as. The caller is judged by judgeWidenedCaller; any other fragment refuses.
  */
 export function storePageTextPolicy(
   member: string,
   rendered: () => string,
-  opts: { callerReaders?: boolean } = {},
+  opts: { callerReaders?: boolean; noReaders?: boolean } = {},
 ): StorePrivacyPolicy {
-  const text = normalizeConceptInputs(rendered());
-  const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
-  if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
-  if (opts.callerReaders) {
-    const access = currentCallerAccess();
-    const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
-    const canonical = withoutCallerAccess(() =>
-      withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
-    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
-  }
+  const policy = judgeWidenedCaller(callerReaders => {
+    const text = normalizeConceptInputs(rendered());
+    const baseline = renderForStoreCaller({}, () => privatePagesFilterForCaller('p'));
+    if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+    if (!opts.callerReaders && !opts.noReaders) return undefined;
+    const readers = opts.noReaders ? { identity: [], privateReadableSources: [] } : callerReaders;
+    const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
+    return text === normalizeConceptInputs(canonical) ? callerReadersPagePolicy(readers) : undefined;
+  });
+  if (policy) return policy;
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
 
-/** The process-setting flags of a rendered page policy. */
+/** The reader record a store policy carries for a widening caller (`identity` and `privateReadableSources` in privacy.rs). */
+export interface StoreCallerReaders {
+  identity: string[];
+  privateReadableSources: string[];
+}
+
+/**
+ * The widened-caller step every store privacy policy shares (page, member-access and fact policies). `judge` compares
+ * the caller's rendered text with reference renderings (renderForStoreCaller) and returns the store policy for the
+ * one it equals, or undefined. It runs with the caller's reader record (its reader identities and private-readable
+ * sources), in the caller's context.
+ *
+ * When nothing matches and the caller is on a brain whose config holds no member-access restriction (restricted:
+ * false, the short member-access form the MCP stdio server's caller renders), anonymous or with a reader identity,
+ * `judge` runs again under the restricted rendering. The restricted rendering only adds conditions that need a page
+ * with readers, a folder rule or a pending folder prefix; each of those sets the store's sticky restriction flag
+ * (access.restrictions_present), which restricted: false says is unset, so it hides the same pages and rows. The
+ * identity reaches a policy only through a page's readers (readersAllowedSql, the member-page case of
+ * privateProvenanceFilterUnderPolicy, memberFactAdmitSql), and no page names readers there, so the restricted
+ * rendering with that identity hides what the short form, which reads no identity, hides. Undefined when neither run
+ * matches: the member refuses.
+ */
+export function judgeWidenedCaller<T>(judge: (readers: StoreCallerReaders) => T | undefined): T | undefined {
+  const access = currentCallerAccess();
+  const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+  const served = judge(readers);
+  if (served !== undefined) return served;
+  if (access.restricted) return undefined;
+  return withCallerAccess({ restricted: true }, () => judge(readers));
+}
+
+/**
+ * The page policy the store judges a page by for a fresh caller record of just `readers` (privatePagesFilterForCaller
+ * with hidePrivate on): the reference storePageTextPolicy serves a `callerReaders` family under, as `page_hidden` in
+ * privacy.rs reads it.
+ */
+export function callerReadersPagePolicy(readers: StoreCallerReaders): StorePrivacyPolicy {
+  const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
+  return { ...pagePolicyFlags(canonical), ...readers };
+}
+
+/**
+ * `render` for a fresh caller record of just `record`, as a reference the caller's text is compared with. The record
+ * keeps the caller's remote policy, whose schema version picks the owner-only and concept-input forms
+ * (readSchemaVersion), so a request whose engine scope has not recorded the version renders its reference in the
+ * same forms as its own text. The store reads the owner-only form off the matched text. An empty record with no
+ * remote policy renders outside any caller record, as the no-caller baseline always has.
+ */
+export function renderForStoreCaller<T>(record: Partial<CallerAccess>, render: () => T): T {
+  const remotePolicy = currentCallerAccess().remotePolicy;
+  const fresh: Partial<CallerAccess> = { ...(remotePolicy ? { remotePolicy } : {}), ...record };
+  return withoutCallerAccess(() => Object.keys(fresh).length === 0 ? render() : withCallerAccess(fresh, render));
+}
+
+/** The process-setting flags of a rendered page policy, and its owner-only form. */
 function pagePolicyFlags(sql: string): StorePrivacyPolicy {
   return {
     honorAliases: sql.includes(privacyAliasSql('p')),
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('p')),
+    ownerOnly: ownerOnlyFormIn(sql, 'pages', 'p'),
   };
 }

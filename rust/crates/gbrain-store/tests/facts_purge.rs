@@ -521,3 +521,40 @@ fn withdrawal_slugs_and_expiry_follow_the_subject_rules() {
     assert_eq!(row["expired_at"], iso(T0 + DAY));
     assert_eq!(row["valid_until"], iso(T0 + DAY));
 }
+
+#[test]
+fn find_active_single_fact_under_the_remote_floor_judges_only_the_holding_page() {
+    let b = brain("purge-single-floor");
+    let private_page = |slug: &str, frontmatter: Value| {
+        let input: gbrain_store::pages::PageInput = args(json!({ "type": "note", "title": slug,
+            "compiled_truth": "x", "frontmatter": frontmatter }));
+        b.put_page(slug, &input, &args(json!({}))).unwrap();
+    };
+    private_page("people/secret", json!({ "visibility": "private" }));
+    private_page("notes/hidden", json!({ "visibility": "private" }));
+    page(&b, "notes/open");
+    let rows = batch(
+        &b,
+        json!([{ "fact": "Likes tea", "source": "chat", "entity_slug": "people/secret",
+                "source_markdown_slug": "notes/hidden", "row_num": 1 },
+              { "fact": "Likes tea", "source": "chat", "entity_slug": "people/secret",
+                "source_markdown_slug": "notes/open", "row_num": 1 }]),
+    );
+    let (hidden, open) = (rows[0], rows[1]);
+    let find = |page: Option<&str>, floor: bool| {
+        let floor = floor.then(
+            || json!({ "honorAliases": true, "entityPrivacy": false, "provenanceOnly": true }),
+        );
+        b.find_active_single_fact(&args::<SingleFactQuery>(json!({
+            "sourceId": "default", "entitySlug": "people/secret", "visibility": "private",
+            "fact": "likes tea", "attributedTo": null, "pageSlug": page, "remoteFloor": floor })))
+            .unwrap()["id"]
+            .as_u64()
+    };
+    assert_eq!(find(Some("notes/hidden"), false), Some(hidden));
+    assert_eq!(find(Some("notes/hidden"), true), None);
+    // The entity page is private, but the floor has no entity gate.
+    assert_eq!(find(Some("notes/open"), true), Some(open));
+    assert_eq!(find(None, false), Some(hidden));
+    assert_eq!(find(None, true), Some(open));
+}

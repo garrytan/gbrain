@@ -21,6 +21,9 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -352,6 +355,61 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     const floored = await find(true);
     expect(floored).toBeNull();
     return { open, floored };
+  });
+
+  parityTest('findActiveSingleFact under the remote provenance floor judges only the provenance page, not the entity page', { methods: ['findActiveSingleFact'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await engine.putPage('people/secret', note('Secret', 'private person', { visibility: 'private' }));
+    await engine.putPage('notes/open', note('Open', 'open'));
+    await engine.putPage('notes/readers', note('Readers', 'kept to one member', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/aliased', note('Aliased', 'aliased', { access: 'private' }));
+    // The lowest id is on the readers page, so a scan with no page names it only without the floor.
+    await seed.fence([{ label: 'readers-page', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/readers', entity_slug: 'people/secret' }]);
+    await seed.fence([{ label: 'open-page', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/open', entity_slug: 'people/secret' }]);
+    await seed.fence([{ label: 'aliased-page', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/aliased', entity_slug: 'people/secret' }]);
+    const find = async (pageSlug: string | null, remoteFloor: boolean) => {
+      const row = await engine.findActiveSingleFact({ sourceId: SRC, entitySlug: 'people/secret', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor });
+      return row === null ? null : seed.name(row.id);
+    };
+    const found: Record<string, string | null> = {};
+    for (const page of ['notes/open', 'notes/readers', 'notes/aliased', null] as const) {
+      found[`${page ?? 'none'}:open`] = await find(page, false);
+      found[`${page ?? 'none'}:floor`] = await find(page, true);
+    }
+    // The entity page is private, yet the floor keeps the fact on an open page: it has no entity gate.
+    expect(found).toEqual({
+      'notes/open:open': 'open-page', 'notes/open:floor': 'open-page',
+      'notes/readers:open': 'readers-page', 'notes/readers:floor': null,
+      'notes/aliased:open': 'aliased-page', 'notes/aliased:floor': null,
+      'none:open': 'readers-page', 'none:floor': 'open-page',
+    });
+    return found;
+  });
+
+  parityTest('findActiveSingleFact under the remote provenance floor hides a fact of an owner-only source, closed with no schema version and per source with one', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    const find = async (sourceId: string, remoteFloor: boolean) => {
+      const row = await engine.findActiveSingleFact({ sourceId, entitySlug: 'people/a', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug: null, remoteFloor });
+      return row === null ? null : seed.name(row.id);
+    };
+    const read = async () => ({
+      open: await find(SRC, false), openFloor: await find(SRC, true),
+      chat: await find('fact-chat', false), chatFloor: await find('fact-chat', true),
+    });
+    await seed.one('default-row', { fact: 'Likes tea', entity_slug: 'people/a' });
+    // Before any owner-only source exists the floor keeps the default-source fact, so the case is not vacuous.
+    const before = { openFloor: await find(SRC, true) };
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    // The harness brain records no schema version: the closed form hides every fact while any source is owner-only.
+    const closed = await read();
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    // Schema version 320 or later: only a fact of the owner-only source is hidden.
+    const fn = await withEngineScope(engine, read);
+    expect(before).toEqual({ openFloor: 'default-row' });
+    expect(closed).toEqual({ open: 'default-row', openFloor: null, chat: 'chat-row', chatFloor: null });
+    expect(fn).toEqual({ open: 'default-row', openFloor: 'default-row', chat: 'chat-row', chatFloor: null });
+    return { before, closed, fn };
   });
 
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {

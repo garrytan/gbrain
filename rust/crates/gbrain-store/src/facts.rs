@@ -48,11 +48,15 @@ pub mod relink_writes;
 pub mod repair;
 pub mod trust;
 pub mod trust_reads;
+mod widen;
 
+pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{page_hidden, version_hidden};
+pub use widen::VisibilityWidening;
+use widen::{visibility_admits, world_admits};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -914,7 +918,9 @@ pub struct KeysetAfter {
 }
 
 /// The filters of the four list reads. The TypeScript member clamps `limit`, builds the `grep`
-/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing).
+/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing) with the
+/// caller's `widen` record when member pages or a private-facts grant widen it, and the
+/// read eligibility as `eligible`, `min_trust` and `suppress_flagged` (as `SupersessionQuery`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactQuery {
@@ -926,6 +932,8 @@ pub struct FactQuery {
     pub unconsolidated_only: bool,
     pub kinds: Option<Vec<String>>,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub exclude_audit_rows: bool,
     pub grep: Option<String>,
     pub fingerprint: bool,
@@ -936,6 +944,15 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// The caller passed a read eligibility (`eligibilityClause`, engine-sql/facts.ts):
+    /// `projectionEligibleSql('facts')` replaces the deleted-page clause, so a row whose live
+    /// provenance page is quarantined is hidden too. The store keeps no `needs_rederive` queue,
+    /// so that clause hides nothing.
+    pub eligible: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -945,6 +962,8 @@ pub struct SupersessionQuery {
     pub since: Option<String>,
     pub limit: f64,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
@@ -998,6 +1017,9 @@ pub struct TrajectoryQuery {
     pub source_ids: Vec<String>,
     pub entity_slug: String,
     pub world_only: bool,
+    /// With `worldOnly`, the private rows the caller's member page or private-facts grant also admits
+    /// (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub metric: Option<String>,
     pub kind: Option<String>,
     pub since: Option<String>,
@@ -1246,7 +1268,7 @@ impl FactQuery {
         if (self.active_only && !row.active(now))
             || (self.unconsolidated_only && row.consolidated_at_us.is_some())
             || !listed(&self.kinds, &row.kind)
-            || !listed(&self.visibility, &row.visibility)
+            || !visibility_admits(read, &self.visibility, &self.widen, row)?
             || (self.exclude_audit_rows && row.audit_row())
         {
             return Ok(false);
@@ -1257,7 +1279,8 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
-            && !hidden_by_policy(read, row, &self.exclude_private)?)
+            && !hidden_by_policy(read, row, &self.exclude_private)?
+            && !(self.eligible && hidden_by_quarantine(read, row)?))
     }
 
     fn check(&self, op: &str) -> Result<()> {
@@ -1305,11 +1328,16 @@ impl Store {
     ) -> Result<Vec<Value>> {
         q.check(op)?;
         let limit = count_arg(op, "limit", q.limit)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now)? {
+            if q.source_id == row.source_id
+                && extra(&row)
+                && q.admits(&*read, &row, now)?
+                && trust.admits(&*read, "facts", row.id, row.tier())?
+            {
                 rows.push(row);
             }
         }
@@ -1508,7 +1536,7 @@ impl Store {
             let ended = row.expired_at_us.or(row.valid_until_us);
             if row.superseded_by.is_none()
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
-                || !listed(&q.visibility, &row.visibility)
+                || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || (q.eligible && hidden_by_quarantine(&*read, &row)?)
@@ -1697,7 +1725,7 @@ impl Store {
             }
             for row in entity_rows(&*read, source, &q.entity_slug)? {
                 if row.expired_at_us.is_some()
-                    || (q.world_only && row.visibility != "world")
+                    || (q.world_only && !world_admits(&*read, &q.widen, &row)?)
                     || q.metric
                         .as_ref()
                         .is_some_and(|m| row.claim_metric.as_ref() != Some(m))

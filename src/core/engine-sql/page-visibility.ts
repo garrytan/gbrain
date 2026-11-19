@@ -8,7 +8,8 @@
  * `privatePagesFilterForCaller` (member access, then privacy), `access` is `callerAccessAllowedSql` (member access
  * alone). The caller picks the part: remoteReadPolicySql's choice, or `access` for a caller that refuses privacy itself.
  */
-import { callerAccessAllowedSql, privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { ANY_OWNER_ONLY_SQL, READ_SOURCE_OWNER_ONLY_SQL } from '../access/owner-only.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 
@@ -35,6 +36,27 @@ export async function readCallerPageAccess(exec: LegacyUnscopedRead, pages: read
     JOIN unnest(${pages.map(p => p.source_id)}::text[], ${pages.map(p => p.slug)}::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
     GROUP BY p.source_id, p.slug`);
   return rows.map(r => ({ source_id: r.source_id, slug: r.slug, readable: r.readable === true }));
+}
+
+/**
+ * The opening read of a remote page write's visibility check (authorizePageVisibility), one statement: whether any
+ * access member is labelled-only, whether a reader identity could open the page `slug` of `sourceId` that the
+ * empty-identity policy with privacy hides (null when no row of it, live or soft-deleted, is hidden; else whether the
+ * row names readers or sits under a folder rule), and whether that source, or any source, is owner-only.
+ */
+export interface WriteVisibilityProbe { any_labelled: boolean; identity_may_open: boolean | null; owner_only_source: boolean; owner_only_any: boolean }
+
+/**
+ * readWriteVisibilityProbe: see WriteVisibilityProbe. Undefined only when the statement returns no row. The text is
+ * the statement authorizePageVisibility sent through `executeRaw`, with the source id bound a second time for the
+ * owner-only source test (`ownerOnlySourceSql`) instead of reusing `$1`.
+ */
+export async function readWriteVisibilityProbe(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<WriteVisibilityProbe | undefined> {
+  const { rows: [row] } = await exec.run<WriteVisibilityProbe>(
+    sqlFragment`SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (SELECT (page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL) FROM pages
+      WHERE source_id=${sourceId} AND slug=${slug} AND NOT (${trustedSql(readPolicyFragment('pages', [], true))}) LIMIT 1) AS identity_may_open,
+          EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${sourceId} AND ${trustedSql(READ_SOURCE_OWNER_ONLY_SQL)}) AS owner_only_source, ${trustedSql(ANY_OWNER_ONLY_SQL)} AS owner_only_any`);
+  return row;
 }
 
 const OAUTH_CLIENT_FENCE_SQL = 'SELECT bound_slug_prefixes AS prefixes FROM oauth_clients WHERE client_id=$1';

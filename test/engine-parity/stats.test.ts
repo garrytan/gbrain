@@ -11,11 +11,19 @@
  *  - Why existing coverage misses it: config-ingest.test.ts and code-eval-salience.test.ts write embeddings in most
  *    stats cases, so an engine that keeps no vectors stops on a refusal before it reaches the counters; and none of them
  *    covers the empty scope, dead links, the entity coverage threshold or the ingest log's failure paths.
+ *  - Owner-only sources: the last case adds a source of kind imessage and one with owner_only set, then reads
+ *    findAnomalies under `excludePrivate` as a non-owner. Every page is hidden while one exists (the closed form, no
+ *    schema version in context); at schema 320 (the fn form) only the pages in those sources and the concepts
+ *    synthesized from them are (`ownerOnlyAllowedSql`, src/core/search/private-visibility.ts).
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -198,6 +206,64 @@ describe('engine parity: stats without vectors', () => {
         tomorrow: view(await engine.findAnomalies({ since: new Date(Date.parse(today) + 86_400_000).toISOString().slice(0, 10), lookback_days: 2 })),
         badDate: await outcome(() => engine.findAnomalies({ since: 'not-a-date' })),
       };
+    },
+  );
+});
+
+describe('engine parity: owner-only sources on excludePrivate anomaly reads', () => {
+  parityTest(
+    'findAnomalies under excludePrivate hides every page while a source is owner-only (closed form) and only owner-only pages and their concepts at schema 320 (fn form)',
+    { methods: ['putPage', 'addTag', 'addLink', 'getPage', 'findAnomalies'] },
+    async (engine, backend) => {
+      const seed = async (slug: string, sourceId: string, type = 'note', frontmatter: Record<string, unknown> = {}) => {
+        const opts = sourceId === 'default' ? undefined : { sourceId };
+        await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter }, opts);
+        await engine.addTag(slug, 'probe', opts);
+      };
+      const concept = { visibility: 'world', synthesized_by: 'dream' };
+      for (const slug of ['notes/open-a', 'notes/open-b', 'notes/open-c']) await seed(slug, 'default');
+      await seed('concepts/from-open', 'default', 'concept', concept);
+      await engine.addLink('concepts/from-open', 'notes/open-a', '', 'synthesized_from', 'concept-provenance');
+      const today = new Date((await engine.getPage('notes/open-a'))!.updated_at).toISOString().slice(0, 10);
+
+      const view = (rows: Awaited<ReturnType<typeof engine.findAnomalies>>) =>
+        sorted(rows.map((r) => `${r.cohort_kind}:${r.cohort_value}:${r.count}:${sorted(r.page_slugs).join(',')}`));
+      const read = async () => {
+        const run = async () => view(await engine.findAnomalies({ since: today, lookback_days: 1, excludePrivate: true }));
+        return { none: await run(), reader: await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, run) };
+      };
+      const keptSlugs = 'concepts/from-open,notes/open-a,notes/open-b,notes/open-c';
+      const kept = [`tag:probe:4:${keptSlugs}`];
+
+      // Before an owner-only source exists the default pages are counted: the case is not vacuous.
+      const before = await read();
+      expect(before.none).toEqual(expect.arrayContaining(kept));
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await seed('notes/chat-a', 'chat');
+      await seed('notes/chat-b', 'chat');
+      await seed('notes/vault-a', 'vault');
+      await seed('concepts/from-chat', 'default', 'concept', concept);
+      await engine.addLink('concepts/from-chat', 'notes/chat-a', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+
+      // Closed form: no schema version in context. A non-owner counts nothing while any source is owner-only.
+      const closed = await read();
+      expect(closed.none).toEqual([]);
+      expect(closed.reader).toEqual([]);
+
+      // Fn form (schema 320): only owner-only pages, and the concept synthesized from one, are left out.
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      let fn;
+      try {
+        fn = await withEngineScope(engine, read);
+      } finally {
+        noteSchemaVersion(engine, Number.NaN);
+      }
+      expect(fn.none).toEqual(expect.arrayContaining(kept));
+      expect(fn.none.join('\n')).not.toMatch(/chat|vault/);
+      expect(fn.reader).toEqual(fn.none);
+      return { before, closed, fn };
     },
   );
 });

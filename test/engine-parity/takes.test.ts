@@ -22,6 +22,9 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine, Take, TakeBatchInput, TakeHit } from '../../src/core/engine.ts';
 import { basisEmbedding, createSource, parityArms, pick, sorted } from './harness.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -926,15 +929,63 @@ describe('engine parity: takes reads (group D)', () => {
   );
 
   parityTest(
-    'countMcpResolvedTakes under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses',
+    'countMcpResolvedTakes under excludePrivate applies the caller policy: a reader identity reads its readers page, a private-readable grant its source',
     { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
     async (engine, backend) => {
       await mcpPrivacyFixture(engine, backend);
-      const asReader = await withCallerAccess({ identity: ['alice-example'], hidePrivate: true },
-        () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true }));
-      const open = await engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: false });
-      expect(asReader).toBeLessThan(open);
-      return { asReader, open };
+      const hidden = () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true });
+      const out = {
+        plain: await hidden(),
+        reader: await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, hidden),
+        stranger: await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, hidden),
+        granted: await withCallerAccess({ privateReadableSources: ['mcp-priv-other'], hidePrivate: true }, hidden),
+        readerGranted: await withCallerAccess({ identity: ['member:alice-example'], privateReadableSources: ['mcp-priv-other'], hidePrivate: true }, hidden),
+      };
+      // plain sees open and other-open; the reader adds the readers page, the grant adds other-private.
+      expect(out).toEqual({ plain: 3, reader: 4, stranger: 3, granted: 4, readerGranted: 5 });
+      return out;
+    },
+  );
+
+  parityTest(
+    'countMcpResolvedTakes under excludePrivate drops the takes of an owner-only source: every take while one exists with no schema version, only that source\'s and its concept lineage under the function form',
+    { methods: ['putPage', 'addLink', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      const resolved = async (slug: string, type: 'note' | 'concept', sourceId: string, claim: string) => {
+        const p = await engine.putPage(slug, { type, title: slug, compiled_truth: `Page ${slug}.`, timeline: '' }, { sourceId });
+        await engine.addTakesBatch([take(p.id, 1, claim)]);
+        await engine.resolveTake(p.id, 1, { quality: 'correct', outcome: true, resolvedBy: `mcp:client-${claim}` });
+      };
+      const counts = async () => {
+        const count = (sourceIds: string[] | null) => engine.countMcpResolvedTakes({ sourceIds, holders: null, excludePrivate: true });
+        return {
+          everything: await count(null), default: await count(['default']), work: await count(['work']),
+          chat: await count(['chat']), vault: await count(['vault']),
+        };
+      };
+      await createSource(engine, backend, 'work');
+      await resolved('notes/open', 'note', 'default', 'default-open');
+      await resolved('concepts/from-chat', 'concept', 'default', 'default-concept');
+      await resolved('notes/work', 'note', 'work', 'work-open');
+      // Before any owner-only source exists every resolved take is counted: the case is not vacuous.
+      const before = await counts();
+      expect(before).toEqual({ everything: 3, default: 2, work: 1, chat: 0, vault: 0 });
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await resolved('chat/thread', 'note', 'chat', 'chat-thread');
+      await resolved('vault/notes', 'note', 'vault', 'vault-notes');
+      await engine.addLink('concepts/from-chat', 'chat/thread', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+
+      // No schema version in context: while an owner-only source exists the non-owner policy hides every take.
+      const closed = await counts();
+      expect(closed).toEqual({ everything: 0, default: 0, work: 0, chat: 0, vault: 0 });
+
+      // Schema version 320 or later: only the owner-only sources' takes, and the concept synthesized from one, are hidden.
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, counts);
+      expect(fn).toEqual({ everything: 2, default: 1, work: 1, chat: 0, vault: 0 });
+      return { before, closed, fn };
     },
   );
 
