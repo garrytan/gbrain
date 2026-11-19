@@ -91,7 +91,6 @@ export function renderPurgeReceipt(r: Record<string, unknown>): string {
 /** Test seam: the terminal probe and the typed-token reader (defaults: isInteractive and a stderr prompt). */
 export interface PurgeCliIo { interactive?: () => boolean; readToken?: (prompt: string) => Promise<string | null> }
 
-/** `gbrain forget` argv this module handles: a purge, its help, and a --dry-run (which a plain forget refuses here, since it has none). */
 /** #9738: the fact ids among `gbrain forget` arguments: every all-digit argument that is not the value of one of its flags (`--reason 42`). */
 export async function forgetFactIds(args: readonly string[]): Promise<string[]> {
   const { EQUALS_READERS } = await import('../cli/flag-equals.ts');
@@ -99,6 +98,7 @@ export async function forgetFactIds(args: readonly string[]): Promise<string[]> 
   return args.filter((arg, i) => /^\d+$/.test(arg) && !valueFlags.has(args[i - 1] ?? ''));
 }
 
+/** `gbrain forget` argv this module handles: a purge, its help, and a --dry-run (which a plain forget refuses here, since it has none). */
 export function routesToForgetPurge(args: readonly string[]): boolean {
   return args.includes('--purge') || args.includes('--dry-run') || args.includes('--help') || args.includes('-h');
 }
