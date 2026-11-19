@@ -3,11 +3,13 @@
  * (rust/crates/gbrain-store/src/facts/repair.rs). A member not exported here refuses with `engine_capability_missing`.
  *
  * Served: listSessionFactsForClassification, listSessionFactTwins, listCapturedFactsForClassification and
- * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, and countLabelFacts, whose label line this member
- * reads into literal labels (label-line.ts). loopFactDrift and closedLoopWithActiveFact are served from open-loops.ts.
- * Refused, because the store holds no such table: listExtractorFactsForClassification (`persistence_requests`, the
- * write journal), countPurgedPageFacts (`page_purges`) and listUnwithdrawnFacts (`derived_generations`,
- * `derived_generation_items`).
+ * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, countLabelFacts, whose label line this member
+ * reads into literal labels (label-line.ts), and countPurgedPageFacts, which reads the store's `page_purges` ledger. No
+ * member writes that ledger on Rust: the page purge sweep and the restore replay write it with raw SQL in the write
+ * journal's transaction and refuse, so on Rust every counted fact is ambiguous. loopFactDrift and
+ * closedLoopWithActiveFact are served from open-loops.ts. Refused, because the store holds no such table:
+ * listExtractorFactsForClassification (`persistence_requests`, the write journal) and listUnwithdrawnFacts
+ * (`derived_generations`, `derived_generation_items`).
  *
  * An id list binds as `bigint[]` on PGLite, so an id that is not an integer refuses rather than guess at its cast error.
  */
@@ -72,5 +74,21 @@ export const countLabelFacts: Member<'countLabelFacts'> = (brain, sourceIds, cap
   return storeCall({ member: m }, async () => {
     const n = Number(await brain.countLabelFacts(query));
     return { count: Math.min(n, cap), capped: n > cap };
+  });
+};
+
+/**
+ * `countPurgedPageFacts`: the store lists, for up to `LIMIT cap + 1` gone-page facts, whether a purge record is the
+ * evidence; this member keeps the first `cap` and counts them, as the SQL does. A cap that is not an integer, or one whose
+ * `LIMIT` would be negative, refuses.
+ */
+export const countPurgedPageFacts: Member<'countPurgedPageFacts'> = (brain, sourceIds, cap) => {
+  const m = 'countPurgedPageFacts';
+  if (!Number.isSafeInteger(cap) || cap + 1 < 0) refuseMember(m, 'a cap that is not an integer of -1 or more');
+  return storeCall({ member: m }, async () => {
+    const rows = (await brain.countPurgedPageFacts({ sourceIds, limit: cap + 1 })) as boolean[];
+    const kept = rows.slice(0, Math.max(cap, 0));
+    const evidenced = kept.filter(Boolean).length;
+    return { evidenced, ambiguous: kept.length - evidenced, capped: rows.length > cap };
   });
 };

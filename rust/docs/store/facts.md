@@ -265,10 +265,17 @@ Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its recon
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
-Ten members (`src/core/engine-sql/facts-repair.ts`). Seven are served: four read only `facts` and `pages`, the two loop
-reads come from `facts/loops.rs`, and `countLabelFacts` reads facts, pages, loops and withdrawals. Three read a table the
+Ten members (`src/core/engine-sql/facts-repair.ts`). Eight are served: four read only `facts` and `pages`, the two loop
+reads come from `facts/loops.rs`, `countLabelFacts` reads facts, pages, loops and withdrawals, and `countPurgedPageFacts`
+also reads the `page_purges` ledger (`facts/page_purges.rs`, key `F 0x0C source \0 content_hash`). Two read a table the
 store does not hold and refuse with `engine_capability_missing` (they are absent from `store-members/facts-repair.ts`,
 so the capability named in `members.ts` is `facts`).
+
+No member writes `page_purges` on Rust. Its two writers, the page purge sweep (`persistence/page-purge.ts`) and the
+restore replay (`belief/purge-mirror.ts`), write it with raw SQL inside the write journal's transaction, so they stop on
+the typed `raw_sql` refusal and the Rust ledger stays empty: every fact `countPurgedPageFacts` counts on Rust is
+ambiguous. A writer that binds the ledger must also add `F 0x0C` to the source cascade and give `putPage` the
+`purged_content` guard of the Postgres pages trigger.
 
 | Member | What it answers | Rust |
 | --- | --- | --- |
@@ -280,7 +287,7 @@ so the capability named in `members.ts` is `facts`).
 | `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
 | `countLabelFacts` | The bounded count of evidenced label facts. | Served: the active facts of `segmentSource` whose context holds the `%text%` of `contextLike`, on a live page whose body or timeline has a line that opens with `**`, a label, any `[[:space:]]` and `:**` (ASCII case folding; `[[:space:]]` is the musl `iswspace` set PGLite reads, where Postgres on glibc also counts U+1680), on a page no active `extractor_version=N`-stamped audit fact decided, unsuperseded and no row's successor, named by no loop and covered by no withdrawal. The store counts up to `cap + 1` and the member caps it. `store-members/label-line.ts` reads the label line into its literal labels; any other pattern, a context pattern other than `%text%` and a cap that is not an integer refuse |
 | `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs the `persistence_requests` receipts of the write journal |
-| `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges` |
+| `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Served: the active facts of a page-extraction source (`mcp:put_page`, `sync:import`, `file_upload`, `code_import`) filed on no page, whose context head (the text before the first ` — `) is not empty, holds no `[[:space:]]` (the musl set PGLite reads, where Postgres on glibc also counts U+1680) and names no page row, live or soft-deleted, of the fact's source. A fact counts when its head holds a `/` (ambiguous) or a `page_purges` row of its source names the head at or after its `created_at` (evidenced), and no withdrawal, successor, referring row or loop holds it. The store lists up to `cap + 1` and the member caps and counts them; a cap that is not an integer refuses |
 | `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Refused: needs `derived_generations` and `derived_generation_items` |
 
 Rules of the four served members:
