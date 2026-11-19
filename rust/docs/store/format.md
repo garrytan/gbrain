@@ -45,6 +45,13 @@ commits redb's allocator state, so the header bytes of `records.redb` change whi
 the same. A record file that needs crash recovery cannot be read read-only; it is opened normally,
 recovered and then refused.
 
+To go back to an older build, export the brain and import it there: `gbrain export --dir <dir>` on
+the Rust brain, then `gbrain import <dir>` into a brain the older build opens. Export on a Rust brain
+writes the same file tree, byte for byte, as PGLite does for the same pages, so the older build reads
+the pages back as it would from a PGLite export (`test/rust-export.serial.test.ts`). The export
+carries pages, tags, frontmatter, timelines, fact fences with withdrawals struck through, and
+segmented bodies; `export --source` and `--restore-only` still refuse on a Rust brain.
+
 Pinned by `older_build_tests` in `crates/gbrain-store/src/lib.rs`: a format-3 brain opened by a build
 that knows `[1, 2]`, and the next format against every build from format 1 on, with and without
 `FORMAT`, compare every file byte for byte before and after the refused open.
