@@ -5460,13 +5460,23 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
 
+### skill_resolver_host_hidden
+
+<a id="skill_resolver_host_hidden"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| OpenClaw now hides some skills the plugin still suggests from the agent's model (ineligible on this host, outside the agent's skill filter, or model invocation off). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skill-loading resolve --agent <id> again, so setup re-reads OpenClaw's skill list and stops suggesting them. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_host_hidden](../../docs/guides/skill-resolver.md#skill_resolver_host_hidden)
+
 ### skill_resolver_host_load_cut
 
 <a id="skill_resolver_host_load_cut"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot), so setup leaves them out of the agent's suggestions. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot in openclaw.json, or split the skill root, then run setup again. | agent | `repeat the read that failed` | 1 | no |
+| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so setup leaves them out of the agent's suggestions and doctor warns when the plugin still offers one. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot and skills.limits.maxSkillsLoadedPerSource in openclaw.json, or split the skill root, then run gbrain setup openclaw --skill-loading resolve again. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_host_load_cut](../../docs/guides/skill-resolver.md#skill_resolver_host_load_cut)
 

@@ -333,6 +333,23 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
     });
   });
 
+  test('a re-run with an unchanged plugin OpenClaw already loads, enables and allows runs no openclaw command', async () => {
+    const st = state();
+    await withEnv({ OPENCLAW_STATE_DIR: st, OPENCLAW_PROFILE: undefined, OPENCLAW_CONFIG_PATH: undefined }, async () => {
+      syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      const dir = openclawTurnPluginDir();
+      writeFileSync(join(st, 'openclaw.json'), JSON.stringify({ plugins: { load: { paths: [dir] }, entries: { [OPENCLAW_TURN_PLUGIN_ID]: { enabled: true, hooks: { allowConversationAccess: true } } } } }));
+      const rec = recorder();
+      const o = syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: rec.run });
+      expect(o).toMatchObject({ action: 'keep', unchanged: true });
+      expect(rec.calls).toEqual([]);
+      writeFileSync(join(st, 'openclaw.json'), JSON.stringify({ plugins: { load: { paths: [dir] }, entries: { [OPENCLAW_TURN_PLUGIN_ID]: { enabled: false, hooks: { allowConversationAccess: true } } } } }));
+      const off = recorder();
+      expect(syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: off.run }).unchanged).toBeUndefined();
+      expect(off.calls).toHaveLength(3);
+    });
+  });
+
   test('internal turns (heartbeat, cron, exec completion) get the rule without the reply sentence; every other turn keeps it', async () => {
     await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
       syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
