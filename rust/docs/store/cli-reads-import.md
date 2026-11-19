@@ -55,3 +55,9 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   column became `NOT NULL`.
 - **Timeline detail.** `detail` is always a string; an entry written without one reads `''`, as the Postgres column
   default gives.
+- **Sync routing row.** `readSyncDispatchRow` has no store method of its own: the shim
+  (`src/core/rust-engine/store-members/cli-reads-import.ts`) builds it from `readSourceState` and
+  `hasCompanyBrainReceipt`. The store keeps no writer bindings and one unmanaged brain, so
+  `claimed` is `false` and `modes` is `[false]`, as `isSourceClaimed` and `readManagedModeRows` answer. An unknown id
+  reads one row with null source columns, as the SQL's `LEFT JOIN` gives. PGLite and Postgres run the statement in
+  `src/core/engine-sql/sync-dispatch.ts`.

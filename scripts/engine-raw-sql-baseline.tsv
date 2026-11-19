@@ -208,9 +208,8 @@ src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	13
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
-src/commands/sync/full.ts	execute_raw	2
+src/commands/sync/full.ts	execute_raw	1
 src/commands/sync/holds.ts	execute_raw	4
-src/commands/sync/perform.ts	execute_raw	1
 src/commands/sync/plain-directory.ts	execute_raw	1
 src/commands/sync/preflight.ts	execute_raw	3
 src/commands/sync/rename-collision.ts	execute_raw	2
@@ -234,7 +233,6 @@ src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared compa
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
-src/core/access/policy.ts	execute_raw	31
 src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	1
@@ -251,7 +249,6 @@ src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
 src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
-src/core/backup/coverage.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
 src/core/belief/append.ts	execute_raw	1
@@ -380,7 +377,6 @@ src/core/embedding-state.ts	execute_raw	1
 src/core/enrichment-service.ts	execute_raw	2
 src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
-src/core/entities/resolve.ts	execute_raw	9
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
 src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
@@ -527,7 +523,7 @@ src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
-src/core/minions/submission-authority.ts	execute_raw	2
+src/core/minions/submission-authority.ts	execute_raw	1
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
@@ -601,7 +597,6 @@ src/core/persistence/activation.ts	execute_raw	9
 src/core/persistence/admin-intent.ts	execute_raw	3
 src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
-src/core/persistence/applied-watermark.ts	execute_raw	4
 src/core/persistence/atom-maintenance.ts	execute_raw	21
 src/core/persistence/authority.ts	execute_raw	4
 src/core/persistence/blocking-effects.ts	execute_raw	2
@@ -751,7 +746,6 @@ src/core/persistence/staging.ts	execute_raw	4
 src/core/persistence/sync-administration.ts	execute_raw	1
 src/core/persistence/sync-admission.ts	execute_raw	4
 src/core/persistence/sync-admitted.ts	execute_raw	1
-src/core/persistence/sync-authority.ts	execute_raw	1
 src/core/persistence/sync-blocked.ts	execute_raw	2
 src/core/persistence/sync-concurrent-write.ts	execute_raw	2
 src/core/persistence/sync-cursor-key.ts	execute_raw	7
@@ -765,7 +759,7 @@ src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
 src/core/persistence/sync-holds-carried.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	31
+src/core/persistence/sync-holds.ts	execute_raw	27
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-lease.ts	execute_raw	5
@@ -826,8 +820,6 @@ src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
 src/core/questions/store.ts	execute_raw	7
-src/core/readiness.ts	execute_raw	2
-src/core/reason-trailers.ts	execute_raw	2
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/accepted-takes.ts	execute_raw	4
@@ -943,7 +935,6 @@ src/core/search/projection-statistics.ts	execute_raw	11
 src/core/search/query-cache-gate.ts	execute_raw	2
 src/core/search/query-cache.ts	execute_raw	8
 src/core/search/relational-chain.ts	execute_raw	1
-src/core/search/relational-recall.ts	execute_raw	3
 src/core/search/safe-chunks.ts	execute_raw	2
 src/core/search/saved-facts-match.ts	execute_raw	1
 src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the readable-page lookup that maps a bare name tag to the page later written at <dir>/<tag>
@@ -989,7 +980,6 @@ src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	5
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
-src/core/sync-dispatch-read.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	3
 src/core/sync-identity-downgrades.ts	execute_raw	8
 src/core/sync-pending.ts	execute_raw	3

@@ -121,9 +121,9 @@ export async function performFullSync(
   await moveHeldRenames(engine, holds, holdRoot);
   // GBRA-217: a re-import of a source that already has pages reads its reasons from the whole history (a first sync creates
   // every page, so it archives no snapshot to annotate and runs no scan).
-  const [known] = await engine.executeRaw<{ any: boolean }>('SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1) AS any', [opts.sourceId ?? 'default']);
+  const known = await engine.countSourcePages(opts.sourceId ?? 'default', { includeDeleted: true });
   const reasons = await scanClassicReasons(engine, { sourceId: opts.sourceId, company, anchorPath, gitRoot: gitContextRoot, from: null, to: headCommit,
-    imports: known?.any === true ? 1 : 0 });
+    imports: known > 0 ? 1 : 0 });
   let result: import('../import.ts').RunImportResult;
   try {
     result = await runImport(engine, importArgs, {

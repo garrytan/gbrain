@@ -64,7 +64,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listJobAttachmentNames', 'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
   // Minion queue: health reads (engine-sql/jobs-health.ts)
   'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
-  'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName',
+  'readWedgeSignals', 'readOldestWaitingAge', 'countWaitingJobs', 'listStuckActiveJobsByName',
   // Minion job counts and last-run reads for the status surfaces, lane L5 group B (engine-sql/jobs-status.ts)
   'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
@@ -102,7 +102,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig',
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
-  'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal',
+  'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal', 'countBrainLivePages', 'readBrainMaturity',
   // Graph and doctor link reads (engine-sql/link-reads.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
   'listLivePageSummaries', 'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
@@ -129,7 +129,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readBodyManifestRows', 'readBodyManifestMeta', 'readBodyManifestOutline', 'listForcedCutSeqs', 'readManifestSeqAt', 'readSegmentedVersionBodyBytes',
   'listAccessPolicySourceIds', 'setLocalStatementTimeout',
   // CLI import and extract reads (engine-sql/cli-reads-import.ts; covered by test/engine-parity/cli-reads-import.test.ts)
-  'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
+  'listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
   'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
   'filterPagesAtRevision',
   // Wanted-link writes (engine-sql/wanted-links.ts; covered by test/engine-parity/wanted-links.test.ts)
@@ -188,6 +188,17 @@ const INTERFACE_METHODS: readonly string[] = [
   // The large-page write guard's stored body size read (engine-sql/large-page.ts).
   'readStoredBodyBytes',
   'readPageBodySizes',
+  // Lane 11 (rust-engine/resolve-relational): the relational recall arm's page reads (engine-sql/relational-reads.ts).
+  'readAdmittedPageRefs', 'readPageSynopses', 'readSeedTitleSlugs',
+  // The entity resolver's page reads (engine-sql/entity-reads.ts).
+  'readLiveSlugs', 'readLivePageTypes', 'readTrigramCandidates', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readNamedEntitySlugs',
+  // Sync hold, reason, watermark and readiness reads (engine-sql/sync-*.ts, sources.ts) and the job principal read (engine-sql/access-control.ts).
+  'readGitHoldRecords', 'readGitHoldRetryRequest', 'readGitHoldReportInputs', 'readReasonPurgeTombstones', 'readSourcePurgeEpoch',
+  'readWriteWatermarkRow', 'readSourceCheckoutRoot', 'readUnembeddedPageSummary', 'countRepoBoundSources', 'readJobPrincipal',
+  // Folder access policy statements (engine-sql/access-policy.ts).
+  'readAccessStoreConfig', 'writeAccessStoreConfig', 'ensureAccessPolicyState', 'lockAccessPolicy', 'listAccessRules', 'readAccessPolicyRevisions',
+  'listAccessCoverage', 'readAccessStateUnreadable', 'applyAccessRuleChanges', 'restampAccessWindow', 'finishAccessRestamp', 'insertAccessPolicyRevision',
+  'markAccessRevisionsApplied', 'approveAccessPolicyRevision', 'hasAccessPolicyState', 'listAccessPrefixSlugs', 'readAccessPolicyMarks', 'replaceAccessInvalidCoverage',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
   'listFenceRetireCandidates', 'listFenceFactRows', 'restorePageTrust', 'listHeldRows', 'listGuardedTakeRows',
   // The trust decision queue (engine-sql/trust-proposals.ts).

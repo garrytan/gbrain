@@ -30,6 +30,7 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -125,6 +126,8 @@ function makeEngine(opts: { sources?: SourceFixture[]; pageCount?: number } = {}
       calls.push('listSourceRecords');
       return sources();
     },
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+    readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       calls.push(sql);
       if (/from\s+sources/i.test(sql)) return sources();
@@ -256,6 +259,8 @@ describe('collectBackupCoverage remote (remote:true)', () => {
     saveBackupStatus(warnCache());
     // Remote must never touch the engine (cache-only read).
     const engine = {
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('remote collect must not query the engine');
       },
@@ -504,6 +509,8 @@ describe('collectBackupCoverage — GBRAIN_BACKUP_CHECK=0', () => {
 
     // Any engine touch (compute attempt) blows the test up.
     const throwing = {
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('disabled collect must not query the engine');
       },

@@ -89,6 +89,11 @@ export async function archiveRustSource(engine: unknown, id: string): Promise<vo
   await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
 }
 
+/** Fixture: the Rust brain's access-rule store (the policy writes have no typed BrainEngine member). */
+export function rustAccessBrain(engine: unknown) {
+  return (engine as RustEngine).openStore('accessRules').brain;
+}
+
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
 
 /**
