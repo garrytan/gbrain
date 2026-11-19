@@ -223,8 +223,11 @@ change which skills an agent can use.
 
 The plugin never adds to or edits OpenClaw's own skill list. On each real user
 turn (`before_prompt_build`; inter-session and other internal turns are
-skipped) it puts up to 3 suggestions with at least a description match in
-`appendContext`, and the pinned block in `appendSystemContext`. Ranking runs
+skipped) it ranks the message the user just sent (OpenClaw's `event.prompt`;
+`event.messages` holds only earlier turns) and puts up to 3 suggestions with at
+least a description match in `appendContext`, and the pinned block in
+`appendSystemContext`. A turn whose run OpenClaw already ended (its
+`assertActive` check throws) commits nothing toward the session. Ranking runs
 in a worker thread with a 50 ms deadline: a miss injects nothing, commits
 nothing and is logged as `timeout`; three misses in a row restart the worker.
 A retried turn (same message id) gets the same block and commits once. It

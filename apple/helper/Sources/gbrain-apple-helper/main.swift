@@ -41,11 +41,16 @@ func save(_ config: Config) {
     }
 }
 
-func lockedConfig() -> Config {
+func lockConfigFile() -> Int32 {
     _ = loadConfig()
     let lockPath = configPath + ".lock"
     let lockFile = Darwin.open(lockPath, O_CREAT | O_RDWR, 0o600)
     guard lockFile >= 0, flock(lockFile, LOCK_EX) == 0 else { fail("could not lock \(lockPath)", code: 75) }
+    return lockFile
+}
+
+func lockedConfig() -> Config {
+    _ = lockConfigFile()
     return loadConfig().0
 }
 
@@ -56,12 +61,13 @@ func printJSON<T: Encodable>(_ value: T) {
     if let data = try? encoder.encode(value) { print(String(decoding: data, as: UTF8.self)) }
 }
 
-func admin(_ fields: [String: String], timeout: TimeInterval = 30) -> Never {
+func admin(_ fields: [String: String], timeout: TimeInterval = 30, success: String? = nil) -> Never {
     let port = loadConfig().1.port
-    guard let (status, body) = AdminClient.post(port: port, fields: fields, timeout: timeout) else {
+    guard case .answered(let status, let body) = AdminClient.post(port: port, fields: fields, timeout: timeout) else {
         fail("GBrain Helper isn't answering on 127.0.0.1:\(port). Check it is running: launchctl print gui/\(getuid())/\(HelperIdentity.bundleId)", code: 69)
     }
     print(String(decoding: body, as: UTF8.self))
+    if status == 200, let success { print(success) }
     exit(status == 200 ? 0 : 1)
 }
 
@@ -113,24 +119,15 @@ case "token":
     }
 
 case "send-setup":
-    var config = lockedConfig()
-    let off = arguments.contains("--off")
-    if !off, config.send?.enabled != true, AdminClient.post(port: UInt16(config.port), fields: ["action": "off"], timeout: 10)?.0 != 200 {
-        fail("GBrain Helper isn't answering on 127.0.0.1:\(config.port). Start it, then run send-setup again.", code: 69)
-    }
-    config.send = SendSetting(enabled: !off)
-    save(config)
-    if off {
-        print("sending is off in \(configPath)")
-        let port = config.port
-        if let (status, _) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 10), status == 200 {
-            print("GBrain Helper confirmed sending is off")
-        } else {
-            print("GBrain Helper didn't answer; the config switch already stops every send")
-        }
-        exit(0)
-    }
-    admin(["action": "setup"], timeout: 300)
+    let setup = SendSetup(configPath: configPath,
+                          lockConfig: { let lockFile = lockConfigFile(); return { Darwin.close(lockFile) } },
+                          loadConfig: { loadConfig().0 },
+                          saveConfig: save,
+                          post: { fields, timeout in AdminClient.post(port: loadConfig().1.port, fields: fields, timeout: timeout) })
+    let result = arguments.contains("--off") ? setup.off() : setup.on()
+    result.out.forEach { print($0) }
+    if let err = result.err { FileHandle.standardError.write(Data("\(name): \(err)\n".utf8)) }
+    exit(result.code)
 
 case "send-key":
     guard let keyName = value("--name") else { fail(usage, code: 64) }
@@ -139,9 +136,10 @@ case "send-key":
         guard let source = value("--public-key-file") else { fail("send-key add needs --public-key-file <path or ->", code: 64) }
         let data = source == "-" ? FileHandle.standardInput.readDataToEndOfFile() : FileManager.default.contents(atPath: source)
         guard let data, let key = String(data: data, encoding: .utf8) else { fail("could not read the public key", code: 66) }
-        admin(["action": "add_key", "name": keyName, "public_key": key.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: 180)
+        admin(["action": "add_key", "name": keyName, "public_key": key.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: LocalOwnerPresence.wait + 60)
     case "remove":
-        admin(["action": "remove_key", "name": keyName])
+        admin(["action": "remove_key", "name": keyName], timeout: 40,
+              success: "No new text signed with the key \(keyName) will be handed to Messages. A text Messages has already accepted may still be delivered.")
     default:
         fail(usage, code: 64)
     }
@@ -157,7 +155,7 @@ case "send-limits":
         fields[parts[0]] = parts[1]
     }
     guard fields.count > 1 else { fail(usage, code: 64) }
-    admin(fields, timeout: 180)
+    admin(fields, timeout: LocalOwnerPresence.wait + 60)
 
 case "send-audit":
     guard arguments.dropFirst().first == "show", arguments.contains("--redacted") else {

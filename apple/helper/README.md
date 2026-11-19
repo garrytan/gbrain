@@ -100,7 +100,7 @@ Sending is off until the owner turns it on at the Mac. The owner's agent then se
 3. On the agent's computer, make an Ed25519 key pair (`generateSendKeyPair` in `src/core/apple/send-sign.ts`) and keep the private key there. At the Mac, `gbrain-apple-helper send-key add --name <name> --public-key-file -` with the public key on stdin asks for Touch ID once.
 4. Full Disk Access (System Settings > Privacy & Security > Full Disk Access) must be on: the helper reads the Messages database to confirm each send.
 
-With nobody logged in at the Mac, the Touch ID steps fail with `owner_presence_unavailable`. Removing a key, lowering a limit and `send-setup --off` need no prompt.
+With nobody logged in at the Mac, the Touch ID steps fail with `owner_presence_unavailable`. Removing a key, lowering a limit and `send-setup --off` need no prompt. Sends keep working while a Touch ID dialog is open. If another settings change lands while the dialog is open, the helper applies nothing and answers `overloaded`; run the command again to see the dialog for the settings as they are now. `send-setup --off`, `send-key remove` and a lowered limit always write the keychain item, so a failed write is reported instead of being taken as done, and a Touch ID approval still open from an earlier command can't undo them. Each send checks the switch and its key once more right before it hands the text to Messages. So once `send-setup --off` or `send-key remove` has returned, no new text is handed to Messages. A text Messages has already accepted may still be delivered, and one already being handed over finishes first, which can take up to about 30 seconds. `send-setup --off` holds the config file lock until the helper has answered, so a `send-setup` started meanwhile waits for it. It doesn't wait for a `send-setup` that is still at its Touch ID dialog, and approving that dialog afterwards answers `send_disabled`. If the helper isn't running, `--off` says so and exits 0, because the config switch alone stops every send; if the helper doesn't confirm within 40 seconds, it exits 69, because a text being handed over may still go out. When the helper answers with an error, the command says what answered, such as the helper being busy.
 
 ### Request
 
@@ -145,7 +145,7 @@ What this does not stop: a program running as the owner that builds a look-alike
 
 ### The send log
 
-`~/Library/Application Support/GBrain Helper/send-audit/YYYY-MM.jsonl`, mode 0600, one line per attempt and one per outcome: time, key name, the caller's address, idempotency key, recipient, the exact text, `requested_by`, `owner_instruction`, outcome and the Messages guid or error. No setting turns it off. A new file starts each month; after 90 days a line keeps only its time, outcome, code and a short hash of the recipient. A torn last line is moved to `torn-<time>.jsonl` instead of stopping the helper. `gbrain-apple-helper send-audit show --redacted` prints the redacted form; read that, not the raw file. The log never leaves the Mac.
+`~/Library/Application Support/GBrain Helper/send-audit/YYYY-MM.jsonl`, mode 0600, one line per attempt and one per outcome: time, key name, the caller's address, idempotency key, recipient, the exact text, `requested_by`, `owner_instruction`, outcome and the Messages guid or error. No setting turns it off. A new file starts each month; after 90 days a line keeps only its time, outcome, code and a short hash of the recipient. The hash is keyed with a random secret the helper keeps with the send keys in the keychain, so a phone number can't be recovered from it by trying every number, and the same recipient hashes differently on another Mac. A torn last line is moved to `torn-<time>.jsonl` instead of stopping the helper. `gbrain-apple-helper send-audit show --redacted` prints the redacted form; read that, not the raw file. The log never leaves the Mac.
 
 ### Outside terms
 
@@ -197,7 +197,7 @@ The request was over 8 KB, or a send's body over 32 KB.
 
 ### overloaded
 
-Four requests were already running. Retry after the `Retry-After` seconds.
+Four requests were already running. Retry after the `Retry-After` seconds. From `POST /v1/admin/send`, it can also mean another settings change landed while a Touch ID dialog was open, so nothing was applied; run the command again.
 
 ### no_access
 
