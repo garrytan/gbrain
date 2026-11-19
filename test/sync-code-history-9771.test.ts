@@ -68,6 +68,7 @@ for (const backend of testBackends()) {
         await performManagedSync(engine, { ...opts, full: true });
         expect((await engine.getPage(page!.slug, { sourceId: 'default' }))!.knowledge_revision).toBe(current!.knowledge_revision);
       }
+      // test-reads-source-ok[raw-bytes]: reads the synthetic checkout fixture, not repository source; proves mirror bytes stay unchanged.
       expect(readFileSync(join(root, 'src/tool.py'), 'utf8')).toBe(after);
       expect(git(root, 'status', '--porcelain')).toBe('');
     }, { databaseUrl, setup: ({ root }) => {
