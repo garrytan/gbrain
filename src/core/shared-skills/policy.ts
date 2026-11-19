@@ -9,6 +9,7 @@ import { currentVerifiedLocalWriter, type LocalGrant } from '../persistence/iden
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import type { SqlEngine, WriteAuthority } from '../persistence/model.ts';
+import type { BrainEngine } from '../engine.ts';
 import { stringList } from './manifest.ts';
 import type { SharedSkillPolicy, SkillFileClass, StoredSkillFile } from './model.ts';
 import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
@@ -173,10 +174,9 @@ export function normalizePolicy(value: unknown): SharedSkillPolicy {
   return { version: 1, enabled: p.enabled, allow_follow: p.allow_follow, classes: classes as SkillFileClass[],
     audiences: stringList(p.audiences, 'audiences'), requirements: stringList(p.requirements, 'requirements') };
 }
-export async function readSharedSkillPolicy(engine: SqlEngine, sourceId: string, incarnation: string, legacyEnabled: boolean, lock = false): Promise<{ epoch: string; policy: SharedSkillPolicy }> {
-  const [row] = await engine.executeRaw<{ epoch: string; policy: SharedSkillPolicy }>(
-    `SELECT epoch,policy FROM shared_skill_policies WHERE source_id=$1 AND source_incarnation=$2::uuid${lock ? ' FOR SHARE' : ''}`, [sourceId, incarnation]);
-  if (row) return { epoch: row.epoch, policy: normalizePolicy(row.policy) };
+export async function readSharedSkillPolicy(engine: BrainEngine, sourceId: string, incarnation: string, legacyEnabled: boolean, lock = false): Promise<{ epoch: string; policy: SharedSkillPolicy }> {
+  const row = await engine.readSharedSkillPolicyRow(sourceId, incarnation, lock);
+  if (row) return { epoch: row.epoch, policy: normalizePolicy(row.policy as SharedSkillPolicy) };
   return legacySharedSkillPolicy(legacyEnabled);
 }
 export function legacySharedSkillPolicy(legacyEnabled: boolean): { epoch: string; policy: SharedSkillPolicy } {

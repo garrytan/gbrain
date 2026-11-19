@@ -7,6 +7,7 @@ import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writ
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
+import type * as SharedSkillMembersSql from './engine-sql/shared-skill-members.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -3728,6 +3729,34 @@ export interface BrainEngine {
   readLocalWriterMemberGrant(id: string): Promise<AccessGrantsSql.MemberLocalWriterGrant | undefined>;
   /** The shared-skill serving epoch, or null when the brain has no shared-skill state row. */
   readSharedSkillServingEpoch(): Promise<string | null>;
+
+  // Shared-skill membership (engine-sql/shared-skill-members.ts): the rows join_brain, sync_brain_skills, leave_brain and the catalog read.
+  /** The brain id, the catalog token secret and the serving epoch, or undefined without the brain or shared-skill state row. */
+  readSharedSkillCatalogIdentity(): Promise<SharedSkillMembersSql.SharedSkillCatalogIdentity | undefined>;
+  /** The live shared-skill heads of live sources that match the query, in key order, at most `limit` rows. */
+  listSharedSkillCatalogHeads(query: SharedSkillMembersSql.SharedSkillHeadQuery): Promise<SharedSkillMembersSql.SharedSkillHeadRow[]>;
+  /** A source incarnation's stored publication policy and epoch, or undefined; `lock` reads it `FOR SHARE`. */
+  readSharedSkillPolicyRow(sourceId: string, incarnation: string, lock: boolean): Promise<{ epoch: string; policy: unknown } | undefined>;
+  /** The live sources in both id lists (null matches all), by id, at most 65 rows. */
+  listSharedSkillFollowSources(allowed: string[] | null, sourceIds: string[] | null): Promise<Array<{ id: string; incarnation: string }>>;
+  /** The persistent brain id locked `FOR UPDATE`, or undefined without the row. */
+  lockSharedSkillBrainId(): Promise<string | undefined>;
+  /** One shared-skill member locked `FOR UPDATE`, or undefined; by installation id it matches only under its own principal. */
+  readSharedSkillMember(by: SharedSkillMembersSql.SharedSkillMemberLookup): Promise<SharedSkillMembersSql.SharedSkillMemberRow | undefined>;
+  /** The number of shared-skill members, active or not. */
+  countSharedSkillMembers(): Promise<number>;
+  /** Inserts a shared-skill member or re-activates the one with its installation id at the next epoch. */
+  enrollSharedSkillMember(spec: SharedSkillMembersSql.SharedSkillMemberEnroll): Promise<void>;
+  /** Sets an active member's narrowed follow policy and epoch, and resets its sequences and views. */
+  rebindSharedSkillMember(installationId: string, followPolicy: unknown, epoch: number): Promise<void>;
+  /** Marks a shared-skill member inactive. */
+  leaveSharedSkillMember(installationId: string): Promise<void>;
+  /** Issues a delivery batch for a member: prune, reuse or insert, retention trim and the seen mark, in order. */
+  issueSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchIssue): Promise<SharedSkillMembersSql.SharedSkillBatchIssued>;
+  /** A member's batch under this epoch issued within 24 hours, locked `FOR UPDATE`, or undefined. */
+  readSharedSkillDeliveryBatch(token: string, installationId: string, epoch: number): Promise<SharedSkillMembersSql.SharedSkillBatchRow | undefined>;
+  /** Records a batch's acknowledgment evidence and, with `advance`, the member's acknowledged sequence and view. */
+  acknowledgeSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchAcknowledge): Promise<void>;
 
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
   /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
