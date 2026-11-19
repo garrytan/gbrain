@@ -10,7 +10,7 @@
  * tries again, and doctor reports the last success. With no backend nothing is uploaded and doctor says the database
  * backup carries the store.
  */
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -28,7 +28,7 @@ interface BackupDocument { kind: typeof KIND; version: 1; key_id: string; create
 interface BackupBody { entries: BackupEntryRow[]; occurrences: BackupOccurrenceRow[] }
 
 export interface BackupStatus {
-  last_success: { at: string; object: string; entries: number; occurrences: number; key_id: string; high_water?: string | null; backend?: string } | null;
+  last_success: { at: string; object: string; entries: number; occurrences: number; key_id: string; high_water?: string | null; places?: string; backend?: string } | null;
   last_failure: { at: string; message: string } | null;
 }
 
@@ -108,7 +108,7 @@ export async function backupStore(engine: BrainEngine, storage: StorageBackend, 
     const result = { object, entries: body.entries.length, occurrences: body.occurrences.length, key_id: key.id };
     const highWater = [...body.entries.flatMap(row => [row.created_at, row.updated_at]), ...body.occurrences.map(o => o.created_at)]
       .reduce<string | null>((max, t) => (!max || t > max ? t : max), null);
-    writeBackupStatus({ last_success: { at: createdAt, ...result, high_water: highWater, ...(backend ? { backend } : {}) }, last_failure: null });
+    writeBackupStatus({ last_success: { at: createdAt, ...result, high_water: highWater, places: placesOf(body.occurrences), ...(backend ? { backend } : {}) }, last_failure: null });
     return result;
   } catch (error) {
     recordFailure(error);
@@ -119,16 +119,21 @@ export async function backupStore(engine: BrainEngine, storage: StorageBackend, 
 /**
  * True when no backup ever succeeded to `backend` (the last success went to another backend, or names none), or the
  * store changed since: an entry or an occurrence (a new place an existing original was redacted) newer than the newest
- * row that backup held, or a different number of entries or occurrences. Both sides are database timestamps, so a host
+ * row that backup held, or a different number of entries or occurrences, or an occurrence moved (a rename). Both sides are database timestamps, so a host
  * clock ahead of the database's does not hide a change.
  */
+/** A digest of where every occurrence is, so a rename (which moves occurrences and changes no count or time) is a change. */
+function placesOf(occurrences: BackupOccurrenceRow[]): string {
+  return createHash('sha256').update(occurrences.map(o => [o.entry_id, o.source_id, o.slug, o.commit_sha, o.path, o.line, o.field].join('\u0000')).sort().join('\n')).digest('hex');
+}
+
 export async function backupDue(engine: BrainEngine, backend?: string): Promise<boolean> {
   const { entries, occurrences } = await storeSnapshot(engine);
   if (!entries.length) return false;
   const success = readBackupStatus().last_success;
   const last = success ? success.high_water ?? success.at : undefined;
   if (!success || !last || (backend !== undefined && success.backend !== backend)) return true;
-  if (entries.length !== success.entries || occurrences.length !== success.occurrences) return true;
+  if (entries.length !== success.entries || occurrences.length !== success.occurrences || success.places !== placesOf(occurrences)) return true;
   return entries.some(row => row.created_at > last || row.updated_at > last) || occurrences.some(o => o.created_at > last);
 }
 

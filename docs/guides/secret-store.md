@@ -157,8 +157,9 @@ store is backed up, and warns when:
 - the current key was never exported (`gbrain secrets key export` clears it), because a lost key loses every original;
 - a storage backend is configured and the last backup failed or never ran;
 - originals still wait in this host's encrypted spool;
-- sealed originals are referenced by no page or commit any more (nothing can reveal or restore them; a page purge
-  removes its own, so these come from an older purge or a direct database edit);
+- sealed originals are referenced by no page or commit any more (no remote caller can reveal them, and only the trusted
+  local `gbrain secrets reveal <id>` reads them; a page purge removes its own, so these come from an older purge or a
+  direct database edit);
 - a checkout holds held-back publish commits, or local refs that still reach commits from before a redaction rebuild
   (the trusted local doctor only; a remote caller sees counts of entries, never paths or refs).
 
@@ -166,4 +167,6 @@ store is backed up, and warns when:
 
 - It does not rotate or revoke credentials.
 - It does not erase bytes physically: dead database rows and WAL can hold old text until the database reclaims them.
+- An original an older gbrain left an occurrence for after its page was purged stays: that occurrence still names it,
+  so the cascade and doctor's count treat it as referenced.
 - Markers written before the store existed (`<REDACTED:rule>` with no id) stay unrecoverable.

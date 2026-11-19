@@ -10,7 +10,8 @@ import { operations } from '../src/core/operations.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
 import { recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
 import { scrubPurgedSlugStores } from '../src/core/persistence/purge-slug-stores.ts';
-import { backupStore, restoreBackup } from '../src/core/secret-store/backup.ts';
+import { backupDue, backupStore, restoreBackup } from '../src/core/secret-store/backup.ts';
+import { carryRenameIdentity } from '../src/commands/sync/renames.ts';
 import { createStorage } from '../src/core/storage.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -242,6 +243,75 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         await b.engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '2 hours' WHERE source_id = $1 AND slug = $2", [b.sourceId, expired]);
         await purgeDeletedPagesCoordinated(b.engine, 1);
         expect({ purged: await entry(ids.purged), batch: await entry(ids.batch), expired: await entry(ids.expired) }).toEqual({ purged: 0, batch: 0, expired: 0 });
+      });
+    }, 120_000);
+
+    test('a rename that falls back to a new row moves the stale row\'s occurrences to it, so expiring the stale row keeps the original', async () => {
+      await brain(async b => {
+        const stale = `notes/stale-${randomUUID().slice(0, 6)}`, dest = `notes/dest-${randomUUID().slice(0, 6)}`;
+        await b.put(stale, beliefPage({ prose: 'Old place.' }));
+        await b.put(dest, beliefPage({ prose: 'New place.' }));
+        const ids = await b.engine.executeRaw<{ id: number; slug: string }>('SELECT id, slug FROM pages WHERE source_id = $1 AND slug = ANY($2::text[])', [b.sourceId, [stale, dest]]);
+        const from = ids.find(r => r.slug === stale)!, to = ids.find(r => r.slug === dest)!;
+        const id = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`fb${randomUUID().slice(0, 6)}`) })).id;
+        await recordOccurrence(b.engine, { entryId: id, sourceId: b.sourceId, pageId: from.id, slug: stale, field: 'compiled_truth', origin: 'repair' });
+        await carryRenameIdentity(b.engine, b.sourceId, stale, dest);
+        expect(await b.engine.executeRaw('SELECT slug, page_id FROM secret_store_occurrence WHERE entry_id = $1', [id])).toEqual([{ slug: dest, page_id: to.id }]);
+        await b.engine.deletePages([stale], { sourceId: b.sourceId });
+        expect((await b.engine.executeRaw('SELECT 1 FROM secret_store WHERE id = $1', [id])).length).toBe(1);
+      });
+    }, 120_000);
+
+    test('a restore keeps two recorded occurrences at one place that differ in origin, and adds neither twice', async () => {
+      await brain(async b => {
+        const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-origin-bucket-'));
+        try {
+          const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+          const slug = `notes/two-${randomUUID().slice(0, 6)}`;
+          await b.put(slug, beliefPage({ prose: 'Two records.' }));
+          const id = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`two${randomUUID().slice(0, 6)}`) })).id;
+          await recordOccurrence(b.engine, { entryId: id, sourceId: b.sourceId, slug, field: 'compiled_truth', origin: 'repair', path: `${slug}.md` });
+          await recordOccurrence(b.engine, { entryId: id, sourceId: b.sourceId, slug, field: 'compiled_truth', origin: 'publish_rebuild', path: `${slug}.md` });
+          const out = await backupStore(b.engine, storage);
+          expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 0, occurrences: 0 });
+          await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE entry_id = $1', [id]);
+          await b.engine.executeRaw('DELETE FROM secret_store WHERE id = $1', [id]);
+          expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 1, occurrences: 2 });
+          expect((await b.engine.executeRaw<{ origin: string }>('SELECT origin FROM secret_store_occurrence WHERE entry_id = $1 ORDER BY origin', [id])).map(r => r.origin)).toEqual(['publish_rebuild', 'repair']);
+        } finally { rmSync(bucket, { recursive: true, force: true }); }
+      });
+    }, 120_000);
+
+    test('a restore whose value the store holds under another id is not reported as a missing page', async () => {
+      await brain(async b => {
+        const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-reseal-bucket-'));
+        try {
+          const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+          const slug = `notes/reseal-${randomUUID().slice(0, 6)}`;
+          await b.put(slug, beliefPage({ prose: 'Resealed.' }));
+          await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE source_id = $1', [b.sourceId]);
+          await b.engine.executeRaw('DELETE FROM secret_store WHERE source_id = $1', [b.sourceId]);
+          const id = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`rs${randomUUID().slice(0, 6)}`) })).id;
+          await recordOccurrence(b.engine, { entryId: id, sourceId: b.sourceId, slug, field: 'compiled_truth', origin: 'repair' });
+          const out = await backupStore(b.engine, storage);
+          await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE entry_id = $1', [id]);
+          await b.engine.executeRaw('UPDATE secret_store SET id = $2 WHERE id = $1', [id, `ss_${'f'.repeat(12)}`]);
+          expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 0, skipped_no_page: 0 });
+        } finally { rmSync(bucket, { recursive: true, force: true }); }
+      });
+    }, 120_000);
+
+    test('a rename makes the next backup due, so the newest backup names the page by its new slug', async () => {
+      await brain(async b => {
+        const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-rename-due-'));
+        try {
+          const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+          const { slug } = await pages(b);
+          await backupStore(b.engine, storage);
+          expect(await backupDue(b.engine)).toBe(false);
+          await b.engine.updateSlug(slug, `notes/renamed-${randomUUID().slice(0, 6)}`, { sourceId: b.sourceId });
+          expect(await backupDue(b.engine)).toBe(true);
+        } finally { rmSync(bucket, { recursive: true, force: true }); }
       });
     }, 120_000);
 

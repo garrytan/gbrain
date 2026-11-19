@@ -240,16 +240,18 @@ export async function insertBackupRows(engine: BrainEngine, entries: BackupEntry
       [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at, anchored, pageSlugs]);
       if (inserted.length) written++;
       else {
-        const [held] = await tx.executeRaw<{ same: boolean }>('SELECT (source_id=$2 AND value_mac=$3) AS same FROM secret_store WHERE id=$1', [row.id, row.source_id, row.value_mac]);
-        if (!held && !anchored) skippedNoPage++;
-        if (!held?.same) continue;
+        const [held] = await tx.executeRaw<{ same: boolean | null; paged: boolean }>(`SELECT h.same, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug = ANY($4::text[])) AS paged
+          FROM (SELECT 1) one LEFT JOIN (SELECT (source_id=$2 AND value_mac=$3) AS same FROM secret_store WHERE id=$1) h ON true`, [row.id, row.source_id, row.value_mac, pageSlugs]);
+        if (held!.same === null && !anchored && !held!.paged) skippedNoPage++;
+        if (!held!.same) continue;
       }
       for (const o of own) {
         occ += (await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
           SELECT $1,$2,(SELECT id FROM pages WHERE source_id=$2 AND slug=$3),$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz
           WHERE ($6::text IS NOT NULL OR $3::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$3))
             AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence x WHERE x.entry_id=$1 AND x.source_id=$2 AND x.slug IS NOT DISTINCT FROM $3 AND x.field=$4
-              AND x.commit_sha IS NOT DISTINCT FROM $6 AND x.path IS NOT DISTINCT FROM $7 AND x.line IS NOT DISTINCT FROM $8::integer) RETURNING 1`,
+              AND x.commit_sha IS NOT DISTINCT FROM $6 AND x.path IS NOT DISTINCT FROM $7 AND x.line IS NOT DISTINCT FROM $8::integer AND x.origin=$5
+              AND x.pre_field_sha256 IS NOT DISTINCT FROM $9 AND x.created_by=$10 AND date_trunc('milliseconds', x.created_at) = $11::timestamptz) RETURNING 1`,
         [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at])).length;
       }
     }

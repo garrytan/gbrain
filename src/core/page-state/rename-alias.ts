@@ -120,7 +120,8 @@ export async function moveSlugBindings(
  * Move the page-id-keyed rows of a page whose rename fell back to add
  * semantics (#5431) onto the row that materialized at the destination, before
  * the stale row is soft-deleted: edges where it is the source, target or
- * origin, its timeline entries and its version history. Rows the surviving
+ * origin, its timeline entries, its version history and its secret store
+ * occurrences (the purge cascade finds a page's originals by page id). Rows the surviving
  * page already holds under the same unique key (`links` composite key,
  * timeline dedup indexes) are dropped from the stale side, never duplicated.
  * Runs inside the caller's transaction and is idempotent.
@@ -147,6 +148,7 @@ export async function movePageIdReferences(
     [`DELETE FROM timeline_entries s WHERE s.event_page_id = $1 AND EXISTS (SELECT 1 FROM timeline_entries o WHERE o.event_page_id = $2 AND o.date = s.date)`, [fromPageId, toPageId]],
     [`UPDATE timeline_entries SET event_page_id = $2 WHERE event_page_id = $1`, [fromPageId, toPageId]],
     [`UPDATE page_versions SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
+    [`UPDATE secret_store_occurrence SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
   ];
   for (const [sql, params] of statements) await tx.executeRaw(sql, params);
 }
