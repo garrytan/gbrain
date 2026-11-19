@@ -331,6 +331,20 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect(existsSync(join(folder, dayFile(ALICE, 1)))).toBe(false);
   });
 
+  test('removing a source during its first import, with nothing recorded yet, waits for the sync lock too', async () => {
+    const { id } = await setup();
+    const lock = await tryAcquireDbLock(engine, syncLockId(id));
+    expect(lock).not.toBeNull();
+    try {
+      await expect(removeSource(engine, { id, yes: true })).rejects.toThrow(`A sync of source ${id} is running`);
+      expect((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM sources WHERE id=$1', [id]))[0]!.n).toBe(1);
+    } finally {
+      await lock!.release();
+    }
+    await removeSource(engine, { id, yes: true });
+    expect((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM sources WHERE id=$1', [id]))[0]!.n).toBe(0);
+  });
+
   test('a push destination not proven private keeps the pages database-only, and rebind refuses it', async () => {
     const { repo, remote, id, cfg, folder } = await setup();
     const fake = mac();

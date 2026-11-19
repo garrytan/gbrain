@@ -19,10 +19,15 @@ type Exec = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConf
 
 export interface OwnedRemoval { files: number; removed: number; kept: string[]; sha: string | null; kept_storage: boolean }
 
-async function ownedRecord(engine: Exec, sourceId: string) {
+async function ownedSource(engine: Exec, sourceId: string) {
   const [src] = await engine.executeRaw<{ incarnation: string; local_path: string | null; config: Record<string, unknown> | null }>(
     'SELECT incarnation::text AS incarnation, local_path, config FROM sources WHERE id=$1', [sourceId]);
-  if (!src || !isOwnedFolderKind(src.config)) return null;
+  return src && isOwnedFolderKind(src.config) ? src : null;
+}
+
+async function ownedRecord(engine: Exec, sourceId: string) {
+  const src = await ownedSource(engine, sourceId);
+  if (!src) return null;
   const kind = src.config!.kind as ConnectorKind;
   const owned = await readOwnedState(engine, sourceId, src.incarnation, kind);
   if (!owned || !Object.keys(owned.files).length) return null;
@@ -32,11 +37,12 @@ async function ownedRecord(engine: Exec, sourceId: string) {
 /**
  * Removes the source's folder (removeOwnedFolder), then runs `deleteRow`, both under the source's sync lock, so a
  * sync of an owned-folder source that is still reading Messages cannot commit day files after the folder and the row
- * are gone. A busy lock refuses with nothing removed. A source that wrote no file takes no lock.
+ * are gone, even during a first import that has recorded nothing yet. A busy lock refuses with nothing removed. Any
+ * other kind of source takes no lock.
  */
 export async function removeOwnedFolderThen<T>(engine: BrainEngine, sourceId: string, opts: { keep?: boolean }, deleteRow: () => Promise<T>): Promise<T> {
   const work = async () => { await removeOwnedFolder(engine, sourceId, opts); return deleteRow(); };
-  if (!(await previewOwnedRemoval(engine, sourceId))) return work();
+  if (!(await ownedSource(engine, sourceId))) return work();
   const { syncLockId, tryAcquireDbLock } = await import('../db-lock.ts');
   const lock = await tryAcquireDbLock(engine, syncLockId(sourceId));
   if (!lock) {
