@@ -80,4 +80,12 @@ describe('scripts/spec/tlc.sh config selection', () => {
       expect(r.javaCalls[0]).toContain('-Dtlc2.tool.queue.DiskStateQueue.BufSize=1048576');
     }
   });
+
+  it('lets a BufSize in TLC_JAVA_OPTS win, since java keeps the last -D for a property', () => {
+    const r = runTlc('bufsize-override', ['drain-lease', 'DrainLease.cfg'], { TLC_JAVA_OPTS: '-Dtlc2.tool.queue.DiskStateQueue.BufSize=4096' });
+    expect(r.status).toBe(0);
+    expect(r.javaCalls).toHaveLength(1);
+    const sizes = [...r.javaCalls[0].matchAll(/-Dtlc2\.tool\.queue\.DiskStateQueue\.BufSize=(\d+)/g)].map(m => m[1]);
+    expect(sizes.at(-1)).toBe('4096');
+  });
 });
