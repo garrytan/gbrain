@@ -15,7 +15,7 @@ const PG_REFUSALS: ReadonlyArray<{ re: RegExp; code: string }> = [
 ];
 
 /** A `constraint_violation` of the store as the error PGLite (`constraint`, `table`) and postgres.js (`constraint_name`, `table_name`) raise. */
-export function asSqlConstraintError(error: unknown): unknown {
+function asSqlConstraintError(error: unknown): unknown {
   if (!(error instanceof Error) || (error as { code?: unknown }).code !== 'constraint_violation') return error;
   for (const { re, code } of PG_REFUSALS) {
     const m = re.exec(error.message);
