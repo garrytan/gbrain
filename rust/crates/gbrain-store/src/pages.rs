@@ -530,7 +530,7 @@ fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -
 
 /// An origin (`source_path`) in the form PGLite compares two of them: as stored, and on Windows
 /// with `\` read as `/` and case folded (`originKey` of `persistence/origin-guard.ts`).
-fn origin_key(path: &str) -> String {
+pub(crate) fn origin_key(path: &str) -> String {
     if cfg!(windows) {
         path.replace('\\', "/").to_lowercase()
     } else {
@@ -539,7 +539,7 @@ fn origin_key(path: &str) -> String {
 }
 
 /// The origin a page claims: its `source_path` while the page is live and the path is not empty.
-fn claimed_origin(page: &PageRecord) -> Option<String> {
+pub(crate) fn claimed_origin(page: &PageRecord) -> Option<String> {
     match (&page.source_path, page.deleted_at_us) {
         (Some(path), None) if !path.is_empty() => Some(origin_key(path)),
         _ => None,

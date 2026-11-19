@@ -34,6 +34,7 @@ pub mod timeline;
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
 // so building a family never edits this list.
 pub mod aliases;
+pub mod chat_usage;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
@@ -42,6 +43,7 @@ pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
+pub mod field_usage;
 pub mod jobs;
 pub mod keyword;
 pub mod link_queries;
@@ -54,11 +56,13 @@ pub mod relations;
 pub mod salience;
 pub mod stats;
 pub mod takes;
+pub mod telemetry;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
 pub mod vectors;
 pub mod wanted_links;
+pub mod write_guards;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
