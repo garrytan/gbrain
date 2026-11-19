@@ -142,9 +142,11 @@ Rust guesses and gaps (1x parity):
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
 
-`listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) answers
-`[]` without a store call: the store keeps no `decide_proposals`, because `insertProposal` (ai/decide/proposals-store.ts)
-writes one through `executeRaw`, which the Rust engine refuses.
+`listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) is the
+decide-proposals family's `list_pending_contradictions` (eval-capture, `eval_capture/decide_proposals.rs`): the pending
+proposals whose two facts both sit in the proposal's source and are active (not expired, `valid_until` unset or in the
+future), oldest first, at most 1000, with the new fact's tier, entity and claim, the slug of either fact and both claim
+values. An optional source and an ISO `since` filter by the proposal.
 
 ## The write gate (`trust::write_gate`)
 

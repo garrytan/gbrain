@@ -7,7 +7,8 @@ use gbrain_store::env::iso;
 use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use gbrain_store::eval_capture::decide_proposals::{
     DecideProposalInput, DecideProposalTransition, DecideReviewProposalInput,
-    DecideReviewProposalTransition, ListDecideProposalsOptions, ReviewQueueOp, SweepDeferredOp,
+    DecideReviewProposalTransition, ListDecideProposalsOptions, PendingContradictionsFilter,
+    ReviewQueueOp, SweepDeferredOp,
 };
 use memory_env::{T0, brain};
 use serde_json::{Value, json};
@@ -295,6 +296,23 @@ fn the_lists_filter_by_status_order_by_pair_index_or_age_and_limit() {
         limit: Some(-1),
     });
     assert_eq!(negative.unwrap_err().code, INVALID_ARGUMENT);
+}
+
+/// `listPendingContradictions` lists a proposal only when both its facts exist: a proposal whose
+/// facts are missing is not a contradiction, and a malformed `since` is refused.
+#[test]
+fn a_pending_proposal_without_its_facts_is_not_a_contradiction() {
+    let b = brain("dp-pending");
+    b.insert_decide_proposal(&proposal("s1", 0, 1, 2)).unwrap();
+    let none = b
+        .list_pending_contradictions(&PendingContradictionsFilter::default())
+        .unwrap();
+    assert!(none.is_empty());
+    let bad = b.list_pending_contradictions(&PendingContradictionsFilter {
+        source_id: None,
+        since: Some("yesterday".into()),
+    });
+    assert_eq!(bad.unwrap_err().code, INVALID_ARGUMENT);
 }
 
 #[test]

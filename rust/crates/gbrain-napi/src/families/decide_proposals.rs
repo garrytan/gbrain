@@ -56,6 +56,19 @@ impl Brain {
         })
     }
 
+    /// `listPendingContradictions({ sourceId?, since? }?)`: resolves the pending proposals whose two
+    /// facts are both active, with the facts' tier, entity and claim.
+    #[napi]
+    pub fn list_pending_contradictions<'env>(
+        &self,
+        env: &'env Env,
+        filter: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_pending_contradictions(&arg(filter, "listPendingContradictions filter")?)
+        })
+    }
+
     /// `transitionDecideProposal({ id, from, to, before?, after? })`: resolves whether a row moved.
     #[napi]
     pub fn transition_decide_proposal<'env>(
