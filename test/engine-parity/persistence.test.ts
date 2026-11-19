@@ -28,6 +28,7 @@ import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
 import type { QueuedPublicationEffect } from '../../src/core/engine-sql/persistence-journal.ts';
 import { assertPageRequestIdentity, completeWrite, releaseUnpublishedClaim } from '../../src/core/persistence/journal.ts';
+import { countPendingProjections, countProjectionRebuild, type CoverageRelevance } from '../../src/core/search/retrieval-coverage.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -1311,6 +1312,53 @@ describe('engine parity: write-journal housekeeping', () => {
       later: [row('window', 1, 'notes/a'), row('window', 2, 'notes/b2'), row('window', 3, 'notes/c')],
       pending: [], anyPending: [],
     });
+    return answers;
+  });
+
+  parityTest('many writes to one page keep one projection job at its last revision, and sealing drains every job', {
+    methods: ['putPage', 'sealChunks', 'readPageSnapshot', 'readSourceMembership', 'listPendingSegmentedProjections',
+      'selectProjectionWindowJobs', 'countPendingProjectionPages', 'projectionRebuildProgress'],
+  }, async (engine) => {
+    const ALL: CoverageRelevance = { all: true, types: [], patterns: [], pageIds: [], exactTopPageId: null, imageArm: false };
+    const body = (slug: string, n: number) => `${slug} body ${n}`;
+    const many = Array.from({ length: 8 }, (_, i) => `notes/many-${i}`);
+    // Five changes to one page, the last one twice (the repeat keeps the revision), then one write to each of many pages.
+    for (let n = 0; n < 5; n++) await engine.putPage('notes/hot', { type: 'note', title: 'hot', compiled_truth: body('notes/hot', n) });
+    await engine.putPage('notes/hot', { type: 'note', title: 'hot', compiled_truth: body('notes/hot', 4) });
+    for (const slug of many) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body(slug, 0) });
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const slugs = ['notes/hot', ...many];
+    const revisions = new Map<string, string>();
+    for (const slug of slugs) revisions.set(slug, (await engine.readPageSnapshot(slug))!.revision);
+    const TS = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$/;
+    const rows = (all: Awaited<ReturnType<BrainEngine['selectProjectionWindowJobs']>>) => all.map(r => ({
+      lane: r.lane, ord: r.ord === null ? null : Number(r.ord), slug: r.slug,
+      inc: r.source_incarnation === null ? null : r.source_incarnation === incarnation,
+      revision: r.revision === null ? null : r.revision === revisions.get(r.slug ?? ''), highWater: r.high_water === null ? null : TS.test(r.high_water),
+    })).sort((x, y) => (x.lane ?? '').localeCompare(y.lane ?? '') || (x.ord ?? 0) - (y.ord ?? 0) || (x.slug ?? '').localeCompare(y.slug ?? ''));
+    const start = { after: { source_incarnation: '00000000-0000-0000-0000-000000000000', slug: '' }, highWater: null };
+    const reads = async () => ({
+      window: rows(await engine.selectProjectionWindowJobs(start, true)),
+      anyWindow: rows(await engine.selectProjectionWindowJobs(start, false)),
+      pending: await engine.listPendingSegmentedProjections({ limit: 50, retryCooldown: false }),
+      count: await countPendingProjections(engine, {}, ALL),
+      rebuild: await countProjectionRebuild(engine, {}),
+    });
+    const queued = await reads();
+    // The drain: sealing each page at its current revision drops its job.
+    for (const slug of slugs) {
+      const n = slug === 'notes/hot' ? 4 : 0;
+      await installChunks(engine, slug, [chunk(0, body(slug, n))]);
+    }
+    const drained = await reads();
+    const answers = { queued, drained };
+    const sorted = [...slugs].sort();
+    const row = (lane: string, ord: number, slug: string) => ({ lane, ord, slug, inc: true, revision: true, highWater: true });
+    expect(answers.queued.window).toEqual([...sorted.map(slug => row('recent', 0, slug)), ...sorted.map((slug, i) => row('window', i + 1, slug))]);
+    expect(answers.queued.count).toMatchObject({ total: 9 });
+    const nulls = [{ lane: null, ord: null, slug: null, inc: null, revision: null, highWater: null }];
+    expect(answers.drained.window).toEqual(nulls);
+    expect(answers.drained.count).toMatchObject({ total: 0 });
     return answers;
   });
 

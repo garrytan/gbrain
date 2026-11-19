@@ -53,7 +53,7 @@ mod housekeeping;
 mod idle_probe;
 mod noop_settle;
 mod owner_scans;
-mod projection_queue;
+pub(crate) mod projection_queue;
 mod topology;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};

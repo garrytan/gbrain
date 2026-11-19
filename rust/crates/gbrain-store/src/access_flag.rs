@@ -176,6 +176,24 @@ impl KvWrite for FlaggingWriter<'_> {
             "a store write handle commits with its write, not on its own",
         ))
     }
+
+    // The special primitives go to the handle below unchanged, so a concurrent store keeps its
+    // conflict-free counters (lib.rs `write_chain`).
+    fn allocate(&mut self, key: &[u8], count: u64) -> Result<u64> {
+        self.0.allocate(key, count)
+    }
+
+    fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<()> {
+        self.0.raise_counter(key, value)
+    }
+
+    fn add_i64(&mut self, key: &[u8], delta: i64) -> Result<()> {
+        self.0.add_i64(key, delta)
+    }
+
+    fn counter_below(&mut self, key: &[u8], cap: i64) -> Result<Option<i64>> {
+        self.0.counter_below(key, cap)
+    }
 }
 
 #[cfg(test)]

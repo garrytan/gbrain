@@ -1572,9 +1572,30 @@ mod tests {
         }
     }
 
+    /// Stores an open page at `slug` through `put_page`, so the record is complete.
+    fn put_open_page(store: &Store, slug: &str) {
+        let input: crate::pages::PageInput = serde_json::from_value(
+            json!({"type": "note", "title": slug, "compiled_truth": "body"}),
+        )
+        .unwrap();
+        let opts: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+        store.put_page(slug, &input, &opts).unwrap();
+    }
+
+    /// Adds `readable_by` to the stored page record at `slug` with a raw put: a page write that
+    /// never calls `write_page`.
+    fn name_readers_raw(tx: &mut dyn KvWrite, slug: &str) -> Result<()> {
+        let page = keys::page("default", slug);
+        let mut record: Value = serde_json::from_slice(&tx.get(&page)?.unwrap_or_default())?;
+        record["frontmatter"]["readable_by"] = json!(["alice-example"]);
+        tx.put(&page, &serde_json::to_vec(&record)?)
+    }
+
     #[test]
     fn a_generation_write_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
@@ -1582,9 +1603,7 @@ mod tests {
                 let id = crate::pages::next_id(tx, ID_COUNTER)?;
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
-                let page = keys::page("default", "notes/closed");
-                let record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
-                tx.put(&page, &serde_json::to_vec(&record)?)
+                name_readers_raw(tx, "notes/closed")
             })
             .unwrap();
         assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
@@ -1772,6 +1791,7 @@ mod tests {
     #[test]
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         store
             .write(|tx| {
                 let record = AttemptRecord {
@@ -1784,9 +1804,7 @@ mod tests {
                 };
                 put_json(tx, &attempt_key("a1"), &record)?;
                 tx.put(&attempt_index_key(&record, "a1"), &[])?;
-                let page = keys::page("default", "notes/closed");
-                let page_record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
-                tx.put(&page, &serde_json::to_vec(&page_record)?)
+                name_readers_raw(tx, "notes/closed")
             })
             .unwrap();
         assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));

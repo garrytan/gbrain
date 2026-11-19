@@ -119,7 +119,8 @@ Rules for every method:
   while the first is open; nothing is waited for.
 - `FORMAT` is read before the records are opened. A `format_version` this build does not read
   (`addon.formatVersions` lists them) rejects `format_unknown` and nothing is written. A missing
-  `FORMAT` is rebuilt from the records.
+  `FORMAT` is rebuilt from the records. Every format number, its upgrade and what an older build
+  does with a newer brain are in [`docs/store/format.md`](docs/store/format.md).
 
 ### Lifecycle
 

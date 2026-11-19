@@ -2001,7 +2001,7 @@ pub(crate) fn snapshot_in(
 //   seal with the text writes the record again.
 // - A hard page delete removes it (`remove_page`).
 
-const SEARCH_TIMELINE: &str = "page_search_timeline";
+pub(crate) const SEARCH_TIMELINE: &str = "page_search_timeline";
 
 /// Characters of the sanitized timeline the page keyword vector reads (`PAGE_TIMELINE_FTS_MAX_CHARS`).
 pub(crate) const SEARCH_TIMELINE_MAX_CHARS: usize = 65_536;

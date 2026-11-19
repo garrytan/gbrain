@@ -79,15 +79,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	95	no	yes	yes	serves
+transaction	lifecycle	yes	97	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	113	yes	yes	yes	serves
-readPageSnapshot	pages	yes	28	no	yes	yes	serves
+readPageSnapshot	pages	yes	29	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	446	yes	yes	yes	serves
+putPage	pages	yes	451	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
@@ -131,7 +131,7 @@ searchKeyword	search	yes	36	yes	yes	yes	serves
 countKeywordPages	search	yes	11	no	yes	yes	serves
 searchKeywordPages	search	yes	16	no	yes	yes	serves
 searchTitles	search	yes	18	yes	yes	yes	serves
-searchVector	search	yes	3	yes	yes	yes	serves
+searchVector	search	yes	7	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	15	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
@@ -169,9 +169,9 @@ countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
 replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
 backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
 ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
-countPendingProjectionPages	retrieval_coverage	yes	9	no	yes	yes	serves
+countPendingProjectionPages	retrieval_coverage	yes	10	no	yes	yes	serves
 countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
-projectionRebuildProgress	retrieval_coverage	yes	4	no	yes	yes	serves
+projectionRebuildProgress	retrieval_coverage	yes	5	no	yes	yes	serves
 readProjectionReadinessGeneration	retrieval_coverage	yes	2	no	yes	yes	serves
 readProjectionReadiness	retrieval_coverage	yes	7	no	yes	yes	serves
 readSourceChunkerVersion	chunks	yes	2	no	yes	yes	serves
@@ -190,7 +190,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	31	yes	yes	yes	serves
-sealChunks	chunks	yes	57	no	yes	yes	serves
+sealChunks	chunks	yes	62	no	yes	yes	serves
 getChunks	chunks	yes	32	yes	yes	yes	serves
 getChunkPage	chunks	yes	13	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
@@ -384,7 +384,7 @@ readPersistenceBrainId	import_guards	yes	4	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	3	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	4	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	41	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	43	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -449,7 +449,7 @@ lockWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	14	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	41	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	42	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -471,8 +471,8 @@ listReservationsAfter	persistence_journal	yes	1	no	yes	yes	serves
 listTrueUpRequests	persistence_journal	yes	2	no	yes	yes	serves
 trueUpReservations	persistence_journal	yes	1	no	yes	yes	serves
 readCapacityForecastInputs	persistence_journal	yes	2	no	yes	yes	serves
-listPendingSegmentedProjections	persistence_journal	yes	2	no	yes	yes	serves
-selectProjectionWindowJobs	persistence_journal	yes	3	no	yes	yes	serves
+listPendingSegmentedProjections	persistence_journal	yes	3	no	yes	yes	serves
+selectProjectionWindowJobs	persistence_journal	yes	4	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	4	no	yes	yes	serves
@@ -770,7 +770,7 @@ listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	1	no	yes	yes	serves
 readTrustGeneration	trust	yes	1	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	9	no	yes	yes	serves
-upsertPageWriteGateReceipt	trust	yes	13	no	yes	yes	serves
+upsertPageWriteGateReceipt	trust	yes	15	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves

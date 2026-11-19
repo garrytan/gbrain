@@ -88,8 +88,125 @@ keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` ans
 
 ## Keys
 
-None written. The family owns the `R` tag and reads pages, chunks, segment views and sources through their families'
-readers. Every member is a full scan of the live pages (follow-up `keyword-lexeme-index`).
+The family owns the `R` tag and reads pages, chunks, segment views and sources through their families' readers. Each
+chunk-grain member and the title arm scan the live pages, or read the keyword index (below) when it serves.
+
+`R 0x00` is the keyword index state (`keys::keyword_index_state`, JSON `version`, `complete`, `cursor`). While it
+exists, every
+`Store::write` handle tracks what a write touches (`keyword/index_writer.rs`, `IndexingWriter`, the outer wrapper of the
+write handle chain in `lib.rs` `write_chain`): `K` chunk records mark the chunk; `P` page records mark the page, with
+the record stored before the statement's first write of the key; `M page_search_timeline/<id>`, `b 0x05 page_id` and
+`E page_id ...` mark the page. Other keys mark nothing. The flush at the end of each OCC attempt or bound statement
+resolves the touched set and rebuilds each touched document's postings through the inner handle
+(`keyword/index.rs` `reindex_chunk`, `reindex_page`). The wrapper forwards `allocate`, `raise_counter`, `add_i64` and
+`counter_below`, and so must every wrapper inside it.
+
+The postings (`keyword/index.rs`, numbers big-endian, `len` two bytes):
+
+| Key | Value |
+|---|---|
+| `R 0x01 len lexeme page_id chunk_index` | the chunk vector's positions for the lexeme, two bytes each |
+| `R 0x02 len lexeme page_id` | the same for the page vector (`titles.rs`) |
+| `R 0x03 len trigram page_id` | empty: one raw pg_trgm trigram of the page's title (`trgm.rs`, CRC-compacted for multibyte characters), soft-deleted pages included |
+| `R 0x04 len basename page_id` | empty: the page's slug basename, for the handle arm (a basename over 65,535 bytes has none) |
+| `R 0x05 page_id chunk_index`, `R 0x06 page_id` | the forward record: the postings the document owns, `kind(1) len(2) text` each |
+
+The postings are the output of the same `chunk_vector` and page vector code the scan reads, so the store has one
+tokenizer. A vector past the tsvector size cap has no postings and matches nothing, as in the scan. A reindex deletes
+the postings the forward record lists and the new vector lacks, and writes only the entries that changed.
+
+The postings serve a read when the state in its snapshot is complete and of `INDEX_VERSION`, and
+`GBRAIN_RUST_KEYWORD_SCAN=1` is not set. A member reads the postings of every lexeme of its match, rank and phrase
+queries, takes the candidates from the match query's tree (an AND or phrase intersects its bounded sides, an OR unions
+two bounded sides; a NOT, a stop word or an OR with an unbounded side has no bound and the member scans), and gives
+each candidate a sparse vector of those lexemes. `ts_matches`, `ts_rank` and `ts_rank_cd` read only the query's
+lexemes, so the sparse vector gives the full vector's answer and score bits. `keyword/walk.rs` reads the candidate
+pages, applies each member's page and chunk predicates before it reads a chunk, and reads every chunk of a handle page
+with its full vector. `keyword_rare_term_pages` visits the pages in `P` key order, as its cap counts in that order;
+the other members sort their own results with total tie-breaks.
+
+### Build, verify and rebuild
+
+Store format 4 means the store keeps the postings (`format.rs`). A fresh store is created with a complete, empty
+index. The upgrade from formats 1 to 3 deletes every `R` record and writes an incomplete state with cursor 0 in its
+own transaction, so a crash leaves the old store or the new one. Every open reads the state
+(`keyword/index_build.rs` `open_index`): a state of a newer `INDEX_VERSION` refuses the open with `format_unknown`
+before any write; a missing state or an older version is reset the same way; an incomplete state starts the build.
+
+The build runs on a background thread the `Store` owns (`Builder`; off with `OpenOptions::keyword_index_builder`).
+Each batch (`build_batch`, 256 pages) reads the next page ids from the `I` family past the cursor, rebuilds each
+page's page, trigram and basename postings and its chunks' postings, and writes the new cursor in the same
+transaction through `Store::write` and its OCC retry. Only the batch that finds no page past its last one marks the
+state complete. Writes during the build keep the documents they touch current, so a page behind the cursor is
+current and a page ahead is rebuilt by its batch. Dropping the `Store` stops the thread after its current batch
+(waiting up to 30 s); the next open resumes from the cursor. Until the state is complete, every member scans.
+
+| Store API | What it does |
+|---|---|
+| `keyword_index_state()` | the state (`None` when the store keeps none) |
+| `keyword_index_build_step(max_pages)` | runs one batch in its own transaction, for callers that step the build |
+| `keyword_index_verify(max_pages)` | rebuilds the expected records of the first `max_pages` pages (all when `None`) and counts the `missing` and `changed` ones; `orphan` counts stored records no page's rebuild has, only after a walk of every page |
+| `keyword_index_rebuild()` | deletes every `R` record and writes an incomplete state in one transaction, then starts the build |
+
+The binding and `gbrain doctor` do not expose `verify` or `rebuild` yet.
+
+`Store::open_dir_read_only(dir)` opens an existing brain only to read, for checks such as `keyword_index_verify`
+that must not change the store they check. It opens the record file through redb's read-only database
+(`redb_kv.rs` `RedbReadOnlyKv`), which takes no write lock, runs no recovery and commits nothing on close: a plain
+open commits redb's allocator state when it closes, so it changes bytes of `records.redb` even when nothing was
+written. The builder does not run. Every write is refused with `read_only_transaction`, and so is an open that
+would have to write: no records yet, a format before 4 (the upgrade) or an index state to reset. `store_io` names
+a missing record file or one not closed cleanly (redb repairs only on a writable open); `store_locked` means a
+writable handle has the brain open. Pinned by `tests/read_only.rs` (the record file and `FORMAT` keep every byte
+across a keyword search and `keyword_index_verify`) and the format-1 case in `tests/lifecycle.rs`.
+
+### Scale
+
+Measured with `keyword_scale` (`crates/gbrain-store/examples/keyword_scale.rs`) on the bake-off corpus at 50,000
+pages and 200,000 chunks (`rust/bench/corpus/dbpedia.py --chunks 200000`; where the text comes from and its licence
+are in `rust/bench/corpus/PROVENANCE.md`). A release build, the store opened with `Store::open_dir`, one fresh
+process per member, 30 queries per member (35 for `fuzzy`), every query measured, pass 2 of 2. With 30 queries the
+p99 is the slowest query. "Scan" is the same member with the index forced off (`GBRAIN_RUST_KEYWORD_SCAN=1`).
+
+| Member | p50 ms, index (scan) | p99 ms, index (scan) | Peak RSS MiB, index (scan) |
+|---|---|---|---|
+| `arm` | 5.4 (8,121) | 203 (8,868) | 405 (650) |
+| `chunks` | 5.8 (7,764) | 157 (8,182) | 396 (667) |
+| `pages_count` | 6.2 (7,649) | 127 (7,738) | 361 (648) |
+| `pages_search` | 5.8 (7,774) | 162 (8,145) | 402 (648) |
+| `titles` | 0.1 (540) | 2.5 (663) | 24 (454) |
+| `titles_complete` | 0.1 (497) | 2.2 (508) | 23 (435) |
+| `fuzzy` | 3.4 (393) | 10.8 (469) | 30 (359) |
+
+The first query after open takes 45 to 58 ms on the four body members. Every
+member is under 100 ms at p50 and 500 ms at p99.
+
+- Build from a format 2 store: 196 batches of 256 pages in 505 s. The build is bound by the durable commit of each
+  batch (the thread uses about 8% of a CPU), and it peaks at 1.04 GiB RSS.
+- Size: the file is 2.23 GB after the build. Compacted, it is 1.37 GB; the same brain before the index compacts to
+  0.86 GB, so the index adds 0.51 GB compacted. The postings (`R` keys and values) are 222 MB in 7,195,328 records. The
+  build leaves about 0.86 GB of free pages in the file.
+- `keyword_index_verify(None)` (`index-check`) takes 21 s and reads 1.0 GiB RSS: 7,195,327 postings expected, 0
+  missing, 0 changed, 0 orphan.
+
+NOT-only queries (`-word`) have no candidate bound, so they scan, and they are not faster with the index. At this
+size `keyword_scale not-only` gives a p50 of 10.3 s for `arm`, 10.2 s for `chunks`, 9.9 s for `pages_search` and 2.3 s
+for `pages_count`.
+
+Writes keep the index current in the same transaction. `keyword_scale writes` on a copy of the 200,000-chunk store:
+200 durable `put_page` calls took a p50 of 208 ms (p99 318 ms). Body queries while a writer ran had a p50 of 8.5 ms,
+against 6.7 ms alone; title queries were 0.20 ms in both cases. The index check after those writes found 0 missing,
+0 changed and 0 orphan postings. The store has no way to run without the index, so there is no baseline for the put
+cost without postings.
+
+`verify` at this size (512 cases on the bench corpus, 544 with the private-page fixtures on a copy) found 0 mismatches
+between the indexed and the forced-scan result bytes for every member.
+
+To rerun: the header of `keyword_scale.rs` lists every mode and the full recipe (`load ... nosync`, `queries`,
+`build`, `run <store> <queries> <member> 900 2` once per member, `index-check`, `verify`, `sizes`). `index-check`,
+`sizes` and `verify` without `fixtures` open the store read-only, so the file keeps every byte. `verify` is the
+untimed correctness mode: it runs each query through the index and through the forced scan on the same store and
+compares the full result bytes, and `writes` times durable `put_page` calls and queries during writes.
 
 ## The vector cache
 
@@ -256,6 +373,12 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `findByTitleFuzzy` without a `sourceId` reads soft-deleted pages too, as the SQL does (follow-up
   `fuzzy-title-unscoped-deleted`). PGLite types `$minSimilarity` as `real`; Postgres may bind it as `float8`, which
   would compare in f64 (not verified).
+- `findByTitleFuzzy` through the index reads only the pages whose titles share at least `min_shared(n1, min)` of the
+  name's `n1` trigrams (`R 0x03`), then runs the same exact score, `%`, LIKE and source checks. The score is
+  `c / (n1 + n2 - c)` divided in f32, at most `c / n1` in real numbers; the bound uses `min` lowered by two f32
+  steps, so a rounded score equal to `min` is never lost. A unit test checks the bound against `calc_sml` for every
+  `(c, n1)` with `n1 <= 2,048` at its hardest `n2`, and every `n2` for small and large `n1`. Above 2,048 name
+  trigrams any shared trigram admits; a `min` of zero, below zero or not finite scans.
 - `findByTitleFuzzy`'s `dirPrefix` is a LIKE pattern (`sql_like`): `%`, `_` and `\\` escapes as PostgreSQL reads them. The
   matcher is iterative with one backtrack point (the last `%`), so its work is bounded by the text length times the
   pattern length; a prefix of many `%` groups answers at once (`title-fuzzy-like-bound.test.ts`).
