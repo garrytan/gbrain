@@ -55,8 +55,9 @@ pub use link_temporal::{
     InboundEdgeRow, KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship,
     ManualWriteInput, ManualWriteResult, NoteRow, NoteRowsInput, PageStatusInput, PageStatusRow,
     RecordMetadataInput, RecordMetadataRows, ReferrerGroupInput, ReferrerGroupRow,
-    ReferrerPageDetailRow, ReferrerPageDetailsInput, RelationshipEvidence, RelationshipKey,
-    SearchVectorCounts, StaleKeysInput, StateWrite,
+    ReferrerPageDetailRow, ReferrerPageDetailsInput, ReferrerTargetCountInput,
+    ReferrerTargetCountRow, RelationshipEvidence, RelationshipKey, SearchVectorCounts,
+    StaleKeysInput, StateWrite,
 };
 mod retrieval_coverage;
 pub use retrieval_coverage::{

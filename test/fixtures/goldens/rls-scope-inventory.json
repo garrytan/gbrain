@@ -5339,6 +5339,7 @@
         "readReceiptBudget": "none",
         "readReferrerGroupRows": "none",
         "readReferrerPageDetails": "none",
+        "readReferrerTargetCounts": "none",
         "readRetirementHop": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",

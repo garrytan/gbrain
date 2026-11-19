@@ -184,6 +184,34 @@ const PINS: Pin[] = [
        ) x
       ORDER BY c.canonical_type, x.d DESC NULLS LAST, x.source_id, x.slug`],
   })),
+  ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
+    from: 'src/core/mentions/referrers.ts:387 readTargetReferences counts (with referrersCteBatched at :274)',
+    case: {
+      method: 'readReferrerTargetCounts', variant: excludePrivate ? 'remote+floor' : 'local',
+      run: e => e.readReferrerTargetCounts({ sources: ['default', 'default'], slugs: ['companies/acme-example', 'people/alice-example'], indexes: [0, 1] }, {
+        referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], excludePrivate,
+        eligibility: floored ? { floor: 'operator_curated' } : undefined, includeQuarantined: false, recordTypes: ['meeting'],
+      }),
+    },
+    texts: () => [`WITH tgt AS MATERIALIZED (
+      SELECT k.i, t.id FROM pages t JOIN unnest($1::text[], $2::text[], $3::int[]) AS k(s, g, i) ON t.source_id = k.s AND t.slug = k.g
+       WHERE t.deleted_at IS NULL${excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : ''}
+    ),
+    refs AS MATERIALIZED (
+      SELECT DISTINCT tg.i, l.from_page_id AS id FROM links l JOIN tgt tg ON l.to_page_id = tg.id WHERE true${excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : ''}
+    ),
+    typed AS MATERIALIZED (
+      SELECT r.i, f.id, f.slug, f.source_id, f.type,
+             COALESCE(f.effective_date, f.updated_at) AS d,
+             COALESCE(($6::text[])[array_position($5::text[], f.type)], NULLIF(f.type, ''), 'untyped') AS canonical_type
+        FROM refs r JOIN pages f ON f.id = r.id
+       WHERE f.deleted_at IS NULL AND f.source_id = ANY($4::text[])
+         AND NOT EXISTS (SELECT 1 FROM tgt x WHERE x.i = r.i AND x.id = f.id)${excludePrivate ? ` AND ${privatePagesFilterFastForCaller('f')}` : ''} AND ${pageEligibleSql('f', floored ? { floor: 'operator_curated' } : undefined)} AND ${quarantineFilterFragment('f')}
+    )
+     SELECT i, NULL::text AS canonical_type, count(*)::int AS n FROM typed GROUP BY i
+     UNION ALL
+     SELECT i, canonical_type, count(*)::int AS n FROM typed WHERE canonical_type = ANY($7::text[]) GROUP BY i, canonical_type`],
+  })),
   {
     from: 'src/core/mentions/referrers.ts:99 hydrate',
     case: { method: 'readReferrerPageDetails', variant: 'default', run: e => e.readReferrerPageDetails([7, 3]) },

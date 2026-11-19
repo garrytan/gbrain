@@ -274,6 +274,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listRecordMetadataRows': OOS.linkTemporal,
   'readReferrerGroupRows': OOS.linkTemporal,
   'readReferrerPageDetails': OOS.linkTemporal,
+  'readReferrerTargetCounts': OOS.linkTemporal,
   'countSearchVectorRows': OOS.linkTemporal,
   'replaceSearchVectorTriggerFunction': OOS.linkTemporal,
   'backfillSearchVectors': OOS.linkTemporal,

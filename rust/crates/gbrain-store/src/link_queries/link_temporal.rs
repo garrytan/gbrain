@@ -7,7 +7,7 @@
 //! linkRelationshipKeysForPages, staleLinkRelationshipKeys, linkRelationshipKeysForOrigin,
 //! linkRelationshipKeysTouching, applyLinkTemporalRows, writeManualLinkTransitions,
 //! removeManualLinkTransitions, listRelationshipNoteRows, readEntityInboundEdges, edgeValidityCounts,
-//! listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails,
+//! listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts,
 //! countSearchVectorRows.
 //!
 //! The state itself (stints, status, evidence hash) is built by the pure TypeScript builder in
@@ -42,6 +42,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 /// The sub-tag after `q <source> \0` that marks a relationship state row.
 const RELATIONSHIP: u8 = b'R';
@@ -561,6 +562,119 @@ pub struct ReferrerGroupRow {
     /// `COALESCE(effective_date, updated_at)` as `to_char` UTC microsecond text.
     pub d: String,
     pub gtotal: u64,
+}
+
+/// `readReferrerTargetCounts`: the batched card counts per target index.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReferrerTargetCountInput {
+    /// The target pages, `(targetSources[k], targetSlugs[k])`, each of index `targetIndexes[k]`.
+    pub target_sources: Vec<String>,
+    pub target_slugs: Vec<String>,
+    pub target_indexes: Vec<i64>,
+    pub referrer_sources: Vec<String>,
+    /// Pack type aliases and the canonical type each maps to, index for index.
+    pub stored_types: Vec<String>,
+    pub canonical_types: Vec<String>,
+    /// The canonical types counted on their own.
+    pub record_types: Vec<String>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
+    pub include_quarantined: bool,
+}
+
+/// One count of `readReferrerTargetCounts`: an index's total (`canonical_type` null) or its total for a record type.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerTargetCountRow {
+    pub i: i64,
+    pub canonical_type: Option<String>,
+    pub n: u64,
+}
+
+/// The `typed` CTE's read scope, shared by the referrer reads.
+struct ReferrerScope<'a> {
+    referrer_sources: &'a [String],
+    stored_types: &'a [String],
+    canonical_types: &'a [String],
+    exclude_private: Option<&'a PrivacyPolicy>,
+    trust: TrustPolicy,
+    include_quarantined: bool,
+}
+
+impl ReferrerScope<'_> {
+    /// `tgt`: the live target page's id, unless the policy hides it.
+    fn target(&self, read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Option<u64>> {
+        let Some(target) = live_page(read, source_id, slug)? else {
+            return Ok(None);
+        };
+        if let Some(policy) = self.exclude_private
+            && page_hidden(read, &target, policy)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(target.id))
+    }
+
+    /// `refs` and `typed`: each live page in `referrer_sources` that links to one of `targets` and is
+    /// not one of them, with its canonical type, in id order. A policy leaves out a link whose origin
+    /// page it hides and a hidden referrer; the trust floor, the flagged filter and quarantine apply.
+    fn referrers(
+        &self,
+        read: &dyn KvRead,
+        pages: &mut Pages<'_>,
+        targets: &BTreeSet<u64>,
+    ) -> Result<Vec<(Rc<PageRecord>, String)>> {
+        let mut refs = BTreeSet::new();
+        for target in targets {
+            for link in in_links(read, *target)? {
+                if let Some(policy) = self.exclude_private
+                    && !link_origin_shown(pages, &link, policy)?
+                {
+                    continue;
+                }
+                refs.insert(link.from_page_id);
+            }
+        }
+        let mut out = Vec::new();
+        for id in refs {
+            if targets.contains(&id) {
+                continue;
+            }
+            let Some(page) = pages.get(id)?.filter(|p| live(p)) else {
+                continue;
+            };
+            if !self.referrer_sources.contains(&page.source_id) {
+                continue;
+            }
+            if let Some(policy) = self.exclude_private
+                && page_hidden(read, &page, policy)?
+            {
+                continue;
+            }
+            let tier = TrustTier::stored(page.trust_tier.as_deref());
+            if !self.trust.admits(read, "pages", page.id, tier)? {
+                continue;
+            }
+            if !self.include_quarantined && page.frontmatter.contains_key(QUARANTINE_KEY) {
+                continue;
+            }
+            let canonical = self
+                .stored_types
+                .iter()
+                .position(|t| *t == page.page_type)
+                .and_then(|i| self.canonical_types.get(i).cloned())
+                .unwrap_or_else(|| {
+                    if page.page_type.is_empty() {
+                        "untyped".to_string()
+                    } else {
+                        page.page_type.clone()
+                    }
+                });
+            out.push((page, canonical));
+        }
+        Ok(out)
+    }
 }
 
 /// `readReferrerPageDetails` input: the page ids to read.
@@ -1911,66 +2025,21 @@ impl Store {
     ) -> Result<Vec<ReferrerGroupRow>> {
         let read = self.read()?;
         let read = &*read;
-        let trust = TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?;
+        let scope = ReferrerScope {
+            referrer_sources: &input.referrer_sources,
+            stored_types: &input.stored_types,
+            canonical_types: &input.canonical_types,
+            exclude_private: input.exclude_private.as_ref(),
+            trust: TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?,
+            include_quarantined: input.include_quarantined,
+        };
         let mut pages = Pages::new(read);
         let mut targets = BTreeSet::new();
         for (source_id, slug) in input.target_sources.iter().zip(&input.target_slugs) {
-            let Some(target) = live_page(read, source_id, slug)? else {
-                continue;
-            };
-            if let Some(policy) = &input.exclude_private
-                && page_hidden(read, &target, policy)?
-            {
-                continue;
-            }
-            targets.insert(target.id);
-        }
-        let mut refs = BTreeSet::new();
-        for target in &targets {
-            for link in in_links(read, *target)? {
-                if let Some(policy) = &input.exclude_private
-                    && !link_origin_shown(&mut pages, &link, policy)?
-                {
-                    continue;
-                }
-                refs.insert(link.from_page_id);
-            }
+            targets.extend(scope.target(read, source_id, slug)?);
         }
         let mut groups: BTreeMap<String, Vec<(i64, String, String, u64, String)>> = BTreeMap::new();
-        for id in refs {
-            if targets.contains(&id) {
-                continue;
-            }
-            let Some(page) = pages.get(id)?.filter(|p| live(p)) else {
-                continue;
-            };
-            if !input.referrer_sources.contains(&page.source_id) {
-                continue;
-            }
-            if let Some(policy) = &input.exclude_private
-                && page_hidden(read, &page, policy)?
-            {
-                continue;
-            }
-            let tier = TrustTier::stored(page.trust_tier.as_deref());
-            if !trust.admits(read, "pages", page.id, tier)? {
-                continue;
-            }
-            if !input.include_quarantined && page.frontmatter.contains_key(QUARANTINE_KEY) {
-                continue;
-            }
-            let canonical = input
-                .stored_types
-                .iter()
-                .position(|t| *t == page.page_type)
-                .and_then(|i| input.canonical_types.get(i).cloned())
-                .unwrap_or_else(|| {
-                    if page.page_type.is_empty() {
-                        "untyped".to_string()
-                    } else {
-                        page.page_type.clone()
-                    }
-                });
+        for (page, canonical) in scope.referrers(read, &mut pages, &targets)? {
             let d = page.effective_date_us.unwrap_or(page.updated_at_us);
             groups.entry(canonical).or_default().push((
                 d,
@@ -2001,6 +2070,62 @@ impl Store {
                     gtotal,
                 });
             }
+        }
+        Ok(out)
+    }
+
+    /// `readReferrerTargetCounts`: per target index (in ascending order), the referrers of its live
+    /// pages other than its own pages, as `readReferrerGroupRows` reads them: the total (no canonical
+    /// type), then the total of each canonical type in `recordTypes` that has any, bytewise. An index
+    /// with no referrer has no row.
+    pub fn read_referrer_target_counts(
+        &self,
+        input: &ReferrerTargetCountInput,
+    ) -> Result<Vec<ReferrerTargetCountRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = ReferrerScope {
+            referrer_sources: &input.referrer_sources,
+            stored_types: &input.stored_types,
+            canonical_types: &input.canonical_types,
+            exclude_private: input.exclude_private.as_ref(),
+            trust: TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?,
+            include_quarantined: input.include_quarantined,
+        };
+        let mut pages = Pages::new(read);
+        let mut targets: BTreeMap<i64, BTreeSet<u64>> = BTreeMap::new();
+        for ((source_id, slug), i) in input
+            .target_sources
+            .iter()
+            .zip(&input.target_slugs)
+            .zip(&input.target_indexes)
+        {
+            if let Some(id) = scope.target(read, source_id, slug)? {
+                targets.entry(*i).or_default().insert(id);
+            }
+        }
+        let mut out = Vec::new();
+        for (i, ids) in &targets {
+            let referrers = scope.referrers(read, &mut pages, ids)?;
+            if referrers.is_empty() {
+                continue;
+            }
+            let mut by_type: BTreeMap<&str, u64> = BTreeMap::new();
+            for (_, canonical) in &referrers {
+                if input.record_types.contains(canonical) {
+                    *by_type.entry(canonical.as_str()).or_default() += 1;
+                }
+            }
+            out.push(ReferrerTargetCountRow {
+                i: *i,
+                canonical_type: None,
+                n: referrers.len() as u64,
+            });
+            out.extend(by_type.into_iter().map(|(t, n)| ReferrerTargetCountRow {
+                i: *i,
+                canonical_type: Some(t.to_string()),
+                n,
+            }));
         }
         Ok(out)
     }

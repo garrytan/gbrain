@@ -25,7 +25,7 @@ import {
   type AssertionRow, type ExistingRow, type RelationshipEvidence, type RelationshipKey, type RelationshipStateWrite, type TransitionRow,
 } from '../link-relationships.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { referrerGroupsSql, referrerPageDetailsSql } from '../mentions/referrers-sql.ts';
+import { referrerGroupsSql, referrerPageDetailsSql, referrerTargetCountsSql } from '../mentions/referrers-sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { SqlExecutor } from './executor.ts';
 
@@ -472,4 +472,29 @@ export interface ReferrerPageDetailRow {
 export async function readReferrerPageDetails(exec: Exec, ids: readonly number[]): Promise<ReferrerPageDetailRow[]> {
   const rows = await exec.executeRaw<ReferrerPageDetailRow>(referrerPageDetailsSql(), [[...ids]]);
   return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
+/** The batched card counts' scope: the group read's, without the cap, plus the canonical record types to total. */
+export type ReferrerTargetCountScope = Omit<ReferrerGroupScope, 'perGroup'> & { recordTypes: readonly string[] };
+
+/** One count: a target index's referrer total (`canonical_type` null) or its total for one record type. */
+export interface ReferrerTargetCountRow {
+  i: number;
+  canonical_type: string | null;
+  n: number;
+}
+
+/**
+ * Per target index (`target.indexes[k]` names the index of `(sources[k], slugs[k])`; an index may hold several pages),
+ * the live pages in `referrerSources` that link to one of its live pages, other than its own pages: the total, and
+ * the total of each canonical type in `recordTypes` that has any. An index with no referrer has no row. Rows come in
+ * no set order. The read scope applies as in `readReferrerGroupRows`.
+ */
+export async function readReferrerTargetCounts(exec: Exec,
+  target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+  scope: ReferrerTargetCountScope): Promise<ReferrerTargetCountRow[]> {
+  const rows = await exec.executeRaw<ReferrerTargetCountRow>(referrerTargetCountsSql(scope),
+    [[...target.sources], [...target.slugs], [...target.indexes], [...scope.referrerSources], [...scope.storedTypes],
+      [...scope.canonicalTypes], [...scope.recordTypes]]);
+  return rows.map(r => ({ i: Number(r.i), canonical_type: r.canonical_type ?? null, n: Number(r.n) }));
 }
