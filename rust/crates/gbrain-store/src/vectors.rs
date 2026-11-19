@@ -273,7 +273,8 @@ fn js_number(value: f64) -> String {
     }
 }
 
-/// pgvector's parse of the query vector: at least one dimension, every value finite.
+/// pgvector's parse of the query vector: at least one dimension, every value finite and within float4 range (pgvector
+/// reads each value as a float4 and refuses one out of range; a plain cast would turn it into an infinity).
 pub(crate) fn check_query(query: &[f64]) -> Result<Vec<f32>> {
     if query.is_empty() {
         return Err(StoreError::invalid("vector must have at least 1 dimension"));
@@ -284,6 +285,12 @@ pub(crate) fn check_query(query: &[f64]) -> Result<Vec<f32>> {
         }
         if value.is_infinite() {
             return Err(StoreError::invalid("infinite value not allowed in vector"));
+        }
+        // Rounds as strtof does: a value that rounds past f32::MAX overflows (ERANGE in pgvector).
+        if (*value as f32).is_infinite() {
+            return Err(StoreError::invalid(format!(
+                "\"{value}\" is out of range for type vector"
+            )));
         }
     }
     Ok(query.iter().map(|v| *v as f32).collect())
@@ -726,6 +733,19 @@ mod tests {
     use crate::sources::SourceInput;
     use crate::takes::TakeInput;
     use crate::test_support::store;
+
+    #[test]
+    fn a_query_value_beyond_float4_range_is_refused_not_turned_into_infinity() {
+        // pgvector parses each value as a float4 and refuses one out of its range; a cast would make it infinite.
+        for value in [1e39, -1e39, f64::from(f32::MAX) * 2.0] {
+            let error = check_query(&[0.5, value]).expect_err("out of range");
+            assert_eq!(error.code, crate::error::INVALID_ARGUMENT, "{value}");
+        }
+        assert_eq!(
+            check_query(&[f64::from(f32::MAX), f64::from(f32::MIN)]).unwrap(),
+            vec![f32::MAX, f32::MIN]
+        );
+    }
 
     const MODEL: &str = "openai:text-embedding-3-large";
 
