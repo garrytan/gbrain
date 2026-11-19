@@ -10,6 +10,7 @@
 import * as jobsQueue from '../../src/core/engine-sql/jobs-queue.ts';
 import * as jobsHealth from '../../src/core/engine-sql/jobs-health.ts';
 import * as jobsStatus from '../../src/core/engine-sql/jobs-status.ts';
+import * as jobsSpend from '../../src/core/engine-sql/jobs-spend.ts';
 
 const MEMBERS = [
   'deleteTerminalJob', 'pauseJob', 'resumeJob', 'failParentJob', 'resolveParentJob', 'resolveStrandedParents', 'detachChildJob',
@@ -36,6 +37,12 @@ const STATUS_MEMBERS = [
   'readEmbedBackfillBySource',
 ] as const satisfies ReadonlyArray<keyof typeof jobsStatus>;
 
+/** The spend reservations and the lease-pressure log (engine-sql/jobs-spend.ts), added the same way (group C). */
+const SPEND_MEMBERS = [
+  'readJobSpendTree', 'insertSpendReservation', 'expireSpendReservations', 'settleSpendReservation', 'markSpendUsageUnknown',
+  'insertLeasePressure', 'countLeasePressure', 'listRecentLeasePressure',
+] as const satisfies ReadonlyArray<keyof typeof jobsSpend>;
+
 /** `fake` with every queue member it lacks, each running the shared statement on `fake`. */
 export function withQueueMembers<T extends object>(fake: T): T {
   const target = fake as Record<string, unknown>;
@@ -52,6 +59,11 @@ export function withQueueMembers<T extends object>(fake: T): T {
   for (const name of STATUS_MEMBERS) {
     if (name in target) continue;
     const member = jobsStatus[name] as (tx: unknown, ...args: unknown[]) => unknown;
+    target[name] = (...args: unknown[]) => member(fake, ...args);
+  }
+  for (const name of SPEND_MEMBERS) {
+    if (name in target) continue;
+    const member = jobsSpend[name] as (tx: unknown, ...args: unknown[]) => unknown;
     target[name] = (...args: unknown[]) => member(fake, ...args);
   }
   return fake;

@@ -11,8 +11,9 @@
 //! `YYYY/MM/DD`, optionally followed by `T` or a space and a time it ignores, and refuses the
 //! rest with `invalid_argument`. A date that does not exist (`2026-02-30`) is refused too.
 //!
-//! Write receipts: every entry written through [`insert_entry`] or [`put_entry`] is stamped with
-//! the write's actor, as the PGLite attribution trigger stamps it (`receipt.rs`).
+//! Write receipts and trust: every entry written through [`insert_entry`] or [`put_entry`] is
+//! stamped with the write's actor, as the PGLite attribution trigger stamps it (`receipt.rs`), and
+//! with its trust tier and write origin, as the `trust_tier_stamp` trigger stamps them (`tier.rs`).
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
@@ -21,13 +22,16 @@ use crate::kv::{KvRead, KvWrite, prefix_end, scan_prefix};
 use crate::links::{missing, no_nul};
 use crate::pages::{PageRecord, clean, next_id, read_page, read_page_by_id, scope_sources};
 use crate::sources::DEFAULT_SOURCE;
+use crate::trust::TrustPolicy;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 mod receipt;
+mod tier;
 pub(crate) use receipt::TimelineReceipt;
+pub(crate) use tier::TimelineTrust;
 
 const NEXT_TIMELINE_ID: &str = "next_timeline_id";
 
@@ -47,6 +51,10 @@ pub(crate) struct TimelineRecord {
     /// The write receipt. Absent in a record stored before it, and omitted while every column is null.
     #[serde(default, skip_serializing_if = "TimelineReceipt::is_empty")]
     pub receipt: TimelineReceipt,
+    /// `trust_tier` and `write_origin`. Absent in a record stored before them, and omitted while the
+    /// tier is `unknown` with no origin.
+    #[serde(default, skip_serializing_if = "TimelineTrust::is_empty")]
+    pub trust: TimelineTrust,
 }
 
 impl TimelineRecord {
@@ -55,7 +63,7 @@ impl TimelineRecord {
         keys::timeline_dedup(self.page_id, &self.date, &digest, &self.source)
     }
 
-    /// The `TimelineEntry` row with its receipt columns. `date` stays `YYYY-MM-DD`;
+    /// The `TimelineEntry` row with its trust and receipt columns. `date` stays `YYYY-MM-DD`;
     /// `created_at` and `last_written_at` are ISO strings.
     pub(crate) fn to_json(&self) -> Value {
         let mut row = json!({
@@ -69,6 +77,7 @@ impl TimelineRecord {
             "created_at": iso(self.created_at_us),
         });
         if let Value::Object(map) = &mut row {
+            self.trust.extend_json(map);
             self.receipt.extend_json(map);
         }
         row
@@ -117,6 +126,15 @@ pub struct TimelineOptions {
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`) the TypeScript member
     /// reads from the rendered SQL; null reads every row.
     pub exclude_private: Option<PrivacyPolicy>,
+    /// A read-eligibility policy was given (`eligibility`): hide the rows `projectionEligibleSql`
+    /// always hides.
+    pub eligible_only: bool,
+    /// The policy's `floor`: hide a row whose stored tier is below it (`trustFloorSql`).
+    pub min_trust: Option<String>,
+    /// The policy's `suppressFlagged`: hide an agent-written-or-lower row with an activation flag
+    /// receipt (`activationSuppressedSql('timeline_entries', ..)`).
+    pub suppress_flagged: bool,
+    /// A raw `eligibility` value is refused; the TypeScript member sends `eligibleOnly` instead.
     pub eligibility: Option<Value>,
 }
 
@@ -177,7 +195,7 @@ fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool
     if tx.get(&dedup)?.is_some() {
         return Ok(false);
     }
-    let record = receipt::stamp(None, &record)?;
+    let record = receipt::stamp(None, &tier::stamp(None, &record)?)?;
     put_json(
         tx,
         &keys::timeline(record.page_id, &record.date, record.id),
@@ -224,7 +242,8 @@ pub(crate) fn read_entry(
 /// `old`'s `E` key and its `D` key when that `D` key still points at `old.id`. Refuses with
 /// `constraint_violation` when `new`'s `D` key points at another entry (the dedup unique index).
 /// Writes `new`'s `E` and `D` keys and raises `G` of `new.page_id`; this path never lowers `G`.
-/// `new` is stored with its write receipt stamped (`receipt::stamp`; `old` is the update's preimage).
+/// `new` is stored with its trust and write receipt stamped (`tier::stamp`, `receipt::stamp`; `old`
+/// is the update's preimage).
 /// One exception lowers it: `deleteTimelineRows` (timeline_queries/site_reads.rs `reset_latest`)
 /// resets `G` to the newest `created_at` of the rows left, or deletes it when no row is left. On a
 /// refusal the caller returns the error, so the write transaction keeps nothing.
@@ -252,7 +271,7 @@ pub(crate) fn put_entry(
             "duplicate key value violates unique constraint on timeline_entries (page_id, date, summary, source)",
         ));
     }
-    let new = &receipt::stamp(old, new)?;
+    let new = &receipt::stamp(old, &tier::stamp(old, new)?)?;
     put_json(tx, &keys::timeline(new.page_id, &new.date, new.id), new)?;
     tx.put(&dedup, &new.id.to_be_bytes())?;
     raise_latest(tx, new.page_id, new.created_at_us)
@@ -428,6 +447,7 @@ impl Store {
                     event_page_id: None,
                     created_at_us: self.env.now_micros(),
                     receipt: TimelineReceipt::default(),
+                    trust: TimelineTrust::default(),
                 },
             )
         })
@@ -480,6 +500,7 @@ impl Store {
                     event_page_id: None,
                     created_at_us: now,
                     receipt: TimelineReceipt::default(),
+                    trust: TimelineTrust::default(),
                 };
                 if insert_entry(tx, record)? {
                     inserted += 1;
@@ -519,15 +540,22 @@ impl Store {
         };
         let after = bound(&options.after)?;
         let before = bound(&options.before)?;
+        let trust = TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?;
         let read = self.read()?;
         let mut rows = Vec::new();
         for source in scope_sources(&*read, &options.source_id, &options.source_ids)? {
             if let Some(page) = read_page(&*read, &source, slug)?
                 && page_visible(&*read, &page, &options.exclude_private)?
+                && (!options.eligible_only || eligible_page(&page))
             {
-                let keep = |row: &TimelineRecord| match &options.exclude_private {
-                    Some(policy) => event_visible(&*read, row, policy),
-                    None => Ok(true),
+                let keep = |row: &TimelineRecord| -> Result<bool> {
+                    if !trust.admits(&*read, "timeline_entries", row.id, row.trust.tier())? {
+                        return Ok(false);
+                    }
+                    match &options.exclude_private {
+                        Some(policy) => event_visible(&*read, row, policy),
+                        None => Ok(true),
+                    }
                 };
                 rows.extend(page_entries(
                     &*read,
@@ -543,6 +571,15 @@ impl Store {
         rows.truncate(limit);
         Ok(rows.iter().map(TimelineRecord::to_json).collect())
     }
+}
+
+/// The page part of `projectionEligibleSql('timeline_entries', 'te', ..)` (the row part, `floor`
+/// and `suppressFlagged`, is the `TrustPolicy` of `get_timeline`). Every row of `getTimeline` hangs on `page` (`te.page_id = p.id`), so a
+/// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
+/// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
+/// this engine has no such rows.
+fn eligible_page(page: &PageRecord) -> bool {
+    page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }
 
 /// Whether the page policy, when there is one, lets `page` read.
@@ -602,6 +639,7 @@ mod tests {
             event_page_id: None,
             created_at_us: at,
             receipt: TimelineReceipt::default(),
+            trust: TimelineTrust::default(),
         }
     }
 
@@ -847,5 +885,45 @@ mod tests {
         let options: TimelineOptions =
             serde_json::from_value(json!({"eligibility": {"x": 1}})).unwrap();
         assert!(store.get_timeline("people/a", &options).is_err());
+    }
+
+    #[test]
+    fn eligible_only_hides_the_rows_of_a_soft_deleted_or_quarantined_page() {
+        let store = crate::test_support::store();
+        let put = |slug: &str, frontmatter: Value| -> u64 {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap()["id"]
+                .as_u64()
+                .unwrap()
+        };
+        let open = put("people/open", json!({}));
+        let gone = put("people/gone", json!({}));
+        let held = put("people/held", json!({"quarantine": false}));
+        store
+            .write(|tx| {
+                for (page_id, summary) in [(open, "open"), (gone, "gone"), (held, "held")] {
+                    let id = next_entry_id(tx)?;
+                    put_entry(tx, None, &entry(id, page_id, "2026-01-01", summary, 1))?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        store.soft_delete_page("people/gone", None).unwrap();
+        let count = |slug: &str, eligible_only: bool| -> usize {
+            let options: TimelineOptions =
+                serde_json::from_value(json!({"eligibleOnly": eligible_only})).unwrap();
+            store.get_timeline(slug, &options).unwrap().len()
+        };
+        for slug in ["people/open", "people/gone", "people/held"] {
+            assert_eq!(count(slug, false), 1, "{slug}");
+        }
+        assert_eq!(count("people/open", true), 1);
+        assert_eq!(count("people/gone", true), 0);
+        assert_eq!(count("people/held", true), 0);
     }
 }

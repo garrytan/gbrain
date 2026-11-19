@@ -2,9 +2,11 @@
 //!
 //! Built so far (jobs slices 1 and 2): the `minion_jobs`, `minion_inbox`, `minion_attachments` and
 //! `gbrain_cycle_locks` tables of the PGLite engine, as `src/core/engine-sql/jobs.ts`,
-//! `cycle-locks.ts` and `src/core/minions/queue.ts` run them. Spend and rate leases and wake
-//! subscriptions are not built: TypeScript reaches those tables through `executeRaw`, which the
-//! Rust engine refuses.
+//! `cycle-locks.ts` and `src/core/minions/queue.ts` run them. The spend reservations and the
+//! lease-pressure log are built (the `spend` submodule). The wake subscription tables (watches,
+//! crons, cron runs, terms, forgets) are the `wake` submodule, as `src/core/engine-sql/jobs-wake.ts`
+//! runs them. Rate leases are not built: TypeScript reaches that table through `executeRaw`, which
+//! the Rust engine refuses.
 //!
 //! Members (slice 1, here): admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob,
 //! failJob, reclaimStalledJobs; acquireCycleLock, refreshCycleLock, releaseCycleLock,
@@ -13,7 +15,10 @@
 //! `private_queues`, `reads` (stats and lists) and `attachments`. `synthesis_completions` keeps the
 //! `dream_synthesis_completions` archive the prune writes, under its own tag `f`, with the two
 //! dream-cycle reads of it (listSynthesisCompletionKeys, listRecentSynthesisCompletions). `insight`
-//! is the one read behind `describeJobs` (readJobInsight).
+//! is the one read behind `describeJobs` (readJobInsight). `spend` keeps the spend reservations and the
+//! lease-pressure log (group C: the writes and reads of both, and the job spend tree).
+//! is the one read behind `describeJobs` (readJobInsight). `subagent` holds the transcript and tool
+//! ledger of a subagent job (17 members, rust/docs/store/jobs-subagent.md).
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
@@ -29,6 +34,12 @@
 //! - `m 0x07 lock_id -> LockRecord`: one cycle lock lease.
 //! - `m 0x08 job id -> AttachmentRecord`: the `minion_attachments` rows of a job (sequence `attachment`).
 //! - `m 0x09 owner id`: the rows whose `private_queue_owner_job_id` is that owner (the `ON DELETE SET NULL`).
+//! - `m 0x10`..`0x17`: the wake tables, laid out in `wake.rs` (0x12 is unused).
+//! - `m 0x20 reservation_uuid -> record`: one spend reservation (`mcp_spend_reservations`); `0x21 job
+//!   reservation_uuid` indexes it by job, `0x22 expires_at reservation_uuid` by expiry (pending only).
+//!   `0x24 id -> record` is one lease-pressure row (sequence `lease_pressure`), `0x25 bounced_at id` its time
+//!   order and `0x26 job id` its job. The layout is in `spend.rs`.
+//! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
 //!
@@ -43,7 +54,8 @@
 //! children's `parent_job_id` becomes NULL (`ON DELETE SET NULL`). The other two self-references
 //! (`private_queue_owner_job_id`, `budget_owner_job_id`): a row that names the deleted job as its
 //! private-queue owner has it set to NULL (`updated_at` untouched); nothing here writes a budget
-//! owner. A job's attachments go with it (`ON DELETE CASCADE`).
+//! owner. A job's attachments, subagent messages and subagent tool rows go with it
+//! (`ON DELETE CASCADE`).
 
 mod attachments;
 mod checks;
@@ -53,9 +65,12 @@ mod insight;
 mod mutations;
 mod private_queues;
 mod reads;
+mod spend;
 mod status;
+mod subagent;
 mod sweeps;
 mod synthesis_completions;
+mod wake;
 
 pub use attachments::AttachmentInput;
 pub use checks::{
@@ -66,8 +81,13 @@ pub use insight::InsightSpec;
 pub use mutations::{DelayOpts, TokenDelta};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
+pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
 pub use status::StatusFilter;
+pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
+pub use wake::{
+    CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
+};
 
 use crate::dream::jsonb;
 use crate::env::iso;
@@ -700,6 +720,7 @@ fn delete_row(tx: &mut dyn KvWrite, row: &JobRecord) -> Result<()> {
     for k in attachments {
         tx.delete(&k)?;
     }
+    subagent::delete_job_rows(tx, row.id)?;
     for child in ids_under(tx, &child_prefix(row.id))? {
         if let Some(old) = load(tx, child)? {
             let mut new = old.clone();
@@ -714,7 +735,7 @@ fn delete_row(tx: &mut dyn KvWrite, row: &JobRecord) -> Result<()> {
             save(tx, Some(&old), &new)?;
         }
     }
-    Ok(())
+    spend::detach_job(tx, row.id)
 }
 
 fn live_children(read: &dyn KvRead, parent: i64) -> Result<usize> {

@@ -209,6 +209,7 @@ mod tests {
             event_page_id: None,
             created_at_us: 5,
             receipt: TimelineReceipt::default(),
+            trust: crate::timeline::TimelineTrust::default(),
         }
     }
 

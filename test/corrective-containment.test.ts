@@ -73,6 +73,7 @@ describe('remote history uses strict body sanitization', () => {
           executeRaw: (async () => []) as never,
           // Guest stamping reads page trust through the typed member; no page rows are recorded here either.
           readPageTrustRows: (async () => []) as never,
+          readRowTrustRows: (async () => []) as never,
           // Even an operator opt-out cannot disable the Facts/Takes boundary.
           getConfig: async () => 'visible',
         }, { remote: remote as boolean, sourceId: 'default', takesHoldersAllowList }), { slug: 'example-page', include_body: true }) as Array<{ compiled_truth: string }>;

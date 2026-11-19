@@ -118,8 +118,9 @@ above "Segment chunks" in `rust/crates/gbrain-store/src/chunks.rs`). In one stor
 
 The chunks stay out of `getChunks` and keyword search until a flip publishes their generation. The
 TypeScript member normalises them as `upsertChunks` does (`prepareChunks`), refuses a chunk that
-carries a vector (`engine_capability_missing`: vectors are not stored) and refuses
-`opts.embeddingColumn` (PGLite takes the default model label from it). Deleting a page for good
+carries a vector (`engine_capability_missing`: vectors are not stored) and takes the default model
+label from `opts.embeddingColumn` as PGLite does. The option is served for the store's one vector
+column only, as on `upsertChunks` (embeddings.md, "Chunk writes"). Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 
 ## The seal

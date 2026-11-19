@@ -1,11 +1,15 @@
 {
   "golden": {
-    "count": 316,
+    "count": 317,
     "gaps": [
       17,
       18,
       19,
-      100
+      100,
+      322,
+      323,
+      324,
+      325
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -38,6 +42,7 @@
       "PAGES_SEGMENTED_BODY_BYTES_INDEX": "c904a4f68cf190cce6bc68c03219c7b62d05b77eeb557db946a4f58a4f965e57",
       "PAGES_SOURCE_CREATED_INDEX": "33411b4d6fc2287ee8fa37b1ebf2cc36a076101dbd3f3f6ac492aed06288513a",
       "PAGES_TITLE_SEARCH_INDEX": "27e8e1a6c9a2069ee6c6af6fa99b9a7e9e9c118c7a933ffa80ba1864bf68baa3",
+      "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX": "92ba3b31896201b4f1cd61fafe7035d84020efb904d14b95531528e212325d22",
       "PAGE_TIMELINE_FTS_MAX_CHARS": "f7d29264f4144976bbe2e1ded0251095b638175f8e1d711c36f1e80d2263e172",
       "PERSISTENCE_COMMITTED_WATERMARK_INDEX": "f472fa0acb542c1caebaaa3bc69fb2da1647e5e201239429fc02ccef0d669533",
       "PERSISTENCE_COMPACTABLE_INDEX": "25ee657878efb41ba9ea3a7624464ddcf66407d861659456c230366e57f230a0",
@@ -105,7 +110,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 321,
+    "latest": 326,
     "records": [
       {
         "handler": {
@@ -5248,6 +5253,35 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 321
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "f12a4b515ea944cc28d225a4268b75420db4a547bb458967bc86c3f25e856107"
+        },
+        "idempotent": true,
+        "name": "projection_jobs_byte_order_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 326
       }
     ],
     "versions": [
@@ -5566,7 +5600,8 @@
       318,
       319,
       320,
-      321
+      321,
+      326
     ]
   },
   "normalizer": "migrations-record-v1"

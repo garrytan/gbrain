@@ -44,8 +44,8 @@ use crate::pages::{PageRecord, read_page, read_page_by_id};
 use crate::sources::DEFAULT_SOURCE;
 use crate::takes::{int4, not_null};
 use crate::timeline::{
-    TimelineReceipt, TimelineRecord, next_entry_id, parse_date, put_entry, read_entry,
-    recompute_latest, remove_entry,
+    TimelineReceipt, TimelineRecord, TimelineTrust, next_entry_id, parse_date, put_entry,
+    read_entry, recompute_latest, remove_entry,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -633,6 +633,7 @@ impl Store {
                     event_page_id: Some(event.id),
                     created_at_us: now,
                     receipt: TimelineReceipt::default(),
+                    trust: TimelineTrust::default(),
                 },
             };
             put_entry(tx, old.as_ref(), &new)?;

@@ -51,24 +51,11 @@ export async function loadTranscriptRows(
   engine: BrainEngine,
   jobId: number,
 ): Promise<{ messages: SubagentMessageRow[]; tools: SubagentToolExecRow[] }> {
-  const msgRows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT id, job_id, message_idx, role, content_blocks, tokens_in, tokens_out,
-            tokens_cache_read, tokens_cache_create, model, ended_at
-       FROM subagent_messages
-      WHERE job_id = $1
-      ORDER BY message_idx ASC`,
-    [jobId],
-  );
-  const toolRows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT id, job_id, message_idx, ordinal, tool_use_id, tool_name, input, status, output, error
-       FROM subagent_tool_executions
-      WHERE job_id = $1
-      ORDER BY id ASC`,
-    [jobId],
-  );
+  const msgRows = await engine.listSubagentMessages(jobId);
+  const toolRows = await engine.listSubagentToolExecutions(jobId, 'id');
   return {
-    messages: msgRows.map(normalizeMessage),
-    tools: toolRows.map(normalizeTool),
+    messages: msgRows.map(r => normalizeMessage(r as unknown as Record<string, unknown>)),
+    tools: toolRows.map(r => normalizeTool(r as unknown as Record<string, unknown>)),
   };
 }
 

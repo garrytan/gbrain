@@ -94,6 +94,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   openedFactRowSql: 'src/core/persistence/context.ts: constant opened-row predicate over caller-given constant aliases; the setting name is a module constant, the opened ids are read by the statement itself',
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',
   activationSuppressedSql: 'src/core/eligibility/sql.ts: constant activation-suppression predicate over a caller alias; tier ranks and reason families come from constant tables',
+  contestedRefSql: 'src/core/eligibility/sql.ts: constant pending-supersede-proposal subquery over a caller alias; the table name comes from the facts/takes union, the actions are literals; no values',
   unverifiedExtractionFragment: 'src/core/extraction-review.ts: constant frontmatter predicate over a caller alias; keys and values are module constants',
   buildVisibilityClause: 'src/core/search/sql-ranking.ts: constant page visibility predicates over caller page/source aliases; options pick among constant fragments',
   pageReadFilter: 'src/core/search/read-policy-sql.ts: binds scope values as params, splices only the caller alias',

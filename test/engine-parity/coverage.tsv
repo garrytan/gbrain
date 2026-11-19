@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 565/565
+# covered: 615/615
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,12 +32,13 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 9/9
-# persistence_journal: 27/27
+# persistence_journal: 29/29
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
-# minion_queue: 62/62
+# minion_queue: 70/70
 # minion_status: 11/11
+# minion_subagent: 17/17
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
@@ -46,12 +47,12 @@
 # facts_repair: 10/10
 # facts_trust: 8/8
 # raw_sql: 4/4
-# code_edges: 6/6
+# code_edges: 9/9
 # eval_capture: 5/5
 # salience_enrich: 6/6
 # trust: 15/15
 # open_loops: 3/3
-# cli_reads_import: 11/11
+# cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 11/11
 # telemetry: 10/10
@@ -61,13 +62,14 @@
 # trust_fence: 1/1
 # trust_proposals: 6/6
 # connect_gate: 4/4
+# jobs_wake: 19/19
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	39	no	yes	yes	serves
+transaction	lifecycle	yes	42	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -75,13 +77,13 @@ getPage	pages	yes	64	yes	yes	yes	serves
 readPageSnapshot	pages	yes	16	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	261	yes	yes	yes	serves
+putPage	pages	yes	270	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	85	yes	yes	yes	serves
+softDeletePage	pages	yes	88	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -169,9 +171,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	2	no	yes	yes	serves
-upsertChunks	chunks	yes	22	yes	yes	yes	serves
+upsertChunks	chunks	yes	24	yes	yes	yes	serves
 sealChunks	chunks	yes	37	no	yes	yes	serves
-getChunks	chunks	yes	25	yes	yes	yes	serves
+getChunks	chunks	yes	27	yes	yes	yes	serves
 getChunkPage	chunks	yes	4	no	yes	yes	serves
 getChunkWindows	chunks	yes	2	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -189,7 +191,7 @@ deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
 setChunkerVersion	chunks	yes	8	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
-getChunkReuseRows	chunks	yes	2	no	yes	yes	serves
+getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
@@ -235,9 +237,9 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	23	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	27	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
-getTimeline	timeline	yes	10	yes	yes	yes	serves
+getTimeline	timeline	yes	14	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	3	no	yes	yes	serves
 getSince	timeline	yes	2	no	yes	yes	serves
 getOnThisDay	timeline	yes	2	no	yes	yes	serves
@@ -254,7 +256,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	28	yes	yes	yes	serves
+addTakesBatch	takes	yes	30	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 listTakes	takes	yes	12	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
@@ -264,7 +266,7 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	1	no	yes	yes	serves
 supersedeTake	takes	yes	1	no	yes	yes	serves
-resolveTake	takes	yes	6	no	yes	yes	serves
+resolveTake	takes	yes	8	no	yes	yes	serves
 getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
@@ -275,7 +277,7 @@ countOffGridTakeWeights	takes	yes	1	no	yes	yes	serves
 countTakes	takes	yes	1	no	yes	yes	serves
 planFactPurgeTakes	takes	yes	1	no	yes	yes	serves
 listTakeRowsForPage	takes	yes	1	no	yes	yes	serves
-countMcpResolvedTakes	takes	yes	1	no	yes	yes	serves
+countMcpResolvedTakes	takes	yes	3	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
@@ -285,7 +287,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	34	yes	yes	yes	serves
+insertFact	facts	yes	35	yes	yes	yes	serves
 insertFacts	facts	yes	27	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	19	no	yes	yes	serves
@@ -318,7 +320,7 @@ retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 createVersion	versions	yes	6	no	yes	yes	serves
 getVersions	versions	yes	5	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
-countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
+countOnboardSignal	stats_ingest	yes	1	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
@@ -327,14 +329,14 @@ updateSlug	sync_aliases	yes	12	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
-resolveAliases	sync_aliases	yes	9	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	15	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	10	no	yes	yes	serves
+resolveAliases	sync_aliases	yes	10	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	16	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	8	no	yes	yes	serves
-setConfig	config	yes	17	no	yes	yes	serves
+setConfig	config	yes	19	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -345,7 +347,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	11	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	20	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	23	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	3	no	yes	yes	serves
@@ -353,13 +355,13 @@ readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
-readWriteRequestById	persistence_journal	yes	4	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	11	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	10	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	8	no	yes	yes	serves
+readWriteRequestById	persistence_journal	yes	5	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	13	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	12	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	10	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	5	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	10	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	7	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	15	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -374,7 +376,9 @@ listReservationsAfter	persistence_journal	yes	1	no	yes	yes	serves
 listTrueUpRequests	persistence_journal	yes	1	no	yes	yes	serves
 readCapacityForecastInputs	persistence_journal	yes	2	no	yes	yes	serves
 listPendingSegmentedProjections	persistence_journal	yes	2	no	yes	yes	serves
-selectProjectionWindowJobs	persistence_journal	yes	2	no	yes	yes	serves
+selectProjectionWindowJobs	persistence_journal	yes	3	no	yes	yes	serves
+listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
+listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	2	no	yes	yes	serves
@@ -388,15 +392,15 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	78	no	yes	yes	serves
-getJob	minion_jobs	yes	34	no	yes	yes	serves
+admitJob	minion_jobs	yes	101	no	yes	yes	serves
+getJob	minion_jobs	yes	35	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	69	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	73	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	38	no	yes	yes	serves
-failJob	minion_jobs	yes	33	no	yes	yes	serves
+completeJob	minion_jobs	yes	42	no	yes	yes	serves
+failJob	minion_jobs	yes	34	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
-deleteTerminalJob	minion_queue	yes	1	no	yes	yes	serves
+deleteTerminalJob	minion_queue	yes	3	no	yes	yes	serves
 pauseJob	minion_queue	yes	8	no	yes	yes	serves
 resumeJob	minion_queue	yes	2	no	yes	yes	serves
 failParentJob	minion_queue	yes	3	no	yes	yes	serves
@@ -409,7 +413,7 @@ delayActiveJob	minion_queue	yes	1	no	yes	yes	serves
 releaseWatchdogClaim	minion_queue	yes	1	no	yes	yes	serves
 markJobWatchdogSuspect	minion_queue	yes	2	no	yes	yes	serves
 promoteDelayedJobs	minion_queue	yes	3	no	yes	yes	serves
-cancelJobs	minion_queue	yes	13	no	yes	yes	serves
+cancelJobs	minion_queue	yes	15	no	yes	yes	serves
 killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
 killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves
@@ -458,6 +462,14 @@ countDeadDreamSubmissionRows	minion_queue	yes	1	no	yes	yes	serves
 listFactsAbsorbJobsByKeyPrefix	minion_queue	yes	1	no	yes	yes	serves
 listDeadFactsAbsorbJobsByKeys	minion_queue	yes	1	no	yes	yes	serves
 readJobInsight	minion_queue	yes	2	no	yes	yes	serves
+readJobSpendTree	minion_queue	yes	2	no	yes	yes	serves
+insertSpendReservation	minion_queue	yes	3	no	yes	yes	serves
+expireSpendReservations	minion_queue	yes	1	no	yes	yes	serves
+settleSpendReservation	minion_queue	yes	3	no	yes	yes	serves
+markSpendUsageUnknown	minion_queue	yes	1	no	yes	yes	serves
+insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
+countLeasePressure	minion_queue	yes	2	no	yes	yes	serves
+listRecentLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
 countJobsByStatus	minion_status	yes	1	no	yes	yes	serves
 readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
@@ -469,6 +481,23 @@ listRecentFailedJobErrors	minion_status	yes	1	no	yes	yes	serves
 readQueuedPageChars	minion_status	yes	1	no	yes	yes	serves
 readSourceJobCounts	minion_status	yes	1	no	yes	yes	serves
 readEmbedBackfillBySource	minion_status	yes	1	no	yes	yes	serves
+listSubagentMessages	minion_subagent	yes	2	no	yes	yes	serves
+countSubagentMessages	minion_subagent	yes	3	no	yes	yes	serves
+insertSubagentMessage	minion_subagent	yes	3	no	yes	yes	serves
+listSubagentToolExecutions	minion_subagent	yes	8	no	yes	yes	serves
+hasSubagentToolExecution	minion_subagent	yes	2	no	yes	yes	serves
+listSubagentWriteOutcomes	minion_subagent	yes	1	no	yes	yes	serves
+listSubagentOneshotLedger	minion_subagent	yes	1	no	yes	yes	serves
+summarizeSubagentToolExecutions	minion_subagent	yes	1	no	yes	yes	serves
+listSubagentPutPageSlugs	minion_subagent	yes	2	no	yes	yes	serves
+listSubagentPutPageWrites	minion_subagent	yes	2	no	yes	yes	serves
+listSubagentRetainedPutPages	minion_subagent	yes	1	no	yes	yes	serves
+listSubagentStagedPages	minion_subagent	yes	1	no	yes	yes	serves
+listSubagentTimelineAppendCalls	minion_subagent	yes	1	no	yes	yes	serves
+recordSubagentToolExecutions	minion_subagent	yes	13	no	yes	yes	serves
+startSubagentToolExecution	minion_subagent	yes	3	no	yes	yes	serves
+completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
+failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	4	no	yes	yes	serves
@@ -532,7 +561,7 @@ listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
 listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
 countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	4	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -541,6 +570,9 @@ deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
 getCallersOf	code_edges	yes	3	no	yes	yes	serves
 getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
 getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
+getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
+putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
+clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves
 logEvalCandidate	eval_capture	yes	2	no	yes	yes	serves
 listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
@@ -558,7 +590,7 @@ listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	3	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	5	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	11	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
@@ -577,6 +609,7 @@ readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	7	no	yes	yes	serves
+readRowTrustRows	cli_reads_import	yes	2	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	5	no	yes	yes	serves
@@ -627,3 +660,22 @@ hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves
 listRetiredDeactivations	connect_gate	yes	2	no	yes	yes	serves
+openWakeWatch	jobs_wake	yes	11	no	yes	yes	serves
+listWakeWatches	jobs_wake	yes	6	no	yes	yes	serves
+endWakeWatches	jobs_wake	yes	6	no	yes	yes	serves
+countWakeWatches	jobs_wake	yes	1	no	yes	yes	serves
+readWakeDoctor	jobs_wake	yes	3	no	yes	yes	serves
+countPendingWakeForgets	jobs_wake	yes	2	no	yes	yes	serves
+listWakeCrons	jobs_wake	yes	1	no	yes	yes	serves
+addWakeCron	jobs_wake	yes	4	no	yes	yes	serves
+removeWakeCron	jobs_wake	yes	1	no	yes	yes	serves
+hasWakeCron	jobs_wake	yes	2	no	yes	yes	serves
+recordWakeCronRun	jobs_wake	yes	3	no	yes	yes	serves
+hasWakeTermsAcceptance	jobs_wake	yes	1	no	yes	yes	serves
+recordWakeTermsAcceptance	jobs_wake	yes	1	no	yes	yes	serves
+listDueWakeWatches	jobs_wake	yes	5	no	yes	yes	serves
+claimWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
+settleWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
+queueWakeForget	jobs_wake	yes	2	no	yes	yes	serves
+claimWakeForgets	jobs_wake	yes	2	no	yes	yes	serves
+settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves

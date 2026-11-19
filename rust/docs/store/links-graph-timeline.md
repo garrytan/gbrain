@@ -35,7 +35,7 @@ the origin.
 | `brain.traversePathsDetailed(slug, opts?)` | `{ paths, truncated }`; at most 5,000 edges, `truncated` when more exist | `traversePathsDetailed` |
 | `brain.addTimelineEntry(slug, { date, summary, source?, detail? }, { sourceId?, skipExistenceCheck? }?)` | `true` when a row was written, `false` for a duplicate (same page, date, summary and source) | `addTimelineEntry` |
 | `brain.addTimelineEntriesBatch(entries)` | inserted count; entries of missing pages are skipped | `addTimelineEntriesBatch` |
-| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at, write_request_id, write_principal_kind, write_principal_id, last_write_request_id, last_write_principal_kind, last_write_principal_id, last_written_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
+| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate?, eligibleOnly? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at, write_request_id, write_principal_kind, write_principal_id, last_write_request_id, last_write_principal_kind, last_write_principal_id, last_written_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
 
 Where this engine differs from PGLite:
 
@@ -53,12 +53,15 @@ Where this engine differs from PGLite:
   `last_written_at` only when the content (id, page, date, source, summary, detail, event page,
   `created_at`) changed; a changed row with no principal clears `last_*`. A record stored before the
   receipt reads every receipt column null. `getTimeline` returns the seven columns (`last_written_at` ISO).
-- `getTimeline` rows do not carry `trust_tier` and `write_origin`: the store does not stamp timeline
-  trust yet, and the TypeScript codec fills `"unknown"` and `null`, what PGLite stores for an undeclared
-  writer (TODOS.md).
+- Timeline trust: each write stamps `trust_tier` and `write_origin` through `trust::stamp`
+  (`timeline/tier.rs`), as PGLite's `trust_tier_stamp` trigger does. An insert takes the write's declared
+  tier (`unknown` when none) and the context's origin. An update starts from the stored tier and origin
+  and lowers them to the write's only when `summary`, `detail` or `date` changed. The tier is a
+  `serde(default)` field of the `E` record, omitted while it is `unknown` with no origin, so a record
+  stored before it reads `"unknown"` and `null`. `getTimeline` returns both columns.
 - On the link and graph reads, `excludePrivate: true`, `temporal` and `page` (keyset paging of
-  paths) reject `invalid_argument` instead of being ignored, and so does `eligibility` on
-  `getTimeline`. The TypeScript shell must not send them here.
+  paths) reject `invalid_argument` instead of being ignored, and so does a raw `eligibility` value
+  on `getTimeline`. The TypeScript shell must not send them here.
 - `getTimeline` serves `excludePrivate`. The TypeScript member reads the page policy from the
   rendered SQL (`storePagePolicy`) and passes it as `excludePrivate`. It refuses a caller whose
   member pages, grants or lineage widen the policy. Under the policy a page that
@@ -67,6 +70,16 @@ Where this engine differs from PGLite:
   facts/privacy.rs). That filter is an `EXISTS` on the event page id alone, so an event page in
   another source or soft-deleted is still judged, and an entry whose event page is gone drops.
   The filter runs before `limit`.
+- `getTimeline` serves an `eligibility` policy without `floor` or `suppressFlagged`. The
+  TypeScript member sends `eligibleOnly: true` for any policy object, and the store applies the
+  base clauses of `projectionEligibleSql('timeline_entries', 'te', ..)`: every row hangs on its
+  depth page (`te.page_id`), so a soft-deleted page, or a page whose frontmatter has a
+  `quarantine` key (any value), reads no rows. The `needs_rederive` clause has no rows here. The
+  filter runs before `limit`. Without a policy a soft-deleted page still reads its rows, as the SQL
+  has no `deleted_at` test. A policy `floor` drops a row whose stored tier ranks below it, and
+  `suppressFlagged` drops a row at or below `agent_written` with a `flag` write-gate receipt
+  (`target_table` `timeline_entries`) in an activation family (`TrustPolicy::admits`,
+  trust/eligibility.rs). Both run before `limit`.
 
 `crates/gbrain-store/tests/graph_parity.rs` replays PGLite's own results for links, the graph
 walks at depth 0 to 3 and past (cycles, direction, scope, soft delete, caps), timeline writes and

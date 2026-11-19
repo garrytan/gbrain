@@ -1,7 +1,9 @@
 /**
  * Timeline members (BrainEngine addTimelineEntry, addTimelineEntriesBatch, getTimeline). getTimeline takes the page
  * privacy policy of `excludePrivate` (storePagePolicy): a hidden page reads no rows, and an entry drops when the policy
- * hides its event page. `eligibility` stays unsupported. See rust/docs/store/links-graph-timeline.md.
+ * hides its event page. An `eligibility` policy hides the rows of a soft-deleted or quarantined page
+ * (`projectionEligibleSql`), and its `floor` and `suppressFlagged` filter each row by the tier its write stamped and
+ * its write-gate receipts. See rust/docs/store/links-graph-timeline.md.
  */
 import type { TimelineBatchInput } from '../../engine.ts';
 import type { TimelineEntry, TimelineInput, TimelineOpts } from '../../types.ts';
@@ -22,8 +24,12 @@ export const addTimelineEntriesBatch: StoreMember<[entries: TimelineBatchInput[]
 };
 
 export const getTimeline: StoreMember<[slug: string, opts?: TimelineOpts], TimelineEntry[]> = async (brain, slug, opts) => {
-  const taken = takeOptions('getTimeline', opts, ['limit', 'after', 'before', 'sourceId', 'sourceIds', 'excludePrivate']);
-  const scope = { ...taken, excludePrivate: storePagePolicy('getTimeline', taken.excludePrivate) ?? null };
+  const { eligibility, ...taken } = takeOptions('getTimeline', opts, ['limit', 'after', 'before', 'sourceId', 'sourceIds', 'excludePrivate', 'eligibility']);
+  const policy = eligibility as TimelineOpts['eligibility'];
+  const scope = {
+    ...taken, excludePrivate: storePagePolicy('getTimeline', taken.excludePrivate) ?? null, eligibleOnly: Boolean(policy),
+    minTrust: policy?.floor ?? null, suppressFlagged: policy?.suppressFlagged === true,
+  };
   const rows: TimelineEntry[] = await storeCall({ member: 'getTimeline', slug }, () => brain.getTimeline(slug, scope));
   return rows.map((row) => toTimelineEntry(row));
 };

@@ -11,7 +11,8 @@
 //!
 //! A page reads the trust tier and write origin its last write stamped (`pages::write_page`), and
 //! `flagged` is `activationSuppressedSql` over the page's write-gate receipts
-//! (`trust::activation_suppressed`).
+//! (`trust::activation_suppressed`). A timeline row (`readRowTrustRows`) reads the tier and origin
+//! its last write stamped (`timeline::tier`) the same way, and is never contested.
 //!
 //! Keys: none of its own. It reads the source, page, timeline and write-gate receipt records.
 
@@ -86,6 +87,25 @@ pub struct PageTrustRow {
     pub guest: bool,
     #[serde(rename = "byId")]
     pub by_id: bool,
+}
+
+/// Input of `readRowTrustRows`: a row table and the ids to read. This store serves
+/// `timeline_entries`; the TypeScript member refuses `facts` and `takes` before it calls the store.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct RowTrustLookup {
+    pub table: String,
+    pub ids: Vec<u64>,
+}
+
+/// One row's trust fields (`RowTrustRow`). A timeline row is never contested.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RowTrustRow {
+    pub id: u64,
+    pub trust_tier: String,
+    pub write_origin: Option<Value>,
+    pub flagged: bool,
+    pub contested: Option<String>,
 }
 
 /// A live page with its aliases and knowledge revision (`listLinkPageMetadata`).
@@ -252,6 +272,53 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// The trust rows of the timeline entries named by id, in id order; an id with no entry reads
+    /// no row. Entries are keyed by page, so this reads every `E` record once.
+    pub fn read_row_trust_rows(&self, lookup: &RowTrustLookup) -> Result<Vec<RowTrustRow>> {
+        if lookup.table != "timeline_entries" {
+            return Err(StoreError::invalid(format!(
+                "readRowTrustRows: table \"{}\" is not served by this store",
+                lookup.table
+            )));
+        }
+        let wanted: BTreeSet<u64> = lookup.ids.iter().copied().collect();
+        let read = self.read()?;
+        let mut found = Vec::new();
+        let mut failure = None;
+        if !wanted.is_empty() {
+            scan_prefix(&*read, &[keys::TIMELINE], false, &mut |_, v| {
+                match serde_json::from_slice::<TimelineRecord>(v) {
+                    Ok(r) if wanted.contains(&r.id) => found.push(r),
+                    Ok(_) => {}
+                    Err(e) => failure = Some(StoreError::from(e)),
+                }
+                failure.is_none()
+            })?;
+        }
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        found.sort_by_key(|r| r.id);
+        found
+            .into_iter()
+            .map(|r| {
+                let tier = r.trust.tier();
+                Ok(RowTrustRow {
+                    id: r.id,
+                    trust_tier: tier.as_str().to_owned(),
+                    write_origin: r.trust.write_origin.clone(),
+                    flagged: crate::trust::activation_suppressed(
+                        &*read,
+                        "timeline_entries",
+                        r.id,
+                        tier,
+                    )?,
+                    contested: None,
+                })
+            })
+            .collect()
     }
 
     /// The store clock, `YYYY-MM-DDTHH:MM:SS.ffffffZ` in UTC.

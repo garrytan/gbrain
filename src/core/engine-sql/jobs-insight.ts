@@ -5,8 +5,8 @@
  * both engines, so a store that is not SQL serves the same member (rust/docs/store/jobs-insight.md).
  *
  * One member answers all six reads, as `describeJobs` runs them together; each part is skipped when its input list is
- * empty. The spend tree (`mcp_spend_reservations`) is not here: the Rust store keeps no spend rows, so `describeJobs`
- * still reads it through `executeRaw`.
+ * empty. The spend tree (`mcp_spend_reservations`) is a separate member, `readJobSpendTree`
+ * (engine-sql/jobs-spend.ts).
  *
  * Every function takes the transaction (or the engine, for a single statement) it runs on. Rows come back typed:
  * counts and sums as numbers, timestamps as `Date`s.
