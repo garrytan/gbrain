@@ -73,7 +73,7 @@ import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStrea
 const CLAIM_SWEEP_CHUNK_BYTES = 4 * 1024 * 1024;
 
 export const PURGE_RESIDUALS = 'Removed from live stores: the page row with its chunks, versions, takes, timeline, links and raw data, the facts filed on it (tombstoned), '
-  + 'its take proposals, open loops and core notices, the retrieval feedback and captured eval results naming the slug, the volunteer log rows and mention-gazetteer names for it, stored write intents for the slug and its attached file records. Still out of reach: the brain repository\'s '
+  + 'its take proposals, open loops and core notices, the retrieval feedback and captured eval results naming the slug, the volunteer log rows and mention-gazetteer names for it, stored write intents for the slug and its attached file records, and the sealed secret store originals only this page referenced. Still out of reach: the brain repository\'s '
   + 'git history and every other clone or remote, Markdown exports and compiled context files, backups, provider copies (embeddings, decisions), and deleted rows '
   + 'in database pages and the write-ahead log until vacuum. Rotate any exposed credential.';
 

@@ -11,7 +11,9 @@ const SLUG_STORES: ReadonlyArray<readonly [table: string, column: string]> = [
  * core-edit notices (which keep a copy of the page text), the page's free-text aliases, the redirects that resolve to
  * it and the rename rows that end at it (a redirect from this slug to another page stays). A purge's cascade never
  * reaches them, so every hard delete of a page calls this inside its transaction; a soft delete keeps them, because
- * restore_page can bring the page back. `ifPresent` skips a store the database does not have (a restored archive
+ * restore_page can bring the page back. GST-2988: the page's secret store occurrences go too, and with them every
+ * sealed original no other page or commit references (secret-store/store.ts purgeSecretsForSlugs), so a purge leaves
+ * no original of a secret the page held. `ifPresent` skips a store the database does not have (a restored archive
  * older than it). Returns rows removed per store, keyed as the purge receipt names them.
  */
 export async function scrubPurgedSlugStores(
@@ -28,6 +30,12 @@ export async function scrubPurgedSlugStores(
       if (!present?.present) continue;
     }
     removed[table] = (await engine.executeRaw(`DELETE FROM ${table} WHERE source_id = $1 AND ${column} = ANY($2::text[]) RETURNING 1`, [sourceId, [...slugs]])).length;
+  }
+  const [store] = opts.ifPresent ? await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('secret_store_occurrence') IS NOT NULL AS present") : [{ present: true }];
+  if (store?.present) {
+    const secrets = await (await import('../secret-store/store.ts')).purgeSecretsForSlugs(engine, sourceId, slugs);
+    removed.secret_store_occurrence = secrets.occurrences;
+    removed.secret_store = secrets.entries;
   }
   return removed;
 }

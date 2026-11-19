@@ -214,32 +214,68 @@ export async function storeSnapshot(engine: BrainEngine): Promise<{ entries: Bac
 
 /**
  * Writes backed-up entries the store does not hold (by id, and never over a row that holds the same value, so a local
- * row changed since the backup stays as it is), with the occurrences of the entries it wrote. It never updates or
- * deletes a row. An occurrence's page_id is the id of the page that holds its slug in the source now, never the
- * backed-up number (a rebuilt brain numbers its pages in another order); entries of a source this brain no longer has
- * are skipped.
+ * row changed since the backup stays as it is), with the occurrences of the entries it wrote. An occurrence on a page
+ * (a slug and no commit) comes back only while that page exists in the source, live or soft-deleted; an entry whose
+ * every occurrence was on pages this brain does not hold is not written (`skipped_no_page`): the page was purged, or is
+ * not synced yet, and a restore cannot tell which, so it never brings back an original a page purge removed. Sync the
+ * pages, then run the same restore again; it adds what it skipped. An
+ * occurrence's page_id is the id of the page that holds its slug in the source now, never the backed-up number (a
+ * rebuilt brain numbers its pages in another order, and the purge cascade trusts page_id); entries of a source this
+ * brain no longer has are skipped.
  */
-export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number }> {
-  let written = 0, occ = 0;
+export async function insertBackupRows(engine: BrainEngine, entries: BackupEntryRow[], occurrences: BackupOccurrenceRow[]): Promise<{ entries: number; occurrences: number; skipped_no_page: number }> {
+  let written = 0, occ = 0, skippedNoPage = 0;
+  const onPage = (o: BackupOccurrenceRow) => o.commit_sha === null && o.slug !== null;
   const byEntry = new Map<string, BackupOccurrenceRow[]>();
   for (const o of occurrences) byEntry.set(o.entry_id, [...(byEntry.get(o.entry_id) ?? []), o]);
   await engine.transaction(async tx => {
     for (const row of entries) {
+      const own = byEntry.get(row.id) ?? [];
+      const pageSlugs = [...new Set(own.filter(onPage).map(o => o.slug as string))];
+      const anchored = own.length === 0 || own.some(o => !onPage(o));
       const inserted = await tx.executeRaw<{ id: string }>(`INSERT INTO secret_store (id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,created_at,updated_at)
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$12::timestamptz WHERE EXISTS (SELECT 1 FROM sources WHERE id=$2)
+          AND ($13::boolean OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug = ANY($14::text[])))
         ON CONFLICT DO NOTHING RETURNING id`,
-      [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at]);
-      if (!inserted.length) continue;
+      [row.id, row.source_id, row.rule, row.ciphertext, row.nonce, row.tag, row.key_id, row.key_host, row.value_mac, row.status, row.created_at, row.updated_at, anchored, pageSlugs]);
+      if (!inserted.length) {
+        if (!anchored && !(await entryRow(tx, row.id).then(() => true, () => false))) skippedNoPage++;
+        continue;
+      }
       written++;
-      for (const o of byEntry.get(row.id) ?? []) {
-        await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
-          VALUES ($1,$2,(SELECT id FROM pages WHERE source_id=$2 AND slug=$3),$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz)`,
-        [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at]);
-        occ++;
+      for (const o of own) {
+        occ += (await tx.executeRaw(`INSERT INTO secret_store_occurrence (entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,pre_field_sha256,created_by,created_at)
+          SELECT $1,$2,(SELECT id FROM pages WHERE source_id=$2 AND slug=$3),$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz
+          WHERE $6::text IS NOT NULL OR $3::text IS NULL OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$2 AND p.slug=$3) RETURNING 1`,
+        [o.entry_id, o.source_id, o.slug, o.field, o.origin, o.commit_sha, o.path, o.line, o.pre_field_sha256, o.created_by, o.created_at])).length;
       }
     }
   });
-  return { entries: written, occurrences: occ };
+  return { entries: written, occurrences: occ, skipped_no_page: skippedNoPage };
+}
+
+/**
+ * The purge cascade: a page purged for good takes its sealed originals with it. Removes the page's occurrences (those
+ * recorded on the page itself, not the ones a publish recorded on a commit), then every entry those occurrences pointed
+ * at that no other page or commit still references. Called inside every hard delete (persistence/purge-slug-stores.ts).
+ * An occurrence whose page_id names a live page outside the purged set stays: its slug is stale (a rename before
+ * moveSlugBindings moved occurrence slugs), and the original belongs to that page.
+ */
+export async function purgeSecretsForSlugs(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slugs: readonly string[]): Promise<{ occurrences: number; entries: number }> {
+  const gone = await engine.executeRaw<{ entry_id: string }>(
+    `DELETE FROM secret_store_occurrence o WHERE o.source_id=$1 AND o.slug = ANY($2::text[]) AND o.commit_sha IS NULL
+      AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = o.page_id AND NOT (p.source_id = $1 AND p.slug = ANY($2::text[]))) RETURNING o.entry_id`, [sourceId, [...slugs]]);
+  if (!gone.length) return { occurrences: 0, entries: 0 };
+  const entries = await engine.executeRaw(`DELETE FROM secret_store s WHERE s.id = ANY($1::text[])
+    AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.entry_id=s.id) RETURNING 1`, [[...new Set(gone.map(g => g.entry_id))]]);
+  return { occurrences: gone.length, entries: entries.length };
+}
+
+/** Entries no page or commit references any more (doctor). */
+export async function unreferencedEntryCount(engine: BrainEngine): Promise<number> {
+  const [row] = await engine.executeRaw<{ n: number | string }>(
+    'SELECT count(*) AS n FROM secret_store s WHERE NOT EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.entry_id=s.id)');
+  return Number(row?.n ?? 0);
 }
 
 export { keyIdOf };

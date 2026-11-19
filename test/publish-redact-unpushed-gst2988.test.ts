@@ -33,7 +33,7 @@ import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/owner
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { finishRedactions, secretPublishMaintenance, settlePublishRedactions } from '../src/core/git/redact-finish.ts';
-import { reveal, seal } from '../src/core/secret-store/store.ts';
+import { purgeSecretsForSlugs, recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -608,6 +608,8 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
       addSpoolOccurrences(id, [{ commit: 'c'.repeat(40), path: 'notes.md', line: 1, field: 'file' }]);
       expect(await drainSpool(engine)).toMatchObject({ moved: 0, remaining: 0 });
       expect(await engine.executeRaw('SELECT commit_sha FROM secret_store_occurrence WHERE entry_id = $1', [sealed.id])).toEqual([{ commit_sha: 'c'.repeat(40) }]);
+      await recordOccurrence(engine, { entryId: sealed.id, sourceId: 'source-a', slug: 'notes/held', field: 'compiled_truth', origin: 'repair' });
+      expect(await purgeSecretsForSlugs(engine, 'source-a', ['notes/held'])).toEqual({ occurrences: 1, entries: 0 });
       expect(readSpool().find(entry => entry.id === id)?.duplicate_of).toBe(sealed.id);
       expect(undrainedCount()).toBe(0);
       expect((await reveal(engine, id, 'test')).value).toBe(token);

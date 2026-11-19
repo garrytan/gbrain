@@ -126,14 +126,19 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   last success and the last failure.
 - `gbrain secrets backup --restore gbrain-secret-store/<time>.json` adds the entries this brain lacks. It restores only on
   a host whose keyring holds the key the backup names (import the escrow copy first), and it skips, and lists, any row
-  that does not authenticate under it. A restore only adds rows: an entry already here is left as it is, even when the
-  backup's copy differs, and nothing is deleted. Each restored place is tied to the page that holds its slug in this
-  brain now.
+  that does not authenticate under it. An entry already here is left as it is, even when the backup's copy differs.
+  An original whose every recorded place was on a page this brain does not hold is skipped and counted as
+  `skipped_no_page` ("skipped because their page is not in this brain"): the page was purged, or is not synced yet,
+  and a restore cannot tell which, so it never brings back what a page purge removed. Sync the pages, then run the
+  same restore again; it adds what it skipped. When every entry is skipped that way (a rebuilt brain before sync), the
+  restore refuses with `invalid_params` and writes nothing, so a script never reads it as finished.
 - With no storage backend nothing is uploaded and nothing is needed: `gbrain secrets backup` and doctor say the database
   backup carries the store.
 
-Known limit: purging a page does not yet remove its sealed originals from the store. They stay encrypted, and
-`gbrain doctor`'s `secret_store` check still counts them.
+Purging a page (`gbrain delete <slug> --purge`, or the expiry of a deleted page) removes the places the redactor
+recorded on that page, and every sealed original no other page and no publish commit still references. An original
+another page holds, or that a redacted publish commit points to, stays until those go too. A soft delete keeps
+everything, because the page can be restored.
 
 `gbrain doctor` runs the `secret_store` check, which never prints a value. It reports entries and occurrences, where the
 store is backed up, and warns when:
@@ -143,6 +148,8 @@ store is backed up, and warns when:
 - the current key was never exported (`gbrain secrets key export` clears it), because a lost key loses every original;
 - a storage backend is configured and the last backup failed or never ran;
 - originals still wait in this host's encrypted spool;
+- sealed originals are referenced by no page or commit any more (nothing can reveal or restore them; a page purge
+  removes its own, so these come from an older purge or a direct database edit);
 - a checkout holds held-back publish commits, or local refs that still reach commits from before a redaction rebuild
   (the trusted local doctor only; a remote caller sees counts of entries, never paths or refs).
 
