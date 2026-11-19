@@ -15,7 +15,7 @@ read through `getConfig`. The key is the config key `access.restrictions_present
 | Trigger | Store |
 | --- | --- |
 | `pages_access_mark_restricted` | sets the flag on every write of a page record whose frontmatter has a top-level `readable_by` key, when the flag is not already `'1'` |
-| `access_members_mark_restricted` | none: the store keeps no access members, so `gbrain access member add` cannot add one on a Rust brain |
+| `access_members_mark_restricted` | sets the flag in the same write as every member insert (`access_members::insert_access_member`, [access-members.md](access-members.md)), when the flag is not already `'1'` |
 
 The trigger fires only when an UPDATE names the frontmatter column; the store sets the flag on any write of such a
 page. The flag is sticky, so the two differ only after an operator unsets the flag by hand.
