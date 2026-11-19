@@ -11,8 +11,10 @@
  *    arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts) gives the
  *    same answers. A stored publication policy and a stored head bind a source on every arm, a new batch leases each
  *    revision it names, a refused issue changes nothing (its prune included), and a malformed uuid fails with 22P02.
- *    A Rust brain cannot activate shared publication, so writeSharedSkillRevision refuses there as the SQL guard
- *    refuses on a brain without it (42501 writer_not_quiesced); fixtures seed heads under the guard.
+ *    writeSharedSkillRevision refuses on a brain without shared publication (42501 writer_not_quiesced) on every arm.
+ *    Shared publication activates under the same quiescence rules (a queued request refuses writer_not_quiesced), and
+ *    put_skill then gives the same receipt, get_skill and join_brain answers; the Rust arm writes no canonical file
+ *    yet, so its receipt's persistence and write_through are left out of the comparison.
  *  - Regression: these reads and writes ran through executeRaw, so on a Rust brain join_brain ended in
  *    engine_capability_missing at the brain-id lock, and sync_brain_skills and leave_brain could never reach a member.
  *    Each filter is an access cut: a case puts the row a dropped clause would let through (another principal's
@@ -25,7 +27,7 @@
  */
 import { describe, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
@@ -40,6 +42,14 @@ import { getSharedSkillPolicy, setSharedSkillPolicy } from '../../src/core/share
 import { getSharedSkill } from '../../src/core/shared-skills/catalog.ts';
 import { registerServeLocalWriters } from '../../src/core/persistence/provider.ts';
 import { brainMembershipOperations } from '../../src/core/ops/brain-membership.ts';
+import { activateSharedSkillPersistence } from '../../src/core/persistence/skill-activation.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { admitWrite } from '../../src/core/persistence/journal.ts';
+import { submissionAuthority } from '../../src/core/persistence/authority.ts';
+import { cancelWriteRequest } from '../../src/core/persistence/control.ts';
+import { submitSharedSkillMutation } from '../../src/core/shared-skills/publication.ts';
+import { LATEST_VERSION } from '../../src/core/migrate.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -65,6 +75,19 @@ async function answer(engine: BrainEngine, name: string, params: Record<string, 
   const op = brainMembershipOperations.find(o => o.name === name)!;
   try { return { ok: await op.handler(local(engine), params) }; }
   catch (error) { return { code: (error as { code?: string }).code ?? String(error) }; }
+}
+
+/** `value` with every UUID, timestamp and Date replaced by its kind, so two runs compare equal. */
+function generic(value: unknown, drop: readonly string[] = []): unknown {
+  if (value instanceof Date) return '<date>';
+  if (typeof value === 'string') {
+    return /^\d{4}-\d{2}-\d{2}T/.test(value) ? '<date>' : value.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>');
+  }
+  if (Array.isArray(value)) return value.map(v => generic(v, drop));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).filter(([k]) => !drop.includes(k)).map(([k, v]) => [k, generic(v, drop)]));
+  }
+  return value;
 }
 
 /** A sync or join result reduced to what does not vary between runs. */
@@ -117,6 +140,40 @@ async function seedRevision(engine: BrainEngine, backend: ParityBackend, write: 
 function issueSpec(over: Partial<SharedSkillBatchIssue>): SharedSkillBatchIssue {
   return { installationId: A, epoch: 1, issuedSequence: 0, viewToken: 'v1', authorityDigest: 'auth', revisions: [], token: crypto.randomUUID(),
     retainedBatches: 32, ...over };
+}
+
+/**
+ * Fixture: give the default source a fresh canonical root and run `fn` with shared publication possible. The SQL arms
+ * also claim the root's worktree (a Rust brain has none). The arm reset keeps the persistence_brain row, so the SQL
+ * arms put its publication columns back afterwards under replica role (the floor trigger refuses a lower floor).
+ */
+async function withCanonicalRoot<T>(engine: BrainEngine, backend: ParityBackend, fn: (root: string) => Promise<T>): Promise<T> {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-parity-skill-root-')));
+  try {
+    await engine.attachSourcePath('default', root);
+    if (backend !== 'rust') {
+      // The arm reset empties config; activation reads the schema version a fresh SQL brain records there.
+      await engine.setConfig('version', String(LATEST_VERSION));
+      await claimWorktree(engine, 'default', root);
+    }
+    return await fn(root);
+  } finally {
+    await disposePersistenceConsumer(engine);
+    if (backend !== 'rust') await engine.transaction(async tx => {
+      await tx.executeRaw('SET LOCAL session_replication_role = replica');
+      await tx.executeRaw('UPDATE persistence_brain SET skill_bundles_enabled=false, writer_protocol_floor=1, enabled=false WHERE singleton=1');
+    });
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** The answer of `run`, or its refusal reduced to the code, the message and the first line of the suggestion. */
+async function refusal(run: () => Promise<unknown>): Promise<unknown> {
+  try { return { ok: await run() }; }
+  catch (error) {
+    const e = error as { code?: string; message?: string; suggestion?: string };
+    return { code: e.code, message: e.message, suggestion: e.suggestion ?? null };
+  }
 }
 
 describe('engine parity: shared-skill membership', () => {
@@ -423,4 +480,54 @@ describe('engine parity: shared-skill membership', () => {
       publish: { code: '42501', message: 'writer_not_quiesced: shared publication is disabled' }, stored: null });
     return result;
   });
+
+  parityTest('put_skill publishes one revision after activation: the receipt, get_skill and join_brain agree, and a replay returns the same receipt', {
+    methods: ['readSourceMembership', 'writeSharedSkillPolicy', 'readSharedSkillPolicyRow', 'readSharedSkillRevision', 'writeSharedSkillRevision',
+      'listSharedSkillCatalogHeads', 'transaction'],
+  }, (engine, backend) => inFreshHome(() => withCanonicalRoot(engine, backend, async () => {
+    await installSingletons(engine, backend);
+    await registerServeLocalWriters(engine);
+    const activated = await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await engine.setConfig('mcp.publish_skills', 'true');
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const policy = { version: 1 as const, enabled: true, classes: ['prose' as const], audiences: ['readers'], requirements: [], allow_follow: true };
+    await setSharedSkillPolicy(local(engine), 'default', policy, null);
+    const params = { request_id: 'f0000000-0000-4000-8000-0000000000d1', expected_revision: null, source_id: 'default', source_incarnation: incarnation,
+      pack_id: 'pack', name: 'notes', files: [{ path: 'skills/notes/SKILL.md', content: BODY, file_class: 'prose' }] };
+    const ctx = { ...local(engine), sourceId: 'default' } as OperationContext;
+    const put = await submitSharedSkillMutation(ctx, 'put_skill', params);
+    const replay = await submitSharedSkillMutation(ctx, 'put_skill', params);
+    const skill = await getSharedSkill(local(engine), { name: 'notes' });
+    const join = await answer(engine, 'join_brain', { adapter: 'generic', follow_policy: { approved: true } });
+    // The Rust arm writes no canonical file yet, so the receipt's persistence and write_through (at every depth) differ by design.
+    const result = { activated, receipt: generic(put, ['persistence', 'write_through']), replay: JSON.stringify(replay) === JSON.stringify(put),
+      revision: (put as { revision: string }).revision === (skill as { revision?: string }).revision,
+      skill: generic(skill), join: shape(join), followed: join.ok.skills.map((s: any) => `${s.source_id}/${s.pack_id}/${s.name}`) };
+    expect(result.activated).toEqual({ activated: true, protocol_version: 2, filesystem_sources: 1 });
+    expect(result.receipt).toMatchObject({ status: 'published', state: 'committed', delivery: 'canonical_committed', name: 'notes', pack_id: 'pack' });
+    expect(result.replay).toBe(true);
+    expect(result.followed).toEqual(['default/pack/notes']);
+    return result;
+  })));
+
+  parityTest('a queued write request makes activation refuse writer_not_quiesced; once it is cancelled, activation passes', {
+    methods: ['readSourceMembership', 'transaction'],
+  }, (engine, backend) => inFreshHome(() => withCanonicalRoot(engine, backend, async () => {
+    await installSingletons(engine, backend);
+    await registerServeLocalWriters(engine);
+    const source = (await engine.readSourceMembership('default'))!;
+    const ctx = { ...local(engine), sourceId: 'default' } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_page', 'default', source.incarnation, 'notes/queued');
+    const requestId = 'f0000000-0000-4000-8000-0000000000d2';
+    await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
+      sourceIncarnation: source.incarnation, slug: 'notes/queued', requestId, callerIntent: { body: 'queued' }, intent: { body: 'queued' } });
+    const refused = await refusal(() => activateSharedSkillPersistence(engine, { confirmQuiesced: true }));
+    const unconfirmed = await refusal(() => activateSharedSkillPersistence(engine, {}));
+    await cancelWriteRequest(engine, authority.principal, requestId);
+    const passed = await refusal(() => activateSharedSkillPersistence(engine, { confirmQuiesced: true }));
+    expect(refused).toMatchObject({ code: 'writer_not_quiesced' });
+    expect((refused as { suggestion: string }).suggestion).toContain(`Blocking request ${requestId} (put_page, queued) for source default, page notes/queued.`);
+    expect(passed).toEqual({ ok: { activated: true, protocol_version: 2, filesystem_sources: 1 } });
+    return { refused, unconfirmed, passed };
+  })));
 });

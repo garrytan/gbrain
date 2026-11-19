@@ -7,10 +7,9 @@ and the catalog identity read (`src/core/shared-skills/catalog.ts`) run through 
 `src/core/engine-sql/shared-skill-members.ts`. The store keeps the catalog token secret of `shared_skill_state`, the
 `shared_skill_members` table and the `shared_skill_delivery_batches` table, and (`shared_skill_catalog.rs`) the
 publication policies with their audit rows, the heads, the revisions and the delivery leases. `set_skill_policy`
-writes a policy, so a join on a Rust brain binds a source whose policy allows following, as on PGLite. A Rust brain
-cannot activate shared publication, so the engine member `writeSharedSkillRevision` refuses as the SQL publication guard
-refuses on a brain without it (code `42501`, `writer_not_quiesced: shared publication is disabled`); the store method
-serves fixtures that seed a catalog. Timestamps leave as ISO strings; the TypeScript members turn them into `Date`s.
+writes a policy, so a join on a Rust brain binds a source whose policy allows following, as on PGLite. `put_skill` and
+`delete_skill` publish revisions after shared publication is activated ([Publication](#publication)). Timestamps leave
+as ISO strings; the TypeScript members turn them into `Date`s.
 
 Keys (tag `x`, `keys::ACCESS_MEMBERS`; `0x01`-`0x03` are the access members, [access-members.md](access-members.md)):
 
@@ -46,7 +45,7 @@ when the store seeds the brain; a brain created before this family mints it on t
 | `acknowledgeSharedSkillDeliveryBatch({ token, evidence, installationId, advance })` | null | the batch evidence `UPDATE` and, with `advance`, `acknowledged_sequence=GREATEST(...)`, `acknowledged_view` |
 | `writeSharedSkillPolicy({ sourceId, incarnation, epoch, policy, principalKind, principalId, previousEpoch })` | null | the policy upsert and the audit insert of `set_skill_policy`, in one write |
 | `readSharedSkillPolicyRow(sourceId, incarnation)` | `{ epoch, policy }` or null | `readSharedSkillPolicyRow` (one write at a time, so no row lock) |
-| `writeSharedSkillRevision({ sourceId, incarnation, packId, name, revision, metadata, files, deleted, policyEpoch, requestId })` | null; fixtures only | the revision insert and the head upsert of a publication |
+| `writeSharedSkillRevision({ sourceId, incarnation, packId, name, revision, metadata, files, deleted, policyEpoch, requestId })` | null; before activation the engine member refuses as the SQL publication guard (code `42501`, `writer_not_quiesced: shared publication is disabled`) | the revision insert and the head upsert of a publication |
 | `readSharedSkillRevision({ sourceId, incarnation, packId, name, revision })` | the revision (not deleted) or null | `readSharedSkillRevision` |
 | `listSharedSkillCatalogHeads({ sourceIds, limit, sourceId, sourceIncarnation, packId, name, hidePrivate })` | heads not deleted of live sources at their incarnation, each with `current_policy` and `current_epoch` (null without a policy), in key byte order, at most `limit` | `listSharedSkillCatalogHeads`; Postgres orders by collation, which agrees for lowercase ids |
 | `listSharedSkillFollowSources(allowed, sourceIds)` | `[{ id, incarnation }]`: sources not archived, in both lists (null matches every source), by id in byte order, at most 65 | `listSharedSkillFollowSources` |
@@ -55,6 +54,39 @@ Each write is one `Store::write`. A new batch leases each revision it names for 
 delivery-lease trigger does (`expires_at` keeps the later of the old and the new expiry). An issue that refuses leaves
 nothing behind, the prune of old batches included. On Postgres outside a transaction the prune is its own statement
 and stays.
+
+## Publication
+
+`shared_skill_publication.rs` holds the activation flag and the pack rows. The SQL engines keep the flag on
+`persistence_brain` (`skill_bundles_enabled`, `writer_protocol_floor`); a Rust brain has no managed persistence epoch and
+no worktree bindings, so the flag has its own record and activation checks what `skill-activation.ts` and
+`activation.ts` check, in the same order: a registered canonical root (a live source with a local path), no legacy cycle
+lock, no blocking write request, no effect with a recovery record, no queued or running effect. The TypeScript caller
+(`src/core/persistence/skill-activation.ts`) turns each blocker into the same `writer_not_quiesced` refusal and hint.
+
+| Key | Value | Mirrors |
+| --- | --- | --- |
+| `M shared_skill_publication` (`keys::meta`) | flag record: `skill_bundles_enabled`, `writer_protocol_floor`; absent means disabled at floor 1 | `persistence_brain.skill_bundles_enabled`, `writer_protocol_floor` |
+| `x 0x0c <source> 0x00 <incarnation>` | pack record: `source_id`, `source_incarnation`, `pack_id`, `revision`, `manifest`, `manifest_hash` | `shared_skill_packs` |
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `readSharedSkillPublication()` | `{ skill_bundles_enabled, writer_protocol_floor }` | the `persistence_brain` read of `assertSharedSkillPersistence` |
+| `activateSharedSkillPublication(dryRun)` | `{ registration_required }`, `{ legacy_lock }`, `{ blocked }` (the first blocker with its `phase`), or `{ activated, protocol_version: 2, filesystem_sources }`; a dry run writes nothing | `activateSharedSkillPersistence` |
+| `readSharedSkillSource(sourceId)` | `{ id, incarnation, archived, local_path, aliases }` or null | the source read of `sourceRoot` |
+| `readSharedSkillPack({ sourceId, incarnation })` | the pack row or null | `SELECT ... FROM shared_skill_packs` |
+| `listSharedSkillHeadKeys({ sourceId, incarnation, packId, limit, names })` | `[{ name, revision, deleted }]` | the head-key read of a publication |
+| `readSharedSkillHeadRevisions({ sourceId, incarnation, packId, limit, names })` | the heads with their revisions | the head read of a publication |
+| `checkSharedSkillPublication({ sourceId, incarnation, packId, expectedPackRevision, heads, revisions })` | `{ conflict: 'pack' \| 'head' }`, or `{ pruned, capacity, incoming_bytes }` after the prune of eligible revisions | the pack and head locks, the prune and the capacity read of `validate` |
+| `writeSharedSkillPack({ sourceId, incarnation, packId, revision, manifest, manifestHash })` | null; refuses `42501` while publication is disabled | the `shared_skill_packs` upsert |
+| `readSharedSkillRetention({ sourceId, incarnation })` | the retained, protected and eligible counts and bytes of the source and the brain | `sharedSkillRetentionStatus` without the limits |
+
+A publication runs in one bound store transaction (`engine.transaction`), and each statement goes through the
+`FlaggingWriter` wrap: the write admission, the check, the revisions and heads, the pack and the committed receipt. A
+refusal rolls the admission back too, so a Rust brain keeps no conflict receipt. The Rust brain writes no canonical file
+yet: the receipt says `persistence.mode: 'database'` and `write_through.written: false`, and a second `put_skill` of the
+same skill refuses `local_conflict` until the canonical `skills/<name>/SKILL.md` and `skillpack.json` are written.
+`adoptSharedSkillpack` refuses `engine_capability_missing`.
 
 ## Refusals
 
@@ -66,6 +98,6 @@ and stays.
 | a duplicate revision | `shared_skill_revisions_pkey` | code `23505` |
 | a batch that names a revision the store does not retain | `shared_skill_delivery_lease`, message `revision_unavailable: delivery revision is no longer retained` | code `23503`, as the Postgres delivery-lease trigger |
 
-Tests: `rust/crates/gbrain-store/tests/shared_skill_members.rs` (including
+Tests: `rust/crates/gbrain-store/tests/shared_skill_publication.rs`, `rust/crates/gbrain-store/tests/shared_skill_members.rs` (including
 `delivery_batch_outside_the_replay_window_is_unread_and_pruned`, the Rust proof of the parity case that needs raw SQL to
 age a batch) and `test/engine-parity/shared-skill-members.test.ts`.
