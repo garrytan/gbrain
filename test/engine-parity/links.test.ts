@@ -632,4 +632,34 @@ describe('engine parity: backlink and page signal reads', () => {
       return { islanded, inbound, scopedDefault, scopedAlt, federated };
     },
   );
+  parityTest(
+    'findByTitleFuzzy: exact float4 scores, slug ties, LIKE wildcards in dirPrefix, soft-deleted pages per arm',
+    { methods: ['findByTitleFuzzy', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'fuzzy-src');
+      await engine.putPage('fz/b-tie', page('Widget Example', { type: 'concept' }));
+      await engine.putPage('fz/a-tie', page('Widget Example', { type: 'concept' }));
+      await engine.putPage('fz_x/odd', page('Gadget Thing', { type: 'concept' }));
+      await engine.putPage('fz/gone', page('Vanished Widget Example', { type: 'concept' }));
+      await engine.putPage('fz/z-alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
+      await engine.softDeletePage('fz/gone');
+      const tie = await engine.findByTitleFuzzy('Widget Example');
+      const partial = await engine.findByTitleFuzzy('Widget Exampl', 'fz');
+      // The prefix is a LIKE pattern: each `_` matches any one character, so `f__x` matches `fz_x/odd`.
+      const wildcard = await engine.findByTitleFuzzy('Gadget Thing', 'f__x', 0.5);
+      const lowThreshold = await engine.findByTitleFuzzy('Gadget', undefined, 0.1);
+      // 1/3 as a float4 is 0.33333334: the SQL compares in float4.
+      const boundary = await engine.findByTitleFuzzy('abc', undefined, 0.33333334);
+      await engine.putPage('fz/abd', page('abd', { type: 'concept' }));
+      const boundaryHit = await engine.findByTitleFuzzy('abc', 'fz', 0.33333334);
+      const deletedScoped = await engine.findByTitleFuzzy('Vanished Widget Example', undefined, 0.9, 'default');
+      const deletedUnscoped = await engine.findByTitleFuzzy('Vanished Widget Example', undefined, 0.9);
+      const otherSource = await engine.findByTitleFuzzy('Widget Example', undefined, 0.55, 'fuzzy-src');
+      expect(tie?.slug).toBe('fz/a-tie');
+      expect(wildcard?.slug).toBe('fz_x/odd');
+      expect(boundaryHit?.slug).toBe('fz/abd');
+      expect(deletedScoped).toBeNull();
+      return { tie, partial, wildcard, lowThreshold, boundary, boundaryHit, deletedScoped, deletedUnscoped, otherSource };
+    },
+  );
 });

@@ -54,6 +54,7 @@ const ALLOWLIST = new Map([
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
+  { path: 'src/core/apple/send-sign.ts', reason: "held: the GBrain Helper send signer (plan plans/apple-send, PR S1); the agent's computer calls it today, and the apple-setup plan's gbrain apple send command wires it into the CLI" },
   { path: 'src/core/rust-engine.ts', reason: "held: the Rust engine shell (plan PR 8, docs/designs/RUST_ENGINE.md); the addon loader PR on rust-engine/core wires openRustEngine into engine construction" },
   { path: 'src/core/rust-engine/members.ts', reason: 'held: the Rust engine shell member table; reached through src/core/rust-engine.ts once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/addon-errors.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },
@@ -80,6 +81,7 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/rust-engine/store-members/page-ops.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/store-members/extraction.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/store-members/aliases.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
+  { path: 'src/core/rust-engine/store-members/private-provenance.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/store-members/page-body.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/store-members/facts.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/store-members/ontology.ts', reason: 'held: the Rust engine store wiring (plan PRs 10-12); reached through src/core/rust-engine.ts once the addon release PR wires openRustEngine into engine construction with the rust config value' },

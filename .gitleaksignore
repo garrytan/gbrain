@@ -77,3 +77,6 @@ abef0b6d4b3c475ab8a6ab991744562f1f579a4f:test/transcripts-openclaw-gateway-argv.
 # Rust engine research maps (PR 9595): history-only false positives (one prose line, and this file's own first comment) read as generic-api-key; not secrets.
 0b3539ac8cbbcab5308016a53b3559276449854f:docs/research/rust-engine/gbrain-evals/brainbench-categories.md:generic-api-key:242
 ef56be48bd4bca977ed5eee7012070573039b142:.gitleaksignore:generic-api-key:77
+# Rust engine slice 1a: the synthetic fenced word constant in test/engine-parity/search-private-fence.test.ts (commit 3b04ef1)
+# read as generic-api-key; the tree renamed the constant. This history-only fingerprint is not a secret.
+3b04ef121cc1bdf6c5bcb761664f5b07356d9eb2:test/engine-parity/search-private-fence.test.ts:generic-api-key:30

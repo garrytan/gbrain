@@ -105,8 +105,8 @@ The rule lives in `crates/gbrain-napi/build.rs`.
 the event loop is never blocked. The records live in a directory (`~/.gbrain/brain.rust/` in the
 design): `FORMAT` (JSON: `format_version`, `engine_abi`, `catalog_version`, `schema_version`,
 `brain_id`, `created_by`) and `records.redb`. The store is `crates/gbrain-store`: redb behind a
-narrow key-value trait (`kv.rs`); only `redb_kv.rs` names redb. This is a bake-off store: keyword
-search is a plain BM25 and is not search parity with PGLite (design D5).
+narrow key-value trait (`kv.rs`); only `redb_kv.rs` names redb. This is a bake-off store: its keyword and title
+search is a port of PostgreSQL's english full-text search and `ts_rank`, and matches PGLite (`docs/store/keyword.md`).
 
 Rules for every method:
 

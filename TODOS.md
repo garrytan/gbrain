@@ -1,5 +1,13 @@
 # TODOS
 
+## Rust engine search follow-ups (filed 2026-11-18, #9730)
+
+- [ ] **P2 — `rust-title-index-row-limit`: the Rust store keeps a title that PGLite and Postgres refuse (#9730).** **What:** PGLite and Postgres refuse a page whose `lower(title)` row in the btree index `idx_pages_source_title_lower` (`src/schema.sql`) is over 8191 bytes, with `index row requires N bytes, maximum size is 8191`. The Rust store has no such index and stores the page. A title of a few KB is enough on the SQL engines; the exact threshold depends on how well Postgres compresses the value. **Why:** a write that the SQL engines refuse must refuse the same way on Rust, or a brain moved between engines changes what it holds. **Fix:** design how Rust can refuse the same write with the same message (a Rust check can only approximate the compressed size), then add a parity case that uses an incompressible (random) title so every engine refuses it. Do not add a case that pins the current divergence as equal. **Effort:** M. **Priority:** P2.
+
+## Rust engine store follow-ups (filed 2026-11-18, #9688)
+
+- [ ] **P2 — The local ship pregate stops as `unreadable` at its 60-minute limit, and three serial test files time out under it (#9688).** **What:** on the store branch the `/ship` pregate ran 429 files, then ended with exit 143 at its 3600 s step limit and reported `PREGATE unreadable`, not `time limit hit`, so the receipt could not carry it and CI had to stand in. In that run, `test/agent-install-backup.serial.test.ts` (4 tests), `test/backup-portability-native.serial.test.ts` (2) and `test/persistence-publication-native.serial.test.ts` (1) failed on the 5 s per-test timeout; CI passed at the same head. **Fix:** make the 60-minute stop report `time limit hit` with the files it reached, and give those three files a timeout that fits a loaded serial run (or move them to the slow lane). **Effort:** S. **Priority:** P2.
+
 ## Busy-agent soak cell follow-ups (filed 2026-11-11, GBRA-332, #8829)
 
 - [ ] **P2 — Refresh diverged-publish child waits 0 s for the push lock (#8975).** **What:** a refresh whose checkout diverged publishes through a child that runs `commit-push` with `GBRAIN_PUBLISH_LOCK_WAIT_SECONDS=0` (`publishInChild` in `worktree-refresh.ts`), so a refresh tick racing another committer refuses `push_unconfirmed` instead of waiting its turn. The busy-agent soak cell's mode (h) shows it as an informational red, parked by its `.github/nightly-known-red.tsv` row. **Fix:** give the child the normal push-lock wait, then delete the known-red row. **Effort:** S. **Priority:** P2.
