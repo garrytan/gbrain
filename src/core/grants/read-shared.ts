@@ -16,6 +16,7 @@
 import { isSourceFederated, parseSourceConfig } from '../sources-load.ts';
 import type { SqlQuery } from '../sql-query.ts';
 import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
+import { NO_SOURCES } from '../source-id.ts';
 import { GrantError, authSourcesFromGrant, readSharedFromColumns, type PrincipalGrant } from './model.ts';
 
 export interface SharedRow { id: string; config: unknown; guest: boolean; owners: string[]; owner_member: string | null }
@@ -70,16 +71,32 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
 }
 
 /**
- * The AuthInfo source fields of a token: authSourcesFromGrant, widened by the shared set when the switch applies. It
- * does not apply when off, on the deny-all `none` (also every drifted or malformed grant), or on a token with no
- * source list, which already reads the floor. The write source never changes; `member` is read only for a switched key.
+ * The AuthInfo source fields of a token: authSourcesFromGrant with every archived source dropped from the sources it
+ * names, then widened by the shared set when the switch applies. Membership is live, as for OAuth clients: an archived
+ * source reads as absent until it is restored. A grant whose write source is archived reads nothing, as an OAuth client
+ * whose source is archived exposes no operations: reads that scope to the write source alone would otherwise still
+ * reach it. The dropped ids
+ * stay on `archivedSources`, so naming one still answers unknown_source rather than permission_denied. The switch does
+ * not apply when off, on the deny-all `none` (also every drifted or malformed grant), or on a token with no source
+ * list, which already reads the floor. The write source never changes; `member` is read only for a switched key.
+ * Throws when the source rows cannot be read, so the token fails closed.
  */
 export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, member: () => Promise<string | null>):
-  Promise<{ sourceId: string; allowedSources?: string[]; hasSourceGrant: boolean; readShared?: true; readSharedUnresolved?: true }> {
+  Promise<{ sourceId: string; allowedSources?: string[]; hasSourceGrant: boolean; readShared?: true; archivedSources?: string[] }> {
   const base = authSourcesFromGrant(grant);
-  if (grant.readShared !== true || grant.sources.kind === 'none' || grant.sources.kind === 'default') return base;
-  const expanded = await expandReadShared(sql, base.allowedSources ?? [base.sourceId], await member());
-  return { sourceId: base.sourceId, allowedSources: expanded.sources, hasSourceGrant: true, readShared: true, ...(expanded.unresolved ? { readSharedUnresolved: true as const } : {}) };
+  if (grant.sources.kind === 'none' || grant.sources.kind === 'default') return base;
+  const rows = await sharedRows(sql);
+  const live = new Set(rows.map(r => r.id));
+  const named = base.allowedSources ?? [base.sourceId];
+  const stored = named.filter(id => live.has(id));
+  const archived = named.filter(id => !live.has(id));
+  const archivedSources = archived.length ? { archivedSources: archived } : {};
+  const shared = grant.readShared === true ? { readShared: true as const } : {};
+  const denied = { sourceId: NO_SOURCES, allowedSources: [], hasSourceGrant: true, ...shared, ...archivedSources };
+  if (!live.has(base.sourceId)) return denied;
+  const sources = grant.readShared === true ? [...new Set([...stored, ...sharedSetFromRows(rows, await member())])] : stored;
+  if (grant.readShared !== true && !base.allowedSources) return { ...base, ...archivedSources };
+  return { sourceId: base.sourceId, allowedSources: sources, hasSourceGrant: true, ...shared, ...archivedSources };
 }
 
 /**
