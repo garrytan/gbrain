@@ -45,6 +45,7 @@ import { coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
 import type { OpenPages } from '../core/access/open-pages.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { mintToken } from './auth-mint.ts';
+import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
 
 export const MEMBER_KEY_DIR = 'member-keys';
 export const memberKeyName = (member: string): string => `member-${member}`;
@@ -304,11 +305,11 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
   if (!apply || blocked(receipt)) return receipt;
   receipt.applied = true;
   try {
-    for (const m of receipt.members.filter(x => x.action === 'add')) await addMember(engine, m.id);
+    for (const m of receipt.members.filter(x => x.action === 'add')) await addMember(engine, m.id, { beforeWrite: () => rescopeArchiveBefore(engine, m.id, 'add') });
     receipt.completed.push('members');
     abortAfter('serves-members');
     if (receipt.owner && receipt.owner.action !== 'keep') {
-      if (!(await getMember(engine, receipt.owner.id))) await addMember(engine, receipt.owner.id);
+      if (!(await getMember(engine, receipt.owner.id))) await addMember(engine, receipt.owner.id, { beforeWrite: () => rescopeArchiveBefore(engine, receipt.owner!.id, 'add') });
       await setOwner(engine, receipt.owner.id);
       receipt.completed.push('owner');
     }
@@ -442,6 +443,7 @@ export async function runAccessServes(engine: BrainEngine, mode: string | undefi
   if (!roster.length) throw rosterEmpty('gbrain access serves several');
   const owner = flagValue(args, '--owner');
   const r = await labelSeveral(engine, roster, flagValue(args, '--source') ?? 'default', args.includes('--yes'), json, { labelledOnly: args.includes('--labelled-only'), ...(owner !== undefined ? { owner: assertAccessId(owner) } : {}) });
+  if (r.applied) await rescopeArchiveAfter(engine);
   console.log(json ? JSON.stringify(r, null, 2) : receiptLines(r).join('\n'));
   if (!receiptOk(r)) setCliExitVerdict(1);
 }

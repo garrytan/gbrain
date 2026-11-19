@@ -19,7 +19,11 @@ async function defaultModel(brain: StoreBrain): Promise<string> {
   return (await brain.getConfig('embedding_model')) || 'unconfigured';
 }
 
-/** The chunks as PGLite would store them, ready for the store. Vectors never get here (the member refuses them first). */
+/**
+ * The chunks as PGLite would store them, ready for the store. A text vector travels as a number array with the hash
+ * of the input it was computed from; an image vector never gets here (the member refuses it first). A vector needs a
+ * model label: with no chunk model and no configured one, the write throws, as PGLite's does.
+ */
 export async function prepareChunks(brain: StoreBrain, chunks: ChunkInput[]): Promise<Record<string, unknown>[]> {
   if (chunks.length === 0) return [];
   // A registered embedding column changes which column and model PGLite writes; the store has neither.
@@ -27,6 +31,9 @@ export async function prepareChunks(brain: StoreBrain, chunks: ChunkInput[]): Pr
     if (await brain.getConfig(key)) throw capabilityMissing('chunks', `upsertChunks (config ${key} routes chunk writes to another embedding column)`);
   }
   const fallback = await defaultModel(brain);
+  if (fallback === 'unconfigured' && chunks.some((chunk) => chunk.embedding && !chunk.model)) {
+    throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.');
+  }
   return chunks.map((chunk) => ({
     chunk_index: chunk.chunk_index,
     chunk_text: sanitizeText(chunk.chunk_text),
@@ -44,5 +51,7 @@ export async function prepareChunks(brain: StoreBrain, chunks: ChunkInput[]): Pr
     modality: chunk.modality ?? 'text',
     projected_byte_start: chunk.projected_byte_start ?? null,
     projected_byte_end: chunk.projected_byte_end ?? null,
+    embedding: chunk.embedding ? Array.from(chunk.embedding) : null,
+    embedding_input_hash: chunk.embedding ? chunk.embedding_input_hash ?? null : null,
   }));
 }

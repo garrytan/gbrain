@@ -761,7 +761,8 @@ closed to the whole corpus. `scripts/e2e-matrix.ts` then drops
 `E2E_EXCLUSIONS`, the files a named job owns, printing each owner: Tier 1's
 named files, `tier1-backend-matrix` for every `test/e2e/` row of
 `scripts/e2e-backend-matrix.txt` (direct Postgres and PgBouncer, so a
-Selected E2E direct-only run would duplicate it), persistence-validation.yml and the live-key lanes.
+Selected E2E direct-only run would duplicate it), persistence-validation.yml, the
+`openclaw-skill-resolver` job (it needs the OpenClaw CLI) and the live-key lanes.
 `test/scripts/e2e-wiring.test.ts` requires every excluded file to have a named
 owner. Locally, `ci:local:diff` and `ci:ubicloud:diff` run gitleaks and
 `scripts/ci-doc-checks.sh` (llms freshness, KEY_FILES byte caps, documented
@@ -1476,6 +1477,13 @@ the keys and run them.
 When asked to "run all E2E tests" or "run tests", that means ALL tiers:
 - Tier 1: `bun run test:e2e` (mechanical, sync, upgrade — no API keys needed)
 - Tier 2: `test/e2e/skills.test.ts` (requires OpenAI + Anthropic + openclaw CLI)
+- OpenClaw skill resolver: `test/e2e/openclaw-skill-resolver-real.test.ts` (keyless; needs the
+  openclaw CLI, from `GBRAIN_TEST_OPENCLAW_SKILL_BIN` or PATH). It drives the resolver plugin through a
+  real gateway, Telegram channel turns and cron turns included. CI runs it in e2e.yml's
+  `openclaw-skill-resolver` job (full-corpus profile, one cell per OpenClaw version); the
+  labelled-set bench is `scripts/bench/openclaw-skill-resolver-real.ts`, run by hand
+  (workflow_dispatch) after a resolver change through `openclaw-skill-resolver-bench.yml`.
+  It has no schedule.
 - Always spin up the test DB, source zshrc, run everything, tear down.
 
 Real-agent door suites (`test/e2e/install-real-*.serial.test.ts`) run in

@@ -15,7 +15,7 @@
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
-import { ANY_OWNER_ONLY_SQL, ownerOnlyPageSql } from '../../access/owner-only.ts';
+import { ownerOnlyPageSql } from '../../access/owner-only.ts';
 import {
   privacyAliasSql,
   privatePagesFilterForCaller,
@@ -23,6 +23,8 @@ import {
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
 } from '../../search/private-visibility.ts';
+import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
+import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
@@ -35,15 +37,16 @@ export interface StorePrivacyPolicy {
 /**
  * The owner-only part of the policy, as the baseline renders it (src/core/access/owner-only.ts): `lineage` is the v320
  * form (a page of an owner-only source, or a concept or question synthesized from one, is hidden), which a brain at or
- * above that schema version renders; `closed` is the form below it or outside an engine scope (any owner-only source in
- * the brain hides every page). The part always applies to the no-caller baseline, whatever the other settings say.
+ * above that schema version renders, and its v328 form with the login's read mode (always the exact lineage in the store,
+ * which has no logins that row security narrows); `closed` is the form below v320 or outside an engine scope (any
+ * owner-only source in the brain, or the held flag, hides every page). The part always applies to the no-caller baseline, whatever the other settings say.
  */
 export type StoreOwnerOnly = 'lineage' | 'closed';
 
 /** Which owner-only form `baseline` renders for the page alias `alias`; a text that holds neither refuses (the store has no third form). */
 function ownerOnlyOf(member: string, baseline: string, alias: string): StoreOwnerOnly {
-  if (baseline.includes(ownerOnlyPageSql(alias, 'fn'))) return 'lineage';
-  if (baseline.includes(ANY_OWNER_ONLY_SQL)) return 'closed';
+  if (baseline.includes(ownerOnlyPageSql(alias, 'fn')) || baseline.includes(ownerOnlyPageSql(alias, 'mode'))) return 'lineage';
+  if (baseline.includes(ownerOnlyPageSql(alias, 'closed'))) return 'closed';
   return refuseMember(member, 'excludePrivate under an owner-only rule the store does not model');
 }
 
@@ -109,3 +112,32 @@ export function storePagePolicy(member: string, excludePrivate: unknown): StoreP
     ownerOnly: ownerOnlyOf(member, baseline, 'p'),
   };
 }
+
+/**
+ * Every key hybridSearch's option bag carries that does not decide which pages a marker read may see: the search's own
+ * settings, callbacks and internal flags, and `takesHoldersAllowList`, which only the takes reads honour. hybridSearch
+ * hands the page-marker reads (stampContentFlags, stampUnverifiedExtractions) and the ranking reads
+ * (getBacklinkCounts, getAdjacencyBoosts, supersedingPageSlugs) that whole bag as their policy, and PGLite
+ * reads only the page policy out of it (src/core/search/read-policy-sql.ts), so these change nothing here. The list is
+ * checked against the two option types below: a new key in either one fails the type check until it is listed.
+ */
+export const HYBRID_BAG_KEYS = [
+  'expansion', 'anyWordFill', 'decide', 'aliasTokenHop', 'onRelationalMeta', 'mode', 'expandFn', 'expansionVariantBudget',
+  'keywordArmConfidenceFloor', 'metadataBoostGate', 'rerankGate', 'pageRankCut', 'explainTarget', 'explain', 'rrfK', 'dedupOpts',
+  'onMeta', 'onRerankPool', '_queryEmbedDeadline', '_queryPrefix', '_embeddingOptedOut', '_timings', 'queryEmbedFn',
+  'onQueryEmbedding', '_telemetryCacheStatus', '_searchModeInput', 'limit', 'offset', 'onVectorPoolMeta', 'vectorLegacyGuard',
+  'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn', 'autocut', 'type', 'types', 'where',
+  'exclude_slugs', 'exclude_slug_prefixes', 'source_boosts', 'include_slug_prefixes', 'detail', 'language', 'symbolKind',
+  'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'keywordPhrase', 'embeddingColumn',
+  'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since',
+  'until', 'tokenBudget', 'useCache', 'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals',
+  'relationalRetrieval', 'relationalRetrievalDepth', 'relationalRerankPin', 'relationalPlanner', 'relationalOrientOneHop',
+  'relationalChainSlots', 'takesHoldersAllowList', 'applyBacklinks', 'decayMap', 'fallback', 'graphSignalsEnabled',
+  'onGraphMeta', 'onScoreDistribution', 'query', 'titleBoost', 'skipMetadataBoosts',
+] as const;
+type BagKey = Exclude<keyof HybridSearchOpts | keyof PostFusionOpts, keyof PageReadScope>;
+// Both directions: every listed key is a key of the bag, and every key of the bag that is not a page policy key is listed.
+const HYBRID_BAG_KEYS_CHECKED: readonly BagKey[] = HYBRID_BAG_KEYS;
+const HYBRID_BAG_KEYS_COMPLETE: [Exclude<BagKey, (typeof HYBRID_BAG_KEYS)[number]>] extends [never] ? true : never = true;
+void HYBRID_BAG_KEYS_CHECKED;
+void HYBRID_BAG_KEYS_COMPLETE;

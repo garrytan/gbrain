@@ -461,6 +461,12 @@ export interface AuthInfo {
   readShared?: boolean;
   readSharedUnresolved?: boolean;
   /**
+   * GST-3163: sources a token's grant names that are archived now. They are left out of `sourceId`/`allowedSources`,
+   * so no unqualified read reaches them; an explicit `source_id` naming one passes the grant check and then answers
+   * unknown_source from the liveness check (`assertExplicitSourceLive`), as it did before archiving narrowed the grant.
+   */
+  archivedSources?: string[];
+  /**
    * GBRA-575: the grant's `private_facts: granted_sources` axis, set at token
    * verification from the live row, with the same explicitly named sources.
    * MCP dispatch makes them the private-fact sources of each non-mutating call

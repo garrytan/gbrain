@@ -125,17 +125,39 @@ describe('Rust engine on the store', () => {
   withAddon('an option the store does not keep refuses engine_capability_missing instead of being dropped', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    const refused = await code(() => engine.getChunks('notes/a', { includeEmbedding: true } as never));
+    // The store does not evaluate the private-page filter of findAnomalies.
+    const refused = await code(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true }));
     expect(refused).toBe('engine_capability_missing');
+    expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
-  withAddon('a chunk that carries a vector refuses chunks, and writes nothing', async () => {
+  withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
     const before = await engine.getChunks('notes/a');
     const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding: new Float32Array(4) } as never;
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('invalid_argument');
+    expect(await engine.getChunks('notes/a')).toEqual(before);
+  });
+
+  withAddon('a chunk that carries an image vector refuses chunks, and writes nothing', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const before = await engine.getChunks('notes/a');
+    const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding_image: new Float32Array(4) } as never;
     expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('engine_capability_missing');
     expect(await engine.getChunks('notes/a')).toEqual(before);
+  });
+
+  withAddon('getStats and getHealth refuse a brain whose config selects another embedding column', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    expect((await engine.getStats()).page_count).toBe(1);
+    await engine.setConfig('search_embedding_column', 'embedding_other');
+    expect(await code(() => engine.getStats())).toBe('engine_capability_missing');
+    expect(await code(() => engine.getHealth())).toBe('engine_capability_missing');
+    await engine.unsetConfig('search_embedding_column');
+    expect((await engine.getHealth()).page_count).toBe(1);
   });
 
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {

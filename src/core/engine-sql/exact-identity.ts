@@ -5,7 +5,7 @@
  * Every arm is an equality probe an existing index serves, so the read never
  * scans a source's pages:
  *
- *   title    lower(title) = key             idx_pages_source_title_lower
+ *   title    lower(title) = key             idx_pages_title_lower_hash
  *   basename slug basename = key            idx_pages_slug_basename (the slug
  *                                           grammar already folds accents)
  *   alias    page_aliases.alias_norm = key  the (source_id, alias_norm) indexes

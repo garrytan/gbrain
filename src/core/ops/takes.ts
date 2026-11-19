@@ -23,7 +23,7 @@ import {
 } from './context.ts';
 import { embedQueryWithPrefix } from '../search/query-prefix.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { ownerOnlyTakeAllowedSql, privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { keepRoomEvidence } from '../access/room.ts';
 
 /** Result pages whose takes D2 checks: the page a get_page read returned, or the first distinct pages of a search/query. */
@@ -258,7 +258,7 @@ const takes_calibration: Operation = {
 async function countMcpResolved(ctx: OperationContext): Promise<number> {
   const scope = await readPolicyOpts(ctx);
   const where: string[] = [`t.resolved_at IS NOT NULL`, `t.resolved_by LIKE 'mcp:%'`];
-  if (scope.excludePrivate) where.push(privatePagesFilterForCaller('p'));
+  if (scope.excludePrivate) where.push(`${privatePagesFilterForCaller('p')}${ownerOnlyTakeAllowedSql('t')}`);
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {
     params.push(scope.sourceIds);

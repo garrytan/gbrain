@@ -326,6 +326,9 @@ import { v322 } from './v322-owner-only-marks.ts';
 import { v323 } from './v323-token-read-shared.ts';
 import { v324 } from './v324-secret-store.ts';
 import { v325 } from './v325-entity-identity-reviews.ts';
+import { v326 } from './v326-pages-title-lower-hash-index.ts';
+import { v327 } from './v327-access-handovers.ts';
+import { v328 } from './v328-owner-only-reads-complete.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -650,4 +653,7 @@ export const MIGRATIONS: Migration[] = [
   v323,
   v324,
   v325,
+  v326,
+  v327,
+  v328,
 ];

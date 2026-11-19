@@ -2,7 +2,7 @@
 
 A small macOS program that reads the Messages database on your own Mac and answers gbrain over `127.0.0.1`. It never writes to the database and never shows a macOS dialog while it answers a request. When the owner turns sending on, it also sends one-to-one iMessages for the owner's own agent over Tailscale (see [Sending](#sending)); it never sends on its own.
 
-This folder is Swift source only. On Linux and Windows nothing in gbrain's install, upgrade, doctor or test suite builds or loads it. A later `gbrain apple-setup` builds it on your Mac; until then, `.github/workflows/apple-helper.yml` builds and tests it on a macOS runner.
+This folder is Swift source only. On Linux and Windows nothing in gbrain's install, upgrade, doctor or test suite builds or loads it. On a Mac, `scripts/install.sh` builds, signs and starts it (see [Install on a Mac](#install-on-a-mac)); a later `gbrain apple-setup` will run the same steps for you. `.github/workflows/apple-helper.yml` builds, tests and installs it on a macOS runner.
 
 ## Build and test on a Mac
 
@@ -14,11 +14,28 @@ swift test
 
 The helper runs on macOS 13 or newer. Building it needs the Xcode Command Line Tools (`xcode-select --install`), and `swift test` needs Swift 6 (Xcode 16 or its Command Line Tools, macOS 14.5 or newer) because the tests use Swift Testing.
 
+## Install on a Mac
+
+```bash
+apple/helper/scripts/install.sh
+```
+
+It builds the helper, signs it with a certificate made on this Mac, installs `~/Applications/GBrain Helper.app` and registers its background agent. It shows no dialog. The first run makes the signing keychain `~/Library/Keychains/gbrain-helper-signing.keychain-db`, with its random password in a 0600 file in `~/Library/Application Support/GBrain Helper/`. Every later run signs with that same certificate, so macOS keeps the helper's Full Disk Access, Automation and keychain access across rebuilds. If the app is installed but its signing keychain is gone, the script stops and changes nothing, because a new certificate would make macOS treat the helper as a different app. An interrupted run leaves the installed app in place, and one install runs at a time. `install.sh --repair` re-signs the installed app with the same certificate and registers it again, without rebuilding.
+
+After it runs:
+
+- macOS may show "Background Items Added". If System Settings > General > Login Items & Extensions lists GBrain Helper as off, switch it on.
+- Until a config exists, the helper restarts every 10 seconds. Write one with `"$HOME/Applications/GBrain Helper.app/Contents/MacOS/gbrain-apple-helper" init --port <port>`, then run the helper's other commands from that same path.
+- Turn on GBrain Helper in System Settings > Privacy & Security > Full Disk Access.
+
+Any program already running as you can read the signing keychain's password, or see it in the `security` command's arguments while the script runs, and sign itself as the helper, inheriting its grants. That is the cost of signing on the Mac with no Apple developer account.
+
 ## Layout
 
 - `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`).
 - `Sources/gbrain-apple-helper/`: the command-line program.
 - `Bundle/`: `Info.plist`, the background agent's property list and the entitlements for `GBrain Helper.app`.
+- `scripts/install.sh`: builds, signs, installs and registers the app (above).
 - `scripts/signing-probe.sh`: CI probe that asks whether a self-signed certificate made on the machine signs the app with no dialog, or first needs a one-time Always Trust step. Its answer goes to the job summary.
 - `Tests/HelperCoreTests/`: tests against a synthetic Messages database.
 
@@ -100,7 +117,7 @@ Sending is off until the owner turns it on at the Mac. The owner's agent then se
 3. On the agent's computer, make an Ed25519 key pair (`generateSendKeyPair` in `src/core/apple/send-sign.ts`) and keep the private key there. At the Mac, `gbrain-apple-helper send-key add --name <name> --public-key-file -` with the public key on stdin asks for Touch ID once.
 4. Full Disk Access (System Settings > Privacy & Security > Full Disk Access) must be on: the helper reads the Messages database to confirm each send.
 
-With nobody logged in at the Mac, the Touch ID steps fail with `owner_presence_unavailable`. Removing a key, lowering a limit and `send-setup --off` need no prompt. Sends keep working while a Touch ID dialog is open. If another settings change lands while the dialog is open, the helper applies nothing and answers `overloaded`; run the command again to see the dialog for the settings as they are now. `send-setup --off`, `send-key remove` and a lowered limit always write the keychain item, so a failed write is reported instead of being taken as done, and a Touch ID approval still open from an earlier command can't undo them.
+With nobody logged in at the Mac, the Touch ID steps fail with `owner_presence_unavailable`. Removing a key, lowering a limit and `send-setup --off` need no prompt. Sends keep working while a Touch ID dialog is open. If another settings change lands while the dialog is open, the helper applies nothing and answers `overloaded`; run the command again to see the dialog for the settings as they are now. `send-setup --off`, `send-key remove` and a lowered limit always write the keychain item, so a failed write is reported instead of being taken as done, and a Touch ID approval still open from an earlier command can't undo them. Each send checks the switch and its key once more right before it hands the text to Messages. So once `send-setup --off` or `send-key remove` has returned, no new text is handed to Messages. A text Messages has already accepted may still be delivered, and one already being handed over finishes first, which can take up to about 40 seconds. A send that was accepted before a stop the helper confirmed stays cancelled even if sending is turned back on, or the same key is added again, before it reaches Messages; it answers `send_disabled` or `unknown_send_key`, and the agent sends it again if it is still wanted. `send-setup --off` holds the config file lock until the helper has answered, so a `send-setup` started meanwhile waits for it. It doesn't wait for a `send-setup` that is still at its Touch ID dialog, and approving that dialog afterwards answers `send_disabled`. If nothing answers and no `gbrain-apple-helper` process is running, `--off` says the helper isn't running and exits 0, because the config switch alone stops every send. If nothing answers but such a process is running (for example a helper still on a port the config no longer names), or the helper doesn't confirm within 40 seconds, it exits 69, because a text being handed over may still go out. When the helper answers with an error, the command says what answered, such as the helper being busy, and says when a text being handed over may still go out.
 
 ### Request
 
@@ -145,7 +162,7 @@ What this does not stop: a program running as the owner that builds a look-alike
 
 ### The send log
 
-`~/Library/Application Support/GBrain Helper/send-audit/YYYY-MM.jsonl`, mode 0600, one line per attempt and one per outcome: time, key name, the caller's address, idempotency key, recipient, the exact text, `requested_by`, `owner_instruction`, outcome and the Messages guid or error. No setting turns it off. A new file starts each month; after 90 days a line keeps only its time, outcome, code and a short hash of the recipient. A torn last line is moved to `torn-<time>.jsonl` instead of stopping the helper. `gbrain-apple-helper send-audit show --redacted` prints the redacted form; read that, not the raw file. The log never leaves the Mac.
+`~/Library/Application Support/GBrain Helper/send-audit/YYYY-MM.jsonl`, mode 0600, one line per attempt and one per outcome: time, key name, the caller's address, idempotency key, recipient, the exact text, `requested_by`, `owner_instruction`, outcome and the Messages guid or error. No setting turns it off. A new file starts each month; after 90 days a line keeps only its time, outcome, code and a short hash of the recipient. The hash is keyed with a random secret the helper keeps with the send keys in the keychain, so a phone number can't be recovered from it by trying every number, and the same recipient hashes differently on another Mac. A torn last line is moved to `torn-<time>.jsonl` instead of stopping the helper. `gbrain-apple-helper send-audit show --redacted` prints the redacted form; read that, not the raw file. The log never leaves the Mac.
 
 ### Outside terms
 

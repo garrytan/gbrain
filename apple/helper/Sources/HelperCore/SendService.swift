@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public enum SendReply {
     case ok(HTTPResponse)
@@ -53,6 +54,7 @@ public final class SendService {
     let lock = NSLock()
     let stateLock: NSRecursiveLock
     var adminSaves = 0
+    var stops = Stops()
     var inflight = Set<String>()
     var lastRetention: Date?
 
@@ -97,6 +99,7 @@ public final class SendService {
             state = try store.load() ?? state
             guard state.enabled, !switchedOn() else { return }
             state.enabled = false
+            defer { bump(nil) }
             try store.save(state)
         } catch {
             Log.line("send: could not record that the config switch turned sending off")
@@ -105,6 +108,7 @@ public final class SendService {
 
     public func handle(_ request: HTTPRequest, peer: UInt32) -> SendReply {
         let now = clock.now()
+        let seen = currentStops()
         var state: SendState
         do {
             state = try store.load() ?? SendState()
@@ -136,19 +140,17 @@ public final class SendService {
             inflight.remove(idempotencyKey)
             lock.unlock()
         }
-        return queue.sync { serially(send, key: idempotencyKey, signer: key, peer: peer) }
+        return queue.sync { serially(send, key: idempotencyKey, signer: key, peer: peer, seen: seen) }
     }
 
-    func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32) -> SendReply {
+    func serially(_ send: SendRequest, key: String, signer: SendKey, peer: UInt32, seen: Stops) -> SendReply {
         let limits: SendLimits
+        let hashKey: [UInt8]
         do {
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            var state = try store.load() ?? SendState()
-            observeKill(&state)
-            guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
-            guard state.keys.contains(signer) else { return fail(.unknownSendKey) }
-            limits = state.limits
+            (limits, hashKey) = try locked { () throws -> (SendLimits, [UInt8]) in
+                var state = try allowed(signer, since: seen)
+                return (state.limits, try recipientKey(&state))
+            }
         } catch {
             return fail((error as? Problem) ?? .sendKeysUnreadable)
         }
@@ -174,13 +176,13 @@ public final class SendService {
         } catch {
             return fail(Problem.from(error, dbPath: Config.defaultDBPath))
         }
-        if let limited = rateProblem(send.to, firstContact: firstContact, limits: limits, now: now) { return fail(limited) }
+        if let limited = rateProblem(send.to, firstContact: firstContact, limits: limits, hashKey: hashKey, now: now) { return fail(limited) }
         var pending = AuditRecord(t: SendAudit.stamp(now), kind: "pending", key: key)
         pending.hash = hash
         pending.keyName = signer.name
         pending.peer = IPv4.string(peer)
         pending.to = send.to
-        pending.toHash = Recipient.hash(send.to)
+        pending.toHash = Recipient.hash(send.to, key: hashKey)
         pending.text = send.text
         pending.requestedBy = send.requestedBy
         pending.ownerInstruction = send.ownerInstruction
@@ -194,7 +196,20 @@ public final class SendService {
         let dispatch: DispatchResult
         switch messages.prepare(askPermission: false) {
         case .ready:
-            dispatch = messages.send(text: send.text, to: send.to)
+            let handed = messages.handOver {
+                locked { () -> Result<DispatchResult, Problem> in
+                    do {
+                        _ = try allowed(signer, since: seen)
+                    } catch {
+                        return .failure((error as? Problem) ?? .sendKeysUnreadable)
+                    }
+                    return .success(messages.send(text: send.text, to: send.to))
+                }
+            }
+            switch handed {
+            case .success(let result): dispatch = result
+            case .failure(let stopped): return refuse(stopped, error: nil, pending: pending)
+            }
         case .automationDenied:
             return refuse(.automationDenied, error: -1743, pending: pending)
         case .signedOut:
@@ -224,7 +239,43 @@ public final class SendService {
         return record(.from(delivery), pending: pending)
     }
 
-    func rateProblem(_ recipient: String, firstContact: Bool, limits: SendLimits, now: Date) -> Problem? {
+    func allowed(_ signer: SendKey, since seen: Stops) throws -> SendState {
+        var state = try store.load() ?? SendState()
+        observeKill(&state)
+        let now = currentStops()
+        guard state.enabled, switchedOn(), now.all == seen.all else { throw Problem.sendDisabled }
+        guard state.keys.contains(signer), now.keys[signer.name] == seen.keys[signer.name] else { throw Problem.unknownSendKey }
+        return state
+    }
+
+    func currentStops() -> Stops {
+        lock.lock()
+        defer { lock.unlock() }
+        return stops
+    }
+
+    func bump(_ keyName: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let keyName { stops.keys[keyName, default: 0] += 1 } else { stops.all += 1 }
+    }
+
+    func recipientKey(_ state: inout SendState) throws -> [UInt8] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        if state.recipientHashKey == nil { state = try store.load() ?? state }
+        if state.recipientHashKey != nil {
+            guard let key = state.recipientKey else { throw Problem.sendKeysTampered }
+            return key
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw Problem.sendKeysUnreadable }
+        state.recipientHashKey = Base64URL.encode(bytes)
+        try store.save(state)
+        return bytes
+    }
+
+    func rateProblem(_ recipient: String, firstContact: Bool, limits: SendLimits, hashKey: [UInt8], now: Date) -> Problem? {
         let day = audit.attempts(since: now.addingTimeInterval(-86400))
         func check(_ window: TimeInterval, _ cap: Int, _ what: String, _ filter: (AuditRecord) -> Bool) -> Problem? {
             let inWindow = day.filter { ($0.date ?? .distantPast) > now.addingTimeInterval(-window) && filter($0) }
@@ -236,7 +287,7 @@ public final class SendService {
         return check(60, limits.maxPerMinute, "texts a minute") { _ in true }
             ?? check(3600, limits.maxPerHour, "texts an hour") { _ in true }
             ?? check(86400, limits.maxPerDay, "texts a day") { _ in true }
-            ?? check(3600, limits.maxPerRecipientPerHour, "texts an hour to one recipient") { $0.to == recipient || $0.toHash == Recipient.hash(recipient) }
+            ?? check(3600, limits.maxPerRecipientPerHour, "texts an hour to one recipient") { $0.to == recipient || $0.toHash == Recipient.hash(recipient, key: hashKey) }
             ?? (firstContact ? check(86400, limits.maxFirstContactPerDay, "texts a day to people never texted one-to-one before") { $0.firstContact == true } : nil)
     }
 
@@ -363,7 +414,9 @@ public final class SendService {
             let first = try locked { () throws -> (change: (state: SendState, reason: String?, save: Bool), seen: SendState, saves: Int) in
                 var current = try store.load() ?? SendState()
                 observeKill(&current)
+                defer { if action == "off" { bump(nil) } }
                 let change = try Self.change(action, fields, current)
+                defer { if action == "remove_key", let name = fields["name"] { bump(name) } }
                 if change.reason == nil, change.save {
                     try store.save(change.state)
                     adminSaves += 1
@@ -376,6 +429,7 @@ public final class SendService {
                 state = try locked { () throws -> SendState in
                     var current = try store.load() ?? SendState()
                     observeKill(&current)
+                    guard current.enabled || !first.change.state.enabled || switchedOn() else { throw Problem.sendDisabled }
                     guard current == first.seen, adminSaves == first.saves else { throw Problem.overloaded }
                     if first.change.save {
                         try store.save(first.change.state)
@@ -390,6 +444,11 @@ public final class SendService {
         } catch {
             return .problem((error as? Problem) ?? .internalError)
         }
+    }
+
+    struct Stops: Equatable {
+        var all = 0
+        var keys: [String: Int] = [:]
     }
 
     func locked<T>(_ body: () throws -> T) rethrows -> T {

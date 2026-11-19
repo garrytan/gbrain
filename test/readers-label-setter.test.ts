@@ -106,9 +106,16 @@ describe('the label editor writes readable_by as one flow-list line', () => {
     expect(replaced).toBe(withLine(text, readersLine(OWNER)).replace('title: A' + NL, 'title: A' + CR + NL));
     expect(spliceLabelLines(added, readLabelEdit({ set: {}, remove: ['readable_by'] })!)!.text).toBe(text);
   });
-  test('a block list, a duplicate key, or a reader that is not a plain principal is refused', () => {
-    const block = text.replace('type: note', 'type: note' + NL + 'readable_by:' + NL + '  - alice-example');
-    expect(spliceLabelLines(block, readLabelEdit({ set: { readable_by: [OWNER] }, remove: [] })!)).toBeNull();
+  test('a block list of plain items (as put_page writes it) is replaced with its item lines; every other byte is kept', () => {
+    const block = text.replace('type: note', 'type: note' + NL + 'readable_by:' + NL + '  - alice-example' + NL + '  - group:team-example');
+    expect(spliceLabelLines(block, readLabelEdit({ set: { readable_by: [OWNER] }, remove: [] })!)!.text).toBe(withLine(text, readersLine(OWNER)));
+    expect(spliceLabelLines(block, readLabelEdit({ set: {}, remove: ['readable_by'] })!)!.text).toBe(text);
+  });
+  test('a block scalar, a nested or continued item, a duplicate key, or a reader that is not a plain principal is refused', () => {
+    for (const value of ['readable_by: |' + NL + '  alice-example', 'readable_by:' + NL + '  - alice-example' + NL + '    more', 'readable_by:' + NL + '  - [alice-example]', 'readable_by:',
+      'readable_by:' + NL + '  # kept by hand' + NL + '  - alice-example', 'readable_by:' + NL + '  -' + NL + '    alice-example']) {
+      expect(spliceLabelLines(text.replace('type: note', 'type: note' + NL + value), readLabelEdit({ set: { readable_by: [OWNER] }, remove: [] })!)).toBeNull();
+    }
     const twice = text.replace('type: note', 'type: note' + NL + 'readable_by: [a]' + NL + 'readable_by: [b]');
     expect(spliceLabelLines(twice, readLabelEdit({ set: {}, remove: ['readable_by'] })!)).toBeNull();
     for (const bad of [[], ['Alice Example'], ['group:'], ['a, b'], 'alice-example'] as unknown[]) {
@@ -188,6 +195,29 @@ for (const backend of testBackends()) describe('[' + backend + '] repair visibil
     expect(await row(engine, slug)).toEqual({ frontmatter, page_readers: null });
     expect(await stamps(engine, slug)).toEqual(stamped);
     expect(await proposals(engine)).toEqual([]);
+  }, { databaseUrl, setup }), 240_000);
+
+  test('a block list of plain readers is replaced with one line; a comment, a nested item or a block scalar leaves its file byte for byte', () => managedBrain(async ({ engine, root }) => {
+    const withReaders = (slug: string, lines: string[]) => file(slug).replace('type: note' + NL, 'type: note' + NL + lines.join(NL) + NL);
+    const pages: Record<string, string> = {
+      'notes/plain-list-example': withReaders('notes/plain-list-example', ['readable_by:', '  - bob-example']),
+      'notes/commented-list-example': withReaders('notes/commented-list-example', ['readable_by:', '  # kept by hand', '  - bob-example']),
+      'notes/nested-item-example': withReaders('notes/nested-item-example', ['readable_by:', '  -', '    bob-example']),
+      'notes/block-scalar-example': withReaders('notes/block-scalar-example', ['readable_by: >-', '  bob-example']),
+    };
+    await seed(engine, root, pages);
+    const slugs = Object.keys(pages);
+    const argv = ['visibility', ...slugs.flatMap(slug => ['--slug', slug]), '--readers', ownerAnd('alice-example')];
+    const preview = await repair(engine, argv);
+    const applied = await repair(engine, [...argv, '--apply', '--expect', preview.preview_hash]);
+    expect(applied.applied).toBe(1);
+    expect((applied.failed as Array<{ slug: string; reason: string }>).map(f => [f.slug, f.reason]).sort()).toEqual(slugs.slice(1).map(slug => [slug, 'label_edit_refused']).sort());
+    await settleManagedGitEffects(engine);
+    expect(onDisk(root, 'notes/plain-list-example')).toBe(withReaders('notes/plain-list-example', [readersLine('alice-example', OWNER)]));
+    for (const slug of slugs.slice(1)) {
+      expect(onDisk(root, slug)).toBe(pages[slug]!);
+      expect(git(root, 'show', 'HEAD:' + slug + '.md')).toBe(pages[slug]!);
+    }
   }, { databaseUrl, setup }), 240_000);
 
   test('a listed set (--slugs-file): file pages and a db_only page, per-page outcomes in --json and counts in the text', () => managedBrain(async ({ engine, root, ctx }) => {
