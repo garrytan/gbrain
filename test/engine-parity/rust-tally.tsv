@@ -13,7 +13,7 @@ test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/core-page-member-reads.test.ts	1	0
 test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/effect-scans.test.ts	3	0
-test/engine-parity/entity-card-option-reads.test.ts	5	0
+test/engine-parity/entity-card-option-reads.test.ts	6	0
 test/engine-parity/entity-reads.test.ts	12	1
 test/engine-parity/extraction.test.ts	6	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
@@ -47,7 +47,7 @@ test/engine-parity/link-read-options.test.ts	17	0
 test/engine-parity/link-reads.test.ts	11	0
 test/engine-parity/link-temporal.test.ts	18	0
 test/engine-parity/links.test.ts	33	0
-test/engine-parity/mention-coverage.test.ts	6	1
+test/engine-parity/mention-coverage.test.ts	7	0
 test/engine-parity/open-loops.test.ts	5	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	25	1
@@ -55,6 +55,7 @@ test/engine-parity/persistence-declaration.test.ts	6	0
 test/engine-parity/persistence.test.ts	29	0
 test/engine-parity/private-page-reads.test.ts	7	0
 test/engine-parity/raw-sql.test.ts	0	4
+test/engine-parity/referrer-reads.test.ts	3	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/retrieval-coverage.test.ts	12	1
 test/engine-parity/search-reads.test.ts	15	1
