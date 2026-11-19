@@ -49,15 +49,39 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | `brain.readCounterRows(keys)` | the `persistence_counters` rows that exist for the keys, in byte order of the key, without creating or locking any; a missing key has no row | `readCounterRows` |
 | `brain.readAdmissionRate(principalKind, principalId)` | `{ first_request_id, admissions, age_seconds, gross, net }`: the id of the brain's first request (lowest sequence), then over the latest 1000 requests of the principal (all principals when both are null) their count, the age in seconds of the oldest of them, the mean terminal reservation and the mean compacted receipt size (authority, outcome, error detail and client request id, plus 1 KiB of headroom, at most the reservation; this engine records no effects). The means and the age are null when there are no requests | `readAdmissionRate` |
 | `brain.stampWriteClaim({ id, token, leaseMs, phaseJson })` | the claimed row with `passed_sync` and `seen_sequence`, or `null` when the refresh barrier holds it | `stampWriteClaim` |
-| `brain.completeWriteRow(completion)` | the ended row (with `purge_has_facts`, `purge_has_pages` when `probePurges`), or `null` when the effects do not fit the reservation. Releases the counters; a terminal counter shorter than the release is clamped to zero and counted in config `persistence.true_up.clamped`. A completion that would take a counter below zero changes nothing and rejects with `constraint_violation` | `completeWriteRow` |
+| `brain.completeWriteRow(completion)` | the ended row (with `purge_has_facts`, whether the source holds a fact purge tombstone, and `purge_has_pages`, always false, when `probePurges`), or `null` when the effects do not fit the reservation. Releases the counters; a terminal counter shorter than the release is clamped to zero and counted in config `persistence.true_up.clamped`. A completion that would take a counter below zero changes nothing and rejects with `constraint_violation` | `completeWriteRow` |
+| `brain.cancelWriteRow(cancellation)` | `null` when the request does not exist; `{ status: 'kept', row }` with the row unchanged when it is terminal, publishing, in recovery, or no longer in `expectState` under `expectExecutionToken`; `{ status: 'too_large', row }` when the result does not fit the reservation; else `{ status: 'cancelled', row }` with the row `completeWriteRow` ends. The read, the check and the completion run in one store write, so of two cancels of one request exactly one ends it. A state other than `cancelled` rejects with `constraint_violation` | `cancelWriteRow` |
 | `brain.renewWriteClaim({ id, token, leaseMs, phaseJson })` | `true` when the claim is still `running` under that token; the lease is extended and the phase replaced when one is given | `renewWriteClaim` |
 | `brain.expireStaleWriteClaims({ hostId, charge, deadOwners })` | the number of claims returned to `queued`: an expired lease, or a phase owner in `deadOwners` (`pid:nonce:start`), with publication not started; at most 100, oldest first. `charge` counts one preparation attempt for a claim that expired while preparing | `expireStaleWriteClaims` |
 | `brain.hasClaimableWrite({ excludeRoots, priority })` | whether a claim would find a row now. `priority` `null` reads config `sync.foreground_priority` (on unless `0` or `false`) | `hasClaimableWrite` |
+| `brain.selectClaimableWrite({ excludeRoots, fifoRoots, laneRoots, priority })` | the request row a FIFO claim takes next, or `null`: a foreground row before the sync rows it passes, then sequence order. A root in `fifoRoots` claims plain FIFO; with any lane root only a foreground row is claimed | `selectClaimableWrite` |
 | `brain.readSourceMembership(sourceId)` | `{ incarnation, archived }` or `null` | `readSourceMembership`, `readLedgerSource` |
 
 Rows have a null `worktree_id`, so the worktree terms of the claim statements are answered as Postgres
 answers them for a null worktree. `select_claimable_write` (the claim head read) exists in the store
 but has no binding.
+
+## Receipt list
+
+The candidate page that `list_write_requests` (`persistence/control.ts` `listWriteRequests`) authorizes and pages
+(`crates/gbrain-store/src/persistence/receipt_list.rs`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listWriteRequestRows({ kind, id }, sourceId, filter)` | the `WriteRequest` rows of the principal in the source, newest sequence first, at most `filter.limit`. A source that is missing or archived, or a request from an earlier incarnation of the source, gives no row | `listWriteRequestRows` |
+
+The filter is `{ before, limit, slugPrefixes, operations, slugAllowList }`. A null list skips its check and an empty
+list matches no row, as the SQL `IS NULL OR EXISTS` terms do.
+
+- `before` is a sequence as decimal text; only lower sequences are listed. Text that is not a `u64` refuses with
+  `invalid`.
+- `slugPrefixes` match the lower-case slug (Postgres `lower`). An empty prefix matches nothing. A prefix that ends
+  in `/` matches the slugs that start with it; any other prefix matches the slug itself or the slugs under it.
+- `operations` match `authority.attestedOp` (a JSON value that is not a string as its JSON text), else `operation`.
+- `slugAllowList` holds exact slugs (case-sensitive) or `<prefix>/*`, which matches the slugs that start with
+  `<prefix>/`.
+
+Lengths count characters, as Postgres `left` and `length` do.
 
 ## Steps that refuse by name
 
@@ -132,13 +156,26 @@ Differences from the SQL engines:
   checkpoint that no run clears stays until an op clears it.
 - The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
   persistence receipts) are still raw SQL. Their rows are not in this store.
+## Writer versions
+
+Which binaries admitted and published the retained requests (`writer-versions.ts`), from the
+`admitter_*` and `consumer_*` stamps on each request. Postgres reads its cutoff from
+`persistence_brain.writer_version_cutoff`, the moment migration 178 started stamping requests. This
+engine stamps every request from the brain's creation, so its cutoff is the brain's creation time. No
+request is bound to a worktree here, so an unstamped consumer has no owner host to fall back to.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readWriterVersionCutoff()` | the brain's creation time as ISO text, `null` without a format record | `readWriterVersionCutoff` |
+| `brain.listWriterVersions(limit)` | per role, the latest request of each host and principal (a consumer only for a committed request), newest first (null times first, ties by role, host, principal), at most `limit` | `listWriterVersions` |
+| `brain.recentWriterVersions(days)` | the committed requests published in the last `days`, grouped per role, host, principal and version with a `requests` count; admitters count from the cutoff by admission, consumers by publication; newest first | `recentWriterVersions` |
 
 ## Effect scans
 
-The effect worker's reads before and when it claims effects (`persistence-effect-scans.ts`). Each one joins
-`persistence_effects` to the worktrees the host owns. This engine keeps no worktree and records no
+The effect worker's reads before and when it claims effects, and the effects a write receipt lists
+(`persistence-effect-scans.ts`). Each worker scan joins `persistence_effects` to the worktrees the host owns. This engine keeps no worktree and records no
 effect, so each scan answers no row. The arguments are checked as the Postgres casts check them: a host
-id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`, an `after` that is
+or request id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`, an `after` that is
 not a bigint with `invalid input syntax for type bigint: "<after>"` (or `value "<after>" is out of range
 for type bigint`), a fractional limit with the same bigint syntax message and a negative limit with
 `LIMIT must not be negative`.
@@ -148,6 +185,23 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 | `brain.listGatedMirrorRequests(hostId)` | `[]`: no withdrawal mirror is parked on a worktree here. The gate and allowed codes change nothing, so they are not sent | `listGatedMirrorRequests` |
 | `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: no effect carries a recovery on a worktree here | `listEffectRecoveries` |
 | `brain.selectClaimableEffect(hostId)` | `null`: no effect is recorded here, so none is claimable. The dead owner keys change nothing, so they are not sent | `selectClaimableEffect` |
+| `brain.listRequestEffects(requestId)` | `[]`: no effect is recorded here, so a write receipt lists none | `listRequestEffects` |
+
+## Owner scans
+
+The write owner's housekeeping reads on each scan tick (`persistence-owner-scans.ts`). Each one joins a
+write request to a worktree the host owns. This engine keeps no worktree (a request here always has a
+null `worktree_id`, and an insert that names a refresh hold refuses), so each list answers no row and no
+hold stands. An id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`; a hold
+kind other than `refresh` or `import` refuses.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listOverdueHeldWrites(hostId, hold)` | `[]`: no write here waits behind a refresh or a worktree import. The wait limit only narrows the rows, so it is not sent | `listOverdueHeldWrites` |
+| `brain.lockOverdueHold(hold, id)` | `false`: no refresh row or worktree import hold exists here. `id` is the refresh id (may be null) or the request id | `lockOverdueHold` |
+| `brain.listOwnerRecoveryHeads(hostId)` | `[]`: no write here carries a recovery record (those live only on worktree-owned writes). The excluded worktree ids only narrow the rows, so they are not sent | `listOwnerRecoveryHeads` |
+| `brain.listResumableRefreshes(hostId)` | `[]`: no refresh row exists here (refreshes live only on managed worktrees). The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
+| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` reads null because the store keeps none | `listSourceLastCommits` |
 
 ## Projection queue
 
@@ -166,6 +220,6 @@ brain predates the queue, so no such store exists outside development.
 
 | Member | Answer | Why |
 | --- | --- | --- |
-| `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible: false }`; a batch adds `managedRows: [{ enabled: false }]` and `planModePrev: 'auto'` | Belief events and fact, take and page purges are written only through `executeRaw`, which this engine refuses. |
+| `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible }`, `purgesPossible` true when the source holds a fact purge tombstone (`hasFactPurges`, rust/docs/store/facts.md "The fact purge ledger"); a batch adds `managedRows: [{ enabled: false }]` and `planModePrev: 'auto'` | Belief events, the purge epoch and take and page purges are written only through `executeRaw`, which this engine refuses. |
 | `listHostConsumerRows(hostId, opts?)`, `probeLiveConsumerRows(probe, opts?)` | `[]` | One process owns this engine's brain, so it keeps no consumer heartbeat rows. PGLite, which also admits one process, answers the same in its callers (`listHostConsumers`, `probeLiveFullConsumer`) without a read. |
 | `renewConsumerRow(renewal, opts?)`, `deleteConsumerRow(key, opts?)`, `stampWorktreeHeartbeats(hostId, opts?)` | resolve with no effect | The heartbeat has no row to renew or delete, and this engine has no worktrees to stamp. |

@@ -5,7 +5,8 @@
  * effects: the requests whose parked mirror targets only wait on the segmented writer gate
  * (persistence/segmented-mirror-gate.ts `resumeGatedMirrors`), and the effects with a recovery due
  * (persistence/effect-recovery-scan.ts `selectEffectRecoveries`), and the claim's candidate read
- * (persistence/effect-journal.ts `claimPersistenceEffect`). Each text is the one its caller has always sent, byte
+ * (persistence/effect-journal.ts `claimPersistenceEffect`); and the effects a write receipt lists
+ * (persistence/effect-journal.ts `publicEffectsForRequest`). Each text is the one its caller has always sent, byte
  * for byte, written out in full so this module imports no persistence code; the codes it matches arrive as arguments.
  * Decisions stay with the callers.
  */
@@ -74,4 +75,18 @@ export const CLAIMABLE_EFFECT_SQL = `SELECT e.* FROM persistence_effects e
 export async function selectClaimableEffect<R = Record<string, unknown>>(exec: LegacyUnscopedRead, hostId: string, deadOwners: readonly string[]): Promise<R | null> {
   const [row] = await exec.executeRaw<R>(CLAIMABLE_EFFECT_SQL, [hostId, [...deadOwners]]);
   return row ?? null;
+}
+
+/**
+ * `listRequestEffects`: $1 request id. The text `publicEffectsForRequest` (persistence/effect-journal.ts) has always
+ * sent, with the kind order pinned to `COLLATE "C"` so it never follows the database's locale.
+ */
+export const REQUEST_EFFECTS_SQL = 'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"';
+
+/** One effect of a write request as its receipt reads it: kind, state, error code, outcome and whether a recovery is open. */
+export interface RequestEffectRow { kind: string; state: string; error_code: string | null; outcome: Record<string, unknown> | null; recovering: boolean }
+
+/** Every effect of write request `requestId`, in kind order. A request id that is not a uuid refuses, as `::uuid` does. */
+export function listRequestEffects(exec: LegacyUnscopedRead, requestId: string): Promise<RequestEffectRow[]> {
+  return exec.executeRaw<RequestEffectRow>(REQUEST_EFFECTS_SQL, [requestId]);
 }

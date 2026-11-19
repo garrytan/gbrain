@@ -15,7 +15,6 @@ import {
 import type { ExactMatch } from '../search/exact-scan.ts';
 import type { BrainEngine } from '../engine.ts';
 import { heldFenceLines } from '../eligibility/stamp.ts';
-import { chunkVisibleFilter, safeChunksFilter } from '../search/safe-chunks.ts';
 
 const TYPE_NAME = /^[A-Za-z0-9_.:/-]+$/;
 
@@ -26,14 +25,10 @@ const TYPE_NAME = /^[A-Za-z0-9_.:/-]+$/;
  * visible chunk with its held lines taken out, so a public hit after a held one is still found and a held hit is
  * neither shown nor counted; a page left without a hit goes, since its presence alone would confirm the phrase.
  */
-async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, matches: M[], find: (text: string) => [number, number] | null): Promise<M[]> {
+async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, matches: M[], find: (text: string) => [number, number] | null, excludePrivate: boolean): Promise<M[]> {
   const keys = matches.flatMap(m => m.snippets.map(s => ({ m, s })));
   if (!keys.length) return matches;
-  const found = await engine.executeRaw<{ i: number; chunk_text: string }>(
-    `SELECT k.i, cc.chunk_text FROM unnest($1::int[], $2::int[], $3::text[]) WITH ORDINALITY AS k(page_id, chunk_index, snippet, i)
-      JOIN pages p ON p.id = k.page_id JOIN content_chunks cc ON cc.page_id = k.page_id AND cc.chunk_index = k.chunk_index
-      WHERE ${chunkVisibleFilter('p', 'cc')} AND strpos(cc.chunk_text, k.snippet) > 0`,
-    [keys.map(k => k.m.page_id), keys.map(k => k.s.chunk_index), keys.map(k => k.s.text)]);
+  const found = await engine.readExactSnippetChunks(keys.map(k => ({ pageId: k.m.page_id, chunkIndex: k.s.chunk_index, snippet: k.s.text })), { excludePrivate });
   const chunks = found.map(f => ({ key: keys[Number(f.i) - 1]!, text: f.chunk_text }));
   const held = await heldFenceLines(engine, chunks.map(c => ({ source_id: c.key.m.source_id, slug: c.key.m.slug, chunk_text: c.text })));
   const touched = new Set<ExactMatch['snippets'][number]>(keys.map(k => k.s));
@@ -48,10 +43,7 @@ async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, ma
   });
   const rescan = matches.filter(m => m.matching_chunks !== m.snippets.length || m.snippets.some(s => touched.has(s)));
   if (!rescan.length) return matches;
-  const rows = await engine.executeRaw<{ page_id: number; chunk_index: number; chunk_source: string; chunk_text: string }>(
-    `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.page_id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')} AND ${safeChunksFilter('p')} ORDER BY cc.page_id, cc.chunk_index`,
-    [rescan.map(m => m.page_id)]);
+  const rows = await engine.listExactRescanChunks(rescan.map(m => m.page_id), { excludePrivate });
   const owner = new Map(rescan.map(m => [m.page_id, m] as const));
   const lines = await heldFenceLines(engine, rows.map(r => ({ source_id: owner.get(Number(r.page_id))?.source_id, slug: owner.get(Number(r.page_id))?.slug ?? '', chunk_text: r.chunk_text })));
   const hits = new Map<number, ExactMatch['snippets']>();
@@ -161,7 +153,7 @@ const search_exact: Operation = {
       return o === -1 ? null : [at[o]!, at[o + needle.length - 1]! + 1];
     };
     const visible = worldOnlyFacts(ctx.remote)
-      ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, find) : []
+      ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, find, excludePrivate) : []
       : result.matches;
     const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
     // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).

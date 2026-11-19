@@ -165,12 +165,13 @@ describe('rank_entities counting', () => {
   test('an engine that refuses the coverage read refuses the ranking; a plain read error stays a degraded answer', async () => {
     await seedBase();
     // The coverage reads are the local typed lag count (readExtractionLagCounts) and the remote
-    // executeRaw read; the ranking itself runs through other typed members, so it is not refused here.
-    const COVERAGE_READS = new Set<PropertyKey>(['executeRaw', 'readExtractionLagCounts']);
+    // typed coverage read (readRankCoverage); the ranking itself runs through other typed members,
+    // so it is not refused here.
+    const COVERAGE_READS = new Set<PropertyKey>(['readRankCoverage', 'readExtractionLagCounts']);
     const refusing = (err: Error) => new Proxy(engine, {
       get: (target, key) => COVERAGE_READS.has(key) ? async () => { throw err; } : Reflect.get(target, key, target),
     });
-    const refusal = capabilityMissing('raw_sql', 'executeRaw');
+    const refusal = capabilityMissing('graph', 'readRankCoverage');
     for (const ctx of [ctxOf({ engine: refusing(refusal) as any }), ctxOf({ engine: refusing(refusal) as any, remote: true, transport: 'stdio', auth: { allowedSources: ['source-a'] } as any })]) {
       const err = await rank(ctx).then(() => null, (e: unknown) => e as { code?: string });
       expect(err?.code).toBe('engine_capability_missing');

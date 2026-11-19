@@ -1,6 +1,6 @@
 //! Effect scans: the statements of `src/core/engine-sql/persistence-effect-scans.ts` that the
-//! effect worker's pass sends before and when it claims effects (rust/docs/store/persistence.md,
-//! "Effect scans").
+//! effect worker's pass sends before and when it claims effects, and the read of the effects a
+//! write receipt lists (rust/docs/store/persistence.md, "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
 //! worktree. This engine keeps no worktree and records no effect, so every scan answers no row.
@@ -13,7 +13,7 @@ use crate::error::{Result, StoreError};
 use serde_json::Value;
 
 /// `$1::uuid`: the message Postgres gives for text that is not a uuid.
-fn host_uuid(text: &str) -> Result<()> {
+pub(super) fn host_uuid(text: &str) -> Result<()> {
     if is_uuid(text) {
         Ok(())
     } else {
@@ -82,7 +82,19 @@ pub(crate) fn select_claimable_effect(host_id: &str) -> Result<Value> {
     Ok(Value::Null)
 }
 
+/// `listRequestEffects(requestId)`: no effect is recorded here, so a write request has none; a
+/// non-uuid request id refuses.
+pub(crate) fn list_request_effects(request_id: &str) -> Result<Vec<Value>> {
+    host_uuid(request_id)?;
+    Ok(Vec::new())
+}
+
 impl Store {
+    /// `listRequestEffects(requestId)`.
+    pub fn list_request_effects(&self, request_id: &str) -> Result<Vec<Value>> {
+        list_request_effects(request_id)
+    }
+
     /// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`.
     pub fn list_gated_mirror_requests(&self, host_id: &str) -> Result<Vec<Value>> {
         list_gated_mirror_requests(host_id)
@@ -118,6 +130,19 @@ mod tests {
                 .is_empty()
         );
         let bad = list_gated_mirror_requests("nope").unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
+    }
+
+    #[test]
+    fn request_effects_are_empty_and_refuse_a_non_uuid_request() {
+        let request = "0f000000-0000-4000-8000-0000000000f2";
+        assert!(list_request_effects(request).unwrap().is_empty());
+        assert!(
+            list_request_effects(&request.to_uppercase())
+                .unwrap()
+                .is_empty()
+        );
+        let bad = list_request_effects("nope").unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 

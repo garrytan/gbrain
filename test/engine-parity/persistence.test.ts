@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
  * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
- * the claim upkeep (renewal, expiry, the claimable probe) and the admission reads (source membership, topology changes,
+ * the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
  * the ledger's source view).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -22,7 +22,7 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
-import type { TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
+import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
 import { assertPageRequestIdentity } from '../../src/core/persistence/journal.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
@@ -433,6 +433,38 @@ describe('engine parity: write journal', () => {
     const claimed = await engine.hasClaimableWrite(HOST, []);
     const answers = { empty, queued, claimed };
     expect(answers).toEqual({ empty: false, queued: { config: true, on: true, off: true, excluded: true }, claimed: false });
+    return answers;
+  });
+
+  parityTest('selectClaimableWrite takes the oldest queued request in a transaction, honours excluded and lane roots, and finds none once both are claimed', {
+    methods: ['selectClaimableWrite', 'transactionDirect', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim'],
+  }, async (engine) => {
+    const head = (over: Partial<ClaimHeadSpec> = {}) => engine.transactionDirect(async tx => {
+      const row = await tx.selectClaimableWrite<WriteRequest>({ hostId: HOST, excludeRoots: [], fifoRoots: [], laneRoots: [], nonce: 'parity-nonce', syncSeen: {},
+        priority: null, leaseHolder: null, ...over });
+      return row && row.request_id;
+    });
+    const empty = await head();
+    const first = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const second = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    const root = `db:${(await engine.readSourceMembership('default'))!.incarnation}`;
+    const queued = {
+      config: await head(), on: await head({ priority: true }), off: await head({ priority: false }), fifo: await head({ fifoRoots: [root] }),
+      leaseHolder: await head({ leaseHolder: { lockPrefix: 'gbrain-sync:', pid: 1, host: 'parity-host' } }), seen: await head({ syncSeen: { [HOST]: '1' } }),
+      excluded: await head({ excludeRoots: [root] }), otherExcluded: await head({ excludeRoots: ['db:parity-elsewhere'] }),
+      laneFirst: await head({ laneRoots: [HOST], priority: true }), laneFifo: await head({ laneRoots: [HOST], priority: false }),
+    };
+    await engine.stampWriteClaim(first, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const behindRunning = await head();
+    await engine.stampWriteClaim(second, OTHER_TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const claimed = await head();
+    const answers = { empty, queued, behindRunning, claimed };
+    const b1 = 'b0000000-0000-4000-8000-0000000000b1';
+    expect(answers).toEqual({
+      empty: null,
+      queued: { config: b1, on: b1, off: b1, fifo: b1, leaseHolder: b1, seen: b1, excluded: null, otherExcluded: b1, laneFirst: b1, laneFifo: null },
+      behindRunning: null, claimed: null,
+    });
     return answers;
   });
 

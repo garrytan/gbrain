@@ -1,7 +1,7 @@
 //! The owner-only rule of the `excludePrivate` page policy (`ownerOnlyPageSql`,
 //! src/core/access/owner-only.ts): with an owner-only source in the brain, a non-owner read
 //! hides that source's pages and every concept or question synthesized from one of them in the
-//! lineage form, and hides every page in the closed form. With no owner-only source, the rule
+//! `fn` form, and hides every page in the closed form. With no owner-only source, the rule
 //! hides nothing.
 
 mod common;
@@ -57,7 +57,7 @@ fn synthesized_from(store: &Store, from: &str, to_source: &str, to: &str) {
 }
 
 /// The `source:slug` keys a slug-sorted read of both sources returns, with `limit`.
-fn read(store: &Store, form: Option<OwnerOnlyForm>, limit: Option<usize>) -> Vec<String> {
+fn read(store: &Store, form: OwnerOnlyForm, limit: Option<usize>) -> Vec<String> {
     let filters = PageFilters {
         sort: Some("slug".into()),
         limit,
@@ -105,7 +105,7 @@ const ALL: [&str; 6] = [
 ];
 
 #[test]
-fn lineage_form_hides_owner_only_pages_and_their_concepts_before_the_limit() {
+fn fn_form_hides_owner_only_pages_and_their_concepts_before_the_limit() {
     let (_dir, store) = brain("owner-only-lineage");
     fixture(&store, json!({"owner_only": true}));
     let kept = [
@@ -113,13 +113,10 @@ fn lineage_form_hides_owner_only_pages_and_their_concepts_before_the_limit() {
         "default:c/open",
         "default:d/plain-concept",
     ];
-    assert_eq!(read(&store, Some(OwnerOnlyForm::Lineage), None), kept);
-    assert_eq!(
-        read(&store, Some(OwnerOnlyForm::Lineage), Some(2)),
-        kept[..2]
-    );
+    assert_eq!(read(&store, OwnerOnlyForm::Fn, None), kept);
+    assert_eq!(read(&store, OwnerOnlyForm::Fn, Some(2)), kept[..2]);
     // The owner's rendering carries no owner-only conjunct, so every page stays.
-    assert_eq!(read(&store, None, None), ALL);
+    assert_eq!(read(&store, OwnerOnlyForm::Off, None), ALL);
 }
 
 #[test]
@@ -127,7 +124,7 @@ fn an_imessage_source_is_owner_only() {
     let (_dir, store) = brain("owner-only-imessage");
     fixture(&store, json!({"kind": "imessage"}));
     assert_eq!(
-        read(&store, Some(OwnerOnlyForm::Lineage), None),
+        read(&store, OwnerOnlyForm::Fn, None),
         [
             "default:a/thread",
             "default:c/open",
@@ -140,13 +137,13 @@ fn an_imessage_source_is_owner_only() {
 fn closed_form_hides_every_page_while_an_owner_only_source_exists() {
     let (_dir, store) = brain("owner-only-closed");
     fixture(&store, json!({"owner_only": true}));
-    assert!(read(&store, Some(OwnerOnlyForm::Closed), None).is_empty());
+    assert!(read(&store, OwnerOnlyForm::Closed, None).is_empty());
 }
 
 #[test]
 fn no_owner_only_source_hides_nothing() {
     let (_dir, store) = brain("owner-only-none");
     fixture(&store, json!({"owner_only": false}));
-    assert_eq!(read(&store, Some(OwnerOnlyForm::Closed), None), ALL);
-    assert_eq!(read(&store, Some(OwnerOnlyForm::Lineage), None), ALL);
+    assert_eq!(read(&store, OwnerOnlyForm::Closed, None), ALL);
+    assert_eq!(read(&store, OwnerOnlyForm::Fn, None), ALL);
 }

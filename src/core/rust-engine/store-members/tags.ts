@@ -15,22 +15,18 @@ export const removeTag: StoreMember<[slug: string, tag: string, opts?: { sourceI
 type GetTagsOpts = { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean };
 
 /**
- * Like PGLite: a federated grant reads the union of the sources' tags, an unscoped read reads `default`. Under
- * `excludePrivate` each read takes the caller's page policy (`storePagePolicy`: the statement's
- * `privatePagesFilterForCaller` over its `pages` table, with the caller's readers), and a page it hides has no tags.
+ * Like PGLite: a federated grant reads the union of the sources' tags, an unscoped read reads `default`; `liveOnly`
+ * and the page policy `excludePrivate` names leave a soft-deleted or hidden page with no tags.
  */
 export const getTags: StoreMember<[slug: string, opts?: GetTagsOpts], string[]> = async (brain, slug, opts) => {
   const scope = takeOptions('getTags', opts, ['sourceId', 'sourceIds', 'liveOnly', 'excludePrivate']);
-  const policy = storePagePolicy('getTags', scope.excludePrivate, { callerReaders: true });
-  const privacy = policy ? { excludePrivate: policy } : {};
   // An id that names no source (an empty string) matches nothing in PGLite; the store would read it as "no scope".
   const sourceIds = namedSourceIds((scope.sourceIds as unknown[] | undefined)?.length ? (scope.sourceIds as unknown[]) : [scope.sourceId ?? 'default']);
+  const excludePrivate = storePagePolicy('getTags', scope.excludePrivate, { callerReaders: true }) ?? null;
   const tags = new Set<string>();
   for (const sourceId of sourceIds) {
     const found: string[] = await storeCall({ member: 'getTags', slug }, () =>
-      scope.liveOnly === true
-        ? brain.readPageSnapshot(slug, { sourceId, ...privacy }).then((snapshot: { tags: string[] } | null) => snapshot?.tags ?? [])
-        : brain.getTags(slug, { sourceId, ...privacy }));
+      brain.getTags(slug, { sourceId, liveOnly: scope.liveOnly === true, excludePrivate }));
     for (const tag of found) tags.add(tag);
   }
   return [...tags].sort();

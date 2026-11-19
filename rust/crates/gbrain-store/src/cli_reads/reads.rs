@@ -18,6 +18,7 @@ use super::pg_text::{
 };
 use crate::alias_fanout_reads::reject_nul;
 use crate::aliases::alias_row_slugs;
+use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::{read_chunks, read_segment_view};
 use crate::error::{INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
@@ -45,14 +46,14 @@ const NON_RANKING_LINK_TYPES: &[&str] = &["amends"];
 // ---------------------------------------------------------------------------------------------
 
 /// `servedTextProjectionFilter`: the current projection, or the pre-activation marker.
-fn served(page: &PageRecord) -> bool {
+pub(super) fn served(page: &PageRecord) -> bool {
     match page.text_projection_revision.as_deref() {
         Some(rev) => rev == page.knowledge_revision || rev == ACTIVATION_SERVED_REVISION,
         None => false,
     }
 }
 
-fn has_key(page: &PageRecord, key: &str) -> bool {
+pub(super) fn has_key(page: &PageRecord, key: &str) -> bool {
     page.frontmatter.contains_key(key)
 }
 
@@ -63,13 +64,13 @@ fn row_count(value: i64, what: &str) -> Result<usize> {
 }
 
 /// Source archive flags, read once per source. A page whose source is missing is not joined.
-struct Sources<'a> {
+pub(super) struct Sources<'a> {
     read: &'a dyn KvRead,
     archived: HashMap<String, Option<bool>>,
 }
 
 impl<'a> Sources<'a> {
-    fn new(read: &'a dyn KvRead) -> Self {
+    pub(super) fn new(read: &'a dyn KvRead) -> Self {
         Self {
             read,
             archived: HashMap::new(),
@@ -87,7 +88,7 @@ impl<'a> Sources<'a> {
     }
 
     /// `JOIN sources s ... AND NOT s.archived`.
-    fn live(&mut self, id: &str) -> Result<bool> {
+    pub(super) fn live(&mut self, id: &str) -> Result<bool> {
         Ok(self.archived(id)? == Some(false))
     }
 }
@@ -169,7 +170,9 @@ impl EntityTypeFilter {
     }
 }
 
-/// `remote: { excludePrivate, policy? }` of the whois and rank_entities statements.
+/// `remote: { excludePrivate, policy }` of the whois and rank_entities statements. With
+/// `exclude_private`, `policy` is the page policy the TypeScript member read from the rendered
+/// `privatePagesFilterForCaller` fragment (private-provenance.ts `storePagePolicy`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RemoteCaller {
@@ -179,14 +182,21 @@ pub struct RemoteCaller {
     pub policy: Option<PrivacyPolicy>,
 }
 
-fn refuse_private(remote: &Option<RemoteCaller>, member: &str) -> Result<()> {
-    if remote.as_ref().is_some_and(|r| r.exclude_private) {
-        return Err(StoreError::new(
-            INVALID_ARGUMENT,
-            format!("{member}: excludePrivate is not supported by the rust engine"),
-        ));
+/// The page policy a remote read applies, or None when it reads no private filter. A read that
+/// asks for `exclude_private` with no policy is refused: the store never guesses the caller.
+fn private_policy<'a>(
+    remote: &'a Option<RemoteCaller>,
+    member: &str,
+) -> Result<Option<&'a PrivacyPolicy>> {
+    match remote {
+        Some(r) if r.exclude_private => r.policy.as_ref().map(Some).ok_or_else(|| {
+            StoreError::new(
+                INVALID_ARGUMENT,
+                format!("{member}: excludePrivate needs the caller's page policy"),
+            )
+        }),
+        _ => Ok(None),
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -208,6 +218,11 @@ pub struct ExactBatchInput {
     pub exclude_slug_prefixes: Vec<String>,
     pub after: i64,
     pub batch_pages: i64,
+    /// `remote`: match only chunks past the chunker-version fence (`safeChunksFilter(p)`), and
+    /// report a page below it with no match as `unsealed`.
+    pub remote: bool,
+    /// `excludePrivate`: the caller's page policy (`storePagePolicy` with caller readers).
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -512,7 +527,13 @@ impl Store {
                         .exclude_slug_prefixes
                         .iter()
                         .any(|p| !p.is_empty() && page.slug.starts_with(p.as_str()));
-                if in_scope && sources.live(&page.source_id)? {
+                if in_scope
+                    && sources.live(&page.source_id)?
+                    && match &input.exclude_private {
+                        Some(policy) => !page_hidden(&*read, &page, policy)?,
+                        None => true,
+                    }
+                {
                     batch.push(page);
                 }
                 Ok(batch.len() < limit)
@@ -530,9 +551,11 @@ impl Store {
             } else {
                 Vec::new()
             };
+            // `safeChunksFilter(p)`; a record with no version is below the fence (Postgres stores 1).
+            let sealed = page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION;
             let mut count = 0u32;
             let mut snippets = Vec::new();
-            for chunk in &visible {
+            for chunk in visible.iter().filter(|_| sealed || !input.remote) {
                 if !like_contains(&chunk.chunk_text, &input.longest, input.case_sensitive) {
                     continue;
                 }
@@ -551,6 +574,8 @@ impl Store {
             let has_body = !page.compiled_truth.is_empty() || !page.timeline.is_empty();
             let gap = if count > 0 {
                 None
+            } else if input.remote && !sealed {
+                Some("unsealed")
             } else if !served(&page) {
                 Some("projection_pending")
             } else if visible.is_empty() && has_body {
@@ -598,10 +623,7 @@ impl Store {
         input: &ExactIdentityInput,
     ) -> Result<Vec<ExactIdentityRow>> {
         const MEMBER: &str = "listExactIdentityCandidates";
-        let policy = input.remote.as_ref().and_then(|r| r.policy.as_ref());
-        if policy.is_none() {
-            refuse_private(&input.remote, MEMBER)?;
-        }
+        let policy = private_policy(&input.remote, MEMBER)?;
         let limit = row_count(input.limit, "LIMIT")?;
         let probes = &input.probes;
         reject_nul(
@@ -679,7 +701,7 @@ impl Store {
     /// `rankEntities`: entity pages ranked by distinct in-scope edges, retired pages folded into the
     /// live page their redirect chain reaches.
     pub fn rank_entities(&self, input: &RankEntitiesInput) -> Result<Vec<RankEntityRow>> {
-        refuse_private(&input.remote, "rankEntities")?;
+        let policy = private_policy(&input.remote, "rankEntities")?;
         let limit = row_count(input.limit, "LIMIT")?;
         let folded_cap = row_count(input.folded_cap, "LIMIT")?;
         let key_of: fn(i64, i64) -> i64 = match input.direction.as_str() {
@@ -703,7 +725,11 @@ impl Store {
                     .as_ref()
                     .is_none_or(|ids| ids.contains(&page.source_id))
                 && (input.remote.is_none()
-                    || (!has_key(&page, "quarantine") && sources.live(&page.source_id)?));
+                    || (!has_key(&page, "quarantine") && sources.live(&page.source_id)?))
+                && match policy {
+                    Some(policy) => !page_hidden(&*read, &page, policy)?,
+                    None => true,
+                };
             if readable {
                 pages.insert(page.id, page);
             }

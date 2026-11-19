@@ -179,6 +179,30 @@ function withAgeDecayCompared(args: string[], ref: unknown, rust: unknown): unkn
   });
 }
 
+/**
+ * The one intended difference in the embeddings readiness fix: a Rust brain names `gbrain embeddings enable`, which
+ * keeps the Rust engine, where a PGLite brain names `gbrain init --force ... --path <db>` (it would rebuild a Rust
+ * store as PGLite; test/rust-engine-readiness-fix.test.ts pins both). Where the Rust answer holds exactly that Rust
+ * form and the reference holds the PGLite form with the same model and width, the Rust answer takes the reference
+ * value; the datastore label ("the Rust brain at") is mapped the same way. Anything else still differs.
+ */
+function withEnableFixCompared(ref: unknown, rust: unknown): unknown {
+  if (typeof rust === 'string' && typeof ref === 'string') {
+    return rust.replace(/for the Rust brain at /g, 'for the PGLite brain at ') === ref ? ref : rust;
+  }
+  if (Array.isArray(rust) && Array.isArray(ref)) {
+    const rustForm = rust.length === 7 && rust.slice(0, 3).join(' ') === 'gbrain embeddings enable';
+    const refForm = ref.length === 9 && ref.slice(0, 3).join(' ') === 'gbrain init --force' && ref[7] === '--path';
+    if (rustForm && refForm && JSON.stringify(rust.slice(3)) === JSON.stringify(ref.slice(3, 7))) return ref;
+    return rust.map((item, i) => withEnableFixCompared(ref[i], item));
+  }
+  if (rust && ref && typeof rust === 'object' && typeof ref === 'object') {
+    const r = ref as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(rust as Record<string, unknown>).map(([k, v]) => [k, withEnableFixCompared(r[k], v)]));
+  }
+  return rust;
+}
+
 /** stdout parsed as JSON, or undefined when it is not JSON. */
 function parseJson(text: string): unknown {
   try { return JSON.parse(text); } catch { return undefined; }
@@ -254,15 +278,19 @@ const COMMANDS: string[][] = [
  * typed refusal that names the member given here, the next engine member the write path needs. When a later change
  * serves that member, this case fails and names the new next member, so the record stays current.
  */
-/** A write stops on Rust with a typed refusal that names `member`, or is accepted and stays queued behind `member`. */
-const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued'; member: string }> = [
-  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'queued', member: 'executeRawDirect' },
+/**
+ * A write stops on Rust with a typed refusal that names `member`, or is accepted and stays pending behind `member`:
+ * `queued` when no background writer claims it, `running` when the writer claims it and then stops at `member`.
+ */
+const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued' | 'running'; member: string }> = [
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'running', member: 'executeRaw' },
 ];
-// `put` passes the persistence declaration and write admission, so the request is recorded (state queued). The
-// background writer that applies it then stops at the raw consumer heartbeat (executeRawDirect in
-// src/core/persistence/consumer-heartbeat.ts), so the reply is write_pending (exit 10) and nothing is applied.
+// `put` passes the persistence declaration and write admission, so the request is recorded. The background writer
+// claims it (state running) and then stops at the raw publication-effect insert (executeRaw in
+// src/core/persistence/effect-journal.ts queuePublicationEffects), so the reply is write_pending (exit 10) and
+// nothing is applied.
 
-type State = 'equal' | 'refused' | 'queued' | 'diverged' | 'no-engine' | 'runs';
+type State = 'equal' | 'refused' | 'queued' | 'running' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
 const table: Row[] = [];
 const setupRows: Row[] = [];
@@ -275,7 +303,7 @@ function printTable(): void {
     '[rust cli parity] commands:', ...table.map((r) => `  ${r.command} | ${r.state}${r.note ? ` (${r.note})` : ''}`)];
   const count = (s: State) => table.filter((r) => r.state === s).length;
   if (useMirror) lines.push('[rust cli parity] a Rust setup write was refused: reads were compared with the mirror (PGLite with the same completed writes)');
-  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('queued')} queued, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
+  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('queued')} queued, ${count('running')} running, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
   console.log(lines.join('\n'));
 }
 
@@ -333,7 +361,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       const refJson = parseJson(ref.stdout);
       const rustJson = parseJson(rust.stdout);
       const want = { exitCode: ref.exitCode, json: asJson(ref, refBrain, refJson) };
-      const got = { exitCode: rust.exitCode, json: asJson(rust, brains.rust, rustJson === undefined ? undefined : withAgeDecayCompared(args, refJson, rustJson)) };
+      const rustSide = asJson(rust, brains.rust, rustJson === undefined ? undefined : withAgeDecayCompared(args, refJson, rustJson));
+      const got = { exitCode: rust.exitCode, json: withEnableFixCompared(want.json, rustSide) };
       const equal = got.exitCode === want.exitCode && same(got.json, want.json);
       const notes = [useMirror ? 'vs mirror' : '', equal && ref.exitCode !== 0 ? `both exit ${ref.exitCode}` : '', equal ? '' : `exit ${rust.exitCode}`].filter(Boolean);
       table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: notes.join(', ') });
@@ -343,7 +372,7 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
   }
 
   for (const { args, rust: outcome, member: next } of RECORDED_WRITES) {
-    test(`${label(args)} writes on PGLite and ${outcome === 'refused' ? 'refuses on Rust at' : 'stays queued on Rust behind'} ${next}`, async () => {
+    test(`${label(args)} writes on PGLite and ${outcome === 'refused' ? 'refuses on Rust at' : `stays ${outcome} on Rust behind`} ${next}`, async () => {
       const [pg, rust] = await Promise.all([cli(brains.pglite, args), rustArm === 'on' ? cli(brains.rust, args) : Promise.resolve(null)]);
       expect({ exitCode: pg.exitCode, json: parseJson(pg.stdout) !== undefined }).toEqual({ exitCode: 0, json: true });
       if (!rust || engineMissing(rust)) {
@@ -351,12 +380,12 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         return;
       }
       const member = refusedMember(rust);
-      if (outcome === 'queued') {
+      if (outcome !== 'refused') {
         // Accepted, never applied: the reply is the typed pending receipt, not a refusal or a success.
         const body = parseJson(rust.stdout) as { code?: string; state?: string } | undefined;
-        const queued = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === 'queued';
-        table.push({ command: label(args), state: queued ? 'queued' : 'diverged', note: queued ? `behind ${next}` : `exit ${rust.exitCode}` });
-        expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: 'queued', member: null });
+        const pending = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === outcome;
+        table.push({ command: label(args), state: pending ? outcome : 'diverged', note: pending ? `behind ${next}` : `exit ${rust.exitCode}` });
+        expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: outcome, member: null });
         return;
       }
       table.push({ command: label(args), state: member ? 'refused' : 'diverged', note: member ?? `exit ${rust.exitCode}` });
@@ -411,8 +440,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
       // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
+      // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
+      // does, so the check reads the same model and passes with PGLite's message.
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
-        'extract_atoms_backlog', 'fact_take_vectors', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
+        'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog

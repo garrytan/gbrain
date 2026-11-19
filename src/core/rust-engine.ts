@@ -20,7 +20,7 @@ import type { Capability, EngineCapabilities } from './engine-capabilities.ts';
 import type { EngineConfig } from './types.ts';
 import { capabilityMissing } from './rust-engine/errors.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
-import { openRustStore, type RustStore, type StoreBrain } from './rust-engine/store.ts';
+import { openRustStore, seedEmbeddingIdentity, type RustStore, type StoreBrain } from './rust-engine/store.ts';
 import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
@@ -28,6 +28,7 @@ import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { installOwnerClient } from './rust-engine/owner-ipc/client.ts';
+import { forgetOwnedRustBrain, recordOwnedRustBrain } from './rust-engine/owned-brains.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 
@@ -163,7 +164,7 @@ export class RustEngine {
     this._owner = role;
     let store: RustStore;
     try {
-      store = await openRustStore(this.addon, this.databasePath);
+      store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
     } catch (error) {
       if (this._owner === role) this._owner = null;
       await leaveRole(role);
@@ -177,6 +178,7 @@ export class RustEngine {
     }
     this._store = store;
     this._connected = true;
+    recordOwnedRustBrain(this.databasePath);
   }
 
   async disconnect(): Promise<void> {
@@ -206,7 +208,10 @@ export class RustEngine {
     this._store = null;
     this._connected = false;
     // The owner stops taking calls before its store closes, and gives up the lock last.
-    if (owner?.role === 'owner') await owner.server.close();
+    if (owner?.role === 'owner') {
+      if (store) forgetOwnedRustBrain(this.databasePath);
+      await owner.server.close();
+    }
     const txPool = this._txPool;
     this._txPool = null;
     await txPool?.shutdown(TRANSACTION_SHUTDOWN_WAIT_MS).catch(() => undefined);

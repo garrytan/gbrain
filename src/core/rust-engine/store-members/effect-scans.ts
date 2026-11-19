@@ -1,7 +1,7 @@
 /**
  * The effect scans the Rust store answers (engine-sql/persistence-effect-scans.ts): the reads the effect worker's pass
  * runs before it claims effects (listGatedMirrorRequests, listEffectRecoveries) and the claim's candidate read
- * (selectClaimableEffect).
+ * (selectClaimableEffect); and the effects a write receipt lists (listRequestEffects).
  *
  * Each scan joins persistence effects to the worktrees a host owns. The store keeps no worktree and records no effect,
  * so each one answers no row; it still refuses the arguments the Postgres casts refuse (a host id that is not a uuid,
@@ -9,7 +9,7 @@
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Effect scans").
  */
-import type { GatedMirrorRequest } from '../../engine-sql/persistence-effect-scans.ts';
+import type { GatedMirrorRequest, RequestEffectRow } from '../../engine-sql/persistence-effect-scans.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** No request has a parked withdrawal mirror here, so none is requeued; the codes change nothing. */
@@ -23,3 +23,7 @@ export const listEffectRecoveries: StoreMember<[hostId: string, after: string | 
 /** No effect is recorded here, so none is claimable (null); the dead owner keys change nothing. */
 export const selectClaimableEffect: StoreMember<[hostId: string, deadOwners: readonly string[]], Record<string, unknown> | null> =
   (brain, hostId) => storeCall({ member: 'selectClaimableEffect' }, () => brain.selectClaimableEffect(hostId));
+
+/** No effect is recorded here, so a write request has none ([]); a request id that is not a uuid still refuses. */
+export const listRequestEffects: StoreMember<[requestId: string], RequestEffectRow[]> =
+  (brain, requestId) => storeCall({ member: 'listRequestEffects' }, () => brain.listRequestEffects(requestId));

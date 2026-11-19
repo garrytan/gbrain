@@ -48,6 +48,25 @@ const PAGE = (title: string, body: string, timeline = '') => ({ type: 'note' as 
 
 describe('engine parity: chunks', () => {
   parityTest(
+    'a fresh brain records the embedding model it was created with, and a chunk with no model of its own carries it',
+    { methods: ['getConfig', 'putPage', 'upsertChunks', 'getChunks'] },
+    async (engine) => {
+      const config = {
+        embedding_model: await engine.getConfig('embedding_model'),
+        embedding_dimensions: await engine.getConfig('embedding_dimensions'),
+        chunk_strategy: await engine.getConfig('chunk_strategy'),
+      };
+      expect(config.embedding_model).toBeTruthy();
+      expect(config.embedding_dimensions).toBeTruthy();
+      await engine.putPage('notes/modelled', PAGE('Modelled', 'a body with no embedding.'));
+      await engine.upsertChunks('notes/modelled', [chunk(0, 'a body with no embedding.')]);
+      const models = (await engine.getChunks('notes/modelled', { includeUnsealed: true })).map((c) => c.model);
+      expect(models).toEqual([config.embedding_model!]);
+      return { config, models };
+    },
+  );
+
+  parityTest(
     'upsertChunks stores chunks that getChunks serves only once the projection is sealed',
     { methods: ['putPage', 'upsertChunks', 'getChunks'] },
     async (engine) => {

@@ -50,7 +50,7 @@ import type {
   LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
-  FileSpec, FileRow,
+  FileSpec, FileRow, ListFilesOptions,
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, StaleTakeOpts, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
@@ -143,6 +143,8 @@ import { hasCJK } from './cjk.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as trustWithdrawalsImpl from './engine-sql/trust-withdrawals.ts';
 import * as openLoopsImpl from './engine-sql/open-loops.ts';
+import * as entityIdentitiesImpl from './engine-sql/entity-identities.ts';
+import type { EntityIdentityFilter, EntityIdentityLinkInput, EntityIdentityUnlinkInput } from './engine-sql/entity-identities.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import * as trustWriteGateImpl from './engine-sql/trust-write-gate.ts';
 import * as takesImpl from './engine-sql/takes.ts';
@@ -175,15 +177,19 @@ import * as persistenceDeclarationImpl from './engine-sql/persistence-declaratio
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
 import * as writeGuardsImpl from './engine-sql/write-guards.ts';
+import * as pageVisibilityImpl from './engine-sql/page-visibility.ts';
+import * as largePageImpl from './engine-sql/large-page.ts';
 import * as trustFenceImpl from './engine-sql/trust-fence.ts';
 import * as persistenceClaimsImpl from './engine-sql/persistence-claims.ts';
 import * as housekeepingImpl from './engine-sql/persistence-housekeeping.ts';
 import * as effectScansImpl from './engine-sql/persistence-effect-scans.ts';
+import * as ownerScansImpl from './engine-sql/persistence-owner-scans.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { TrustTable } from './trust/schema.ts';
 import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
+import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -192,12 +198,14 @@ import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
-import type { RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
+import type { RankCoverageStatementOpts, RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
 import * as transactionSettingsImpl from './engine-sql/transaction-settings.ts';
+import * as writerVersionsImpl from './engine-sql/writer-versions.ts';
 import * as connectGateImpl from './engine-sql/connect-gate.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
+import type { MemberBindingVia } from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
 import * as jobsImpl from './engine-sql/jobs.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from './engine-sql/jobs.ts';
@@ -211,6 +219,9 @@ import * as jobsWake from './engine-sql/jobs-wake.ts';
 import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
 import * as jobsInsight from './engine-sql/jobs-insight.ts';
 import * as jobsSpend from './engine-sql/jobs-spend.ts';
+import * as spendLog from './engine-sql/spend-log.ts';
+import * as oauthClients from './engine-sql/oauth-clients.ts';
+import * as accessTokens from './engine-sql/access-tokens.ts';
 import * as jobsSubagent from './engine-sql/jobs-subagent.ts';
 import * as takesReads from './engine-sql/takes-reads.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
@@ -242,7 +253,7 @@ import * as chatUsageImpl from './engine-sql/chat-usage.ts';
 import * as fieldUsageImpl from './engine-sql/field-usage.ts';
 import * as aliasFanoutReadsImpl from './engine-sql/alias-fanout-reads.ts';
 import type { McpRequestLogRow, SearchTelemetryBucket } from './engine-sql/telemetry.ts';
-import type { CodeChunkScope, CodeSymbolQuery, FrozenHitKey, WithdrawalChunkKey } from './engine-sql/chunk-reads.ts';
+import type { CodeChunkScope, CodeSymbolQuery, FrozenHitKey, UnsealedPageScope, WithdrawalChunkKey } from './engine-sql/chunk-reads.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
@@ -1496,6 +1507,11 @@ export class PGLiteEngine implements BrainEngine {
   nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.rawRead, afterPageId); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }
+  readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.rawRead, opts, timeoutMs); }
+  readExactSnippetChunks(keys: readonly cliReadsOpsImpl.ExactSnippetKey[], opts: { excludePrivate: boolean }) { return cliReadsOpsImpl.readExactSnippetChunks(this.rawRead, keys, opts); }
+  listExactRescanChunks(pageIds: readonly number[], opts: { excludePrivate: boolean }) { return cliReadsOpsImpl.listExactRescanChunks(this.rawRead, pageIds, opts); }
+  listHeldFenceCells(keys: readonly cliReadsOpsImpl.HeldFenceCellKey[]) { return cliReadsOpsImpl.listHeldFenceCells(this.rawRead, keys); }
+  readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean }) { return cliReadsOpsImpl.readFenceOverlayRows(this.rawRead, page, incoming, opts); }
   listExtractionPendingPages(opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }) { return cliReadsOpsImpl.listExtractionPendingPages(this.rawRead, opts); }
   listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listUnattributedFacts(this.rawRead, opts); }
   listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listWantedPages(this.rawRead, opts); }
@@ -1511,6 +1527,12 @@ export class PGLiteEngine implements BrainEngine {
   countFactRelinkOutcomes(sourceIds: string[]) { return factsDoctorImpl.countFactRelinkOutcomes(this.rawRead, sourceIds); }
   listUnlinkedConversationSlugs(opts: { sourceId: string; auditSources: string[]; windowPerSource: number; fix: factsDoctorImpl.ConversationFixKind; hasAttempts: boolean }) { return factsDoctorImpl.listUnlinkedConversationSlugs(this.rawRead, opts); }
   countFactEmbeddingCoverage(opts: { sourceId?: string | null; model: string; dims: number }) { return factsDoctorImpl.countFactEmbeddingCoverage(this.rawRead, opts); }
+  countStaleFactEmbeddings(opts: { model: string; dims: number; sourceId?: string | null }) { return factsDoctorImpl.countStaleFactEmbeddings(this.rawRead, opts); }
+  readChunkVectorColumn(column: string) { return embeddingCatalogImpl.readChunkVectorColumn(this.rawRead, column); }
+  readEmbeddingIdentity() { return embeddingCatalogImpl.readEmbeddingIdentity(this.rawRead, () => this.getConfig('embedding_model')); }
+  listEmbeddingStores() { return embeddingCatalogImpl.listEmbeddingStores(this.rawRead); }
+  hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.rawRead, store); }
+  countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.rawRead, column); }
   upsertFactRelinkAttempt(sourceId: string, attempt: factRelinkImpl.FactRelinkAttempt, opts: factRelinkImpl.FactRelinkUpsertOpts = {}) { return factRelinkImpl.upsertFactRelinkAttempt(this.engineSql, sourceId, attempt, opts); }
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]) { return factRelinkImpl.listFactRelinkOutcomes(this.rawRead, sourceId, factIds, outcomes); }
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string) { return factRelinkImpl.deleteFactRelinkMemos(this.engineSql, sourceId, tier, targetSlug); }
@@ -1546,6 +1568,7 @@ export class PGLiteEngine implements BrainEngine {
   listHeldFenceFactRows(sourceId: string, slug: string) { return factsPurgeImpl.listHeldFenceFactRows(this.rawRead, sourceId, slug); }
   listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.listWithdrawalSlugs(this.rawRead, sourceId, visibility, factHash, subject); }
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string) { return factsPurgeImpl.expireFactsByWithdrawal(this.rawRead, sourceId, visibility, fact, subject); }
+  insertFactPurge(row: factsPurgeImpl.FactPurgeInsert) { return factsPurgeImpl.insertFactPurge(this.rawRead, row); }
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts), through executeRaw as before.
   loopFactDrift(sourceIds: string[], loopId: number | null) { return factsRepairImpl.loopFactDrift(this.rawRead, sourceIds, loopId); }
@@ -1581,9 +1604,13 @@ export class PGLiteEngine implements BrainEngine {
   readHeldCoverageRows(sourceIds: string[] | null) { return persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(this.engineSql, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds); }
   readWriteRequest(principalKind: string, principalId: string, requestId: string) { return persistenceJournalImpl.readWriteRequest(unscopedExecutor(this.engineSql, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId); }
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return persistenceJournalImpl.readWriteRequestById(unscopedExecutor(this.engineSql, 'persistence: request read ran unscoped through executeRaw'), id, opts); }
+  listWriteRequestRows(principalKind: string, principalId: string, sourceId: string, filter: persistenceJournalImpl.WriteRequestListFilter) { return persistenceJournalImpl.listWriteRequestRows(unscopedExecutor(this.engineSql, 'persistence: receipt list ran unscoped through executeRaw'), principalKind, principalId, sourceId, filter); }
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }) { return persistenceJournalImpl.readWriteRequestProgress(unscopedExecutor(this.engineSql, 'persistence: request progress read ran unscoped through executeRaw'), id, opts); }
   readCounterRows(keys: readonly string[]) { return persistenceJournalImpl.readCounterRows(unscopedExecutor(this.engineSql, 'persistence: counter rows read ran unscoped through executeRaw'), keys); }
   ownsSchemaTables() { return persistenceJournalImpl.ownsSchemaTables(unscopedExecutor(this.engineSql, 'persistence: schema owner read ran unscoped through executeRaw')); }
+  readOAuthClientWriteGrant(clientId: string, opts?: { lock?: boolean }) { return persistenceJournalImpl.readOAuthClientWriteGrant(unscopedExecutor(this.engineSql, 'persistence: OAuth client grant read ran unscoped through executeRaw'), clientId, opts); }
+  readAccessTokenWriteGrant(tokenId: string, opts?: { lock?: boolean }) { return persistenceJournalImpl.readAccessTokenWriteGrant(unscopedExecutor(this.engineSql, 'persistence: legacy token grant read ran unscoped through executeRaw'), tokenId, opts); }
+  shareLockWriteCredential(kind: 'oauth_client' | 'legacy_token', id: string) { return persistenceJournalImpl.shareLockWriteCredential(unscopedExecutor(this.engineSql, 'persistence: credential lock ran unscoped through executeRaw'), kind, id); }
   readAdmissionRate(principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) { return persistenceJournalImpl.readAdmissionRate(unscopedExecutor(this.engineSql, 'persistence: admission rate read ran unscoped through executeRaw'), principal, opts); }
   countOutstandingBySource(principalKind: string, principalId: string) { return persistenceJournalImpl.countOutstandingBySource(unscopedExecutor(this.engineSql, 'persistence: outstanding-by-source read ran unscoped through executeRaw'), principalKind, principalId); }
   lockPersistenceCounters(keys: readonly string[]) { return persistenceJournalImpl.lockPersistenceCounters(this.engineSql, keys); }
@@ -1591,6 +1618,7 @@ export class PGLiteEngine implements BrainEngine {
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string) { return persistenceJournalImpl.stampWriteClaim(this.engineSql, id, token, leaseMs, phaseJson); }
   lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.engineSql, id); }
   completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.engineSql, completion); }
+  cancelWriteRow(cancel: persistenceJournalImpl.WriteCancellation) { return persistenceJournalImpl.cancelWriteRow(this.engineSql, cancel); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }) { return persistenceClaimsImpl.readSourceMembership(this.engineSql, sourceId, opts); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through executeRaw'), principalId, requestIds); }
   readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through executeRaw'), principalId, requestId); }
@@ -1598,6 +1626,7 @@ export class PGLiteEngine implements BrainEngine {
   renewWriteClaim(renewal: persistenceClaimsImpl.ClaimRenewal, opts?: { signal?: AbortSignal }) { return persistenceClaimsImpl.renewWriteClaim(this.engineSql, renewal, opts); }
   expireStaleWriteClaims(expiry: persistenceClaimsImpl.ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.expireStaleWriteClaims(this.engineSql, expiry, { signal: opts?.signal }); }
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }) { return persistenceClaimsImpl.hasClaimableWrite(unscopedExecutor(this.engineSql, 'persistence: claim check ran unscoped through executeRaw'), hostId, excludeRoots, opts); }
+  selectClaimableWrite<R = Record<string, unknown>>(spec: persistenceClaimsImpl.ClaimHeadSpec) { return persistenceClaimsImpl.selectClaimableWrite<R>(unscopedExecutor(this.engineSql, 'persistence: FIFO head read ran unscoped through the transaction executeRaw'), spec); }
   listHostConsumerRows(hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.listHostConsumerRows(unscopedExecutor(this.engineSql, 'persistence: consumer rows read ran unscoped through executeRaw'), hostId, { signal: opts?.signal }); }
   probeLiveConsumerRows(probe: persistenceClaimsImpl.ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.probeLiveConsumerRows(unscopedExecutor(this.engineSql, 'persistence: live consumer probe ran unscoped through executeRaw'), probe, { signal: opts?.signal }); }
   renewConsumerRow(renewal: persistenceClaimsImpl.ConsumerRenewal, opts?: { signal?: AbortSignal }) { return persistenceClaimsImpl.renewConsumerRow(this.engineSql, renewal, opts); }
@@ -1615,7 +1644,19 @@ export class PGLiteEngine implements BrainEngine {
   listGatedMirrorRequests(hostId: string, gateCode: string, allowedCodes: readonly string[]) { return effectScansImpl.listGatedMirrorRequests(unscopedExecutor(this.engineSql, 'persistence: gated mirror scan ran unscoped through executeRaw'), hostId, gateCode, allowedCodes); }
   listEffectRecoveries<R = Record<string, unknown>>(hostId: string, after: string | null, limit: number) { return effectScansImpl.listEffectRecoveries<R>(unscopedExecutor(this.engineSql, 'persistence: effect recovery scan ran unscoped through executeRaw'), hostId, after, limit); }
   selectClaimableEffect<R = Record<string, unknown>>(hostId: string, deadOwners: readonly string[]) { return effectScansImpl.selectClaimableEffect<R>(unscopedExecutor(this.engineSql, 'persistence: effect claim read ran unscoped through the transaction executeRaw'), hostId, deadOwners); }
+  listOverdueHeldWrites<R = Record<string, unknown>>(hostId: string, maxWaitMs: number, hold: ownerScansImpl.OverdueHoldKind, opts?: { signal?: AbortSignal }) { return ownerScansImpl.listOverdueHeldWrites<R>(unscopedExecutor(this.engineSql, 'persistence: overdue hold scan ran unscoped through executeRaw'), hostId, maxWaitMs, hold, opts); }
+  lockOverdueHold(hold: ownerScansImpl.OverdueHold) { return ownerScansImpl.lockOverdueHold(unscopedExecutor(this.engineSql, 'persistence: overdue hold check ran unscoped through the transaction executeRaw'), hold); }
+  listOwnerRecoveryHeads<R = Record<string, unknown>>(hostId: string, excluded: readonly string[], opts?: { signal?: AbortSignal; direct?: boolean }) { return ownerScansImpl.listOwnerRecoveryHeads<R>(unscopedExecutor(this.engineSql, 'persistence: owner recovery scan ran unscoped through executeRaw'), hostId, excluded, { signal: opts?.signal }); }
+  // The refresh resume's reads ran on executeRaw (worktree-refresh.ts resumeWorktreeRefreshes).
+  listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number) { return ownerScansImpl.listResumableRefreshes<R>(unscopedExecutor(this.engineSql, 'persistence: refresh resume scan ran unscoped through executeRaw'), hostId, budgetMs); }
+  listSourceLastCommits(sourceIds: readonly string[]) { return ownerScansImpl.listSourceLastCommits(unscopedExecutor(this.engineSql, 'persistence: refresh resume source read ran unscoped through executeRaw'), sourceIds); }
+  listRequestEffects(requestId: string) { return effectScansImpl.listRequestEffects(unscopedExecutor(this.engineSql, 'persistence: request effects read ran unscoped through executeRaw'), requestId); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
+  readCurrentWriteTrust() { return transactionSettingsImpl.readCurrentWriteTrust(unscopedExecutor(this.engineSql, 'transaction settings: write trust read ran through the transaction executeRaw')); }
+  setWriteContext(input: transactionSettingsImpl.WriteContextInput) { return transactionSettingsImpl.setWriteContext(this.engineSql, input); }
+  readWriterVersionCutoff() { return writerVersionsImpl.readWriterVersionCutoff(unscopedExecutor(this.engineSql, 'writer versions: cutoff read ran unscoped through executeRaw')); }
+  listWriterVersions(limit: number) { return writerVersionsImpl.listWriterVersions(unscopedExecutor(this.engineSql, 'writer versions: list ran unscoped through executeRaw'), limit); }
+  recentWriterVersions(days: number) { return writerVersionsImpl.recentWriterVersions(unscopedExecutor(this.engineSql, 'writer versions: window read ran unscoped through executeRaw'), days); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
   beginSnapshotRead(opts?: { readOnly?: boolean }) { return transactionSettingsImpl.beginSnapshotRead(this, opts); }
   hasPersistenceTable(table: connectGateImpl.PersistenceTable) { return connectGateImpl.hasPersistenceTable(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw'), table); }
@@ -1624,22 +1665,32 @@ export class PGLiteEngine implements BrainEngine {
   listRetiredDeactivations() { return connectGateImpl.listRetiredDeactivations(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw')); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return beliefImpl.readLedgerSource(unscopedExecutor(this.engineSql, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts); }
   isFolderRestricted(sourceId: string, slug: string) { return accessControlImpl.isFolderRestricted(unscopedExecutor(this.engineSql, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug); }
+  // The member lookup runs through this engine's executeRaw, as access/caller.ts liveIdentity did.
+  readLiveMember(via: MemberBindingVia, key: string) { return accessControlImpl.readLiveMember(this, via, key); }
+  readFolderAccess(readers: readonly string[]) { return accessControlImpl.readFolderAccess(this, readers); }
+  listAppliedPolicyRevisions() { return accessControlImpl.listAppliedPolicyRevisions(unscopedExecutor(this.engineSql, 'access: applied revision read ran unscoped through executeRaw')); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return entityReadsImpl.readMentionLastPass(unscopedExecutor(this.engineSql, 'entities: mention pass time ran unscoped through executeRaw'), sourceId); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return entityReadsImpl.countPagesDueForMentions(unscopedExecutor(this.engineSql, 'entities: mention-due count ran unscoped through executeRaw'), q); }
   readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(this.engineSql, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q); }
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return entityReadsImpl.findExactSlug(unscopedExecutor(this.engineSql, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts); }
+  readRetirementHop(sourceId: string, slug: string, privacy: entityReadsImpl.RetirementPrivacy) { return entityReadsImpl.readRetirementHop(unscopedExecutor(this.engineSql, 'entities: retirement hop ran unscoped through executeRaw'), sourceId, slug, privacy); }
+  readEntityCardRows(sourceId: string, match: entityReadsImpl.EntityCardMatch, opts?: { excludePrivate?: boolean }) { return entityReadsImpl.readEntityCardRows(unscopedExecutor(this.engineSql, 'entities: entity card candidates ran unscoped through executeRaw'), sourceId, match, opts); }
   // PGLite runs in process and has no statement timeout, so the two timed reads drop `timeoutMs`. A getter, not a
   // field: a transaction engine is Object.create(this), and must run on its own executeRaw.
   private get untimedRead(): entityReadsImpl.TimedRawRead { return { executeRaw: (sql, params) => this.executeRaw(sql, params) }; }
   readExtractionLagCounts(q: entityReadsImpl.ExtractionLagQuery) { return entityReadsImpl.readExtractionLagCounts(this.untimedRead, q); }
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this.untimedRead, sourceId, scope, opts); }
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
+  readPlainSyncSource(sourceId: string) { return sourcesImpl.readPlainSyncSource(unscopedExecutor(this.engineSql, 'sources: plain-directory sync read it unscoped through executeRaw'), sourceId); }
+  readOwnerOnlySourcesPresent() { return sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw')); }
+  readOwnerOnlySourceConfig(sourceId: string) { return sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), sourceId); }
   listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(unscopedExecutor(this.engineSql, 'sources: the default-write guard read it unscoped through executeRaw')); }
   listStaleSyncSourceIds() { return sourcesImpl.listStaleSyncSourceIds(unscopedExecutor(this.engineSql, 'sources: the advisor read it unscoped through executeRaw')); }
   readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(unscopedExecutor(this.engineSql, 'sources: source checks read it unscoped through executeRaw'), sourceId); }
   lockSourceRow(sourceId: string) { return sourcesImpl.lockSourceRow(this.engineSql, sourceId); }
+  isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }
   readSourceChunkerVersion(sourceId: string) { return sourcesImpl.readSourceChunkerVersion(unscopedExecutor(this.engineSql, 'sources: sync preflight read it unscoped through executeRaw'), sourceId); }
   setSourceChunkerVersion(sourceId: string, version: string) { return sourcesImpl.setSourceChunkerVersion(this.engineSql, sourceId, version); }
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }) { return sourcesImpl.countSourcePages(unscopedExecutor(this.engineSql, 'sources: source commands counted pages unscoped through executeRaw'), sourceId, opts); }
@@ -1668,6 +1719,8 @@ export class PGLiteEngine implements BrainEngine {
   getWorktreeBinding(sourceId: string, hostId: string | null) { return writeMiscImpl.getWorktreeBinding(this.writeMiscReads, sourceId, hostId); }
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
+  hasLabelledOnlyMember() { return writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads); }
+  listAccessTokens() { return writeMiscImpl.listAccessTokens(this.writeMiscReads); }
   notifierCoverageRecorded() { return writeMiscImpl.notifierCoverageRecorded(this.writeMiscReads); }
   readOpCheckpointKeys(op: string, fingerprint: string) { return writeMiscImpl.readOpCheckpointKeys(this.writeMiscReads, op, fingerprint); }
   // Resumable-op checkpoint writes (engine-sql/op-checkpoint.ts) run on executeRawDirect, as op-checkpoint.ts ran them.
@@ -1686,7 +1739,11 @@ export class PGLiteEngine implements BrainEngine {
   listSynopsisSourceIds() { return writeMiscImpl.listSynopsisSourceIds(this.writeMiscReads); }
   expireMemoryProposals(reason: string) { return writeMiscImpl.expireMemoryProposals(this.engineSql, reason); }
   listAwaitingMemoryProposals(limit: number) { return writeMiscImpl.listAwaitingMemoryProposals(this.writeMiscReads, limit); }
+  readMemoryProposal(principalKind: string, principalId: string, requestId: string) { return writeMiscImpl.readMemoryProposal(this.writeMiscReads, principalKind, principalId, requestId); }
   purgeMemoryProposals(retentionDays: number) { return writeMiscImpl.purgeMemoryProposals(this.engineSql, retentionDays); }
+  readPendingProposalSummary() { return writeMiscImpl.readPendingProposalSummary(this.writeMiscReads); }
+  listMemoryProposalRows(query: writeMiscImpl.ProposalListQuery) { return writeMiscImpl.listMemoryProposalRows(this.writeMiscReads, query); }
+  listOwnerProposalRows(requestId: string) { return writeMiscImpl.listOwnerProposalRows(this.writeMiscReads, requestId); }
   attachSourcePath(sourceId: string, localPath: string, opts?: writeMiscImpl.AttachSourcePathOptions) { return writeMiscImpl.attachSourcePath(this.engineSql, sourceId, localPath, opts); }
   listLinkPageMetadata(sourceId?: string) { return cliReadsImpl.listLinkPageMetadata(this.cliReads, sourceId); }
   listStoredTimelineRows(sourceId: string, slug: string) { return cliReadsImpl.listStoredTimelineRows(this.cliReads, sourceId, slug); }
@@ -2091,9 +2148,12 @@ export class PGLiteEngine implements BrainEngine {
   countForeignEdges(slug: string, sourceId: string, direction: 'in' | 'out' | 'both') { return linkReadsImpl.countForeignEdges(this.linkRead, slug, sourceId, direction); }
   listLivePageSummaries(scope?: PageReadScope) { return linkReadsImpl.listLivePageSummaries(this.linkRead, scope); }
   countInboundLinks(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }) { return linkReadsImpl.countInboundLinks(this.linkRead, slug, sourceId, opts); }
+  readEntityInboundEdges(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }) { return linkReadsImpl.readEntityInboundEdges(this.linkRead, slug, sourceId, opts); }
   listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]) { return linkReadsImpl.listLinkEndpointPages(this.linkRead, sourceId, slugs, crossSourceSlugs); }
   listPagesTitledIn(queryLower: string, scope: PageReadScope) { return linkReadsImpl.listPagesTitledIn(this.linkRead, queryLower, scope); }
   wordLexemes(words: string[]) { return linkReadsImpl.wordLexemes(this.linkRead, words); }
+  readLinkContextMatches(asks: readonly linkReadsImpl.LinkContextAsk[]) { return linkReadsImpl.readLinkContextMatches(this.linkRead, asks); }
+  readLinkContextOriginPages(ids: readonly number[]) { return linkReadsImpl.readLinkContextOriginPages(this.linkRead, ids); }
   private get linkTemporal() { return unscopedExecutor(this.engineSql, 'link temporal: master engine.executeRaw, unscoped'); }
   readLinkRelationshipEvidence(keys: readonly RelationshipKey[]) { return linkTemporalImpl.readLinkRelationshipEvidence(this.linkTemporal, keys); }
   writeLinkRelationshipState(write: RelationshipStateWrite) { return linkTemporalImpl.writeLinkRelationshipState(this.linkTemporal, write); }
@@ -2125,6 +2185,7 @@ export class PGLiteEngine implements BrainEngine {
   countOrphanChunks() { return chunkReadsImpl.countOrphanChunks(this.chunkRead); }
   countCodeChunkPages() { return chunkReadsImpl.countCodeChunkPages(this.chunkRead); }
   codeChunksExist(sourceId: string | undefined, policy?: PageReadScope) { return chunkReadsImpl.codeChunksExist(this.chunkRead, sourceId, policy); }
+  hasUnsealedPages(scope: UnsealedPageScope) { return chunkReadsImpl.hasUnsealedPages(this.chunkRead, scope); }
   currentCodeChunksExist(scope: CodeChunkScope, predicate: 'any' | 'with_symbol') { return chunkReadsImpl.currentCodeChunksExist(this.chunkRead, scope, predicate); }
   listQualifiedSymbolNames(sourceId: string, symbol: string, opts: { match: 'exact' | 'contains'; limit: number }) { return chunkReadsImpl.listQualifiedSymbolNames(this.chunkRead, sourceId, symbol, opts); }
   listWithdrawalChunks(sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }) { return chunkReadsImpl.listWithdrawalChunks(this.chunkRead, sourceId, keys, opts); }
@@ -2158,6 +2219,7 @@ export class PGLiteEngine implements BrainEngine {
   resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]) { return aliasFanoutReadsImpl.resolveCaseSensitiveAliases(this.aliasFanoutRead, aliasNorms, sourceIds); }
   readPageTitle(sourceId: string, slug: string) { return aliasFanoutReadsImpl.readPageTitle(this.aliasFanoutRead, sourceId, slug); }
   readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]) { return aliasFanoutReadsImpl.readPageAliasRows(this.aliasFanoutRead, sourceIds, slugs); }
+  readEntityAliasRows(sourceId: string, slugs: readonly string[]) { return aliasFanoutReadsImpl.readEntityAliasRows(this.aliasFanoutRead, sourceId, slugs); }
 
   // v0.41.18.0 — lazy-cached resolveBulkRetryOpts result + batch-retry helper.
   // PGLite has no Postgres pooler so retries don't fire in production; the
@@ -2809,6 +2871,8 @@ export class PGLiteEngine implements BrainEngine {
     return filesImpl.listFilesForPage(unscopedExecutor(this.engineSql, 'files: unscoped on master (EO4 inventory)'), pageId);
   }
 
+  listFiles(opts: ListFilesOptions) { return filesImpl.listFiles(unscopedExecutor(this.engineSql, 'files: unscoped on master (EO4 inventory)'), opts); }
+
   // Dream-cycle triage verdict cache (v0.23 boolean era; widened by #4152 triage-v1).
   async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
     const result = await this.db.query<{
@@ -3332,6 +3396,13 @@ export class PGLiteEngine implements BrainEngine {
   stampPageIngest(slug: string, stamp: writeGuardsImpl.PageIngestStamp) { return writeGuardsImpl.stampPageIngest(this.engineSql, slug, stamp); }
   sealImportedPage(slug: string, seal: writeGuardsImpl.ImportedPageSeal) { return writeGuardsImpl.sealImportedPage(this.engineSql, slug, seal); }
   readLivePageBody(slug: string, opts: { sourceId: string }) { return writeGuardsImpl.readLivePageBody(unscopedExecutor(this.engineSql, 'valid-time advisory: page body read ran unscoped through executeRaw'), slug, opts); }
+  readStoredPageTier(sourceId: string, slug: string) { return writeGuardsImpl.readStoredPageTier(unscopedExecutor(this.engineSql, 'page write gate: stored tier read ran unscoped through executeRaw'), sourceId, slug); }
+  readInlinePageRegions(pageId: number) { return writeGuardsImpl.readInlinePageRegions(unscopedExecutor(this.engineSql, 'append tail digest: page body read ran unscoped through executeRaw'), pageId); }
+  readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: pageVisibilityImpl.PagePolicyPart }) { return pageVisibilityImpl.readPageHiddenFromCaller(unscopedExecutor(this.engineSql, 'page visibility: caller policy read ran unscoped through executeRaw'), sourceId, slug, opts); }
+  readCallerPageAccess(pages: readonly { source_id: string; slug: string }[], opts: { policy: pageVisibilityImpl.PagePolicyPart }) { return pageVisibilityImpl.readCallerPageAccess(unscopedExecutor(this.engineSql, 'page visibility: caller policy read ran unscoped through executeRaw'), pages, opts); }
+  readWriteVisibilityProbe(sourceId: string, slug: string) { return pageVisibilityImpl.readWriteVisibilityProbe(unscopedExecutor(this.engineSql, 'page visibility: write probe ran unscoped through executeRaw'), sourceId, slug); }
+  readWriterSlugFence(principal: { kind: string; id: string }) { return pageVisibilityImpl.readWriterSlugFence(unscopedExecutor(this.engineSql, 'page visibility: writer fence read ran unscoped through executeRaw'), principal); }
+  readStoredBodyBytes(slug: string, sourceId: string) { return largePageImpl.readStoredBodyBytes(unscopedExecutor(this.engineSql, 'large page: stored body size read ran unscoped through executeRaw'), slug, sourceId); }
   listFenceFactRows(target: trustFenceImpl.FenceRowsTarget) { return trustFenceImpl.listFenceFactRows(unscopedExecutor(this.engineSql, 'fence guard: locking fact read ran unscoped through executeRaw'), target); }
   insertTrustProposal(input: trustProposalsImpl.NewTrustProposal) { return trustProposalsImpl.insertTrustProposal(this.engineSql, input); }
   getTrustProposal(id: number, lock = false) { return trustProposalsImpl.getTrustProposal(unscopedExecutor(this.engineSql, 'trust: the trust proposal read ran through executeRaw unscoped'), id, lock); }
@@ -3551,6 +3622,22 @@ export class PGLiteEngine implements BrainEngine {
   async expireSpendReservations(scope?: jobsSpend.ExpireSpendScope) { return jobsSpend.expireSpendReservations(this, scope); }
   async settleSpendReservation(reservationId: string, actualCents: number) { return jobsSpend.settleSpendReservation(this, reservationId, actualCents); }
   async markSpendUsageUnknown(reservationId: string, reason: string) { return jobsSpend.markSpendUsageUnknown(this, reservationId, reason); }
+  async reserveClientSpend(spec: spendLog.ClientReserveSpec) { return this.transaction(tx => spendLog.reserveClientSpend(tx, spec)); }
+  async reserveGroupSpend(spec: spendLog.GroupReserveSpec) { return this.transaction(tx => spendLog.reserveGroupSpend(tx, spec)); }
+  async readGroupSpendTotals(budgetKey: string) { return spendLog.readGroupSpendTotals(this, budgetKey); }
+  async settleSpendWithLog(reservationId: string, actualCents: number, operation: string, tokenName: string | null) { return this.transaction(tx => spendLog.settleSpendWithLog(tx, reservationId, actualCents, operation, tokenName)); }
+  async insertSpendLog(row: spendLog.SpendLogInsert) { return spendLog.insertSpendLog(this, row); }
+  async sumClientSpendSince(clientId: string, since: Date) { return spendLog.sumClientSpendSince(this, clientId, since); }
+  async readClientBudgetUsd(clientId: string) { return spendLog.readClientBudgetUsd(this, clientId); }
+  async insertOauthClient(row: spendLog.OauthClientInsert) { return spendLog.insertOauthClient(this, row); }
+  async updateOauthClientBudget(clientId: string, usd: number | null) { return spendLog.updateOauthClientBudget(this, clientId, usd); }
+  async readAgentClientSpend() { return spendLog.readAgentClientSpend(this); }
+  async readOauthClient(clientId: string) { return oauthClients.readOauthClient(this, clientId); }
+  async listOauthClients() { return oauthClients.listOauthClients(this); }
+  async patchOauthClient(clientId: string, patch: oauthClients.OauthClientPatch, guard?: oauthClients.OauthClientPatchGuard) { return oauthClients.patchOauthClient(this, clientId, patch, guard); }
+  async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
+  async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }
+  async setAccessTokenMinTrust(id: string, tier: string | null) { return accessTokens.setAccessTokenMinTrust(this, id, tier); }
   async insertLeasePressure(row: jobsSpend.LeasePressureInsert) { return jobsSpend.insertLeasePressure(this, row); }
   async countLeasePressure(filter?: jobsSpend.LeasePressureFilter) { return jobsSpend.countLeasePressure(this, filter); }
   async listRecentLeasePressure(windowMs: number, limit: number) { return jobsSpend.listRecentLeasePressure(this, windowMs, limit); }
@@ -3576,6 +3663,7 @@ export class PGLiteEngine implements BrainEngine {
   async countTakes() { return takesReads.countTakes(this); }
   async planFactPurgeTakes(spec: takesReads.PurgeTakesSpec) { return takesReads.planFactPurgeTakes(this, spec); }
   async listTakeRowsForPage(pageId: number) { return takesReads.listTakeRowsForPage(this, pageId); }
+  async listHeldFenceTakeRows(spec: takesReads.HeldFenceTakeSpec) { return takesReads.listHeldFenceTakeRows(this, spec); }
   async countMcpResolvedTakes(spec: takesReads.McpResolvedSpec) { return takesReads.countMcpResolvedTakes(this, spec); }
   async listTakeSupersessionCandidates(sourceIds: readonly string[]) { return takesReads.listTakeSupersessionCandidates(this, sourceIds); }
   async countZeroWeightWithTakes() { return takesReads.countZeroWeightWithTakes(this); }
@@ -3587,6 +3675,7 @@ export class PGLiteEngine implements BrainEngine {
   async listVisibleBeliefLifetimes(lifetimes: readonly string[]) { return trustTierReads.listVisibleBeliefLifetimes(this, lifetimes); }
   async listVersionTrustTiers(ids: readonly number[]) { return trustTierReads.listVersionTrustTiers(this, ids); }
   async listVersionReasonWriters(ids: readonly number[]) { return trustTierReads.listVersionReasonWriters(this, ids); }
+  async listPageRefsByIds(ids: readonly number[]) { return trustTierReads.listPageRefsByIds(this, ids); }
   async listValidTimeIdentities(spec: trustTierReads.ValidTimeIdentitySpec) { return trustTierReads.listValidTimeIdentities(this, spec); }
   async pickValidTimeEdition(spec: trustTierReads.ValidTimePickSpec) { return trustTierReads.pickValidTimeEdition(this, spec); }
   async listAmendmentsNotApplied(spec: trustTierReads.AmendmentsNotAppliedSpec) { return trustTierReads.listAmendmentsNotApplied(this, spec); }
@@ -3727,15 +3816,26 @@ export class PGLiteEngine implements BrainEngine {
 
   // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts), through the raw path as before.
   hasCoveringFactWithdrawal(sourceId: string, visibility: string, factHash: string, claim: string, subject: string) { return trustWithdrawalsImpl.hasCoveringFactWithdrawal(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, visibility, factHash, claim, subject); }
+  isFactWithdrawn(sourceId: string, visibility: string | null, claim: string, entitySlug: string | null, memberPage: string | null) { return trustWithdrawalsImpl.isFactWithdrawn(unscopedExecutor(this.engineSql, 'trust: the withdrawn-claim check ran through executeRaw unscoped'), sourceId, visibility, claim, entitySlug, memberPage); }
+  isFactPurged(sourceId: string, visibility: string, claim: string, entitySlug: string | null) { return trustWithdrawalsImpl.isFactPurged(unscopedExecutor(this.engineSql, 'trust: the purged-claim check ran through executeRaw unscoped'), sourceId, visibility, claim, entitySlug); }
   insertFactWithdrawal(sourceId: string, visibility: string, claim: string, subject: string, withdrawnAt: string | null) { return trustWithdrawalsImpl.insertFactWithdrawal(this.engineSql, sourceId, visibility, claim, subject, withdrawnAt); }
   listFactWithdrawalDates(sourceId: string, claims: readonly trustWithdrawalsImpl.WithdrawalClaimRow[], subject: string | null) { return trustWithdrawalsImpl.listFactWithdrawalDates(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, claims, subject); }
   moveFactWithdrawalSubject(sourceId: string, oldSlug: string, newSlug: string) { return trustWithdrawalsImpl.moveFactWithdrawalSubject(this.engineSql, sourceId, oldSlug, newSlug); }
   hasFactWithdrawalForSubject(sourceId: string, subject: string) { return trustWithdrawalsImpl.hasFactWithdrawalForSubject(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, subject); }
   listFactWithdrawalKeys(sourceId: string, limit: number) { return trustWithdrawalsImpl.listFactWithdrawalKeys(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, limit); }
+  readFactCacheWatermark(sourceId: string) { return trustWithdrawalsImpl.readFactCacheWatermark(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId); }
+  readTrustGeneration() { return trustWithdrawalsImpl.readTrustGeneration(unscopedExecutor(this.engineSql, 'trust: the policy generation read ran through executeRaw unscoped')); }
   // Open loops (engine-sql/open-loops.ts), through the raw path as before.
   upsertOpenLoop(loop: OpenLoopUpsertInput) { return openLoopsImpl.upsertOpenLoop(this.engineSql, loop); }
   closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return openLoopsImpl.closeOpenLoop(this.engineSql, sourceId, id, status, closedBy); }
   listOpenLoops(opts?: OpenLoopListOpts) { return openLoopsImpl.listOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped'), opts); }
+  readEntityOpenLoops(slug: string, sourceId: string, limit: number) { return openLoopsImpl.readEntityOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the entity card read ran through executeRaw unscoped'), slug, sourceId, limit); }
+  private get entityIdentityRead() { return unscopedExecutor(this.engineSql, 'entity identities: master engine.executeRaw, unscoped'); }
+  linkEntityIdentityRow(input: EntityIdentityLinkInput) { return entityIdentitiesImpl.linkEntityIdentityRow(this.engineSql, input); }
+  unlinkEntityIdentityRow(input: EntityIdentityUnlinkInput) { return entityIdentitiesImpl.unlinkEntityIdentityRow(this.engineSql, input); }
+  listEntityIdentityRows(filter: EntityIdentityFilter) { return entityIdentitiesImpl.listEntityIdentityRows(this.entityIdentityRead, filter); }
+  readEntityIdentityIdsForPages(pages: ReadonlyArray<{ sourceId: string; slug: string }>) { return entityIdentitiesImpl.readEntityIdentityIdsForPages(this.entityIdentityRead, pages); }
+  readCanonicalTwin(sourceId: string, slug: string) { return entityIdentitiesImpl.readCanonicalTwin(this.entityIdentityRead, sourceId, slug); }
   upsertWriteGateReceipt(input: trustWriteGateImpl.WriteGateReceiptInput) { return trustWriteGateImpl.upsertWriteGateReceipt(this.engineSql, input); }
   upsertPageWriteGateReceipt(sourceId: string, slug: string, receipt: trustWriteGateImpl.WriteGateReceiptFields) { return trustWriteGateImpl.upsertPageWriteGateReceipt(this.engineSql, sourceId, slug, receipt); }
   deleteStalePageWriteGateReceipts(sourceId: string, slug: string, contentHash: string | null) { return trustWriteGateImpl.deleteStalePageWriteGateReceipts(this.engineSql, sourceId, slug, contentHash); }

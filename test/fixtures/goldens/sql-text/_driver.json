@@ -2429,6 +2429,30 @@
           }
         ]
       },
+      "listFiles": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "page_slug": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listFilesForPage": {
         "default": [
           {
@@ -4999,6 +5023,19 @@
         "default": [
           {
             "paramCount": 4,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "isSourceClaimed": {
+        "default": [
+          {
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

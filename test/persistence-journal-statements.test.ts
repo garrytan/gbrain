@@ -42,6 +42,8 @@ import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../sr
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
+import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
+import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIMED_SQL } from '../src/core/page-state/projections.ts';
@@ -155,5 +157,36 @@ describe('the effect claim read copies the claim fragments', () => {
     expect(CLAIMABLE_EFFECT_SQL).toContain(`AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})\n`);
     expect(CLAIMABLE_EFFECT_SQL).toContain('w.owner_host_id=$1::uuid');
     expect(CLAIMABLE_EFFECT_SQL.endsWith('ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED')).toBe(true);
+  });
+});
+
+describe('the FIFO head read copies the journal claim formula', () => {
+  // The text claimNextWrite sent through executeRaw before selectClaimableWrite, built from the journal's own fragments.
+  const LEASE_HELD = `EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE ${SYNC_KIND('r')} AND l.id=$7::text||r.source_id
+  AND l.ttl_expires_at>now() AND NOT (l.holder_pid=$8::integer AND l.holder_host IS NOT DISTINCT FROM $9::text))`;
+  const journalText = (prio: string, holderOnly: boolean) => {
+    const first = `(${prio}) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[]))`;
+    return `WITH waiting AS MATERIALIZED (SELECT f.worktree_id, max(f.sequence) AS last
+        FROM (${FOREGROUND_WAITING_ON('$5::text', "($6::text::jsonb->>f.worktree_id::text)::bigint")}) f GROUP BY f.worktree_id)
+      SELECT r.* FROM persistence_requests r
+      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
+      WHERE ${claimableWriteSql(`(${first})`, '$4::text[]')}
+        -- On a root whose lane groups run in this process only a foreground write is claimed (beside them).
+        AND NOT (r.worktree_id::text=ANY($4::text[]) AND (${SYNC_KIND('r')} OR NOT (${first})))
+        AND NOT (${SYNC_KIND('r')} AND ${first} AND EXISTS (SELECT 1 FROM waiting g WHERE g.worktree_id=r.worktree_id AND g.last>r.sequence))
+      ORDER BY ${holderOnly ? `${LEASE_HELD}, ` : ''}${CLAIM_ORDER(`(${first})`)} LIMIT 1 FOR UPDATE OF r SKIP LOCKED`;
+  };
+
+  test('selectClaimableWrite sends the journal text for each priority and claim owner', () => {
+    for (const priority of [null, true, false] as const) {
+      for (const holder of [false, true]) expect(claimHeadText(priority, holder)).toBe(journalText(foregroundPriorityText(priority), holder));
+    }
+  });
+
+  test('the lease holder binds $7..$9 only when the claim owner holds no resident lease', () => {
+    const spec = { hostId: 'h', excludeRoots: ['x'], fifoRoots: ['f'], laneRoots: ['l'], nonce: 'n', syncSeen: { w: '3' }, priority: null };
+    expect(claimHeadStatement({ ...spec, leaseHolder: null }).params).toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}']);
+    expect(claimHeadStatement({ ...spec, leaseHolder: { lockPrefix: 'p:', pid: 7, host: 'host' } }).params)
+      .toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}', 'p:', 7, 'host']);
   });
 });

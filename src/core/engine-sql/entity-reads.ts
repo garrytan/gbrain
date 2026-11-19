@@ -5,10 +5,11 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import { extractionLagStatement } from './pages.ts';
-import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
-import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
+import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { ignoredPrivacyLabelSql, NOTICE_READ_TIMEOUT_MS, privacyLabelKeySql, SCAN_CAP } from '../search/ignored-privacy-labels.ts';
 
 /**
@@ -91,6 +92,80 @@ export async function findExactSlug(exec: LegacyUnscopedRead, sourceId: string, 
     ORDER BY wanted.n LIMIT 1`);
   const [row] = await exec.executeRaw<{ slug: string }>(text, params);
   return row?.slug ?? null;
+}
+
+/**
+ * The page policy a retirement hop applies to the page it reads (alias `p`), rendered in the caller's access record:
+ * none, the caller's page policy (`privatePagesFilterForCaller`), the remote read floor (`remoteReadFloorSql`), or
+ * member access alone (`callerAccessAllowedSql`).
+ */
+export type RetirementPrivacy = 'none' | 'caller' | 'floor' | 'member_access';
+
+/** One entity-card candidate row: the columns the card's tie-break and synopsis read. */
+export interface EntityCardRow {
+  slug: string;
+  source_id: string;
+  title: string;
+  type: string | null;
+  frontmatter: Record<string, unknown> | null;
+  /** The bounded body prefix (`boundedBodyPrefixSql`), not the whole body. */
+  compiled_truth: string | null;
+  updated_at: Date | string | null;
+  last_retrieved_at: Date | string | null;
+}
+
+/**
+ * Which live pages of the source an entity-card read returns: the name arm (`lower(title)` equal to `titleLc`, a slug
+ * in `slugs`, or a slug matching the LIKE pattern `slugLike`), or the hydrate arm (a slug in `slugs`).
+ */
+export type EntityCardMatch = { titleLc: string; slugs: readonly string[]; slugLike: string } | { slugs: readonly string[] };
+
+export const ENTITY_CARD_COLUMNS_SQL = `slug, source_id, title, type, frontmatter, ${boundedBodyPrefixSql('pages')} AS compiled_truth, updated_at,
+              GREATEST(last_retrieved_at, (SELECT r.last_retrieved_at FROM page_retrievals r WHERE r.page_id = pages.id)) AS last_retrieved_at`;
+
+/** The entity card's candidate rows for `match`; `excludePrivate` applies the caller's page policy over `pages`. */
+export async function readEntityCardRows(exec: LegacyUnscopedRead, sourceId: string, match: EntityCardMatch,
+  opts: { excludePrivate?: boolean } = {}): Promise<EntityCardRow[]> {
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const cols = trustedSql(ENTITY_CARD_COLUMNS_SQL);
+  const { text, params } = 'titleLc' in match
+    ? renderFragment(sqlFragment`SELECT ${cols}
+         FROM pages
+        WHERE deleted_at IS NULL
+          AND source_id = ${sourceId}
+          AND ( lower(title) = ${match.titleLc}
+             OR slug = ANY(${[...match.slugs]}::text[])
+             OR slug LIKE ${match.slugLike} )${priv}`)
+    : renderFragment(sqlFragment`SELECT ${cols}
+           FROM pages
+          WHERE deleted_at IS NULL AND source_id = ${sourceId} AND slug = ANY(${[...match.slugs]}::text[])${priv}`);
+  return exec.executeRaw<EntityCardRow>(text, params);
+}
+
+/** One retirement hop: the page, whether it is retired (`retiredPageSql`), and its trimmed redirect target. */
+export interface RetirementHopRow { slug: string; type: string | null; retired: boolean; target: string | null }
+
+function retirementPrivacySql(privacy: RetirementPrivacy): SqlFragment {
+  switch (privacy) {
+    case 'none': return sqlFragment``;
+    case 'caller': return sqlFragment`AND ${trustedSql(privatePagesFilterForCaller('p'))}`;
+    case 'floor': return sqlFragment`AND ${trustedSql(remoteReadFloorSql('p'))}`;
+    case 'member_access': return sqlFragment`AND ${trustedSql(callerAccessAllowedSql('p'))}`;
+  }
+}
+
+/**
+ * The live page at `slug` in the source with whether it is retired and its `superseded_by` (else `merged_into`)
+ * value, trimmed, as the redirect target; null when no live page sits there or `privacy` hides it.
+ */
+export async function readRetirementHop(exec: LegacyUnscopedRead, sourceId: string, slug: string, privacy: RetirementPrivacy): Promise<RetirementHopRow | null> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.slug, p.type, ${trustedSql(retiredPageSql('p'))} AS retired,
+              COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
+         FROM pages p
+        WHERE p.source_id = ${sourceId} AND p.slug = ${slug} AND p.deleted_at IS NULL ${retirementPrivacySql(privacy)}
+        LIMIT 1`);
+  const [row] = await exec.executeRaw<RetirementHopRow>(text, params);
+  return row ?? null;
 }
 
 export interface ExtractionLagQuery {

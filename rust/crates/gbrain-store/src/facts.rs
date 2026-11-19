@@ -40,20 +40,29 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 mod fence;
+mod fence_overlay;
+mod held_cells;
 pub mod loops;
 mod privacy;
 pub mod purge;
+pub mod purge_ledger;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
 pub mod saved_match;
 pub mod trust;
 pub mod trust_reads;
+mod widen;
 
+pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};
+pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
+pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub use privacy::{OwnerOnlyForm, PrivacyPolicy};
 pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};
+pub use widen::VisibilityWidening;
+use widen::{visibility_admits, world_admits};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -591,6 +600,7 @@ pub(crate) fn write_fact(
     new: &FactRecord,
 ) -> Result<()> {
     let new = &stamp_fact(trust, old, new)?;
+    purge_ledger::refuse_purged(tx, old, new)?;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
             tx.delete(&key)?;
@@ -705,7 +715,8 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 }
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
-/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does. A row of
+/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -716,7 +727,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    Ok(())
+    purge_ledger::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -999,7 +1010,9 @@ pub struct KeysetAfter {
 }
 
 /// The filters of the four list reads. The TypeScript member clamps `limit`, builds the `grep`
-/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing).
+/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing) with the
+/// caller's `widen` record when member pages or a private-facts grant widen it, and the
+/// read eligibility as `eligible`, `min_trust` and `suppress_flagged` (as `SupersessionQuery`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactQuery {
@@ -1011,6 +1024,8 @@ pub struct FactQuery {
     pub unconsolidated_only: bool,
     pub kinds: Option<Vec<String>>,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub exclude_audit_rows: bool,
     pub grep: Option<String>,
     pub fingerprint: bool,
@@ -1021,8 +1036,10 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
-    /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
-    /// deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    /// The caller passed a read eligibility (`eligibilityClause`, engine-sql/facts.ts):
+    /// `projectionEligibleSql('facts')` replaces the deleted-page clause, so a row whose live
+    /// provenance page is quarantined is hidden too. The store keeps no `needs_rederive` queue,
+    /// so that clause hides nothing.
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1037,6 +1054,8 @@ pub struct SupersessionQuery {
     pub since: Option<String>,
     pub limit: f64,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
@@ -1090,6 +1109,9 @@ pub struct TrajectoryQuery {
     pub source_ids: Vec<String>,
     pub entity_slug: String,
     pub world_only: bool,
+    /// With `worldOnly`, the private rows the caller's member page or private-facts grant also admits
+    /// (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub metric: Option<String>,
     pub kind: Option<String>,
     pub since: Option<String>,
@@ -1344,7 +1366,7 @@ impl FactQuery {
         if (self.active_only && !row.active(now))
             || (self.unconsolidated_only && row.consolidated_at_us.is_some())
             || !listed(&self.kinds, &row.kind)
-            || !listed(&self.visibility, &row.visibility)
+            || !visibility_admits(read, &self.visibility, &self.widen, row)?
             || (self.exclude_audit_rows && row.audit_row())
         {
             return Ok(false);
@@ -1609,7 +1631,7 @@ impl Store {
             let ended = row.expired_at_us.or(row.valid_until_us);
             if row.superseded_by.is_none()
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
-                || !listed(&q.visibility, &row.visibility)
+                || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || (q.eligible && hidden_by_quarantine(&*read, &row)?)
@@ -1798,7 +1820,7 @@ impl Store {
             }
             for row in entity_rows(&*read, source, &q.entity_slug)? {
                 if row.expired_at_us.is_some()
-                    || (q.world_only && row.visibility != "world")
+                    || (q.world_only && !world_admits(&*read, &q.widen, &row)?)
                     || q.metric
                         .as_ref()
                         .is_some_and(|m| row.claim_metric.as_ref() != Some(m))

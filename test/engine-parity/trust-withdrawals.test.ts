@@ -3,12 +3,18 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: recording a withdrawal, the covering check, the earliest-withdrawal dates of a fence's claims, the
- *    subject move of a rename, the per-subject check and the ledger key listing return the same observable result on
- *    every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
+ *    subject move of a rename, the per-subject check, the ledger key listing and the hot-memory cache watermark
+ *    (`readFactCacheWatermark`, read by facts/meta-hook.ts on every MCP call), and the trust policy generation that
+ *    keys the same cache (`readTrustGeneration`: decimal text, steady with no write, moved by a `trust.%` config
+ *    write) return the same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine whose claim fingerprint drifts from `gbrain_fact_fingerprint` /
  *    `gbrain_fact_fingerprint_v1` (case, whitespace, punctuation and sentence-dot folding), that lets a withdrawal leak
  *    across sources, visibilities or subjects, that overwrites an earlier withdrawal time, or that orders the key
- *    listing differently: a forgotten claim would come back after `gbrain forget`, a rename or a reimport.
+ *    listing differently: a forgotten claim would come back after `gbrain forget`, a rename or a reimport. A
+ *    watermark that misses a new withdrawal would let hot memory serve a forgotten fact from its cache, and a
+ *    generation that stays put across a trust change would let it serve content the change made wrong. The Rust arm
+ *    answers its commit sequence, which also moves on writes the SQL triggers ignore; no case asserts that an
+ *    ordinary write leaves the generation alone (test/trust-generation.test.ts pins that on the SQL engines).
  *  - Why existing coverage misses it: the withdrawal tests drive these statements through `executeRaw` on PGLite
  *    alone; no case compares engines.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18).
@@ -114,6 +120,47 @@ describe('engine parity: fact withdrawal ledger', () => {
         keys: (await engine.listFactWithdrawalKeys('default', 10)).map(k => [k.visibility, k.subject]),
         dates,
       };
+    },
+  );
+
+  parityTest(
+    'readFactCacheWatermark counts the source\'s withdrawals, names the newest in UTC with microseconds and digests the empty folder access tables',
+    { methods: ['insertFactWithdrawal', 'readFactCacheWatermark'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const emptyDigest = 'd41d8cd98f00b204e9800998ecf8427e:d41d8cd98f00b204e9800998ecf8427e';
+      const before = await engine.readFactCacheWatermark('default');
+      expect(before).toEqual({ withdrawals: 0, latest_withdrawn_at: null, access_rules: emptyDigest });
+      await engine.insertFactWithdrawal('default', 'private', 'claim one', 'people/x', T3);
+      const one = await engine.readFactCacheWatermark('default');
+      await engine.insertFactWithdrawal('default', 'world', 'claim two', '*', '2026-03-02T10:00:00.123Z');
+      await engine.insertFactWithdrawal('default', 'world', 'claim two', '*', T2);
+      const two = await engine.readFactCacheWatermark('default');
+      await engine.insertFactWithdrawal('work', 'private', 'claim one', 'people/x', T1);
+      const out = { before, one, two, after: await engine.readFactCacheWatermark('default'), work: await engine.readFactCacheWatermark('work'), missing: await engine.readFactCacheWatermark('missing') };
+      expect(out.one).toEqual({ withdrawals: 1, latest_withdrawn_at: '2026-03-09T10:00:00.000000Z', access_rules: emptyDigest });
+      expect(out.two).toEqual({ withdrawals: 2, latest_withdrawn_at: '2026-03-09T10:00:00.000000Z', access_rules: emptyDigest });
+      expect(out.after).toEqual(out.two);
+      expect(out.work).toEqual({ withdrawals: 1, latest_withdrawn_at: '2026-03-01T10:00:00.000000Z', access_rules: emptyDigest });
+      return out;
+    },
+  );
+
+  parityTest(
+    'readTrustGeneration reads decimal text that holds with no write and moves after a trust config write',
+    { methods: ['readTrustGeneration', 'setConfig'] },
+    async (engine) => {
+      const first = await engine.readTrustGeneration();
+      const again = await engine.readTrustGeneration();
+      await engine.setConfig('trust.parity_probe', 'on');
+      const moved = await engine.readTrustGeneration();
+      const out = {
+        decimal: [first, again, moved].every(g => typeof g === 'string' && /^\d+$/.test(g)),
+        steady: again === first,
+        movedAfterTrustWrite: BigInt(moved) > BigInt(first),
+      };
+      expect(out).toEqual({ decimal: true, steady: true, movedAfterTrustWrite: true });
+      return out;
     },
   );
 });

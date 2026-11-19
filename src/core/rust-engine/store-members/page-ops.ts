@@ -292,6 +292,7 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
+  // whoknows passes its whole options object (src/commands/whoknows.ts); readEffectiveDates reads only the page scope.
   const scope = readScope('getEffectiveDates', opts);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));

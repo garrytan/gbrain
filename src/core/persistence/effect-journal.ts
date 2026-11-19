@@ -8,7 +8,7 @@ import { readFix } from '../ops/op-fix.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { fileContentHash } from './large-file.ts';
 import { PARK_AFTER_FAILURES, REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_OPERATIONS, WITHHELD_BY_MIRROR, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
-import type { SqlEngine, WriteRequest } from './model.ts';
+import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
 import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
 import { loadConfig } from '../config.ts';
@@ -334,7 +334,7 @@ export function effectClaimKeeper(engine: BrainEngine, effect: PersistenceEffect
   };
 }
 
-export async function renewPersistenceEffectClaim(engine: SqlEngine, effect: PersistenceEffect): Promise<boolean> {
+export async function renewPersistenceEffectClaim(engine: RawSqlEngine, effect: PersistenceEffect): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
     WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [effect.id, effect.execution_token]);
   return rows.length === 1;
@@ -429,11 +429,10 @@ export async function gitReceiptState(engine: SqlEngine, requestId: string): Pro
 }
 
 /** Only public kind/state/reason, aggregated so withdrawal page counts cannot leak. */
-export async function publicEffectsForRequest(engine: SqlEngine, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
+export async function publicEffectsForRequest(engine: Pick<BrainEngine, 'listRequestEffects'>, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
   invalid_targets?: Array<{ slug: string; reason: 'invalid_slug' }> }>> {
-  const rows = await engine.executeRaw<{ kind: EffectKind; state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
-    'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [requestId]);
-  return rows.filter(row => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
+  const rows = await engine.listRequestEffects(requestId);
+  return rows.filter((row): row is typeof row & { kind: EffectKind } => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
     const reason = row.error_code ?? row.outcome?.reason;
     const push = row.outcome?.push;
     const invalid = Array.isArray(row.outcome?.skipped_targets) ? (row.outcome.skipped_targets as Array<{ slug: string; reason: string }>)

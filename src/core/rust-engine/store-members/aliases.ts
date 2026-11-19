@@ -59,11 +59,18 @@ export const resolveSlugWithAlias: StoreMember<[slug: string, sourceOrSources: s
   async (brain, slug, sourceOrSources, opts) => (await detailed(brain, 'resolveSlugWithAlias', slug, sourceOrSources, opts))?.canonical_slug ?? slug;
 
 /**
+ * What the alias hop hands resolveAliases with its policy (search/alias-hop.ts `lookupAliasHop`, hybrid/request.ts
+ * `aliasHopOpts`): the identity-tier slug excludes, which `isExcludedIdentity` applies after the read, and the hop's
+ * token and qualified-window switches, which only choose the names it probes.
+ */
+const ALIAS_HOP_UNREAD = ['excludeSlugs', 'excludeSlugPrefixes', 'tokenHop', 'qualified'] as const;
+
+/**
  * `readAliases` (search/read-enrichment.ts): `pageReadFilter` reads no `requireSafeChunks`, so the store ignores it too.
  * An empty `minTrust` sets no floor, as `pageReadFilter`'s truthiness test does.
  */
 export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadScope], Map<string, AliasRef[]>> = async (brain, aliasNorms, opts) => {
-  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
+  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...ALIAS_HOP_UNREAD]);
   if (aliasNorms.length === 0) return new Map();
   const excludePrivate = storePagePolicy('resolveAliases', o.excludePrivate, { callerReaders: true });
   const scope = {

@@ -6,9 +6,9 @@
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { versionPrivacySql } from '../../engine-sql/pages.ts';
-import { withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
+import { withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { normalizeConceptInputs, storePagePolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { normalizeConceptInputs, renderForStoreCaller, storePagePolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string }], PageVersion> = async (brain, slug, opts) => {
   const scope = takeOptions('createVersion', opts, ['sourceId']);
@@ -17,7 +17,9 @@ export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: strin
 };
 
 export const getVersions: StoreMember<[slug: string, opts?: GetVersionsOpts<boolean>], PageVersionRows<boolean>> = async (brain, slug, opts) => {
-  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody', 'excludePrivate']);
+  // The SQL reads only these five options; the rest of the read policy the MCP tool passes changes nothing there.
+  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody', 'excludePrivate'],
+    ['requireSafeChunks', 'minTrust', 'suppressFlagged', 'takesHoldersAllowList']);
   if ('excludePrivate' in scope) scope.excludePrivate = versionsPolicy(scope.excludePrivate) ?? null;
   const rows: PageVersion[] = await storeCall({ member: 'getVersions', slug }, () => brain.getVersions(slug, scope));
   return rows.map((row) => toVersion(row)) as PageVersionRows<boolean>;
@@ -34,10 +36,13 @@ function versionsPolicy(excludePrivate: unknown): StorePrivacyPolicy | undefined
   if (!policy) return undefined;
   const text = normalizeConceptInputs(versionPrivacySql());
   const readers = { identity: policy.identity ?? [], privateReadableSources: policy.privateReadableSources ?? [] };
+  // A reference keeps the caller's remote policy (renderForStoreCaller), whose schema version picks the owner-only
+  // and concept-input forms, so the caller's own text and its reference render the same forms.
   const renderings = [
     () => withoutCallerAccess(versionPrivacySql),
-    () => withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true }, versionPrivacySql)),
-    () => withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true, restricted: false }, versionPrivacySql)),
+    () => renderForStoreCaller({}, versionPrivacySql),
+    () => renderForStoreCaller({ ...readers, hidePrivate: true }, versionPrivacySql),
+    () => renderForStoreCaller({ ...readers, hidePrivate: true, restricted: false }, versionPrivacySql),
   ];
   if (renderings.some((render) => normalizeConceptInputs(render()) === text)) return policy;
   refuseMember('getVersions', 'excludePrivate for a caller whose snapshot readers or grants widen the policy');

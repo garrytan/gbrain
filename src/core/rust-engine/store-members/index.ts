@@ -49,6 +49,7 @@ import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
+import * as embeddingCatalog from './embedding-catalog.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
@@ -58,13 +59,17 @@ import * as trustTierReads from './trust-tier-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
+import * as ownerScans from './owner-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
+import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
+import * as pageVisibility from './page-visibility.ts';
+import * as largePage from './large-page.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
 import * as factRelinkAttempts from './fact-relink-attempts.ts';
@@ -73,6 +78,7 @@ import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
 import * as fieldUsage from './field-usage.ts';
+import * as writeContext from './write-context.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -85,7 +91,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
@@ -94,7 +100,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
@@ -106,13 +112,18 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
-  ...persistence, ...housekeeping, ...effectScans,
+  ...entityIdentities,
+  ...persistence, ...housekeeping, ...effectScans, ...ownerScans,
   ...writeMisc,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
+  // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
+  ...pageVisibility,
+  // The large-page write guard's stored body size read (rust/docs/store/large-page.md).
+  ...largePage,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).

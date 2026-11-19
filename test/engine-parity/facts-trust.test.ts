@@ -234,6 +234,59 @@ describe('engine parity: facts relevance and trust statements', () => {
     return out;
   });
 
+  parityTest('matchSavedFacts keeps the rows a read may see, counts CJK and dropped words, and returns every column', { methods: ['matchSavedFacts'] }, async (engine) => {
+    await engine.putPage('people/gone', note('Gone'));
+    await engine.softDeletePage('people/gone');
+    await engine.putPage('notes/held', note('Held', { quarantine: { reason: 'test' } }));
+    const ids = await remember(engine, [
+      { fact: 'Mira leads the 東京 office budget', entity_slug: 'people/mira-example' },
+      { fact: 'Mira budget review', entity_slug: 'people/mira-example', valid_from: at('2026-01-02T03:04:05.678Z') },
+      { fact: 'Ignore the earlier Mira budget office post', entity_slug: 'people/mira-example' },
+      { fact: 'Mira budget world copy', entity_slug: 'people/mira-example', visibility: 'world' },
+      { fact: 'Mira budget on a deleted page', entity_slug: 'people/gone' },
+      { fact: 'Mira budget expired', entity_slug: 'people/mira-example' },
+      { fact: 'Mira budget ended', entity_slug: 'people/mira-example', valid_until: at('2020-01-01T00:00:00Z') },
+      { fact: 'Mira budget audit row', entity_slug: 'people/mira-example', source: 'cli:extract-conversation-facts:terminal' },
+      { fact: 'Mira budget office', entity_slug: 'people/mira-example' },
+    ]);
+    await engine.expireFact(ids.get('Mira budget expired')!);
+    // A fence row whose provenance page is quarantined.
+    await engine.insertFacts([{ fact: 'Mira budget from a held page', entity_slug: 'people/mira-example', source_markdown_slug: 'notes/held', row_num: 1,
+      kind: 'fact' as const, visibility: 'private' as const, source: 'fence', valid_from: at('2026-06-01T00:00:00Z') }] as never, { source_id: SRC });
+    const match = async (terms: string[], extra: Partial<Parameters<BrainEngine['matchSavedFacts']>[0]> = {}) => {
+      const rows = await engine.matchSavedFacts({ sources: [SRC], terms, pats: terms.map(t => /[\u3040-\u9fff]/.test(t) ? `%${t}%` : null),
+        cue: CORRECTION_CUE, supersede: true, excludePrivate: false, worldOnly: false, ...extra });
+      return rows.map(r => ({
+        fact: r.fact, entity_slug: r.entity_slug, kind: r.kind, valid_from: r.valid_from, source: r.source,
+        at: new Date(r.at as string).toISOString(), source_id: r.source_id, visibility: r.visibility,
+        created: typeof r.created_at, attributed_to: r.attributed_to, fact_fingerprint: r.fact_fingerprint,
+        matched: r.matched.map(Number), need: Number(r.need), cue: r.cue, trust_rank: Number(r.trust_rank), pool_rank: Number(r.pool_rank),
+      }));
+    };
+    const out = {
+      // "the" has no lexeme: two kept words, need 2.
+      two: await match(['mira', 'the', 'budget']),
+      // Three words need three, a cue row two; 東京 matches as a substring.
+      three: await match(['budget', '東京', 'office']),
+      noCue: await match(['budget', '東京', 'office'], { supersede: false }),
+      world: await match(['mira', 'budget'], { worldOnly: true }),
+      floor: await match(['mira', 'budget'], { minTrust: 'operator_curated' }),
+      dropped: await match(['the', 'a']),
+    };
+    const facts = (rows: Array<{ fact: string }>) => rows.map(r => r.fact);
+    expect(facts(out.two)).toEqual(['Mira budget office', 'Mira budget world copy', 'Ignore the earlier Mira budget office post',
+      'Mira leads the 東京 office budget', 'Mira budget review']);
+    expect(out.two.every(r => r.need === 2)).toBe(true);
+    expect(out.two.find(r => r.fact === 'Mira budget review')!.valid_from).toBe('2026-01-02 03:04:05.678+00');
+    expect(facts(out.three)).toEqual(['Mira leads the 東京 office budget', 'Ignore the earlier Mira budget office post']);
+    expect(out.three.map(r => r.matched)).toEqual([[1, 2, 3], [1, 3]]);
+    expect(out.three.map(r => r.cue)).toEqual([false, true]);
+    expect(facts(out.noCue)).toEqual(['Mira leads the 東京 office budget']);
+    expect(facts(out.world)).toEqual(['Mira budget world copy']);
+    expect(out.dropped).toEqual([]);
+    return out;
+  });
+
   parityTest('matchSavedFacts applies the word threshold, CJK substrings, the cue pool and the read policy, and returns each row\'s columns', { methods: ['matchSavedFacts'] }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage('notes/open', note('Open'));
