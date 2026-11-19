@@ -341,6 +341,13 @@ export const RUST_ENGINE_MEMBERS = {
   countFactRelinkOutcomes: 'facts',
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
+  countStaleFactEmbeddings: 'facts',
+
+  // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
+  readChunkVectorColumn: 'embeddings',
+  readEmbeddingIdentity: 'embeddings',
+  listEmbeddingStores: 'embeddings',
+  hasStoredVectors: 'embeddings',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',

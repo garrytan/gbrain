@@ -130,7 +130,6 @@ src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
-src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
@@ -381,7 +380,7 @@ src/core/embed-stale-images.ts	execute_raw	2
 src/core/embed-stale.ts	execute_raw	3
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
-src/core/embedding-dim-check.ts	execute_raw	4
+src/core/embedding-dim-check.ts	execute_raw	2
 src/core/embedding-invalidation.ts	execute_raw	8
 src/core/embedding-migration-budget.ts	execute_raw	2
 src/core/embedding-migration-retention.ts	execute_raw	6
@@ -420,7 +419,7 @@ src/core/facts/conversation-publication.ts	execute_raw	24
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/derivation-inputs.ts	execute_raw	6
-src/core/facts/embedding-identity.ts	execute_raw	2
+src/core/facts/embedding-identity.ts	execute_raw	1
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	2
 src/core/facts/fence-write.ts	execute_raw	2
@@ -1016,7 +1015,6 @@ src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
-src/core/stored-embedding-identity.ts	execute_raw	3
 src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	5
 src/core/sync-attempt.ts	execute_raw	1

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 656/656
+# covered: 661/661
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -40,7 +40,8 @@
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 11/11
-# facts_doctor: 10/10
+# facts_doctor: 11/11
+# embedding_catalog: 4/4
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 11/11
@@ -175,7 +176,7 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
-upsertChunks	chunks	yes	24	yes	yes	yes	serves
+upsertChunks	chunks	yes	26	yes	yes	yes	serves
 sealChunks	chunks	yes	47	no	yes	yes	serves
 getChunks	chunks	yes	27	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
@@ -260,8 +261,8 @@ getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	35	yes	yes	yes	serves
-updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
+addTakesBatch	takes	yes	36	yes	yes	yes	serves
+updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
 listTakes	takes	yes	15	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	refuses:takes
@@ -291,7 +292,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	41	yes	yes	yes	serves
+insertFact	facts	yes	42	yes	yes	yes	serves
 insertFacts	facts	yes	48	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	26	no	yes	yes	serves
@@ -535,6 +536,11 @@ countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
 countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	serves
 listUnlinkedConversationSlugs	facts_doctor	yes	3	no	yes	yes	serves
 countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
+countStaleFactEmbeddings	facts_doctor	yes	1	no	yes	yes	serves
+readChunkVectorColumn	embedding_catalog	yes	1	no	yes	yes	serves
+readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
+listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
+hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
 upsertFactRelinkAttempt	fact_relink_attempts	yes	8	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
 deleteFactRelinkMemos	fact_relink_attempts	yes	1	no	yes	yes	serves
