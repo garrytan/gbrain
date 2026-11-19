@@ -7,9 +7,8 @@
  * The local writer grant comes from the writer registration the store keeps; the store runs one write transaction at
  * a time, so the FOR SHARE the SQL engines take changes nothing here. The store keeps no shared-skill state table:
  * its serving epoch is a UUID derived from the brain id, fixed for the life of the brain (the store has no restore
- * that would rotate it), and null when the brain has no id, so membership denies. The trust generation is the store's
- * commit sequence: it moves with every commit, so a cache keyed by it is rebuilt more often than on Postgres and is
- * never served across a trust change.
+ * that would rotate it), and null when the brain has no id, so membership denies. The trust generation read lives in
+ * trust-withdrawals.ts.
  */
 import { createHash } from 'node:crypto';
 import type { MemberClientGrant, MemberLocalWriterGrant, MemberTokenGrant, ReceiptClientGrant, ReceiptTokenGrant } from '../../engine-sql/access-grants.ts';
@@ -50,11 +49,6 @@ export const readSharedSkillServingEpoch: StoreMember<[], string | null> = async
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 };
 
-/** The store's commit sequence as decimal text. */
-export const readTrustGeneration: StoreMember<[], string | null> = async (brain) => {
-  const generation = await storeCall({ member: 'readTrustGeneration' }, () => brain.readTrustGeneration());
-  return typeof generation === 'string' ? generation : null;
-};
 
 /** At most two request rows with this request id, from any principal. */
 export const readWriteRequestsByRequestId: StoreMember<[requestId: string], WriteRequest[]> = async (brain, requestId) => {

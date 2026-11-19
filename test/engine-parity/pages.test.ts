@@ -15,9 +15,11 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { parseFindPattern } from '../../src/core/page-find.ts';
+import { parseFindPattern, type FindPagesQuery } from '../../src/core/page-find.ts';
+import { QUARANTINE_KEY } from '../../src/core/quarantine.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { Page, PageInput } from '../../src/core/types.ts';
-import { createSource, parityArms, pick, sorted } from './harness.ts';
+import { archiveSource, createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -460,6 +462,349 @@ describe('engine parity: pages', () => {
     const localOnly = (await engine.listAllSources({ localPathOnly: true })).map((s) => s.id);
     return { ids, config: work?.config, localOnly };
   });
+
+  // A remote caller's page reads (get_page, list_pages, resolve_slugs, delta) pass excludePrivate: a hidden page reads
+  // as missing on every engine, and a scope that names a hidden page first falls through to the next source.
+  async function seedPrivate(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'alt');
+    const page = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+      engine.putPage(slug, { type: 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+    await page('people/alice-example', {});
+    await page('people/alice-example', { visibility: 'private' }, { sourceId: 'alt' });
+    await page('people/private-example', { visibility: 'private' });
+    await page('people/readers-example', { readable_by: ['alice-example'] });
+    await page('people/team-example', { readable_by: 'group:team-a' });
+    await page('people/alias-example', { access: 'Restricted' });
+    await page('people/pinned-example', { visibility: 'private', pinned_question: true });
+    await page('people/deleted-example', {});
+    await engine.softDeletePage('people/deleted-example');
+  }
+  const PRIVATE_SLUGS = ['people/alice-example', 'people/private-example', 'people/readers-example', 'people/team-example',
+    'people/alias-example', 'people/pinned-example', 'people/deleted-example'];
+
+  parityTest(
+    'getPage and readPageSnapshot under excludePrivate read a hidden page as missing',
+    { methods: ['getPage', 'readPageSnapshot', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      const at = (page: Page | null | undefined) => (page ? `${page.source_id}:${page.slug}` : null);
+      const read = async (opts: Parameters<BrainEngine['getPage']>[1]) => {
+        const out: Record<string, { get: string | null; snapshot: string | null; tags: string[] | null }> = {};
+        for (const slug of PRIVATE_SLUGS) {
+          const snapshot = await engine.readPageSnapshot(slug, opts);
+          out[slug] = { get: at(await engine.getPage(slug, opts)), snapshot: at(snapshot?.page), tags: snapshot?.tags ?? null };
+        }
+        return out;
+      };
+      const open = await read({ excludePrivate: false });
+      const hidden = await read({ excludePrivate: true });
+      const withDeleted = await read({ excludePrivate: true, includeDeleted: true });
+      const altFirst = await read({ excludePrivate: true, sourceIds: ['alt', 'default'] });
+      const altOnly = await read({ excludePrivate: true, sourceId: 'alt' });
+      expect(open['people/private-example'].get).toBe('default:people/private-example');
+      expect(hidden['people/alice-example'].get).toBe('default:people/alice-example');
+      for (const slug of PRIVATE_SLUGS.slice(1)) expect(hidden[slug]).toEqual({ get: null, snapshot: null, tags: null });
+      expect(withDeleted['people/deleted-example'].get).toBe('default:people/deleted-example');
+      expect(altFirst['people/alice-example'].get).toBe('default:people/alice-example');
+      expect(altOnly['people/alice-example'].get).toBeNull();
+      return { open, hidden, withDeleted, altFirst, altOnly };
+    },
+  );
+
+  parityTest(
+    'listPages under excludePrivate drops hidden pages before the limit',
+    { methods: ['listPages', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      const list = async (filters: Parameters<BrainEngine['listPages']>[0]) =>
+        (await engine.listPages({ sort: 'slug', ...filters })).map((p) => `${p.source_id}:${p.slug}`);
+      const all = await list({});
+      const kept = await list({ excludePrivate: true });
+      const limited = await list({ excludePrivate: true, limit: 1 });
+      const typed = await list({ excludePrivate: true, type: 'person', includeDeleted: true });
+      const alt = await list({ excludePrivate: true, sourceId: 'alt' });
+      expect(all.length).toBe(7);
+      expect(kept).toEqual(['default:people/alice-example']);
+      expect(limited).toEqual(kept);
+      expect(typed).toEqual(['default:people/alice-example', 'default:people/deleted-example']);
+      expect(alt).toEqual([]);
+      return { all, kept, limited, typed, alt };
+    },
+  );
+
+  parityTest(
+    'resolveSlugs under excludePrivate answers a visible exact page in scope',
+    { methods: ['resolveSlugs', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      const exact = await engine.resolveSlugs('people/alice-example', { excludePrivate: true });
+      const scoped = await engine.resolveSlugs('people/alice-example', { excludePrivate: true, sourceIds: ['alt', 'default'] });
+      expect(exact).toEqual(['people/alice-example']);
+      expect(scoped).toEqual(['people/alice-example']);
+      return { exact, scoped };
+    },
+  );
+
+  parityTest(
+    'page reads under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['getPage', 'readPageSnapshot', 'listPages', 'resolveSlugs', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      // Each caller resolves a slug it can read: a name with no visible exact page goes on to trigram matching.
+      const read = (access: Parameters<typeof withCallerAccess>[0], resolve: string) => withCallerAccess(access, async () => {
+        const got: Record<string, string | null> = {};
+        for (const slug of PRIVATE_SLUGS) {
+          const page = await engine.getPage(slug, { excludePrivate: true });
+          const snapshot = await engine.readPageSnapshot(slug, { excludePrivate: true, sourceIds: ['alt', 'default'] });
+          got[slug] = page ? `${page.source_id}:${page.slug}|${snapshot?.page.source_id ?? null}` : null;
+        }
+        const listed = (await engine.listPages({ sort: 'slug', excludePrivate: true })).map((p) => `${p.source_id}:${p.slug}`);
+        const resolved = await engine.resolveSlugs(resolve, { excludePrivate: true });
+        return { got, listed, resolved };
+      });
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true }, 'people/readers-example');
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true }, 'people/private-example');
+      const grantedAlt = await read({ identity: ['member:carol-example'], privateReadableSources: ['alt'], hidePrivate: true }, 'people/alice-example');
+      expect(member.got['people/readers-example']).toBe('default:people/readers-example|default');
+      expect(member.got['people/team-example']).toBe('default:people/team-example|default');
+      expect(member.got['people/private-example']).toBeNull();
+      expect(granted.got['people/private-example']).toBe('default:people/private-example|default');
+      expect(granted.got['people/pinned-example']).toBeNull();
+      expect(granted.got['people/team-example']).toBeNull();
+      expect(grantedAlt.got['people/alice-example']).toBe('default:people/alice-example|alt');
+      expect(member.resolved).toEqual(['people/readers-example']);
+      expect(granted.resolved).toEqual(['people/private-example']);
+      return { member, granted, grantedAlt };
+    },
+  );
+
+  /**
+   * Rename aliases (`updateSlug` records old -> new in the source's slug_aliases): `people/old-name` is an alias in
+   * default and alt, `people/shadow` is an alias in default and a page in alt, `notes/x` is an alias in default and a
+   * soft-deleted page there, `people/secret-old` names a private page, and `people/gone-old` names a page in an
+   * archived source.
+   */
+  async function seedAliases(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'alt');
+    await createSource(engine, backend, 'arch');
+    const page = (slug: string, frontmatter: Record<string, unknown>, opts?: { sourceId?: string }) =>
+      engine.putPage(slug, { type: 'person', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter }, opts);
+    const renamed = async (from: string, to: string, frontmatter: Record<string, unknown> = {}, sourceId?: string) => {
+      await page(from, frontmatter, sourceId ? { sourceId } : undefined);
+      expect(await engine.updateSlug(from, to, sourceId ? { sourceId } : undefined)).toBe(1);
+    };
+    await renamed('people/old-name', 'people/new-name');
+    await renamed('people/old-name', 'people/alt-name', {}, 'alt');
+    await renamed('people/shadow', 'people/shadow-new');
+    await page('people/shadow', {}, { sourceId: 'alt' });
+    await renamed('notes/x', 'notes/x-new');
+    await page('notes/x', {});
+    await engine.softDeletePage('notes/x');
+    await renamed('people/secret-old', 'people/secret-new', { visibility: 'private' });
+    await renamed('people/gone-old', 'people/gone-new', {}, 'arch');
+    await archiveSource(engine, backend, 'arch');
+  }
+  const ALIAS_SLUGS = ['people/old-name', 'people/new-name', 'people/shadow', 'notes/x', 'people/secret-old', 'people/gone-old'];
+
+  /** Each alias slug read under `opts`: `source:slug` of the page read, `null`, or `error:PageSnapshotAmbiguousError`. */
+  async function aliasReads(engine: BrainEngine, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) {
+    const out: Record<string, { snapshot: string | null; get: string | null }> = {};
+    const at = (page: Page | null | undefined) => (page ? `${page.source_id}:${page.slug}` : null);
+    const attempt = async (read: () => Promise<Page | null | undefined>) => {
+      try {
+        return at(await read());
+      } catch (error) {
+        // Only the ambiguity is an answer; any other error (a typed refusal on the Rust arm) propagates.
+        if ((error as Error).name !== 'PageSnapshotAmbiguousError') throw error;
+        return `error:${(error as Error).name}`;
+      }
+    };
+    for (const slug of ALIAS_SLUGS) {
+      out[slug] = {
+        snapshot: await attempt(async () => (await engine.readPageSnapshot(slug, opts))?.page),
+        get: await attempt(() => engine.getPage(slug, opts)),
+      };
+    }
+    return out;
+  }
+
+  parityTest(
+    'readPageSnapshot under resolveAlias follows a rename alias, an exact page outranks it, and a private target stays hidden',
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'readPageSnapshot', 'getPage'] },
+    async (engine, backend) => {
+      await seedAliases(engine, backend);
+      const out = {
+        plain: await aliasReads(engine, { resolveAlias: true }),
+        altFirst: await aliasReads(engine, { resolveAlias: true, sourceIds: ['alt', 'default'] }),
+        alt: await aliasReads(engine, { resolveAlias: true, sourceId: 'alt' }),
+        deleted: await aliasReads(engine, { resolveAlias: true, includeDeleted: true }),
+        hidden: await aliasReads(engine, { resolveAlias: true, excludePrivate: true }),
+        noAlias: await aliasReads(engine, {}),
+      };
+      expect(out.plain['people/old-name']!.snapshot).toBe('default:people/new-name');
+      expect(out.altFirst['people/old-name']!.snapshot).toBe('alt:people/alt-name');
+      expect(out.plain['people/shadow']!.snapshot).toBe('alt:people/shadow');
+      expect(out.plain['people/secret-old']!.snapshot).toBe('default:people/secret-new');
+      expect(out.hidden['people/secret-old']!.snapshot).toBeNull();
+      expect(out.noAlias['people/old-name']!.snapshot).toBeNull();
+      return out;
+    },
+  );
+
+  parityTest(
+    "readPageSnapshot under fetch's options refuses an ambiguous alias, skips an archived source and keeps an exact identity",
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'readPageSnapshot', 'getPage'] },
+    async (engine, backend) => {
+      await seedAliases(engine, backend);
+      const fetchOpts = { resolveAlias: true, requireLiveSource: true, preserveExactIdentity: true } as const;
+      const out = {
+        unambiguous: await aliasReads(engine, { resolveAlias: true, requireUnambiguous: true }),
+        unambiguousAlt: await aliasReads(engine, { resolveAlias: true, requireUnambiguous: true, sourceId: 'alt' }),
+        unambiguousExact: await aliasReads(engine, { requireUnambiguous: true }),
+        live: await aliasReads(engine, { resolveAlias: true, requireLiveSource: true }),
+        fetch: await aliasReads(engine, { ...fetchOpts, requireUnambiguous: true, excludePrivate: true }),
+        fetchScoped: await aliasReads(engine, { ...fetchOpts, sourceId: 'default', excludePrivate: true }),
+        archivedDeleted: await aliasReads(engine, { resolveAlias: true, includeDeleted: true, sourceId: 'arch' }),
+      };
+      expect(out.unambiguous['people/old-name']!.snapshot).toBe('error:PageSnapshotAmbiguousError');
+      expect(out.unambiguousAlt['people/old-name']!.snapshot).toBe('alt:people/alt-name');
+      expect(out.fetch['people/secret-old']!.snapshot).toBeNull();
+      return out;
+    },
+  );
+
+  parityTest(
+    'listPages under listColumnsOnly returns the list columns with a blank body, and hides private pages under excludePrivate',
+    { methods: ['listPages', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      // The list projection: which fields a row carries, and the values that do not depend on the arm's clock or ids.
+      const row = (page: Page) => ({
+        fields: Object.keys(page).filter((key) => (page as unknown as Record<string, unknown>)[key] !== undefined).sort(),
+        at: `${page.source_id}:${page.slug}`,
+        ...pick(page, ['type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'effective_date', 'effective_date_source']),
+        deleted: page.deleted_at != null,
+      });
+      const list = async (filters: Parameters<BrainEngine['listPages']>[0]) => (await engine.listPages(filters)).map(row);
+      const out = {
+        all: await list({ listColumnsOnly: true, sort: 'slug', includeDeleted: true }),
+        hidden: await list({ listColumnsOnly: true, sort: 'slug', excludePrivate: true, limit: 3 }),
+        typed: await list({ listColumnsOnly: true, type: 'person', sort: 'slug', sourceId: 'alt' }),
+      };
+      expect(out.all.every((page) => page.compiled_truth === '' && page.timeline === '')).toBe(true);
+      expect(out.hidden.map((page) => page.at)).not.toContain('default:people/private-example');
+      return out;
+    },
+  );
+
+  parityTest(
+    'findPages under untrusted hides private and quarantined pages, and applies a caller\'s private-readable grant',
+    { methods: ['findPages', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      await engine.putPage('people/quarantined-example', {
+        type: 'person', title: 'people/quarantined-example', compiled_truth: 'quarantined body', timeline: '',
+        frontmatter: { [QUARANTINE_KEY]: { reason: 'parity' } },
+      });
+      const find = async (untrusted?: FindPagesQuery['untrusted'], sourceIds?: string[]) => {
+        const found = await engine.findPages({ pattern: parseFindPattern('people/*'), limit: 3, untrusted, excludeSlugPrefixes: [], ...(sourceIds ? { sourceIds } : {}) });
+        return { total: found.total, rows: found.rows.map((r) => `${r.source_id}:${r.slug}:${r.type}:${r.title}`) };
+      };
+      const all = async (untrusted?: FindPagesQuery['untrusted']) => (await engine.findPages({
+        pattern: parseFindPattern('people/*'), limit: 50, untrusted, excludeSlugPrefixes: [],
+      })).rows.map((r) => `${r.source_id}:${r.slug}`);
+      const out = {
+        trusted: await all(),
+        empty: await all({}),
+        hidden: await all({ excludePrivate: true }),
+        hiddenPage: await find({ excludePrivate: true }),
+        hiddenAlt: await find({ excludePrivate: true }, ['alt']),
+        granted: await withCallerAccess({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true },
+          () => all({ excludePrivate: true })),
+        member: await withCallerAccess({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true },
+          () => all({ excludePrivate: true })),
+      };
+      expect(out.trusted).toContain('default:people/quarantined-example');
+      expect(out.empty).not.toContain('default:people/quarantined-example');
+      expect(out.hidden).not.toContain('default:people/private-example');
+      expect(out.hidden).not.toContain('alt:people/alice-example');
+      expect(out.granted).toContain('default:people/private-example');
+      expect(out.member).toContain('default:people/readers-example');
+      return out;
+    },
+  );
+
+  parityTest(
+    'page reads under excludePrivate for a remote caller on a brain with no access restrictions hide pages that name readers',
+    { methods: ['getPage', 'readPageSnapshot', 'listPages', 'resolveSlugs', 'findPages', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess({ ...access, hidePrivate: true, restricted: false }, async () => {
+        const got: Record<string, string | null> = {};
+        for (const slug of PRIVATE_SLUGS) {
+          const page = await engine.getPage(slug, { excludePrivate: true });
+          const snapshot = await engine.readPageSnapshot(slug, { excludePrivate: true, sourceIds: ['alt', 'default'] });
+          got[slug] = `${page ? `${page.source_id}:${page.slug}` : null}|${snapshot?.page.source_id ?? null}`;
+        }
+        const listed = (await engine.listPages({ sort: 'slug', excludePrivate: true, listColumnsOnly: true })).map((p) => `${p.source_id}:${p.slug}`);
+        const resolved = await engine.resolveSlugs('people/alice-example', { excludePrivate: true });
+        // resolve_slugs passes the caller's whole read policy; only the source scope and excludePrivate apply.
+        const resolvedUnderPolicy = await engine.resolveSlugs('people/alice-example',
+          { excludePrivate: true, requireSafeChunks: true, takesHoldersAllowList: ['world'], minTrust: 'operator_curated', suppressFlagged: true } as Parameters<BrainEngine['resolveSlugs']>[1]);
+        expect(resolvedUnderPolicy).toEqual(resolved);
+        const found = (await engine.findPages({ pattern: parseFindPattern('people/*'), limit: 50, excludeSlugPrefixes: [], untrusted: { excludePrivate: true } }))
+          .rows.map((r) => `${r.source_id}:${r.slug}`);
+        return { got, listed, resolved, found };
+      });
+      const anonymous = await read({ identity: [] });
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'] });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'] });
+      for (const out of [anonymous, member, granted]) {
+        expect(out.listed).not.toContain('default:people/readers-example');
+        expect(out.found).not.toContain('default:people/team-example');
+        expect(out.listed).not.toContain('default:people/pinned-example');
+      }
+      expect(anonymous.listed).not.toContain('default:people/private-example');
+      expect(granted.listed).toContain('default:people/private-example');
+      return { anonymous, member, granted };
+    },
+  );
+
+  parityTest(
+    "get_page's read path: the purge check answers for the page an alias, a hidden page or a reader-named page resolves to",
+    { methods: ['putPage', 'updateSlug', 'softDeletePage', 'readPageSnapshot', 'pageAwaitsRederive'] },
+    async (engine, backend) => {
+      await seedAliases(engine, backend);
+      await engine.putPage('people/readers-example',
+        { type: 'person', title: 'readers', compiled_truth: 'readers body', timeline: '', frontmatter: { readable_by: ['alice-example'] } });
+      const slugs = [...ALIAS_SLUGS, 'people/readers-example'];
+      // The options get_page passes (src/core/ops/pages.ts), then the purge check pageTrustForRead makes.
+      const read = (access: Parameters<typeof withCallerAccess>[0] | null) => {
+        const run = async () => {
+          const got: Record<string, { page: string | null; awaits: boolean | null }> = {};
+          for (const slug of slugs) {
+            const snapshot = await engine.readPageSnapshot(slug, { resolveAlias: true, excludePrivate: access !== null });
+            const page = snapshot?.page ?? null;
+            got[slug] = { page: page ? `${page.source_id}:${page.slug}` : null, awaits: page ? await engine.pageAwaitsRederive(Number(page.id)) : null };
+          }
+          return got;
+        };
+        return access === null ? run() : withCallerAccess({ ...access, hidePrivate: true }, run);
+      };
+      const out = {
+        trusted: await read(null),
+        open: await read({ identity: [], restricted: false }),
+        member: await read({ identity: ['member:alice-example'] }),
+        granted: await read({ identity: ['member:bob-example'], privateReadableSources: ['default'] }),
+      };
+      expect(out.trusted['people/old-name']).toEqual({ page: 'default:people/new-name', awaits: false });
+      expect(out.trusted['people/secret-old']!.page).toBe('default:people/secret-new');
+      expect(out.open['people/secret-old']).toEqual({ page: null, awaits: null });
+      expect(out.open['people/readers-example']).toEqual({ page: null, awaits: null });
+      expect(out.member['people/old-name']).toEqual({ page: 'default:people/new-name', awaits: false });
+      return out;
+    },
+  );
 
   parityTest('same slug in two sources stays separate', { methods: ['putPage', 'getPage', 'deletePage', 'resolveSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');

@@ -27,6 +27,9 @@ import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -363,6 +366,39 @@ describe('engine parity: link reads', () => {
       expect(sorted(member.titled)).toEqual(['notes/open', 'notes/readers', 'notes/team']);
       expect([stranger.inbound, member.inbound, granted.inbound]).toEqual([1, 3, 3]);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'countInboundLinks under excludePrivate drops an owner-only source\'s referrers and origins, and under the closed form every referrer while one exists',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'countInboundLinks'] },
+    async (engine, backend) => {
+      for (const [slug, type] of [['people/target', 'person'], ['notes/a', 'note'], ['notes/b', 'note'], ['concepts/synthesis', 'concept'], ['notes/c', 'note']] as const) {
+        await put(engine, slug, type);
+      }
+      for (const slug of ['notes/a', 'notes/b', 'concepts/synthesis']) await engine.addLink(slug, 'people/target', '', 'cites', 'manual');
+      const read = async (excludePrivate: boolean) => ({
+        open: await engine.countInboundLinks('people/target', 'default', { excludePrivate, originSameSource: false }),
+        chat: await engine.countInboundLinks('people/chat-target', 'chat', { excludePrivate, originSameSource: false }),
+      });
+      const before = await read(true);
+      // An owner-only source: its page cites a page of its own, is the origin of one default-source edge and the lineage input of a concept.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await put(engine, 'people/chat-target', 'person', {}, 'chat');
+      await put(engine, 'notes/chat-a', 'note', {}, 'chat');
+      await put(engine, 'notes/chat-origin', 'note', {}, 'chat');
+      await engine.addLink('notes/chat-a', 'people/chat-target', '', 'cites', 'manual', undefined, undefined, { fromSourceId: 'chat', toSourceId: 'chat' });
+      await engine.addLinksBatch([{ from_slug: 'notes/c', to_slug: 'people/target', link_type: 'cites', link_source: 'frontmatter', origin_slug: 'notes/chat-origin', origin_source_id: 'chat', origin_field: 'refs' }]);
+      await engine.addLink('concepts/synthesis', 'notes/chat-a', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      const unfiltered = await read(false);
+      const closed = await read(true);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, () => read(true));
+      expect(before).toEqual({ open: 3, chat: 0 });
+      expect(unfiltered).toEqual({ open: 4, chat: 1 });
+      expect(closed).toEqual({ open: 0, chat: 0 });
+      expect(fn).toEqual({ open: 2, chat: 0 });
+      return { before, unfiltered, closed, fn };
     },
   );
 });

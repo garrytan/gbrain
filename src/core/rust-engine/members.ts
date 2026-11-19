@@ -135,6 +135,7 @@ export const RUST_ENGINE_MEMBERS = {
   listSharedSkillPackRoots: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',
+  isSourceClaimed: 'persistence_journal',
   // config
   getConfigValues: 'config',
   getConfig: 'config',
@@ -214,6 +215,8 @@ export const RUST_ENGINE_MEMBERS = {
   // keyword_search
   searchKeyword: 'keyword_search',
   scanExactBatch: 'keyword_search',
+  readExactSnippetChunks: 'keyword_search',
+  listExactRescanChunks: 'keyword_search',
   countKeywordPages: 'keyword_search',
   searchKeywordPages: 'keyword_search',
   searchTitles: 'keyword_search',
@@ -299,6 +302,7 @@ export const RUST_ENGINE_MEMBERS = {
   // graph
   traverseGraph: 'graph',
   rankEntities: 'graph',
+  readRankCoverage: 'graph',
   traversePaths: 'graph',
   traversePathsDetailed: 'graph',
   relationalFanout: 'graph',
@@ -321,6 +325,7 @@ export const RUST_ENGINE_MEMBERS = {
   readHotMemoryWatermark: 'facts',
   listFenceRetireCandidates: 'facts',
   listFenceFactRows: 'facts',
+  listHeldFenceCells: 'facts',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
   findTrajectory: 'facts',
@@ -337,6 +342,13 @@ export const RUST_ENGINE_MEMBERS = {
   countFactRelinkOutcomes: 'facts',
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
+  countStaleFactEmbeddings: 'facts',
+
+  // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
+  readChunkVectorColumn: 'embeddings',
+  readEmbeddingIdentity: 'embeddings',
+  listEmbeddingStores: 'embeddings',
+  hasStoredVectors: 'embeddings',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
@@ -485,6 +497,8 @@ export const RUST_ENGINE_MEMBERS = {
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
+  readFactCacheWatermark: 'facts',
+  readTrustGeneration: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',
@@ -518,7 +532,6 @@ export const RUST_ENGINE_MEMBERS = {
   readAccessTokenMemberGrant: 'persistence_journal',
   readLocalWriterMemberGrant: 'persistence_journal',
   readSharedSkillServingEpoch: 'persistence_journal',
-  readTrustGeneration: 'persistence_journal',
   readJournalLimitRows: 'persistence_journal',
   readHeldPageRows: 'persistence_journal',
   readHeldCoverageRows: 'persistence_journal',
@@ -576,6 +589,10 @@ export const RUST_ENGINE_MEMBERS = {
   selectProjectionWindowJobs: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
+  listAppliedPolicyRevisions: 'access_control',
+  readMayActFor: 'access_control',
+  readAudiencePrincipals: 'access_control',
+  readAccessMembers: 'access_control',
   listActiveAccessMembers: 'access_control',
   insertAccessMember: 'access_control',
   setAccessMemberDisabled: 'access_control',

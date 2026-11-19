@@ -69,9 +69,3 @@ export async function readSharedSkillServingEpoch(exec: LegacyUnscopedRead): Pro
   return state ? state.serving_epoch : null;
 }
 
-/** The trust policy generation as decimal text, or null when `trust_policy_state` has no row. */
-export async function readTrustGeneration(exec: LegacyUnscopedRead): Promise<string | null> {
-  const [row] = await exec.executeRaw<{ generation: string | number | bigint | null }>(
-    'SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1');
-  return row?.generation === undefined || row.generation === null ? null : String(row.generation);
-}

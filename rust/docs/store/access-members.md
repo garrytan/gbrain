@@ -31,6 +31,7 @@ there is no reverse index.
 | `deleteAccessGroup(id)` | null | `DELETE FROM access_groups WHERE id = $1`; its group members go with it (`ON DELETE CASCADE`) |
 | `readAccessMemberIdByEmail(email)` | the member id, or null | `SELECT id FROM access_members WHERE email = $1` |
 | `readAccessMembers({ id } \| { includeRemoved })` | `AccessMemberRow[]` by id, each with its group ids sorted | `engine-sql/access-control.ts` `ACCESS_MEMBER_SQL` |
+| `readAccessGroupIds(ids)` | the ids that name an existing group, each once, in byte order | `engine-sql/access-control.ts` `AUDIENCE_GROUPS_SQL` (`SELECT id FROM access_groups WHERE id = ANY($1)`) |
 | `listActiveAccessMembers()` | the member ids neither disabled nor removed, by id | `engine-sql/write-misc.ts` |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction

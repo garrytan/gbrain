@@ -257,8 +257,22 @@ fn group_writes_add_remove_and_cascade() {
         .unwrap();
     assert_eq!(one(&store, "alice-example")["groups"], json!([]));
     assert_eq!(one(&store, "bob-example")["groups"], json!(["team-a"]));
+    // An emptied group still exists for readAccessGroupIds; an unknown id does not.
+    store
+        .remove_access_group_members("team-a", &["bob-example".into()])
+        .unwrap();
+    let asked = vec![
+        "zz-none".to_string(),
+        "team-a".to_string(),
+        "team-a".to_string(),
+    ];
+    assert_eq!(
+        store.read_access_group_ids(&asked).unwrap(),
+        vec!["team-a".to_string()]
+    );
     store.delete_access_group("team-a").unwrap();
     assert_eq!(one(&store, "bob-example")["groups"], json!([]));
+    assert!(store.read_access_group_ids(&asked).unwrap().is_empty());
     // The group is gone, so adding to it creates it again.
     assert!(store.add_access_group_members("team-a", &[]).unwrap());
 }

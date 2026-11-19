@@ -7,10 +7,15 @@
  * the Postgres constraint, so it leaves here as the Postgres error would: `code` 23505 (unique), 23514 (check) or
  * 23503 (foreign key) with `constraint_name`, which the member commands read (refuseEmailRace).
  *
+ * The member reads (readAccessMembers, readAudiencePrincipals, readAccessMemberIdByEmail, listActiveAccessMembers) read
+ * the same records, so a member a write added is visible to the next read.
+ *
  * The store keeps no access tokens and no OAuth clients, so a token bind on insert and every credential binding
  * member refuse with engine_capability_missing before anything is written.
  */
+import type { AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows } from '../../engine-sql/access-control.ts';
 import type { AccessMemberInsert, AccessMemberKind, CredentialBinding, CredentialBindingRow, CredentialTarget } from '../../engine-sql/access-members.ts';
+import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -77,6 +82,31 @@ export const readAccessMemberIdByEmail: StoreMember<[email: string], string | nu
 /** The ids of the members neither disabled nor removed, by id. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async (brain) =>
   await storeCall({ member: 'listActiveAccessMembers' }, () => brain.listActiveAccessMembers()) as string[];
+
+const MEMBER_DATES = ['disabled_at', 'tombstoned_at', 'created_at'];
+
+/** The member with this id (any status), or every member by id (removed ones only when asked), each with its groups. */
+export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async (brain, by) => {
+  const lookup = 'id' in by ? { id: by.id } : { includeRemoved: by.includeRemoved };
+  const rows = await storeCall({ member: 'readAccessMembers' }, () => brain.readAccessMembers(lookup)) as AccessMemberRow[];
+  return rows.map(row => withDates(row, MEMBER_DATES));
+};
+
+/**
+ * Which of `memberIds` are enabled, untombstoned members (each with its groups) and which of `groupIds` are existing
+ * groups. An empty list reads nothing.
+ */
+export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], groupIds: readonly string[]], AudiencePrincipalRows> =
+  async (brain, memberIds, groupIds) => {
+    const wanted = new Set(memberIds);
+    const members = wanted.size === 0 ? [] : (await storeCall({ member: 'readAudiencePrincipals' }, () =>
+      brain.readAccessMembers({ includeRemoved: false })) as AccessMemberRow[])
+      .filter(row => wanted.has(row.id) && row.disabled_at === null)
+      .map(row => ({ id: row.id, groups: row.groups }));
+    const groups = groupIds.length === 0 ? [] : await storeCall({ member: 'readAudiencePrincipals' }, () =>
+      brain.readAccessGroupIds([...groupIds])) as string[];
+    return { members, groups };
+  };
 
 export const readCredentialBindingForUpdate: StoreMember<[target: CredentialTarget, opts: { readsUnscoped: boolean }], CredentialBindingRow | undefined> =
   async () => refuseMember('readCredentialBindingForUpdate', NO_CREDENTIALS);

@@ -231,11 +231,11 @@ fn requests_by_request_id_span_principals_and_stop_at_two() {
 fn the_trust_generation_moves_with_every_commit() {
     let dir = TempDir::new("persist-trust-generation");
     let store = open(&dir);
-    let before = store.trust_generation().unwrap();
+    let before = store.read_trust_generation().unwrap();
     assert_eq!(before, store.commit_version().unwrap().to_string());
-    assert_eq!(store.trust_generation().unwrap(), before);
+    assert_eq!(store.read_trust_generation().unwrap(), before);
     store.lock_persistence_counters(&["brain".into()]).unwrap();
-    let after = store.trust_generation().unwrap();
+    let after = store.read_trust_generation().unwrap();
     assert!(after.parse::<u64>().unwrap() > before.parse::<u64>().unwrap());
 }
 

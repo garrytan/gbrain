@@ -1,13 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals, readMemoryProposal, readPendingProposalSummary, listMemoryProposalRows, listOwnerProposalRows, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts), and the folder access read beside the
- * access members (isFolderRestricted; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * purgeMemoryProposals, readMemoryProposal, readPendingProposalSummary, listMemoryProposalRows, listOwnerProposalRows, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor; SQL in engine-sql/access-control.ts; the member reads are in access-members.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
+import type { AppliedPolicyRevision, MayActForVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -57,6 +58,9 @@ export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkill
  */
 export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = async () => null;
 
+/** No binding claims a source on this engine (see getWorktreeBinding), so classic sync never meets a claim. */
+export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = async () => false;
+
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
 
@@ -66,6 +70,16 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
  * PGLite answers for a brain with no folder rules and no pending covers (engine-sql/access-control.ts).
  */
 export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], boolean> = async () => false;
+
+/** No source holds folder access state on this engine (see isFolderRestricted), so no revision is applied anywhere. */
+export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = async () => [];
+
+/**
+ * A stdio server's may_act_for is a config value, which the store keeps. The store keeps no access tokens and no OAuth
+ * clients, so a token or a client has no live row and permits nothing, as a revoked token or a deleted client does.
+ */
+export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
+  via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;

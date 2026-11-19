@@ -21,6 +21,9 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -163,6 +166,74 @@ describe('engine parity: page visibility guards', () => {
       after: { default: { ...row(false, true), identity_may_open: false }, chat: row(true, true), flagged: row(true, true), plain: row(false, true) },
     });
     return { before, after };
+  });
+
+  parityTest('the owner-only test of the visibility guards is closed with no schema version and per page with one', {
+    methods: ['putPage', 'addLink', 'readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe'],
+  }, async (engine, backend) => {
+    const concept = { ...NOTE, type: 'concept' as const, title: 'Visibility concept' };
+    await engine.putPage('notes/vis-open', NOTE);
+    await engine.putPage('notes/vis-private', { ...NOTE, frontmatter: { visibility: 'private' } });
+    await engine.putPage('concepts/vis-lineage', concept);
+    await engine.putPage('concepts/vis-plain', concept);
+    const DEFAULT_REFS = ['notes/vis-open', 'notes/vis-private', 'concepts/vis-lineage', 'concepts/vis-plain'].map(slug => ({ source_id: 'default', slug }));
+    const read = async (refs: Array<{ source_id: string; slug: string }>) => {
+      const hidden: Record<string, boolean> = {};
+      const rows: Record<string, string[]> = {};
+      const probe: Record<string, boolean | null> = {};
+      for (const policy of ['read', 'access'] as const) {
+        for (const r of refs) hidden[`${policy}:${r.source_id}:${r.slug}`] = await engine.readPageHiddenFromCaller(r.source_id, r.slug, { policy });
+        rows[policy] = (await engine.readCallerPageAccess(refs, { policy })).map(a => `${a.source_id}:${a.slug}:${a.readable}`).sort();
+      }
+      for (const r of refs) probe[`${r.source_id}:${r.slug}`] = (await engine.readWriteVisibilityProbe(r.source_id, r.slug))?.identity_may_open ?? null;
+      return { hidden, rows, probe };
+    };
+    const before = await read(DEFAULT_REFS);
+    await createSource(engine, backend, 'vis-chat', { kind: 'imessage' });
+    await engine.putPage('notes/vis-chat', NOTE, { sourceId: 'vis-chat' });
+    await engine.putPage('notes/vis-chat-readers', { ...NOTE, frontmatter: { readable_by: ['member:alice-example'] } }, { sourceId: 'vis-chat' });
+    // A concept in `default` synthesized from a page of the owner-only source: its lineage makes it owner-only.
+    await engine.addLink('concepts/vis-lineage', 'notes/vis-chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'vis-chat' });
+    const refs = [...DEFAULT_REFS, { source_id: 'vis-chat', slug: 'notes/vis-chat' }, { source_id: 'vis-chat', slug: 'notes/vis-chat-readers' }];
+    // The harness brain records no schema version: the closed form hides every page while any source is owner-only.
+    const closed = await read(refs);
+    const closedMember = await withCallerAccess(MEMBER, () => read(refs));
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    // Schema version 320 or later: only a page of an owner-only source, or a concept built from one, is owner-only.
+    const fn = await withEngineScope(engine, () => read(refs));
+    const fnMember = await withEngineScope(engine, () => withCallerAccess(MEMBER, () => read(refs)));
+    const answers = { before, closed, closedMember, fn, fnMember };
+    // Before any owner-only source exists the guards answer by the page policy alone, so the case is not vacuous.
+    expect(before.hidden).toMatchObject({ 'read:default:notes/vis-open': false, 'read:default:notes/vis-private': true, 'access:default:notes/vis-private': false });
+    expect(before.rows.read).toContain('default:notes/vis-open:true');
+    // Closed form: every page is hidden from a non-owner, the open page and the unlinked concept included.
+    for (const answer of [closed, closedMember]) {
+      expect(Object.values(answer.hidden).every(h => h)).toBe(true);
+      expect(answer.rows.read.every(r => r.endsWith(':false'))).toBe(true);
+      expect(answer.rows.access.every(r => r.endsWith(':false'))).toBe(true);
+      expect(answer.probe).toEqual({
+        'default:notes/vis-open': false, 'default:notes/vis-private': false, 'default:concepts/vis-lineage': false, 'default:concepts/vis-plain': false,
+        'vis-chat:notes/vis-chat': false, 'vis-chat:notes/vis-chat-readers': true,
+      });
+    }
+    // Function form: a default-source page stays readable; the owner-only source's pages and the concept built from one are hidden.
+    for (const answer of [fn, fnMember]) {
+      expect(answer.hidden).toEqual({
+        'read:default:notes/vis-open': false, 'read:default:notes/vis-private': true, 'read:default:concepts/vis-lineage': true, 'read:default:concepts/vis-plain': false,
+        'read:vis-chat:notes/vis-chat': true, 'read:vis-chat:notes/vis-chat-readers': true,
+        'access:default:notes/vis-open': false, 'access:default:notes/vis-private': false, 'access:default:concepts/vis-lineage': true, 'access:default:concepts/vis-plain': false,
+        'access:vis-chat:notes/vis-chat': true, 'access:vis-chat:notes/vis-chat-readers': true,
+      });
+      expect(answer.rows).toEqual({
+        read: ['default:concepts/vis-lineage:false', 'default:concepts/vis-plain:true', 'default:notes/vis-open:true', 'default:notes/vis-private:false', 'vis-chat:notes/vis-chat-readers:false', 'vis-chat:notes/vis-chat:false'],
+        access: ['default:concepts/vis-lineage:false', 'default:concepts/vis-plain:true', 'default:notes/vis-open:true', 'default:notes/vis-private:true', 'vis-chat:notes/vis-chat-readers:false', 'vis-chat:notes/vis-chat:false'],
+      });
+      expect(answer.probe).toEqual({
+        'default:notes/vis-open': null, 'default:notes/vis-private': false, 'default:concepts/vis-lineage': false, 'default:concepts/vis-plain': null,
+        'vis-chat:notes/vis-chat': false, 'vis-chat:notes/vis-chat-readers': true,
+      });
+    }
+    return answers;
   });
 
   parityTest('readWriterSlugFence reads a local writer\'s stored slug prefixes, and null for no writer or no fence', {

@@ -1130,14 +1130,6 @@ impl Store {
             .collect())
     }
 
-    /// `readTrustGeneration()`: the trust policy generation as decimal text. This engine keeps no
-    /// generation counter, so it is the latest commit sequence: it changes with every commit,
-    /// trust-relevant or not. A cache keyed by it is rebuilt more often than on Postgres, never
-    /// served across a trust change.
-    pub fn trust_generation(&self) -> Result<String> {
-        Ok(self.commit_version()?.to_string())
-    }
-
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the request row or `None`.
     pub fn read_write_request_by_id(&self, id: &str) -> Result<Option<Value>> {
         Ok(request_by_id(&*self.read()?, id)?.map(|r| r.to_row()))

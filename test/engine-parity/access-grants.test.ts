@@ -1,14 +1,13 @@
 /**
  * BrainEngine parity — the access-grant reads (engine-sql/access-grants.ts) the receipt operations
- * (ops/persistence.ts), shared-skill membership (shared-skills/membership-authority.ts) and proactive caches
- * (eligibility/generation.ts) run, and the request-id lookup of the host operator's receipt read
+ * (ops/persistence.ts) and shared-skill membership (shared-skills/membership-authority.ts) run, and the request-id lookup of the host operator's receipt read
  * (readWriteRequestsByRequestId).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a receipt grant read returns the OAuth client or access token row whether deleted/revoked or not (the
  *    caller refuses one that is); a membership grant read returns no row for a deleted client or a revoked token, and
- *    the local writer's row with its revoked_at; the serving epoch is a stable UUID, null without its row; the trust
- *    generation is decimal text that moves with a trust change, null without its row; the request-id lookup returns
+ *    the local writer's row with its revoked_at; the serving epoch is a stable UUID, null without its row (the trust
+ *    generation read lives in trust-withdrawals.test.ts); the request-id lookup returns
  *    at most two rows across principals, so the trusted local CLI reads a receipt another principal owns only when one
  *    row has the id. Every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts) gives the same answers; the Rust store keeps no OAuth clients or access tokens,
@@ -37,7 +36,6 @@ import type { LocalGrant } from '../../src/core/engine-sql/persistence-state.ts'
 import { registerServeLocalWriters } from '../../src/core/persistence/provider.ts';
 import { persistenceOperations } from '../../src/core/ops/persistence.ts';
 import { brainMembershipOperations } from '../../src/core/ops/brain-membership.ts';
-import { readTrustGeneration } from '../../src/core/eligibility/generation.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -192,29 +190,6 @@ describe('engine parity: access-grant reads', () => {
     expect(result).toEqual({ shared: { code: 'not_found' }, unknown: { code: 'not_found' } });
     return result;
   }));
-
-  parityTest('the trust generation is decimal text that moves with a trust config change', {
-    methods: ['readTrustGeneration', 'setConfig'],
-  }, async (engine, backend) => {
-    await installSingletons(engine, backend);
-    const before = await engine.readTrustGeneration();
-    expect(before).toMatch(/^\d+$/);
-    expect(await readTrustGeneration(engine)).toBe(before!);
-    await engine.setConfig('trust.parity_probe', 'on');
-    const after = await engine.readTrustGeneration();
-    expect(BigInt(after!) > BigInt(before!)).toBe(true);
-    return { decimal: true, moved: true };
-  });
-
-  parityTest('a brain with no trust_policy_state row reads a null generation, and the cache identity read fails closed', {
-    methods: ['readTrustGeneration'],
-  }, async (engine) => {
-    await engine.executeRaw('DELETE FROM trust_policy_state');
-    const generation = await engine.readTrustGeneration();
-    const refused = await readTrustGeneration(engine).then(() => null, (e: Error) => e.message);
-    expect({ generation, refused }).toEqual({ generation: null, refused: 'trust generation unreadable: trust_policy_state has no row' });
-    return { generation, refused };
-  });
 
   parityTest('the shared-skill serving epoch is a stable UUID; membership of an unknown installation is membership_not_found', {
     methods: ['readSharedSkillServingEpoch', 'readPersistenceBrainId', 'insertLocalWriterRow', 'readLocalWriterRow', 'readLocalWriterMemberGrant', 'transaction'],

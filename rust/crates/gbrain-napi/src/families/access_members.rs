@@ -132,6 +132,16 @@ impl Brain {
         self.run(env, move |s| s.read_access_member_id_by_email(&email))
     }
 
+    /// `readAccessGroupIds(ids)`: the ids that name an existing group, in byte order.
+    #[napi]
+    pub fn read_access_group_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_group_ids(&ids))
+    }
+
     /// `listActiveAccessMembers()`: the enabled member ids, by id.
     #[napi]
     pub fn list_active_access_members<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

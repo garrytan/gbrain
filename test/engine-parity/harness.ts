@@ -162,6 +162,14 @@ async function resetPostgres(engine: BrainEngine): Promise<void> {
   );
 }
 
+/**
+ * A fresh SQL brain holds the trust policy generation row its migration seeds (eligibility/generation-schema.ts);
+ * the reset empties it like any table, so put the seed back, or `readTrustGeneration` reads a brain no install has.
+ */
+async function seedTrustPolicyState(engine: BrainEngine): Promise<void> {
+  await engine.executeRaw(`INSERT INTO trust_policy_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+}
+
 /** Return the arm to an empty brain (default source only). Harness-only SQL: cases never use it. */
 async function resetArm(arm: ParityArm): Promise<void> {
   switch (arm.backend) {
@@ -170,9 +178,11 @@ async function resetArm(arm: ParityArm): Promise<void> {
       return;
     case 'pglite':
       await resetPgliteState(arm.engine as PGLiteEngine);
+      await seedTrustPolicyState(arm.engine);
       return;
     case 'postgres':
       await resetPostgres(arm.engine);
+      await seedTrustPolicyState(arm.engine);
       return;
     default:
       return assertNever(arm.backend);

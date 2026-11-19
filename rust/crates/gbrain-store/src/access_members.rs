@@ -36,7 +36,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MEMBER: u8 = 0x01;
 const GROUP: u8 = 0x02;
@@ -489,6 +489,18 @@ impl Store {
     /// `readAccessMemberIdByEmail(email)`: the id of the member that declares `email`, or null.
     pub fn read_access_member_id_by_email(&self, email: &str) -> Result<Option<String>> {
         email_owner(&*self.read()?, email, "")
+    }
+
+    /// `readAccessGroupIds(ids)`: which of `ids` name an existing group, each once, in byte order.
+    pub fn read_access_group_ids(&self, ids: &[String]) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut found = BTreeSet::new();
+        for id in ids {
+            if !id.contains('\0') && read.get(&group_key(id))?.is_some() {
+                found.insert(id.clone());
+            }
+        }
+        Ok(found.into_iter().collect())
     }
 
     /// `listActiveAccessMembers()`: the ids of the members neither disabled nor removed, by id.
