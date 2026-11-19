@@ -4,7 +4,7 @@
 # Generated from the tree at its own commit (`bun scripts/check-engine-raw-sql-ratchet.ts --print`).
 # Counts fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows. docs/ci-guards.md#engine-raw-sql-ratchet
 src/cli/enforced-commit-push.ts	execute_raw	1
-src/cli/enforced-member.ts	execute_raw	6
+src/cli/enforced-member.ts	execute_raw	5
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
@@ -80,8 +80,7 @@ src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-movement.ts	execute_raw	1
 src/commands/doctor/checks/mcp-request-log.ts	execute_raw	4
 src/commands/doctor/checks/member-access.ts	execute_raw	4
-src/commands/doctor/checks/memory-writeback.ts	execute_raw	2
-src/commands/doctor/checks/origin-twins.ts	execute_raw	1
+src/commands/doctor/checks/memory-writeback.ts	execute_raw	1
 src/commands/doctor/checks/orphan-bindings.ts	execute_raw	3
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
 src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
@@ -121,7 +120,7 @@ src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	3
-src/commands/doctor/skill-checks.ts	execute_raw	5
+src/commands/doctor/skill-checks.ts	execute_raw	4
 src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
@@ -205,7 +204,7 @@ src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	13
 src/commands/storage.ts	execute_raw	1
-src/commands/sweep.ts	execute_raw	2
+src/commands/sweep.ts	execute_raw	1
 src/commands/sync/full.ts	execute_raw	2
 src/commands/sync/holds.ts	execute_raw	4
 src/commands/sync/perform.ts	execute_raw	1
@@ -226,7 +225,7 @@ src/core/access/labelled-only.ts	execute_raw	3
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	sql_template	1
-src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
+src/core/access/open-pages.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
@@ -305,7 +304,7 @@ src/core/connectors/db-cursor.ts	execute_raw	2
 src/core/connectors/item-holds-store.ts	execute_raw	9
 src/core/content-drift-sweep.ts	execute_raw	2
 src/core/context/compile-view.ts	execute_raw	1
-src/core/context/corpus-source.ts	execute_raw	2
+src/core/context/corpus-source.ts	execute_raw	1
 src/core/context/proactive-brief.ts	execute_raw	10
 src/core/context/retrieval-reflex.ts	execute_raw	6
 src/core/context/volunteer-events.ts	execute_raw	2
@@ -499,7 +498,7 @@ src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	4
-src/core/link-single-value.ts	execute_raw	2
+src/core/link-single-value.ts	execute_raw	1
 src/core/link-source-check-repair.ts	execute_raw	3
 src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	11
@@ -507,8 +506,7 @@ src/core/maintenance/run.ts	execute_raw	1
 src/core/maintenance/status.ts	execute_raw	1
 src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/newer-mentions.ts	execute_raw	1
-src/core/mentions/pass.ts	execute_raw	33
-src/core/mentions/referrers.ts	execute_raw	1
+src/core/mentions/pass.ts	execute_raw	32
 src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
@@ -547,7 +545,6 @@ src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	1
 src/core/ops/admin.ts	execute_raw	2
-src/core/ops/backlinks-paged.ts	execute_raw	2
 src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
@@ -630,7 +627,7 @@ src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
-src/core/persistence/deactivation.ts	execute_raw	19
+src/core/persistence/deactivation.ts	execute_raw	18
 src/core/persistence/derived-origin-hold.ts	execute_raw	10
 src/core/persistence/derived-retirement-hold.ts	execute_raw	1
 src/core/persistence/detached-pages.ts	execute_raw	4
@@ -718,7 +715,7 @@ src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	15
-src/core/persistence/pre-activation-release.ts	execute_raw	7
+src/core/persistence/pre-activation-release.ts	execute_raw	6
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13
@@ -747,7 +744,7 @@ src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/searchable.ts	execute_raw	2
 src/core/persistence/segmented-apply.ts	execute_raw	9
 src/core/persistence/semantic-pages.ts	execute_raw	2
-src/core/persistence/skill-activation.ts	execute_raw	12
+src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/soak-counters.ts	execute_raw	4
 src/core/persistence/source-lifecycle.ts	execute_raw	33
 src/core/persistence/staging.ts	execute_raw	4

@@ -29,6 +29,7 @@ writes the rows the builder returns.
 | `brain.readReferrerTargetCounts(input)` | per target index (`targetIndexes`; an index may hold several pages), the referrers of its live pages other than its own pages, read as `readReferrerGroupRows` reads them: the total (no canonical type), then the total of each canonical type in `recordTypes` that has any; an index with no referrer has no row | `readReferrerTargetCounts` |
 | `brain.listReferrerTargetSources(slug, sources)` | the sources, in input order, that hold a live page with this slug (`get_backlinks {group: "page"}` takes the first as the target) | `listReferrerTargetSources` |
 | `brain.countReferrerRows(target, scope)` / `brain.readReferrerRows(target, scope)` | the number of referring pages `readReferrerGroupRows` reads, of `scope.type` (its canonical or stored type) when set / one page of them by `(date DESC, source, slug)`, after the cursor `[date, source, slug]` when one is given (a null date sorts last), at most `limit` rows, each with its id, slug, source, type, canonical type and date; a cursor date that is not a date is refused | `countReferrerRows` / `readReferrerRows` |
+| `brain.readReferrerTypes(target, scope)` | each `(canonical type, stored type)` pair the referrers of `countReferrerRows` have (no `type` filter), once, sorted; `get_backlinks` takes the observed types from it when a `type` is no pack type | `readReferrerTypes` |
 | `brain.readReferrerRecordCandidates(target, scope)` | per target index (as in `readReferrerTargetCounts`), its newest `perTarget` referring pages whose canonical type is in `recordTypes`, by index, then `(date DESC, source, slug)` | `readReferrerRecordCandidates` |
 | `brain.readReferrerRecordPages(ids)` | the title and date source (`updated_at` without an effective date) of each page id that exists, soft-deleted pages too | `readReferrerRecordPages` |
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
@@ -44,10 +45,10 @@ writes the rows the builder returns.
 - `valid_ranges` is stored and returned in the text form Postgres prints for a `datemultirange` (`{[2019-02-01,2025-03-01)}`).
 - The privacy policy of the world scope (`originPolicy`, `excludePrivate`) uses the store's page privacy rules
   (`facts::page_hidden`), the same rules `privatePagesFilterFragment` composes in SQL. `listRelationshipNoteRows`, `listPageStatusByRef`,
-  `listRecordMetadataRows`, `readReferrerGroupRows`, `readReferrerTargetCounts`, `countReferrerRows`, `readReferrerRows` and `readReferrerRecordCandidates` carry a caller's reader identity and private-readable grant in the policy (the
+  `listRecordMetadataRows`, `readReferrerGroupRows`, `readReferrerTargetCounts`, `countReferrerRows`, `readReferrerRows`, `readReferrerTypes` and `readReferrerRecordCandidates` carry a caller's reader identity and private-readable grant in the policy (the
   `callerReaders` opt-in of `storePagePolicy`); any other caller whose policy differs (folder grants, lineage, an owner
   read) refuses.
-- `readReferrerGroupRows`, `readReferrerTargetCounts`, `countReferrerRows`, `readReferrerRows` and `readReferrerRecordCandidates` apply the read-eligibility trust floor (`minTrust`) and hide quarantined referrers unless
+- `readReferrerGroupRows`, `readReferrerTargetCounts`, `countReferrerRows`, `readReferrerRows`, `readReferrerTypes` and `readReferrerRecordCandidates` apply the read-eligibility trust floor (`minTrust`) and hide quarantined referrers unless
   `includeQuarantined`; under `excludePrivate`, a referrer whose only links come from a hidden origin page is not counted.
 - A repeated refresh over unchanged evidence writes nothing and returns 0.
 - `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
@@ -62,8 +63,8 @@ writes the rows the builder returns.
 | `link-temporal-apply.ts` | linkRelationshipKeysForOrigin, applyLinkTemporalRows, writeManualLinkTransitions, removeManualLinkTransitions | equal |
 | `link-relationship-notes.ts` | listRelationshipNoteRows | equal |
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
-| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts, countReferrerRows, readReferrerRows, readReferrerRecordCandidates, readReferrerRecordPages | equal (an unknown `type` filter still reads the observed types with raw SQL and refuses) |
-| `ops/backlinks-paged.ts` | listReferrerTargetSources | equal for a caller scoped to sources; an unscoped caller's source list and a `type` filter still read `sources` with raw SQL and refuse |
+| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts, countReferrerRows, readReferrerRows, readReferrerTypes, readReferrerRecordCandidates, readReferrerRecordPages | equal |
+| `ops/backlinks-paged.ts` | listReferrerTargetSources, listSourceIds | equal |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
 | `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal (a capped count refuses: see Known differences) |
 | `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses, cached until the next write |

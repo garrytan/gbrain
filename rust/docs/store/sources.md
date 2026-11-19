@@ -10,7 +10,7 @@ until the first stamp; the import members read and write it ([import-members.md]
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.listAllSources({ includeArchived?, localPathOnly? }?)` | `SourceRow[]`, `default` first then by `id`; archived rows are left out unless `includeArchived`; `localPathOnly` keeps rows with a `local_path` that are not `config.role = 'storage_manifest'` | `listAllSources` |
+| `brain.listAllSources({ includeArchived?, localPathOnly? }?)` | `SourceRow[]`, `default` first then by `id` in byte order (the SQL engines sort `id COLLATE "C"`); archived rows are left out unless `includeArchived`; `localPathOnly` keeps rows with a `local_path` that are not `config.role = 'storage_manifest'` | `listAllSources` |
 | `brain.getSourceById(id)` | `SourceRow \| null`, archived rows included | `sources-ops` read by id |
 | `brain.upsertSource({ id, name?, local_path?, last_sync_at?, config? })` | the `SourceRow`; only the fields given change; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `sources add` |
 | `brain.updateSourceConfig(id, patch)` | `boolean`, whether the source exists; `patch` is merged one level deep, and a `null` value is kept as JSON `null` (it does not remove the key) | `updateSourceConfig` |
@@ -33,6 +33,15 @@ The source members below behave differently on the Rust engine. Each difference 
   `default`, not archived, role not `storage_manifest`.
 - `listStaleSyncSourceIds` compares `last_sync_at` with the process clock. The SQL engines use
   the database clock (`now()`).
+- `listSourceIds` reads the ids from `listSourceRecords`, archived sources included, and sorts them in
+  byte order. The SQL engines sort `ORDER BY id COLLATE "C"`, the same byte order on any server
+  locale.
+- `readSoleSourceId` and `readFirstSourceId` read `listSourceRecords` too. The first answers the
+  only id or null; the second answers `default`, else the lowest id in byte order, as the SQL
+  engines' `COLLATE "C"` tie-break does. No parity case can drop `default` on a Rust brain, so
+  only the SQL arms check the case without it.
+- `lockAllSourceRows` takes no lock, like `lockSourceRow`. The SQL engines read every row
+  `ORDER BY id FOR UPDATE` (or `FOR SHARE`).
 - `lockSourceRow` reads the row from `listSourceRecords` and takes no lock. The SQL engines read
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one

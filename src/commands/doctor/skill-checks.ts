@@ -254,8 +254,7 @@ export async function skillPreconditionsCheck(
       // #4278: `source:<id>`'s contract is EXISTENCE — a registered-but-not-
       // yet-synced source is met. Includes 'default' (it always exists).
       try {
-        const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY id`);
-        return rows.map(r => r.id);
+        return await engine.listSourceIds();
       } catch { return []; }
     },
     async listPopulatedSourceIds() {

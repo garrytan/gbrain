@@ -854,6 +854,43 @@ fn referrer_rows_page_newest_first_and_continue_after_the_cursor() {
 }
 
 #[test]
+fn referrer_types_list_each_canonical_and_stored_pair_once() {
+    let b = referrer_page_brain("lt-referrer-types");
+    let read = |extra: Value| {
+        let mut input = json!({"targetSources": ["default"], "targetSlugs": ["acme"], "referrerSources": ["default"],
+            "storedTypes": ["call"], "canonicalTypes": ["meeting"]});
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let input: ReferrerRowInput = de(input);
+        let rows = serde_json::to_value(b.store.read_referrer_types(&input).unwrap()).unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}:{}",
+                    r["canonical_type"].as_str().unwrap(),
+                    r["type"].as_str().unwrap()
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // Two meetings and two notes appear once each; the `call` alias keeps its own pair; an untyped
+    // referrer's stored type is empty. The type filter does not apply.
+    let all = ["meeting:call", "meeting:meeting", "note:note", "untyped:"];
+    assert_eq!(read(json!({})), all);
+    assert_eq!(read(json!({"type": "meeting"})), all);
+    // Without the alias pairs, `call` is its own canonical type.
+    assert_eq!(
+        read(json!({"storedTypes": [], "canonicalTypes": []})),
+        ["call:call", "meeting:meeting", "note:note", "untyped:"]
+    );
+    assert!(read(json!({"targetSlugs": ["nobody"]})).is_empty());
+}
+
+#[test]
 fn referrer_target_sources_name_the_live_page_sources_in_input_order() {
     let b = referrer_page_brain("lt-referrer-sources");
     let read = |slug: &str, sources: Value| {

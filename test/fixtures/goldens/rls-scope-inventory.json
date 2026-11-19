@@ -3031,6 +3031,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLastCommits#default": {
         "flagOffLanes": [
           "pool"
@@ -3320,6 +3331,28 @@
         "flagOnScopes": []
       },
       "loadContradictionsTrend#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "lockAllSourceRows#share": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "lockAllSourceRows#update": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4013,6 +4046,17 @@
         ],
         "flagOnScopes": []
       },
+      "readFirstSourceId#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readFolderAccess#no_readers": {
         "flagOffLanes": [
           "pool"
@@ -4559,6 +4603,17 @@
         "flagOnScopes": []
       },
       "readSharedSkillServingEpoch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSoleSourceId#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6374,6 +6429,7 @@
         "listSharedSkillPackRoots": "none",
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
+        "listSourceIds": "none",
         "listSourceLastCommits": "none",
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
@@ -6435,6 +6491,7 @@
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "loadPurgeTarget": "none",
+        "lockAllSourceRows": "none",
         "lockEffectClaimRow": "none",
         "lockEffectGuard": "none",
         "lockEmbeddingSwitch": "none",
@@ -6552,6 +6609,7 @@
         "readFenceOriginGone": "none",
         "readFenceOverlayRows": "none",
         "readFieldUsageSamples": "none",
+        "readFirstSourceId": "none",
         "readFolderAccess": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
@@ -6635,6 +6693,7 @@
         "readReferrerRecordPages": "none",
         "readReferrerRows": "none",
         "readReferrerTargetCounts": "none",
+        "readReferrerTypes": "none",
         "readRequestEffects": "none",
         "readRetirementHop": "none",
         "readRowAttribution": "none",
@@ -6646,6 +6705,7 @@
         "readSegmentedEmbedPage": "none",
         "readSessionCursor": "none",
         "readSharedSkillServingEpoch": "none",
+        "readSoleSourceId": "none",
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",

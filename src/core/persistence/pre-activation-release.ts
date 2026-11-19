@@ -77,7 +77,7 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
         'Another process activated managed persistence while this release ran, so the claims now belong to the managed writer. Review the brain-wide deactivation preview before deciding anything else.',
         { fix: readFix('Previews the brain-wide deactivation and its blockers; changes nothing.', { argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'] }) });
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
-      await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR UPDATE');
+      await tx.lockAllSourceRows('update');
       const refused = await opts.blocked(tx);
       if (refused) throw refused;
       const claims = await preActivationClaims(tx);

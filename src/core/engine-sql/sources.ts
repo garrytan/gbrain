@@ -19,7 +19,8 @@ export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
     // v0.38: lean per-source enumeration for autopilot dispatch + doctor.
     // Filters at SQL so the autopilot tick stays one query regardless of
     // how many archived rows exist. ORDER BY (id='default') DESC, id
-    // matches sources-ops.listSources for operator-output stability.
+    // matches sources-ops.listSources for operator-output stability. COLLATE "C" on the id tie-break keeps a Postgres
+    // server with a linguistic locale (en_US.utf8) in the byte order PGLite and the Rust engine give.
     // localPathOnly skips pure-DB sources so autopilot fan-out doesn't
     // dispatch jobs that would fall back to the global sync.repo_path, and
     // the storage shelf, whose cycle is always skipped (GST-1943).
@@ -30,7 +31,7 @@ export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
         FROM sources
        WHERE (${includeArchived} OR archived IS NOT TRUE)
          AND (${!localPathOnly} OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest'))
-       ORDER BY (id = 'default') DESC, id
+       ORDER BY (id = 'default') DESC, id COLLATE "C"
     `);
     return rows.map((r) => ({
       id: r.id as string,
@@ -119,6 +120,37 @@ export async function readSourceChunkerVersion(exec: LegacyUnscopedRead, sourceI
 /** Stamps the chunker version a full sync of the source used; an unknown source changes nothing. */
 export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: string, version: string): Promise<void> {
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
+}
+
+/**
+ * Every source id, archived sources included, in byte order of the id: the read scope of a caller with no source
+ * (ops/backlinks-paged.ts). `COLLATE "C"` keeps a Postgres server with a linguistic locale (en_US.utf8) in the order
+ * PGLite and the Rust engine give. Unscoped on master.
+ */
+export async function listSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id COLLATE "C"');
+  return rows.map(r => r.id);
+}
+
+/** The only source's id, or null when the brain has none or more than one (corpus-source.ts, sweep, doctor memory_writeback). Unscoped on master. */
+export async function readSoleSourceId(exec: LegacyUnscopedRead): Promise<string | null> {
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
+  return rows.length === 1 ? rows[0]!.id : null;
+}
+
+/** `default` when it exists, else the lowest id in byte order, else null (doctor origin_twins). Unscoped on master. */
+export async function readFirstSourceId(exec: LegacyUnscopedRead): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY (id = 'default') DESC, id COLLATE "C" LIMIT 1`);
+  return row?.id ?? null;
+}
+
+/**
+ * Locks every source row (`FOR UPDATE`, or `FOR SHARE`) until the caller's transaction ends (persistence deactivation,
+ * pre-activation release, skill activation).
+ */
+export async function lockAllSourceRows(exec: SqlExecutor, mode: 'update' | 'share'): Promise<void> {
+  // Plain ORDER BY id on purpose, not COLLATE "C": the same lock order as topology-locks.ts and core-guard.ts, so no deadlock.
+  await exec.executeRaw(mode === 'update' ? 'SELECT id FROM sources ORDER BY id FOR UPDATE' : 'SELECT id FROM sources ORDER BY id FOR SHARE');
 }
 
 /**

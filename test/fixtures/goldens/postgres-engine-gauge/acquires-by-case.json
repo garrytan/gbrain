@@ -274,6 +274,9 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listSourceIds#default": {
+      "raw": 1
+    },
     "listSourceLocalPaths#default": {},
     "listSourceRoutingRows#default": {
       "raw": 1
@@ -309,6 +312,12 @@
     "listTakes#sourceId": {},
     "listTakes#sourceIds+excludePrivate": {},
     "loadContradictionsTrend#default": {},
+    "lockAllSourceRows#share": {
+      "raw": 1
+    },
+    "lockAllSourceRows#update": {
+      "raw": 1
+    },
     "lockPageKeys#default": {
       "raw": 4,
       "tx": 1
@@ -351,9 +360,15 @@
     "readEmbeddingStateCounts#ops": {
       "raw": 1
     },
+    "readFirstSourceId#default": {
+      "raw": 1
+    },
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
+    "readSoleSourceId#default": {
+      "raw": 1
+    },
     "readSourceChunkerVersion#default": {
       "raw": 1
     },

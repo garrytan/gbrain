@@ -133,7 +133,7 @@ export const listReferrerTargetSources: StoreMember<[slug: string, sources: read
   sources.length === 0 ? [] : storeCall({ member: 'listReferrerTargetSources' }, () => brain.listReferrerTargetSources({ slug, sources: [...sources] }));
 
 /** The referrer page's read scope, in the store's input shape. */
-function referrerRowInput(member: string, target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerRowScope) {
+function referrerRowInput(member: string, target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerTypeScope & { type?: string | null }) {
   const excludePrivate = storePagePolicy(member, scope?.excludePrivate, { callerReaders: true }) ?? null;
   return {
     targetSources: [...target.sources], targetSlugs: [...target.slugs], referrerSources: [...scope.referrerSources],
@@ -147,6 +147,13 @@ export const countReferrerRows: StoreMember<[target: { sources: readonly string[
   scope: LinkTemporalSql.ReferrerRowScope], number> = async (brain, target, scope) => {
     const input = referrerRowInput('countReferrerRows', target, scope);
     return storeCall({ member: 'countReferrerRows' }, () => brain.countReferrerRows(input));
+  };
+
+/** The store returns each pair once, by canonical then stored type; an untyped referrer's stored type is `""`, as in SQL. */
+export const readReferrerTypes: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: LinkTemporalSql.ReferrerTypeScope], LinkTemporalSql.ReferrerTypeRow[]> = async (brain, target, scope) => {
+    const input = referrerRowInput('readReferrerTypes', target, scope);
+    return storeCall({ member: 'readReferrerTypes' }, () => brain.readReferrerTypes(input));
   };
 
 export const readReferrerRows: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[] },

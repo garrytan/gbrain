@@ -81,8 +81,8 @@
               "boolean",
               "boolean"
             ],
-            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id",
-            "textSha256": "7a9f40530ae88bb9c1d059fb6b47a75e864c4e3a9579d0145dfdff0bfdae61ce"
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id COLLATE \"C\"",
+            "textSha256": "87281a18015b9e6ed5383f0ff34f52672f724b758d7959871901d48b77de749a"
           }
         ]
       },
@@ -93,6 +93,16 @@
             "params": [],
             "sql": "SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL",
             "textSha256": "1dd7814b965c14090ee33bf1c44121abffc58c1a95b477a2755cc51615452682"
+          }
+        ]
+      },
+      "listSourceIds": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id COLLATE \"C\"",
+            "textSha256": "976f7c52754fc64f2abfc1c711385170820222e8fec1e1eb02dfa28c2bd770da"
           }
         ]
       },
@@ -126,6 +136,24 @@
           }
         ]
       },
+      "lockAllSourceRows": {
+        "share": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id FOR SHARE",
+            "textSha256": "4d893222d4d812a8104db694447bf33066eb056ed9e029914a9218a319e74d73"
+          }
+        ],
+        "update": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id FOR UPDATE",
+            "textSha256": "eceb1ca1d2a91335dbd46dd2cefe7cbf0440f26f6bf89f4be186ccb24ec8431d"
+          }
+        ]
+      },
       "lockSourceRow": {
         "default": [
           {
@@ -135,6 +163,26 @@
             ],
             "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE",
             "textSha256": "c96279eec5f617f9eee6412cb97ea5799f1b30d4c826b2eaf5be7c7456bf2c08"
+          }
+        ]
+      },
+      "readFirstSourceId": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY (id = 'default') DESC, id COLLATE \"C\" LIMIT 1",
+            "textSha256": "cf9f94704b6cec792da2dbbe4c333540aa5bd4b9223fa785f0a9ef4c479d9ae8"
+          }
+        ]
+      },
+      "readSoleSourceId": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id LIMIT 2",
+            "textSha256": "b29491610b4fc5e76f76c04a5963fce716cd6854c03d4e6587b7902c9d864e2c"
           }
         ]
       },

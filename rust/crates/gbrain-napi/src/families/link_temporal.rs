@@ -281,6 +281,21 @@ impl Brain {
         })
     }
 
+    /// `readReferrerTypes`: `countReferrerRows`'s input (`type` ignored): the distinct
+    /// `{ canonical_type, type }` pairs of the referrers.
+    #[napi]
+    pub fn read_referrer_types<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRowInput =
+                arg(input, "readReferrerTypes input")?;
+            s.read_referrer_types(&input)
+        })
+    }
+
     /// `readReferrerRecordCandidates`: `readReferrerTargetCounts`'s input plus `{ perTarget }`: the record candidates.
     #[napi]
     pub fn read_referrer_record_candidates<'env>(

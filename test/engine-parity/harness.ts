@@ -233,6 +233,25 @@ export async function createSource(engine: BrainEngine, backend: ParityBackend, 
   }
 }
 
+/**
+ * Fixture: set a page's `updated_at` to an exact microsecond time (`iso`), for cases that need two pages written in the
+ * same millisecond. BrainEngine has no write that takes a page time, so the SQL arms set it with harness-only SQL. The
+ * Rust store has no such write either: its arm keeps the microsecond time of each write, so a case writes the pages in
+ * the order its stamps put them, and the Rust order matches.
+ */
+export async function stampUpdatedAt(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, iso: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw('UPDATE pages SET updated_at = $3::text::timestamptz WHERE source_id = $1 AND slug = $2', [sourceId, slug, iso]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
 export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
   switch (backend) {

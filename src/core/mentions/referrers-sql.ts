@@ -106,6 +106,11 @@ export const REFERRER_TARGET_SOURCES_SQL = 'SELECT source_id FROM pages WHERE sl
 /** The referrer page's type filter: `$6` a canonical or stored type, or null for every type. */
 const REFERRER_TYPE_FILTER = `($6::text IS NULL OR canonical_type = $6 OR type = $6)`;
 
+/** The canonical and stored types among the referrers (no type filter). Params: the five of `referrersCte`. */
+export function referrerTypesSql(scope: ReferrerSqlScope): string {
+  return `${referrersCte(scope)} SELECT DISTINCT canonical_type, type FROM typed`;
+}
+
 /** The referrer page's total. Params: the five of `referrersCte`, then $6 the type (or null). */
 export function referrerCountSql(scope: ReferrerSqlScope): string {
   return `${referrersCte(scope)} SELECT count(*)::int AS n FROM typed WHERE ${REFERRER_TYPE_FILTER}`;
@@ -113,11 +118,13 @@ export function referrerCountSql(scope: ReferrerSqlScope): string {
 
 /**
  * One referrer page, newest first by `(d DESC, source_id, slug)`. Params: the five of `referrersCte`, $6 the type (or
- * null); with a cursor $7 its date (or null), $8 its source and $9 its slug; then the row limit, last.
+ * null); with a cursor $7 its date (or null), $8 its source and $9 its slug; then the row limit, last. $7 binds as text
+ * (`$7::text::timestamptz`): bound as a timestamptz, postgres.js turns it into a JavaScript Date and drops the
+ * microseconds, so the next page skipped a referrer dated earlier in the cursor row's millisecond.
  */
 export function referrerRowsSql(scope: ReferrerSqlScope, cursor: boolean): string {
-  const after = cursor ? ` AND ((d IS NOT DISTINCT FROM $7::timestamptz AND (source_id, slug) > ($8::text, $9::text))
-                OR ($7::timestamptz IS NOT NULL AND (d < $7::timestamptz OR d IS NULL)))` : '';
+  const after = cursor ? ` AND ((d IS NOT DISTINCT FROM $7::text::timestamptz AND (source_id, slug) > ($8::text, $9::text))
+                OR ($7::text::timestamptz IS NOT NULL AND (d < $7::text::timestamptz OR d IS NULL)))` : '';
   return `${referrersCte(scope)}
      SELECT id, slug, source_id, type, canonical_type, ${dateText('d')} AS d FROM typed
       WHERE ${REFERRER_TYPE_FILTER}${after}

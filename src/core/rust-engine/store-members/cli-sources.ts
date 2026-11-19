@@ -1,7 +1,8 @@
 /**
  * Source-resolution members (BrainEngine listLocalPathSources, listSourceRoutingRows, countDefaultSourceSplit): the
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
- * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
+ * listStaleSyncSourceIds (the advisor's stale-sync read), listSourceIds (every source id), readSoleSourceId, readFirstSourceId, lockAllSourceRows
+ * (takes no lock) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here. countSourcePages counts one source's pages and insertSource creates a source
  * (store side: the same cli_reads/sources.rs).
  */
@@ -46,6 +47,28 @@ export const listStaleSyncSourceIds: StoreMember<[], string[]> = async (brain) =
   return rows.filter(r => r.last_sync_at !== null && new Date(r.last_sync_at).getTime() < staleBefore).map(r => r.id)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 };
+
+/** Every source id, archived ones included, by id bytewise (the store's source records). */
+export const listSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const rows = (await storeCall({ member: 'listSourceIds' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  return rows.map(r => r.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+};
+
+/** The only source's id, or null when the store has none or several. */
+export const readSoleSourceId: StoreMember<[], string | null> = async (brain) => {
+  const rows = (await storeCall({ member: 'readSoleSourceId' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  return rows.length === 1 ? rows[0]!.id : null;
+};
+
+/** `default` when the store has it, else the lowest id bytewise, else null. */
+export const readFirstSourceId: StoreMember<[], string | null> = async (brain) => {
+  const rows = (await storeCall({ member: 'readFirstSourceId' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  const ids = rows.map(r => r.id);
+  return ids.includes('default') ? 'default' : ids.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0] ?? null;
+};
+
+/** Takes no lock: the store's source records do not lock rows (like lockSourceRow). */
+export const lockAllSourceRows: StoreMember<[mode: 'update' | 'share'], void> = async () => {};
 
 async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: string): Promise<SourceCheckRow | null> {
   const rows = (await storeCall({ member, sourceId }, () => brain.listSourceRecords())) as SourceRecordRow[];
