@@ -325,12 +325,15 @@ impl Store {
     /// Postgres writer waits on a row lock. Callers never see `write_conflict` unless a write
     /// loses `WRITE_RETRY_LIMIT` times in a row. A bound statement runs once: the transaction
     /// holds the store's exclusive writer, so nothing can conflict with it.
+    ///
+    /// Either way `f` writes through the store's write handle chain ([`write_chain`]), made fresh
+    /// for each run.
     pub(crate) fn write<T>(&self, mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
             let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-            return tx.statement(f);
+            return tx.statement(|w| write_chain(w, &mut f));
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
@@ -343,7 +346,7 @@ impl Store {
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-                match f(&mut *tx) {
+                match write_chain(&mut *tx, &mut f) {
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
                 }
@@ -376,6 +379,21 @@ impl Store {
             created_by: options.created_by.clone(),
         })
     }
+}
+
+/// Runs `f` on the store's write handle chain over `inner`: every `Store::write` run (one OCC
+/// attempt, or one bound statement) goes through it, and it ends the run's handle work before
+/// the run is kept. Today the chain is `keyword::IndexingWriter(inner)`; a wrapper added later
+/// goes inside it (`IndexingWriter(OtherWriter(inner))`), and each wrapper forwards the special
+/// `KvWrite` primitives (`allocate`, `raise_counter`, `add_i64`, `counter_below`).
+fn write_chain<T>(
+    inner: &mut dyn KvWrite,
+    f: &mut impl FnMut(&mut dyn KvWrite) -> Result<T>,
+) -> Result<T> {
+    let mut indexing = keyword::IndexingWriter::new(inner);
+    let value = f(&mut indexing)?;
+    indexing.flush()?;
+    Ok(value)
 }
 
 /// The format record kept inside the store (the copy `FORMAT` is rebuilt from).

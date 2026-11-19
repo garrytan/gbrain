@@ -112,6 +112,12 @@ pub fn meta(name: &str) -> Vec<u8> {
     text(META, &[name])
 }
 
+/// `R 0x00`: the keyword index state (`keyword/index_writer.rs`). Kind byte 0x00 of the
+/// `keyword` family; its later kinds are listed in `keyword.rs`.
+pub fn keyword_index_state() -> Vec<u8> {
+    vec![TRIGRAM, 0x00]
+}
+
 /// `P source \0 slug`
 pub fn page(source_id: &str, slug: &str) -> Vec<u8> {
     text(PAGE, &[source_id, slug])

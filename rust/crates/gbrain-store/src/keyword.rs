@@ -33,13 +33,16 @@
 //! `TsVector` built from the row's text.
 //!
 //! Keys: every record of this family starts with `keys::TRIGRAM` (`R`). The bytes after the tag are
-//! this file's to define; document them here. None are written yet.
+//! this file's to define; document them here. `R 0x00` is the keyword index state
+//! (`keys::keyword_index_state`): while it exists, every `Store::write` handle tracks the chunks
+//! and pages a write touches (`keyword/index_writer.rs`). The postings are not written yet.
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
 mod arm;
 mod chunk_search;
 mod filters;
+mod index_writer;
 mod page_search;
 pub(crate) mod parser;
 mod rank;
@@ -51,6 +54,7 @@ mod tsearch;
 mod vector_cache;
 
 pub use filters::{AfterKey, DateBound, KeywordOptions};
+pub(crate) use index_writer::IndexingWriter;
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
 

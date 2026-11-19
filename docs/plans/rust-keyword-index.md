@@ -166,8 +166,8 @@ Each decision has a recommendation (rec). The lettered choices go to the lead as
   conflict-free counters stay in force (`FlaggingWriter` does not forward them today; the build
   fixes both wrappers). A fresh touched set is made inside each OCC attempt and inside each
   bound `tx.statement`; a flush error fails that statement, and its writes and postings go
-  together. `FlaggingWriter` lands first (`4507a47b62`, rebased onto the current `FnMut` retry
-  loop, not the old `FnOnce` shape).
+  together. `FlaggingWriter` reaches the trunk through lane 12, not this PR (see the
+  Implementation plan); the chain seam takes it as `IndexingWriter(FlaggingWriter(inner))`.
 - D1b: call-site hooks in `write_chunk`, `remove_chunk_record`, `page_index::reindex_page`, the
   seal and the timeline writers. Smaller, but a new write path can skip the index silently, and
   timeline, seal and lead writes need hooks that do not exist yet.
@@ -307,10 +307,27 @@ tracking (D1), preimage capture and basename forward keys (D1, D2), the full-res
 
 Files are under `rust/crates/gbrain-store/` unless named otherwise. One PR (D7b) on
 `rust-engine/keyword-index`, pushed as four stacked, reviewable commits:
-(1) `FlaggingWriter` (carried from `4507a47b62`, rebased onto the `FnMut` retry loop) and
-`IndexingWriter`; (2) chunk and page postings; (3) trigram postings with the f32-safe fuzzy
-bound; (4) format 3, the resumable build, `verify` and `rebuild`. If `FlaggingWriter` lands on
-`rust-engine/main` first, commit (1) carries only `IndexingWriter`.
+(1) `IndexingWriter` and the write handle chain seam in `Store::write`; (2) chunk and page
+postings; (3) trigram postings with the f32-safe fuzzy bound; (4) format 3, the resumable build,
+`verify` and `rebuild`.
+
+Commit (1) does not carry `FlaggingWriter` (lead ruling, 2026-11-19 UTC, the lead's own and not
+the owner's): `access_flag.rs` is created by `407f3d874f` with lane 12's member-access feature,
+so carrying `4507a47b62` would carry that chain. Lane 12's chain reaches the trunk first, in
+lane 2's batch. Commit (1) puts the seam in one function, `lib.rs` `write_chain`, which every
+OCC attempt and every bound statement runs; when this branch rebases onto a base with
+`FlaggingWriter`, the merge is one line in `write_chain`:
+`IndexingWriter::new(&mut access_flag::FlaggingWriter(inner))`.
+
+Forwarding fix for lane 12 (a note; the lead routes it): `FlaggingWriter` must forward
+`allocate`, `raise_counter`, `add_i64` and `counter_below` to its inner handle, as
+`IndexingWriter` does. Without it the `KvWrite` defaults turn each into a read and a put, which
+loses `OccTxn`'s conflict-free counters and breaks a later `allocate` on the same key. The
+store test `keyword::index_writer::tests::the_write_chain_forwards_the_special_primitives`
+runs the four calls through `write_chain` against a recording inner handle; after the rebase it
+covers the nested order `IndexingWriter(FlaggingWriter(inner))` with no change, and it must
+pass on that base before the PR opens. It fails today if `IndexingWriter` stops forwarding
+(checked: 2 of 8 tests fail with the four overrides removed).
 
 Accepted at the gate (gate_rev 4, every item `rec`), and where each one lives in this plan:
 - `r4-uc1` one PR and one final all-member gate: D7b and the commit order above.
@@ -338,8 +355,9 @@ Accepted at the gate (gate_rev 4, every item `rec`), and where each one lives in
    matches nothing, as in the scan.
 4. `src/keyword/index_writer.rs` (new): `IndexingWriter`, a transparent `KvWrite` wrapper that
    captures `P` preimages, records touched chunk and page ids by key family and flushes at
-   statement end. `src/access_flag.rs`: forward the special primitives. `src/lib.rs`:
-   `Store::write` builds the wrapper chain inside each OCC attempt and each `tx.statement`.
+   statement end. `src/lib.rs`: `Store::write` builds the wrapper chain (`write_chain`) inside
+   each OCC attempt and each `tx.statement`. `src/access_flag.rs` forwards the special
+   primitives in lane 12's change (see the note above).
 5. `src/keyword/chunk_search.rs`, `page_search.rs`, `arm.rs`: when the index state is complete
    in the query snapshot, take candidates from `index.rs` and apply each member's admission row
    from D4 (lean page view in `src/pages.rs`). Rank with the sparse vector built from every

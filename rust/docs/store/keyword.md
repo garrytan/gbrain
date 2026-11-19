@@ -88,8 +88,16 @@ keyword arm does; `searchTitles` reads `onKeywordIncomplete`. `searchTitles` ans
 
 ## Keys
 
-None written. The family owns the `R` tag and reads pages, chunks, segment views and sources through their families'
-readers. Every member is a full scan of the live pages (follow-up `keyword-lexeme-index`).
+The family owns the `R` tag and reads pages, chunks, segment views and sources through their families' readers. Every
+member is a full scan of the live pages (follow-up `keyword-lexeme-index`).
+
+`R 0x00` is the keyword index state (`keys::keyword_index_state`). No build writes it yet. While it exists, every
+`Store::write` handle tracks what a write touches (`keyword/index_writer.rs`, `IndexingWriter`, the outer wrapper of the
+write handle chain in `lib.rs` `write_chain`): `K` chunk records mark the chunk; `P` page records mark the page, with
+the record stored before the statement's first write of the key; `M page_search_timeline/<id>`, `b 0x05 page_id` and
+`E page_id ...` mark the page. Other keys mark nothing. The flush at the end of each OCC attempt or bound statement
+resolves the touched set and writes no postings yet. The wrapper forwards `allocate`, `raise_counter`, `add_i64` and
+`counter_below`, and so must every wrapper inside it.
 
 ## The vector cache
 
