@@ -143,11 +143,13 @@ withdrawal ledger or purge markers, so here that overlay is the identity.
 
 ## Segmented write statements
 
-A streamed segmented import (`importStreamedMarkdownFile`) and the segmented re-chunk
-(`runSegmentedRechunk`) make reads and writes around the flip that PGLite and Postgres run from
+A streamed segmented import (`importStreamedMarkdownFile`), the segmented re-chunk
+(`runSegmentedRechunk`) and a fence rewrite (`page-body/segment-rewrite.ts`, with the derivation
+delete in `page-body/segment-derive.ts`) make reads and writes around the flip that PGLite and Postgres run from
 `src/core/engine-sql/segmented-writes.ts`. The store serves each one from
 `rust/crates/gbrain-store/src/page_body/segmented_writes.rs`, through
-`src/core/rust-engine/store-members/segmented-writes.ts`. Each write is one store write.
+`src/core/rust-engine/store-members/segmented-writes.ts`. Each write is one store write. The
+fence-rewrite members are in `rust/crates/gbrain-store/src/page_body/segment_rewrite.rs`.
 
 | Member | Serves |
 | --- | --- |
@@ -156,7 +158,7 @@ A streamed segmented import (`importStreamedMarkdownFile`) and the segmented re-
 | `readSegmentedLivePage(pageId)` | the page a write diffs against, deleted or not: id, generation, storage, title, type, body flags |
 | `readSegmentedSealed(sourceId, slug)` | whether the live page's text projection is sealed at its revision |
 | `listChunkedOccurrences(pageId, occurrenceIds, generation)` | the members of `occurrenceIds`, in order, with a chunk row at or below `generation` |
-| `readRetiredChunkVectors(pageId, occurrences, column)` | `[]`: the store keeps no vectors, so a re-chunked text waits for the embed sweep |
+| `readRetiredChunkVectors(pageId, occurrences, column)` | `[]`: the store keeps chunk vectors (`embeddings.rs`), but this read does not look them up yet and `stageSegmentChunks` refuses a chunk that carries one, so a re-chunked text waits for the embed sweep |
 | `hasStaleSegmentChunks(pageId, generation, live)` | whether a chunk row exists that `generation` does not hold |
 | `retireStaleSegmentChunks(pageId, generation, live, maxRows)` | deletes up to `maxRows` of those rows and returns the count |
 | `readSegmentedProjectionPage(sourceId, slug)` | the live segmented page row a projection builds from |
@@ -166,6 +168,13 @@ A streamed segmented import (`importStreamedMarkdownFile`) and the segmented re-
 | `readMaterializingRevision()`, `setMaterializingRevision(revision)` | the `gbrain.materializing_revision` setting, kept in the transaction's settings map; `null` and a no-op outside a transaction |
 | `restorePageUpdatedAt(pageId, updatedUs)` | sets `updated_at` back (a re-chunk is not an edit); a missing page is a no-op |
 | `readPageTrustStamp(ref)` | `trust_tier` (`unknown` when none) and `write_origin`; `{ sourceId, slug }` names a live page, `{ id }` any page |
+| `readSegmentedRewritePage(pageId)` | the page row a live fence rewrite reads, deleted or not, with its tags sorted; an inline page reads at generation 0; `null` when missing |
+| `restorePageDeletedAt(pageId, deletedAt)` | sets `deleted_at` back after the rewrite's flip; a change gives the page a new knowledge revision and clears its text projection revision, as the pages trigger does; a missing page is a no-op |
+| `lockSegmentedGenerationPage(pageId)` | the page's slug, source, body flags, storage and generation. Writes are serialized, so no row lock |
+| `splitManifestGeneration(pageId, generation, stagingId)` | copies the manifest rows that span `generation + 1` into the staging, ends the published rows at `generation`, and deletes the rows that start at it |
+| `publishRebuiltGeneration(pageId, generation, stagingId)` | publishes the staging's rows; the rows that start at `generation` end at `generation + 1` |
+| `setSegmentedVersionHash(pageId, generation, contentHash, bodyBytes)` | sets the content hash and byte count of the segmented version of `generation` |
+| `deleteRewrittenDerivationRows(pageId, scope)` | deletes the derivations of the touched occurrences, the `links` rows of the reach, and the unpaid kinds' rows of occurrences not live; returns the count |
 
 A chunk row is stale for generation `g` with live occurrences `live` as in Postgres's
 `STALE_CHUNKS_SQL`: a segment chunk of a live occurrence when its generation is below the newest
@@ -228,14 +237,11 @@ stay, as in PGLite, for the sweep. Deleting a source removes its texts and stagi
 `constraint_violation` while a manifest row of any page names one of its texts (PGLite's manifest
 foreign key to the texts has no cascade).
 
-## Not served
-
-The TypeScript engine refuses these with `engine_capability_missing`:
-
-- A segmented page inside `transaction`: the store has no transactions yet, so the parity cases that
-  stage inside one stop on that refusal.
-
 ## Known differences from PGLite
+
+- `readSegmentedRewritePage` sorts tags bytewise; Postgres sorts them by the database collation.
+- `restorePageDeletedAt` does not mark the derivation scope entry that Postgres's
+  `pages_derivation_scope_delete` trigger marks when `deleted_at` goes from null to a time.
 
 - `stageSegmentChunks` reads occurrence ids, ordinals and byte spans as unsigned numbers; a negative
   one refuses `invalid_argument`. PGLite's columns are signed, but its occurrence ids come from a
