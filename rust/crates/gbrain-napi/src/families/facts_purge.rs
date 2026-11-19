@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::purge::{
-    FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery, SingleFactQuery,
-    SourceArgs, UnfencedQuery, WithdrawalExpiry,
+    DerivedRowsQuery, FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery,
+    SingleFactQuery, SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
 use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
 
@@ -29,6 +29,20 @@ impl Brain {
         self.run(env, move |s| {
             let a: FactScopeArgs = required(args, "countFactFingerprintLeftovers args")?;
             s.count_fact_fingerprint_leftovers(&a)
+        })
+    }
+
+    /// `listDerivedRows({ frontier, limit })`: resolves the rows one walk hop reaches (none: the
+    /// store keeps no `derivation_inputs`).
+    #[napi]
+    pub fn list_derived_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivedRowsQuery = required(args, "listDerivedRows args")?;
+            s.list_derived_rows(&a)
         })
     }
 
