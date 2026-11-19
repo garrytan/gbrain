@@ -16,6 +16,7 @@ mod graph;
 mod import_members;
 mod journal;
 mod links;
+mod op_checkpoint;
 mod pages;
 mod search;
 mod sources;

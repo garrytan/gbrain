@@ -199,7 +199,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   write_misc: ['readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding',
     'hasExtractedEvents', 'listActiveAccessMembers', 'notifierCoverageRecorded', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
-    'attachSourcePath', 'readOpCheckpointKeys', 'readHealthMemoClock', 'listSynopsisSourceIds'],
+    'attachSourcePath', 'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint',
+    'deleteOpCheckpointPaths', 'readHealthMemoClock', 'listSynopsisSourceIds'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
   write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
     'readOldestVersionAttribution', 'readRowAttribution'],

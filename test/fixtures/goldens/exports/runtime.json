@@ -25,6 +25,7 @@
         "aliasCanonicalRefs",
         "aliasFanoutRead",
         "allocateBodyOccurrenceIds",
+        "appendOpCheckpointPaths",
         "applyForwardReferenceBootstrap",
         "applyLinkTemporalRows",
         "applyTransactionSettings",
@@ -132,6 +133,8 @@
         "deleteFactRelinkMemos",
         "deleteFactsForPage",
         "deleteJobAttachment",
+        "deleteOpCheckpoint",
+        "deleteOpCheckpointPaths",
         "deletePage",
         "deletePages",
         "deleteStalePageWriteGateReceipts",
@@ -686,6 +689,7 @@
         "writeLinkRelationshipState",
         "writeManualLinkTransitions",
         "writeMiscReads",
+        "writeOpCheckpointKeys",
         "writeTextProjectionSeal"
       ],
       "PostgresEngine": [
@@ -708,6 +712,7 @@
         "aliasCanonicalRefs",
         "aliasFanoutRead",
         "allocateBodyOccurrenceIds",
+        "appendOpCheckpointPaths",
         "applyForwardReferenceBootstrap",
         "applyLinkTemporalRows",
         "applyTransactionSettings",
@@ -812,6 +817,8 @@
         "deleteFactRelinkMemos",
         "deleteFactsForPage",
         "deleteJobAttachment",
+        "deleteOpCheckpoint",
+        "deleteOpCheckpointPaths",
         "deletePage",
         "deletePages",
         "deleteStalePageWriteGateReceipts",
@@ -1384,6 +1391,7 @@
         "writeManualLinkTransitions",
         "writeMiscRead",
         "writeMiscReads",
+        "writeOpCheckpointKeys",
         "writeTextProjectionSeal"
       ]
     },

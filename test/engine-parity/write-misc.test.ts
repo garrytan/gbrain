@@ -4,7 +4,8 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, hasExtractedEvents, listActiveAccessMembers, notifierCoverageRecorded, isFolderRestricted,
- *    readOpCheckpointKeys, readHealthMemoClock, listSynopsisSourceIds,
+ *    readOpCheckpointKeys, writeOpCheckpointKeys, appendOpCheckpointPaths, deleteOpCheckpoint, deleteOpCheckpointPaths,
+ *    readHealthMemoClock, listSynopsisSourceIds,
  *    expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -14,8 +15,10 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, notifier state, op checkpoints, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
- *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
+ *    Rust store keeps no skillpacks, chronicle state, access members, notifier state, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
+ *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). It keeps op checkpoints
+ *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
+ *    since the store lists them in path order and the SQL engines in no stated order.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
@@ -23,13 +26,27 @@ import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { clearHealthMemo, memoizedHealth } from '../../src/core/health-memo.ts';
-import { loadOpCheckpoint } from '../../src/core/op-checkpoint.ts';
+import {
+  appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, recordCompleted, resumeFilter,
+} from '../../src/core/op-checkpoint.ts';
 import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 
 const { parityTest } = parityArms(testBackends());
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Runs `fn` with console.error captured: op-checkpoint.ts logs a failed write and answers false instead of throwing. */
+async function quietErrors<T>(fn: () => Promise<T>): Promise<{ value: T; errors: string[] }> {
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+  try {
+    return { value: await fn(), errors };
+  } finally {
+    console.error = original;
+  }
+}
 
 /** A source state with its generated incarnation replaced by its shape. */
 function stateView(row: SourceStateRow | null) {
@@ -160,25 +177,76 @@ describe('engine parity: write misc', () => {
     return { keys, direct: await engine.readOpCheckpointKeys('embed', 'parity-f1') };
   });
 
-  // A checkpoint row is raw SQL here (op-checkpoint.ts writes it); on Rust the seed refuses, because no Rust brain keeps a
-  // resumable-op checkpoint, and the member answers no keys, as the fresh-brain case.
-  parityTest('readOpCheckpointKeys unions the child rows and the legacy array, deduplicated', { methods: ['readOpCheckpointKeys'] }, async (engine) => {
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys) VALUES ('embed', 'parity-f2', '["b","c"]'::jsonb)`);
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.readOpCheckpointKeys('embed', 'parity-f2')).toEqual({ keys: [], corruptParent: false });
-      throw seeded;
-    }
-    await engine.executeRaw(`INSERT INTO op_checkpoint_paths (op, fingerprint, path) VALUES ('embed', 'parity-f2', 'a'), ('embed', 'parity-f2', 'b')`);
+  // Seeded through op-checkpoint.ts's own writers (recordCompleted for the parent array, appendCompleted for the child
+  // rows), which every arm serves: durableWrite logs and answers false on a failed write, so the case asserts both.
+  parityTest('readOpCheckpointKeys unions the child rows and the legacy array, deduplicated', { methods: ['readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths'] }, async (engine) => {
+    const key = { op: 'embed', fingerprint: 'parity-f2' };
+    const { value: wrote, errors } = await quietErrors(async () => ({
+      parent: await recordCompleted(engine, key, ['c', 'b']),
+      children: await appendCompleted(engine, key, ['a', 'b']),
+    }));
+    expect({ wrote, errors }).toEqual({ wrote: { parent: true, children: true }, errors: [] });
     const read = await engine.readOpCheckpointKeys('embed', 'parity-f2');
     const other = await engine.readOpCheckpointKeys('embed', 'parity-other');
     expect({ keys: [...read.keys].sort(), corruptParent: read.corruptParent, other }).toEqual({
       keys: ['a', 'b', 'c'], corruptParent: false, other: { keys: [], corruptParent: false },
     });
     return { keys: [...read.keys].sort(), other };
+  });
+
+  // A resumable op stopped midway: each processed key is banked as it lands, the run throws, and a fresh run loads the
+  // checkpoint and processes only the keys still pending. A clean exit clears it, so the next run starts from the top.
+  // recordCompleted replaces the parent's keys; the children stay through a replace and go with the clear.
+  parityTest('a stopped op resumes with only its pending keys, and a clear starts it over', { methods: ['readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths'] }, async (engine) => {
+    const key = { op: 'sync', fingerprint: 'parity-resume' };
+    const all = ['p/1.md', 'p/2.md', 'p/3.md', 'p/4.md', 'p/5.md'];
+    const { value, errors } = await quietErrors(async () => {
+      const firstRun: string[] = [];
+      let stopped: string | null = null;
+      try {
+        for (const path of resumeFilter(all, await loadOpCheckpoint(engine, key))) {
+          if (path === 'p/4.md') throw new Error('killed');
+          firstRun.push(path);
+          expect(await appendCompleted(engine, key, [path])).toBe(true);
+        }
+      } catch (error) { stopped = (error as Error).message; }
+      const banked = [...await loadOpCheckpoint(engine, key)].sort();
+      const secondRun = resumeFilter(all, await loadOpCheckpoint(engine, key));
+      expect(await recordCompleted(engine, key, ['legacy'])).toBe(true);
+      const afterReplace = [...await loadOpCheckpoint(engine, key)].sort();
+      expect(await appendCompletedOnce(engine, key, secondRun)).toBe(true);
+      const finished = resumeFilter(all, await loadOpCheckpoint(engine, key));
+      await clearOpCheckpoint(engine, key);
+      const afterClear = await engine.readOpCheckpointKeys(key.op, key.fingerprint);
+      const thirdRun = resumeFilter(all, await loadOpCheckpoint(engine, key));
+      return { firstRun, stopped, banked, secondRun, afterReplace, finished, afterClear, thirdRun };
+    });
+    expect({ ...value, errors }).toEqual({
+      firstRun: ['p/1.md', 'p/2.md', 'p/3.md'], stopped: 'killed', banked: ['p/1.md', 'p/2.md', 'p/3.md'],
+      secondRun: ['p/4.md', 'p/5.md'], afterReplace: ['legacy', 'p/1.md', 'p/2.md', 'p/3.md'], finished: [],
+      afterClear: { keys: [], corruptParent: false }, thirdRun: all, errors: [],
+    });
+    return value;
+  });
+
+  // clearOpCheckpoint's second sweep deletes the paths and keeps the parent's keys; other checkpoints stay.
+  parityTest('deleteOpCheckpointPaths keeps the parent keys and other checkpoints', { methods: ['deleteOpCheckpointPaths', 'deleteOpCheckpoint'] }, async (engine) => {
+    const mine = { op: 'extract', fingerprint: 'parity-mine' };
+    const theirs = { op: 'extract', fingerprint: 'parity-theirs' };
+    await engine.writeOpCheckpointKeys(mine.op, mine.fingerprint, ['k']);
+    await engine.appendOpCheckpointPaths(mine.op, mine.fingerprint, ['x', 'y']);
+    await engine.appendOpCheckpointPaths(theirs.op, theirs.fingerprint, ['z']);
+    await engine.deleteOpCheckpointPaths(mine.op, mine.fingerprint);
+    const kept = await engine.readOpCheckpointKeys(mine.op, mine.fingerprint);
+    await engine.deleteOpCheckpoint(mine.op, mine.fingerprint);
+    await engine.deleteOpCheckpoint('extract', 'parity-missing');
+    const gone = await engine.readOpCheckpointKeys(mine.op, mine.fingerprint);
+    const other = await engine.readOpCheckpointKeys(theirs.op, theirs.fingerprint);
+    const result = { kept, gone, other };
+    expect(result).toEqual({
+      kept: { keys: ['k'], corruptParent: false }, gone: { keys: [], corruptParent: false }, other: { keys: ['z'], corruptParent: false },
+    });
+    return result;
   });
 
   // memoizedHealth computes uncached when its clock read fails, so a refused read shows as a second compute.

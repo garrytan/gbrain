@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 655/655
+# covered: 659/659
 # lifecycle: 9/9
 # pages: 37/37
 # search: 7/7
@@ -56,7 +56,7 @@
 # open_loops: 3/3
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 15/15
+# write_misc: 19/19
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -657,7 +657,11 @@ getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
+readOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
+writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
+appendOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
+deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
+deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves

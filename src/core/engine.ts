@@ -1403,6 +1403,14 @@ export interface BrainEngine {
   notifierCoverageRecorded(): Promise<boolean>;
   /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
   readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
+  /** A resumable op's checkpoint parent with `keys` (sorted by the caller) as its completed keys, stamped now (op-checkpoint.ts recordCompleted). */
+  writeOpCheckpointKeys(op: string, fingerprint: string, keys: string[]): Promise<void>;
+  /** The checkpoint parent created or stamped now, then each path not yet banked added (op-checkpoint.ts appendCompleted). */
+  appendOpCheckpointPaths(op: string, fingerprint: string, paths: string[]): Promise<void>;
+  /** The checkpoint parent deleted, its paths with it; a missing row is a no-op (op-checkpoint.ts clearOpCheckpoint). */
+  deleteOpCheckpoint(op: string, fingerprint: string): Promise<void>;
+  /** The checkpoint's paths deleted, its parent kept (op-checkpoint.ts clearOpCheckpoint's second sweep). */
+  deleteOpCheckpointPaths(op: string, fingerprint: string): Promise<void>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

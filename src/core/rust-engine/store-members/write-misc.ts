@@ -70,14 +70,6 @@ export const listActiveAccessMembers: StoreMember<[], string[]> = async () => []
 export const notifierCoverageRecorded: StoreMember<[], boolean> = async () => false;
 
 /**
- * The store keeps no resumable-op checkpoint: every checkpoint write (op-checkpoint.ts) is raw SQL, which this engine
- * refuses, and the store's only `op_checkpoints` rows are housekeeping turns, whose ops no resumable op uses. So no
- * key has completed and the op walks from the start, as after `clearOpCheckpoint`.
- */
-export const readOpCheckpointKeys: StoreMember<[op: string, fingerprint: string], { keys: string[]; corruptParent: boolean }> =
-  async () => ({ keys: [], corruptParent: false });
-
-/**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
  * among them, so a memoized health answer is reused only while nothing was written since it was read.
  */

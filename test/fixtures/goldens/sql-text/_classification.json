@@ -58,7 +58,7 @@
       "out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)": 2,
       "out-of-scope:write-attribution (born in engine-sql/write-attribution.ts; pinned by test/engine-parity/write-attribution.test.ts)": 5,
       "out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)": 7,
-      "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)": 15,
+      "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)": 19,
       "pages": 40,
       "salience": 5,
       "sources": 14,
@@ -86,6 +86,7 @@
       "aliasCanonicalRefs": "out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)",
       "aliasFanoutRead": "out-of-scope:internal-helper (private; exercised through public callers)",
       "allocateBodyOccurrenceIds": "out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)",
+      "appendOpCheckpointPaths": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",
       "applyForwardReferenceBootstrap": "out-of-scope:internal-helper (private; exercised through public callers)",
       "applyLinkTemporalRows": "out-of-scope:link-temporal (born in engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts; pinned by test/engine-parity/link-temporal.test.ts)",
       "applyTransactionSettings": "out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)",
@@ -191,6 +192,8 @@
       "deleteFactRelinkMemos": "out-of-scope:fact-relink-attempts (born in engine-sql/fact-relink-attempts.ts; pinned by test/engine-parity/fact-relink-attempts.test.ts)",
       "deleteFactsForPage": "facts",
       "deleteJobAttachment": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
+      "deleteOpCheckpoint": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",
+      "deleteOpCheckpointPaths": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",
       "deletePage": "pages",
       "deletePages": "pages",
       "deleteStalePageWriteGateReceipts": "out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)",
@@ -763,6 +766,7 @@
       "writeManualLinkTransitions": "out-of-scope:link-temporal (born in engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts; pinned by test/engine-parity/link-temporal.test.ts)",
       "writeMiscRead": "out-of-scope:internal-helper (private; exercised through public callers)",
       "writeMiscReads": "out-of-scope:internal-helper (private; exercised through public callers)",
+      "writeOpCheckpointKeys": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",
       "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)"
     }
   },
