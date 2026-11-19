@@ -27,6 +27,7 @@ mod import_members;
 mod journal;
 mod large_page;
 mod links;
+mod page_purges;
 mod page_visibility;
 mod pages;
 mod search;

@@ -56,6 +56,7 @@ test/engine-parity/link-reads.test.ts	10	0
 test/engine-parity/link-temporal.test.ts	15	0
 test/engine-parity/links.test.ts	32	0
 test/engine-parity/open-loops.test.ts	4	0
+test/engine-parity/page-purges.test.ts	1	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	34	1
 test/engine-parity/persistence-declaration.test.ts	6	0

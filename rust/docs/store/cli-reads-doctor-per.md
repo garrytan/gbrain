@@ -65,7 +65,6 @@ the store gains the writer.
 | `listGitPushHoldRows()`, `listStalledCatchupRows()`, `listParkedGroupRows()` | `[]` | no effect or worktree is recorded |
 | `readStaleEmbeddingCounts()`, `listStaleEmbeddingEffects()` | zeros, `[]` | no embedding effect is recorded |
 | `listOrphanBindingRows()`, `listWorktreeIds()`, `listSourceBindingsForMovement()`, `listOwnerBindings()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no worktree, host binding or consumer |
-| `listRecentPurgeRequests()` | `[]` | the store keeps no `page_purges`, `fact_purges` or `take_purges` (see `facts/repair.rs`) |
 | `listDerivationPurgeSweeps()` | `[]` | no derivation-result sweep of a fact purge is recorded |
 | `listUnboundSourcePages()` | `[]` | a page has no `database_only_reason` |
 | `listOverwriteCandidates()` | `[]` | page versions carry no link to the request that wrote them |

@@ -133,6 +133,17 @@ counter is `M next_facts_id`.
 | `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
+| `F 0x0C source content_hash` | `PagePurgeRecord` (JSON) | One `page_purges` row (primary key `(source_id, content_hash)`). |
+
+### Page purge ledger (`facts/page_purges.rs`)
+
+`recordPagePurge` writes one `page_purges` row per content hash, as `purge_page` does in Postgres: a second write of the
+same `(source, hash)` replaces the slug and request id and stamps `purged_at` with the store clock. A source that does
+not exist is refused, as the foreign key does in Postgres, and deleting a source deletes its rows (`ON DELETE CASCADE`).
+`listRecentPurgeRequests(days, cap)` answers the distinct non-null request ids of rows purged strictly inside the window,
+in byte order, up to the cap. The store holds no `fact_purges` or `take_purges` row, so only the page ledger adds ids.
+Open: `purge_page` still writes through `executeRaw`, so on a Rust brain the ledger holds the rows
+seeded through the store only.
 
 ### Relink attempts (`facts/relink.rs`)
 

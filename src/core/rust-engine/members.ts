@@ -377,7 +377,7 @@ export const RUST_ENGINE_MEMBERS = {
   listUnboundSourcePages: 'persistence_journal',
   readWriterVersionCutoff: 'persistence_journal',
   listRecentWriterVersions: 'persistence_journal',
-  listRecentPurgeRequests: 'persistence_journal',
+  listRecentPurgeRequests: 'facts',
   listStuckWorktreeRefreshes: 'persistence_journal',
   listSourceBindingsForMovement: 'persistence_journal',
   listRunningClaimOwners: 'persistence_journal',

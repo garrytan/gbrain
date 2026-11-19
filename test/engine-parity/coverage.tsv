@@ -607,7 +607,7 @@ listManagedRoots	doctor_persistence	yes	1	no	yes	yes	serves
 listUnboundSourcePages	doctor_persistence	yes	1	no	yes	yes	serves
 readWriterVersionCutoff	doctor_persistence	yes	1	no	yes	yes	serves
 listRecentWriterVersions	doctor_persistence	yes	2	no	yes	yes	serves
-listRecentPurgeRequests	doctor_persistence	yes	1	no	yes	yes	serves
+listRecentPurgeRequests	doctor_persistence	yes	2	no	yes	yes	serves
 listStuckWorktreeRefreshes	doctor_persistence	yes	1	no	yes	yes	serves
 listSourceBindingsForMovement	doctor_persistence	yes	1	no	yes	yes	serves
 listRunningClaimOwners	doctor_persistence	yes	2	no	yes	yes	serves

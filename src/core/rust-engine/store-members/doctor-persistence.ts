@@ -3,7 +3,7 @@
  *
  * Served from the store (rust/crates/gbrain-store/src/cli_reads/doctor_persistence.rs): the reads over the request
  * journal and the counters, which the store keeps. Answered in TypeScript with no store call: the reads over a
- * relation the store has no writer for (worktrees, host bindings, consumers, effects, purge tombstones, derivation
+ * relation the store has no writer for (worktrees, host bindings, consumers, effects, derivation
  * sweeps), which hold no row on this engine, so each answers the empty state the same read gives on a PGLite brain with
  * none. rust/docs/store/cli-reads-doctor-per.md names each member and the reason.
  */
@@ -103,8 +103,12 @@ export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovemen
 export const listOwnerBindings: Member<'listOwnerBindings'> = async () => [];
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
 export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];
-/** The store keeps no page, fact or take purge request (`page_purges`, `fact_purges`, `take_purges`). */
-export const listRecentPurgeRequests: Member<'listRecentPurgeRequests'> = async () => [];
+/**
+ * The request ids of the page purges the store's `page_purges` ledger (`F 0x0C`) holds. The store keeps no `fact_purges` or
+ * `take_purges` row, so only the page ledger adds ids.
+ */
+export const listRecentPurgeRequests: Member<'listRecentPurgeRequests'> = (brain, days, cap) =>
+  storeCall({ member: 'listRecentPurgeRequests' }, () => brain.listRecentPurgeRequests(days, cap));
 /** The store records no derivation-result sweep of a fact purge. */
 export const listDerivationPurgeSweeps: Member<'listDerivationPurgeSweeps'> = async () => [];
 /** The store has no `database_only_reason` on a page, so no page was written database-only to an unbound source. */
