@@ -181,7 +181,10 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   one state. It does not enforce `READ ONLY`; a write in that transaction lands.
 - `listValidTimeIdentities` serves a caller with a reader identity or a private-readable grant: its `excludePrivate`
   policy carries them (`callerReaders`), and the `world` mark, which never reads the caller's readers, is the
-  no-reader policy (`noReaders`). Pinned by `test/engine-parity/valid-time-member-reads.test.ts`.
+  no-reader policy (`noReaders`). `pickValidTimeEdition` serves the same callers when the caller's snapshot policy is
+  the canonical one for those readers: a version that names readers is visible when one of them is in the policy's
+  identity, and a private version when the page's source is a private-readable source and the page is not a pinned
+  question. Both pinned by `test/engine-parity/valid-time-member-reads.test.ts` and `tests/valid_time.rs`.
 - The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.

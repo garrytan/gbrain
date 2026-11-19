@@ -62,4 +62,34 @@ describe('engine parity: valid-time reads for a member caller', () => {
       return out;
     },
   );
+
+  parityTest(
+    'pickValidTimeEdition marks a retained version visible when the caller may read it',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine: BrainEngine, backend) => {
+      await createSource(engine, backend, 'team');
+      await createSource(engine, backend, 'vault');
+      // Each page's version from January is closed (named readers, or private); its current edition from June is open.
+      await engine.putPage('vt/ed', note({ valid_from: '2026-01-01', readable_by: ['alice-example'] }), { sourceId: 'team' });
+      await engine.createVersion('vt/ed', { sourceId: 'team' });
+      await engine.putPage('vt/ed', note({ valid_from: '2026-06-01' }), { sourceId: 'team' });
+      await engine.putPage('vt/ed', note({ valid_from: '2026-01-01', visibility: 'private' }), { sourceId: 'vault' });
+      await engine.createVersion('vt/ed', { sourceId: 'vault' });
+      await engine.putPage('vt/ed', note({ valid_from: '2026-06-01' }), { sourceId: 'vault' });
+      const visible = async (sourceId: string) => {
+        const pageId = (await engine.getPage('vt/ed', { sourceId }))!.id;
+        const r = await engine.pickValidTimeEdition({ pageId, asOf: '2026-02-01', excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 });
+        return r ? `${r.valid_from}:${r.visible ? 'visible' : 'hidden'}` : null;
+      };
+      const out = await asEach(async () => ({ listed: await visible('team'), private: await visible('vault') }));
+      expect(out).toEqual({
+        none: { listed: '2026-01-01:hidden', private: '2026-01-01:hidden' },
+        reader: { listed: '2026-01-01:visible', private: '2026-01-01:hidden' },
+        stranger: { listed: '2026-01-01:hidden', private: '2026-01-01:hidden' },
+        granted: { listed: '2026-01-01:hidden', private: '2026-01-01:visible' },
+        readerGranted: { listed: '2026-01-01:visible', private: '2026-01-01:visible' },
+      });
+      return out;
+    },
+  );
 });

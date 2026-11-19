@@ -378,7 +378,7 @@ impl Store {
                         &v.compiled_truth,
                         &v.timeline,
                     ),
-                    visible: !version_hidden(&v.page_type, &v.frontmatter, &q.policy),
+                    visible: !version_hidden(&page, &v.page_type, &v.frontmatter, &q.policy),
                     tier: TrustTier::stored(v.trust_tier.as_deref()).as_str(),
                     segmented,
                     large: !segmented && inline_bytes(v) > q.inline_max_bytes,

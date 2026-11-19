@@ -16,7 +16,8 @@
  *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
  *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
  *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
- *    snapshot policy is not the no-caller one (the pick reports every row's visibility);
+ *    snapshot policy is neither the no-caller one nor the canonical one for its reader identity and private-readable
+ *    sources (a labelled-only, owner, audience or lineage caller; the pick reports every row's visibility);
  *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order, and over
  *    a history PGLite would have pruned (more large inline versions than it keeps, a segmented version, a long
  *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
@@ -37,7 +38,7 @@ import { validDate } from '../../valid-time.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
+import { judgeWidenedCaller, renderForStoreCaller, storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -124,10 +125,15 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   if (spec.pinOrd !== null) requireInteger(member, 'pinned ordinal', spec.pinOrd);
   requireCount(member, 'inline byte limit', spec.inlineMaxBytes);
   if (validDate(spec.asOf) !== spec.asOf) refuseMember(member, 'an as-of date that is not YYYY-MM-DD');
-  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'));
-  if (snapshotVisibleSql() !== withoutCallerAccess(snapshotVisibleSql)) {
-    refuseMember(member, 'a caller whose readers or grants widen the snapshot policy');
-  }
+  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
+  // The store judges a version by the page policy's readers: the caller's snapshot text must be the canonical one for them.
+  const readers = { identity: policy.identity ?? [], privateReadableSources: policy.privateReadableSources ?? [] };
+  const snapshotServed = judgeWidenedCaller(() => {
+    const text = snapshotVisibleSql();
+    if (text === withoutCallerAccess(snapshotVisibleSql)) return true;
+    return text === renderForStoreCaller({ ...readers, hidePrivate: true }, snapshotVisibleSql) || undefined;
+  });
+  if (!snapshotServed) refuseMember(member, 'a caller whose snapshot policy is not the canonical one for its readers');
   const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
     pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
     policy, pruneMaxBytes: PAGE_INLINE_MAX_BYTES, pruneKept: LARGE_PAGE_VERSIONS_KEPT,
