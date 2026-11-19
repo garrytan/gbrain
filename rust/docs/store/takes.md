@@ -26,7 +26,7 @@ embedding staleness check owned by core).
 | `brain.addTakesBatch(rows)` | number of rows sent. Inserts or, when one of the nine written columns is DISTINCT, updates in place (`updated_at` moves, `created_at` stays). `constraint_violation` for a `NOT NULL` column, `takes_weight_check`, the same key twice in one batch ("ON CONFLICT DO UPDATE command cannot affect row a second time") or a missing page (`takes_page_id_fkey`, raised after every row is read); `invalid_argument` for a NUL byte, an `int4` overflow or an `f32` overflow | `addTakesBatch` |
 | `brain.listTakes(filter)` | `Take[]`: page/slug/holder/kind/active/resolved/allow-list/source filters, `since_on_or_before` (`since_date <= x`, nulls drop), sort by `since_date` (NULLS LAST, `oldest_first` flips), `weight DESC` or `created_at DESC`, then `id DESC`; `limit` (100 when absent) and `offset` (a non-number, negative or non-finite offset is `invalid_argument`) | `listTakes` |
 | `brain.listActiveTakesForPages({ page_ids, allow_list })` | active takes of the pages, by page then row | `listActiveTakesForPages` |
-| `brain.searchTakes({ query, limit, allow_list, source_ids, eligible_only })` | `TakeHit[]`: active takes whose `word_similarity(query, claim) >= 0.6` (`pg_trgm` default), `score DESC, weight DESC`; `limit` 30 when absent | `searchTakes` |
+| `brain.searchTakes({ query, limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged })` | `TakeHit[]`: active takes whose `word_similarity(query, claim) >= 0.6` (`pg_trgm` default), `score DESC, weight DESC`; `limit` 30 when absent | `searchTakes` |
 | `brain.updateTake({ page_id, row_num, weight, since_date, source })` | `false` when no take; else COALESCEs the three columns, moves `updated_at`, `true`. `takes_weight_check` applies | `updateTake` |
 | `brain.supersedeTake(input)` | `{ status: 'not_found' \| 'resolved' }`, or `{ status: 'ok', old_row, new_row }` with `new_row = max(row_num) + 1` on the page; the old row turns inactive with `superseded_by = new_row`. Both rows share one timestamp; the new take keeps the old take's source | `supersedeTake` |
 | `brain.resolveTake({ page_id, row_num, resolution })` | `'not_found'`, `'resolved'` or `'ok'`. Writes only on `'ok'` with a resolution: `takes_resolution_consistency` (three-valued, as the CHECK: `correct` needs outcome not false, `incorrect` not true, `partial`/`unresolvable` null) then `takes_resolved_quality_values` | `resolveTake` |
@@ -40,7 +40,21 @@ Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of so
 whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge
 writes `needs_rederive` and `executeRaw` refuses on Rust, so that clause never hides a row here. The
 members send `eligible_only: true` for any eligibility object and the store applies the first two clauses.
-`eligibility.floor` and `eligibility.suppressFlagged` refuse with `engine_capability_missing`.
+`listTakes` and `searchTakes` also take `min_trust` (`eligibility.floor`: `trustFloorSql`, the take's stamped
+tier at or above the floor) and `suppress_flagged` (`eligibility.suppressFlagged`: `activationSuppressedSql`
+over the take's tier and its write-gate receipts), through `trust::TrustPolicy`.
+
+Trust (`takes/trust.rs`): a take record carries `trust_tier` and `write_origin` under a `trust` key, as
+PGLite's `trust_tier_stamp` trigger stamps them (`trust::stamp`, `TrustTable::Takes`). Every take write runs
+inside `Store::write`, which opens the write's trust context. An insert takes the declared tier (`unknown`
+when none) and the context's origin. An update keeps the stored pair unless `claim`, `kind` or `holder`
+changed; then the stamp lowers the tier to the write's and sets the context's origin. Each `addTakesBatch`
+row runs the insert check first, as the `BEFORE INSERT` trigger runs before `ON CONFLICT` decides, so a
+writer that declares a tier above `operator_curated` without owner confirmation is refused even when the row
+is already current. The `trust` key is omitted while the tier is `unknown` with no origin, so a record
+stored before the store kept the columns reads as the column defaults; the store format does not change.
+`Take` rows (`listTakes`, `listActiveTakesForPages`) do not carry the two columns, as `takeRowToTake` drops
+them on PGLite; `readRowTrustRows({ table: 'takes' })` reads them ([cli-reads-import.md](cli-reads-import.md)).
 
 Cascades: deleting a page (`remove_page_rows`) drops its takes, their evidence, and the evidence the page
 cites as a synthesis page. `remove_source_rows` sweeps every take and evidence row of the source; page
