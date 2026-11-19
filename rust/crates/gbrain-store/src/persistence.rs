@@ -47,7 +47,7 @@ use serde_json::{Map, Value, json};
 mod effect_scans;
 mod housekeeping;
 mod projection_queue;
-mod topology;
+pub(crate) mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
@@ -80,7 +80,7 @@ const REQUEST_STATES: &[&str] = &[
 const FOREGROUND_PRIORITY_KEY: &str = "sync.foreground_priority";
 
 /// The config row the completion counts clamped true-ups in (`TRUE_UP_CLAMP_SQL`).
-const TRUE_UP_CLAMPED_KEY: &str = "persistence.true_up.clamped";
+pub(crate) const TRUE_UP_CLAMPED_KEY: &str = "persistence.true_up.clamped";
 
 /// The `persistence_requests` columns `RequestRecord` keeps in `extra`, each with its column
 /// default. `to_row` fills every one, so a row read here has the column set Postgres returns.
@@ -131,7 +131,7 @@ pub(crate) fn fill_request_columns(row: &mut Map<String, Value>, extra: &Map<Str
 
 /// `->>`: a JSON value as text. A JSON null (or a missing key) is SQL NULL; a string is its text
 /// unquoted; anything else is its JSON text.
-fn json_text(v: Option<&Value>) -> Option<String> {
+pub(crate) fn json_text(v: Option<&Value>) -> Option<String> {
     match v? {
         Value::Null => None,
         Value::String(s) => Some(s.clone()),
@@ -140,7 +140,7 @@ fn json_text(v: Option<&Value>) -> Option<String> {
 }
 
 /// SQL `LIKE` with `%` and `_` and no escape character.
-fn sql_like(text: &str, pattern: &str) -> bool {
+pub(crate) fn sql_like(text: &str, pattern: &str) -> bool {
     fn go(t: &[char], p: &[char]) -> bool {
         match p.split_first() {
             None => t.is_empty(),
@@ -163,7 +163,7 @@ fn sync_kind(intent: &Value) -> bool {
 }
 
 /// Three-valued AND / OR / NOT (`None` is SQL NULL).
-fn and3(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+pub(crate) fn and3(a: Option<bool>, b: Option<bool>) -> Option<bool> {
     match (a, b) {
         (Some(false), _) | (_, Some(false)) => Some(false),
         (Some(true), Some(true)) => Some(true),
@@ -184,7 +184,7 @@ fn not3(a: Option<bool>) -> Option<bool> {
 }
 
 /// A timestamp stored in `extra`, in microseconds.
-fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
+pub(crate) fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
     record
         .extra
         .get(column)
@@ -192,7 +192,7 @@ fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
         .and_then(parse_iso)
 }
 
-fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
+pub(crate) fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
     record
         .extra
         .get(column)
@@ -200,11 +200,11 @@ fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
         .unwrap_or(0)
 }
 
-fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
     record.extra.get(column).is_none_or(Value::is_null)
 }
 
-fn extra_bool(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_bool(record: &RequestRecord, column: &str) -> bool {
     record
         .extra
         .get(column)
@@ -243,7 +243,7 @@ fn violation(message: impl Into<String>) -> StoreError {
 }
 
 /// Every request record, in key order. Requests are never deleted on this engine.
-fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
+pub(crate) fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
@@ -263,7 +263,7 @@ fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
 }
 
 /// The states that hold an outstanding slot (`persistence/journal.ts` `outstandingRefusal`).
-const OUTSTANDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
+pub(crate) const OUTSTANDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
 
 pub(crate) fn count_outstanding_by_source_in(
     read: &dyn KvRead,

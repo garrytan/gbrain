@@ -24,21 +24,8 @@ export const CURRENT_BINDING_SQL = `(e.worktree_id IS NULL OR EXISTS (SELECT 1 F
  * #7985: effects of a former binding form their own group (`former_binding`) naming their recorded worktree, the current
  * one, up to five request ids and the settle preview (`--retire` for a replaced source), never the bulk retry that cannot select them.
  */
-export async function readParkedGroups(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<ParkedGroup[]> {
-  const rows = await engine.executeRaw<{ source_id: string; code: string; former: FormerBinding['reason'] | null; effects: number; targets: number;
-    rule: string | null; worktree_ids: string[]; current_worktree_id: string | null; requests: string[] }>(
-    `WITH parked AS (
-       SELECT e.id, e.source_id, e.worktree_id, r.request_id, p->>'error_code' AS code, p->>'rule' AS rule,
-              CASE WHEN ${CURRENT_BINDING_SQL} THEN NULL
-                WHEN EXISTS (SELECT 1 FROM sources src WHERE src.id=e.source_id AND NOT src.archived AND src.incarnation::text=e.source_incarnation::text)
-                THEN 'binding_changed' ELSE 'source_replaced' END AS former
-         FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id CROSS JOIN LATERAL jsonb_array_elements(e.data->'parked') p
-        WHERE e.kind='git' AND e.state='failed' AND e.error_code='targets_parked' AND jsonb_typeof(e.data->'parked')='array' AND NOT (e.data ? 'settled')
-          AND ($1::text[] IS NULL OR e.source_id=ANY($1::text[])))
-     SELECT source_id, code, former, count(DISTINCT id)::int AS effects, count(*)::int AS targets, min(rule) AS rule,
-            array_agg(DISTINCT worktree_id::text) AS worktree_ids, (array_agg(DISTINCT request_id::text))[1:5] AS requests,
-            (SELECT sb.worktree_id::text FROM persistence_source_bindings sb WHERE sb.source_id=parked.source_id) AS current_worktree_id
-       FROM parked GROUP BY source_id, code, former ORDER BY source_id, code, former NULLS FIRST`, [sourceIds ?? null]);
+export async function readParkedGroups(engine: Pick<BrainEngine, 'listParkedGroupRows'>, sourceIds?: string[]): Promise<ParkedGroup[]> {
+  const rows = await engine.listParkedGroupRows(sourceIds ?? null);
   return rows.map(({ rule, former, worktree_ids, current_worktree_id, requests, ...row }) => {
     if (former) {
       const command = ['gbrain', 'sources', 'writer', 'settle-effects', row.source_id, '--parked-code', row.code, ...(former === 'source_replaced' ? ['--retire'] : []), '--dry-run'];

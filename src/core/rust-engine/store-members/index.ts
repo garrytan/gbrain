@@ -76,6 +76,7 @@ import * as importMembers from './import-members.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as doctorReads from './doctor-reads.ts';
 import * as doctorDerived from './doctor-derived.ts';
+import * as doctorPersistence from './doctor-persistence.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -127,6 +128,8 @@ export const STORE_MEMBERS = {
   ...doctorReads,
   // The second doctor set: served, answered empty where the store keeps no writer, or left out to refuse (rust/docs/store/cli-reads-doctor-derived.md).
   ...doctorDerived,
+  // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
+  ...doctorPersistence,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

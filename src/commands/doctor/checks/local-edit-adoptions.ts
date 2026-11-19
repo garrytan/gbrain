@@ -20,10 +20,7 @@ async function runLocalEditAdoptions(ctx: DoctorContext): Promise<Check[]> {
   ctx.progress.heartbeat('local_edit_adoptions');
   const checks: Check[] = [];
   try {
-    const rows = await engine.executeRaw<{ source_id: string; adoptions: number | string; paths: string[] }>(
-      `SELECT source_id, count(*)::int AS adoptions, array_agg(DISTINCT outcome->'adopted_local_edit'->>'path' ORDER BY outcome->'adopted_local_edit'->>'path') AS paths
-       FROM persistence_requests WHERE state='committed' AND operation='put_page' AND outcome ? 'adopted_local_edit'
-         AND completed_at > now() - interval '24 hours' GROUP BY source_id ORDER BY source_id`);
+    const rows = await engine.listLocalEditAdoptions();
     const sources: SourceAdoptions[] = rows.map(row => ({ source_id: row.source_id, adoptions: Number(row.adoptions), paths: row.paths.slice(0, MAX_PATHS) }));
     if (!sources.length) {
       checks.push({ name: 'local_edit_adoptions', status: 'ok', details: { sources, docs: DOCS }, message: 'No local edit was adopted in the last 24 h.' });

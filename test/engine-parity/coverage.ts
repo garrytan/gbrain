@@ -159,6 +159,19 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels', 'listRestorableAtomRetirements',
     'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations', 'listPendingGenerationMembers',
     'listOrphanGenerationCandidates', 'listOntologyFactCandidates', 'readAtomProvenanceCounts', 'readExtractRollup7d', 'listRecordedHaltReasons7d',],
+  // doctor_persistence: the persistence statements doctor checks ran through executeRaw (engine-sql/doctor-persistence.ts)
+  doctor_persistence: [
+    'listCapacityCounters', 'listOutstandingHolders', 'countPersistenceRequestRows', 'listLifetimeCounters',
+    'readAdmissionSample', 'listRunningRequestStalls', 'readLiveConsumerSummary', 'readCounterDrift',
+    'readMaxRequestSequence', 'listRefusalBreakerRows', 'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs',
+    'readPublicationRefusals', 'countParkedEffects', 'listParkedEffects', 'listGitPushHoldRows',
+    'listStalledCatchupRows', 'listParkedGroupRows', 'readStaleEmbeddingCounts', 'listStaleEmbeddingEffects',
+    'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'listManagedRoots',
+    'listUnboundSourcePages', 'readWriterVersionCutoff', 'listRecentWriterVersions', 'listRecentPurgeRequests',
+    'listStuckWorktreeRefreshes', 'listSourceBindingsForMovement', 'listRunningClaimOwners', 'listOwnerBindings',
+    'listConsumerOwners', 'listOverwriteCandidates', 'listCallerRefusalRows', 'countCompactedCallerRefusals',
+    'listLocalEditAdoptions', 'listDerivationPurgeSweeps',
+  ],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],
