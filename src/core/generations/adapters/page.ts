@@ -7,6 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
+import type { GenerationPageRowsQuery } from '../../engine-sql/generation-page-rows.ts';
 import { importFromContent } from '../../import-file.ts';
 import { parseMarkdown, serializeMarkdown } from '../../markdown.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../../page-size-policy.ts';
@@ -49,13 +50,9 @@ export function markdownItem(slug: string, content: string): ProposedItem {
     timeline: parsed.timeline, frontmatter: parsed.frontmatter, tags: parsed.tags }) };
 }
 
-/** Rows of `sourceId` matching `where` (a constant predicate over alias `p`; parameters start at $2), deleted rows included. */
-export async function readPageRows(engine: BrainEngine, sourceId: string, where: string, params: readonly unknown[]): Promise<PageRowData[]> {
-  const rows = await engine.executeRaw<PageRowData & { tags: string[] | null }>(
-    `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
-            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
-       FROM pages p WHERE p.source_id = $1 AND (${where}) ORDER BY p.slug`, [sourceId, ...params]);
-  return rows.map(row => ({ ...row, page_id: Number(row.page_id), tags: row.tags ?? [] }));
+/** The rows of `query` (engine-sql/generation-page-rows.ts), deleted rows included, by slug. */
+export async function readPageRows(engine: BrainEngine, query: GenerationPageRowsQuery): Promise<PageRowData[]> {
+  return engine.readGenerationPageRows(query);
 }
 
 export function pagePreimage(row: PageRowData): Preimage {

@@ -36,7 +36,7 @@ export const singlePageOwnerKey = (slug: string) => `page:${slug}`;
 const slugOf = (key: GenerationKey) => key.ownerKey.slice('page:'.length);
 
 async function readRow(engine: BrainEngine, sourceId: string, slug: string): Promise<PageRowData | undefined> {
-  return (await readPageRows(engine, sourceId, 'p.slug = $2', [slug]))[0];
+  return (await readPageRows(engine, { sourceId, match: 'slug', slug }))[0];
 }
 
 /** Writes the page: the live page it changes goes to page_versions first; then the derivation's tier and input edges. */

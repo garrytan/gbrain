@@ -159,8 +159,7 @@ async function projectionRows(db: BrainEngine, pageIds: readonly number[]): Prom
  */
 async function readEventItems(db: BrainEngine, key: GenerationKey, itemKeys: readonly string[], context?: ChronicleGenerationContext): Promise<Map<string, ItemRow>> {
   const depth = depthOf(key);
-  const rows = await readPageRows(db, key.sourceId, `p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND p.type='event' AND p.frontmatter->'event'->>'depth' = $3
-      AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%')`, [[...itemKeys], depth]);
+  const rows = await readPageRows(db, { sourceId: key.sourceId, match: 'chronicle', slugs: [...itemKeys], depth });
   if (!rows.length) return new Map();
   const hashes = await db.executeRaw<{ slug: string; content_hash: string | null }>('SELECT slug, content_hash FROM pages WHERE source_id=$1 AND id = ANY($2::bigint[])',
     [key.sourceId, rows.map(row => row.page_id)]);

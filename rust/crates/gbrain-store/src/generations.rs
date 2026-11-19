@@ -65,8 +65,10 @@ use std::collections::BTreeSet;
 mod activations;
 mod fence_evidence;
 mod fence_restore;
+mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
+pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
 
 const RECORD: u8 = 0x01;

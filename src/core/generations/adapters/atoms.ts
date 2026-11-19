@@ -87,8 +87,7 @@ export const atomGenerationAdapter: GenerationAdapter<AtomGenerationContext> = {
   },
   async readItems(engine, key, itemKeys, context) {
     const origin = originOf(key, context);
-    const rows = await readPageRows(engine, key.sourceId,
-      `p.type='atom' AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL AND p.frontmatter->>'${origin.field}' = $3))`, [[...itemKeys], origin.value]);
+    const rows = await readPageRows(engine, { sourceId: key.sourceId, match: 'atoms', slugs: [...itemKeys], field: origin.field, value: origin.value });
     return new Map(rows.map(row => [row.slug, pageItemRow(row, origin.value !== null && row.frontmatter?.[origin.field] === origin.value
       && row.frontmatter?.imported_from == null)]));
   },

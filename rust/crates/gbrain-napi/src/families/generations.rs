@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::generations::{
-    ActivationInput, ActivationRecordInput, GenerationKey, HeldInput, LedgerItemInput, RepairFilter,
+    ActivationInput, ActivationRecordInput, GenerationKey, GenerationPageRowsQuery, HeldInput,
+    LedgerItemInput, RepairFilter,
 };
 
 #[napi]
@@ -457,6 +458,19 @@ impl Brain {
         self.run(env, move |s| {
             let key: GenerationKey = required(key, "readLiveGenerationId key")?;
             s.read_live_generation_id(&key)
+        })
+    }
+
+    /// `readGenerationPageRows(query)`: resolves the page rows the query selects, by slug.
+    #[napi]
+    pub fn read_generation_page_rows<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query: GenerationPageRowsQuery = required(query, "readGenerationPageRows query")?;
+            s.read_generation_page_rows(&query)
         })
     }
 }

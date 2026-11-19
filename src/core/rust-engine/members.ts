@@ -584,6 +584,7 @@ export const RUST_ENGINE_MEMBERS = {
   readGenerationFenceBlocks: 'persistence_journal',
   listOwnedGenerationItems: 'persistence_journal',
   readLiveGenerationId: 'persistence_journal',
+  readGenerationPageRows: 'persistence_journal',
   hasPersistenceTable: 'persistence_journal',
   listManagedRootBindings: 'persistence_journal',
   readGraduationGateRow: 'persistence_journal',

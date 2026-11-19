@@ -3778,6 +3778,61 @@
         ],
         "flagOnScopes": []
       },
+      "readGenerationPageRows#atoms-source-path": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readGenerationPageRows#atoms-source-slug": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readGenerationPageRows#chronicle": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readGenerationPageRows#slug": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readGenerationPageRows#synthesis": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readGenerationRestored#default": {
         "flagOffLanes": [
           "pool"
@@ -6115,6 +6170,7 @@
         "readGenerationActivationState": "none",
         "readGenerationFenceBlocks": "none",
         "readGenerationItemsByIds": "none",
+        "readGenerationPageRows": "none",
         "readGenerationRestored": "none",
         "readGenerationValve": "none",
         "readGlobalMaintenanceDeaths": "none",

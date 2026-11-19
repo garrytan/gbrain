@@ -13,3 +13,4 @@
 
 ### Changed
 - On Postgres, an empty `gbrain repair generations` preview (nothing to apply) taken before this upgrade, for several sources whose ids sort differently by language rules and by bytes, may refuse its apply as `preview_changed` after it. Preview again and use the new hash; the refusal says so.
+- A Rust brain now reads the derived pages its generations check (the dream summary, `think` synthesis and drift report pages, a transcript's synthesis outputs, atoms and Life Chronicle events) as Postgres and PGLite do. Before, this read sent raw SQL and stopped on a Rust brain. Writing those pages still stops on a Rust brain: the trust and taint writes of a derived page and retiring one still send raw SQL.

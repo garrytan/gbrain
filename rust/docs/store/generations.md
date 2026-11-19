@@ -87,6 +87,13 @@ fact records. Ids read back as integers. Every ledger read's statement orders it
 (`COLLATE "C"`), and the store answers in the same order (key order, id order). As in the statement, the move does not name the page for the moving rows: a claimed row of another page of the
 source moves too (fence-evidence.ts passes the page's own rows).
 
+The page row read (`generations/page_rows.rs`, `readGenerationPageRows`) adds no keys: it scans the page records of one
+source (`P source \0 slug`), deleted pages included, and keeps those the query's `match` selects. `frontmatter->>'k'`
+reads as Postgres reads it: a string is itself, JSON null or a missing key is NULL, any other value is its jsonb text,
+so `dream_generated: true` matches `'true'`. Rows come in slug byte order and tags sort by bytes; Postgres orders both
+by the database collation, and the adapters key the rows by slug. `segmented` is true when both body columns are
+NULL, as `body_storage = 'segmented'` is on PGLite.
+
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all five tables (`cascade.rs`).
 

@@ -19,6 +19,7 @@ import {
   type SourceIncarnationListRow, type UnmatchedGenerationRow,
 } from '../../engine-sql/generation-repair.ts';
 import type { FenceVersionBodyRow } from '../../engine-sql/generation-fence-evidence.ts';
+import { checkGenerationPageRowsQuery, type GenerationPageRow, type GenerationPageRowsQuery } from '../../engine-sql/generation-page-rows.ts';
 import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from '../../engine-sql/generation-fence-restore.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -192,3 +193,9 @@ export const listOwnedGenerationItems: StoreMember<[generationIds: readonly numb
 /** The id of the live generation of `key`, or null. */
 export const readLiveGenerationId: StoreMember<[key: GenerationRowKey], { id: number | string } | null> = async (brain, key) =>
   storeCall({ member: 'readLiveGenerationId', sourceId: key.sourceId }, () => brain.readLiveGenerationId(key));
+
+/** The page rows a page generation adapter reads, deleted rows included, by slug (`generations/page_rows.rs`). */
+export const readGenerationPageRows: StoreMember<[query: GenerationPageRowsQuery], GenerationPageRow[]> = async (brain, query) => {
+  checkGenerationPageRowsQuery(query);
+  return storeCall({ member: 'readGenerationPageRows', sourceId: query.sourceId }, () => brain.readGenerationPageRows(query));
+};

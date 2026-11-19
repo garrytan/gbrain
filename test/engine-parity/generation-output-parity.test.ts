@@ -5,7 +5,8 @@
  * JSON `null` held context, proposal or fence as a value (not SQL NULL), an activation id that is not a uuid, a
  * `--since` that is not an ISO instant with a zone, the fact before-states the fact rows adapter records and puts back,
  * the consolidation adapter's restored check and `tie` hold clear, the take rows adapter's before-states, and the
- * extracted facts adapter's page check, own-row read, next row number and retire.
+ * extracted facts adapter's page check, own-row read, next row number and retire, and the page rows the single-page and
+ * synthesis adapters read (a single-page publish with no derivation, end to end).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each case gives the same answer on PGLite, Postgres (en_US collation) and the Rust engine. Source ids
@@ -34,6 +35,8 @@ import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite } from '../../src/core/persistence/journal.ts';
 import { takePreimages } from '../../src/core/generations/adapters/take-rows.ts';
 import { EXTRACTED_FACTS_KIND, extractedFactsAdapter } from '../../src/core/generations/adapters/extracted-facts.ts';
+import { DREAM_SUMMARY_KIND, dreamSummaryAdapter, publishSinglePage, singlePageOwnerKey } from '../../src/core/generations/adapters/single-page.ts';
+import { SYNTHESIS_KIND, synthesisAdapter, synthesisOwnerKey } from '../../src/core/generations/adapters/synthesis.ts';
 import { CONSOLIDATION_KIND, clearConsolidationTies, consolidationOwnerKey, consolidationRestored, factPreimages, restoreFactRow }
   from '../../src/core/generations/adapters/fact-rows.ts';
 
@@ -450,6 +453,60 @@ describe('engine parity: generation ledger output', () => {
     expect(answers).toEqual({ livePage: input, absentPage: null, items: [false, true], own: ['Own live 4 live', 'Own gone - expired'], backstop: 1,
       published: ['Own live 4 live', 'Own gone - expired', 'Added 8 live'], retired: ['Own live 4 expired', 'Own gone - expired', 'Added 8 live'],
       otherSource: null, wildcard: 'a source prefix must not hold %, _ or \\: "cli:%"', fraction: 'fact ids must be whole numbers: 1.5' });
+    return answers;
+  });
+  parityTest('the single-page and synthesis adapters read their page rows, deleted rows included, and a single-page publish versions the page it changes', {
+    methods: ['readGenerationPageRows', 'readLiveGenerationRow', 'readPageSnapshot', 'createVersion', 'putPage', 'addTag', 'getPage', 'getVersions',
+      'softDeletePage', 'transaction', 'activateGenerationRows'],
+  }, async (engine) => {
+    // Slugs of lowercase letters after one shared prefix, so byte order and en_US order agree.
+    const slug = 'dream/summary';
+    const page = (body: string) => ({ type: 'note', title: 'Summary', compiled_truth: body, frontmatter: { dream: 'summary' }, tags: ['zeta', 'alpha'] });
+    const first = await publishSinglePage(engine, { kind: DREAM_SUMMARY_KIND, sourceId: 'default', slug, page: page('one'), expectedRevision: null });
+    const revision = (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))!.revision;
+    const second = await publishSinglePage(engine, { kind: DREAM_SUMMARY_KIND, sourceId: 'default', slug, page: page('two'), expectedRevision: revision });
+    const stale = await outcome(() => publishSinglePage(engine, { kind: DREAM_SUMMARY_KIND, sourceId: 'default', slug, page: page('three'), expectedRevision: revision }),
+      /its input changed after the producer read it/);
+    const singleKey = { kind: DREAM_SUMMARY_KIND, sourceId: 'default', ownerKey: singlePageOwnerKey(slug) };
+    const single = [...(await dreamSummaryAdapter.readItems(engine, singleKey, [slug])).values()];
+    const stored = await engine.getPage(slug);
+    const versions = (await engine.getVersions(slug)).map(v => v.compiled_truth);
+
+    // Synthesis: the recorded key of the live generation, a live output of the locator, a listed key, and outputs it skips.
+    const dream = (rawSource: string, generated: unknown) => ({ type: 'note' as const, title: 'out', compiled_truth: 'o', timeline: '',
+      frontmatter: { raw_source: rawSource, dream_generated: generated } });
+    await engine.putPage('synth/recorded', dream('old.md', true));
+    await engine.putPage('synth/current', dream('loc.md', true));
+    await engine.putPage('synth/listed', dream('loc.md', 'yes'));
+    await engine.putPage('synth/textual', dream('loc.md', 'true'));
+    await engine.putPage('synth/elsewhere', dream('other.md', true));
+    await engine.putPage('synth/gone', dream('loc.md', true));
+    await engine.softDeletePage('synth/gone');
+    const synthKey = { kind: SYNTHESIS_KIND, sourceId: 'default', ownerKey: synthesisOwnerKey('root/transcript.md') };
+    await engine.transaction(tx => tx.activateGenerationRows(synthKey, null, activation(1, 'synth-1', '{}'), ledger(['synth/recorded'])));
+    const context = { locator: 'loc.md', transcriptInput: { pin: 'p', size: 1 } };
+    const items = async (keys: string[], locator: string | null) =>
+      [...(await synthesisAdapter.readItems(engine, synthKey, keys, { ...context, locator: locator as string })).values()]
+        .map(item => `${item.key} ${item.live ? 'live' : 'deleted'} ${item.owned ? 'owned' : 'not-owned'}`);
+    const answers: Record<string, unknown> = {
+      first: first.outcome.state, second: second.outcome.state, pageIds: first.pageId === second.pageId && typeof first.pageId === 'number', stale,
+      single: single.map(item => `${item.key} ${item.live} ${item.owned} ${item.segmented} ${item.identityHash.length}`),
+      preimage: single[0]!.preimage().json,
+      stored: { body: stored?.compiled_truth, frontmatter: stored?.frontmatter }, versions,
+      synthesis: await items(['synth/listed', 'synth/gone'], 'loc.md'),
+      noLocator: await items([], null),
+      absent: [...(await dreamSummaryAdapter.readItems(engine, { ...singleKey, ownerKey: singlePageOwnerKey('dream/absent') }, [])).keys()],
+    };
+    expect(answers).toEqual({
+      first: 'published', second: 'published', pageIds: true, stale: 'its input changed after the producer read it',
+      single: ['dream/summary true true false 64'],
+      preimage: { slug, type: 'note', title: 'Summary', compiled_truth: 'two', timeline: '', frontmatter: { dream: 'summary' }, tags: ['alpha', 'zeta'], deleted: false },
+      stored: { body: 'two', frontmatter: { dream: 'summary' } }, versions: ['one'],
+      synthesis: ['synth/current live owned', 'synth/gone deleted owned', 'synth/listed live not-owned', 'synth/recorded live owned',
+        'synth/textual live not-owned'],
+      noLocator: ['synth/recorded live owned'],
+      absent: [],
+    });
     return answers;
   });
 });

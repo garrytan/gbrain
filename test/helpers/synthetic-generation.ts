@@ -6,7 +6,7 @@
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { GenerationAdapter, GenerationKey, InputState, ProposedItem } from '../../src/core/generations/contract.ts';
 import { registerGenerationAdapter } from '../../src/core/generations/adapters/index.ts';
-import { importPageItem, markdownItem, pageItemRow, pageVersionEvidence, preimageIdentity, preimageMarkdown, readPageRows } from '../../src/core/generations/adapters/page.ts';
+import { importPageItem, markdownItem, pageItemRow, pageVersionEvidence, preimageIdentity, preimageMarkdown, type PageRowData } from '../../src/core/generations/adapters/page.ts';
 import { retireDerivedPagesInTransaction } from '../../src/core/persistence/derived-retirement-hold.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
 
@@ -17,6 +17,15 @@ export function setSyntheticInput(key: GenerationKey, input: InputState | null):
   if (input) inputs.set(`${key.sourceId}:${key.ownerKey}`, input); else inputs.delete(`${key.sourceId}:${key.ownerKey}`);
 }
 
+/** The synthetic kind's own page row read (a test-only where text; the real adapters use engine.readGenerationPageRows). */
+async function readSyntheticRows(engine: BrainEngine, sourceId: string, where: string, params: readonly unknown[]): Promise<PageRowData[]> {
+  const rows = await engine.executeRaw<PageRowData & { tags: string[] | null }>(
+    `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
+            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
+       FROM pages p WHERE p.source_id = $1 AND (${where}) ORDER BY p.slug`, [sourceId, ...params]);
+  return rows.map(row => ({ ...row, page_id: Number(row.page_id), tags: row.tags ?? [] }));
+}
+
 export const syntheticAdapter: GenerationAdapter<undefined> = {
   kind: SYNTHETIC_KIND,
   retiredBy: 'extract-atoms',
@@ -24,7 +33,7 @@ export const syntheticAdapter: GenerationAdapter<undefined> = {
   lockKeys: (key, itemKeys) => itemKeys.map(slug => ({ sourceId: key.sourceId, slug })),
   readInput: async (_engine, key) => inputs.get(`${key.sourceId}:${key.ownerKey}`) ?? null,
   async readItems(engine, key, itemKeys) {
-    const rows = await readPageRows(engine, key.sourceId, `p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND p.frontmatter->>'synthetic_owner' = $3)`, [[...itemKeys], key.ownerKey]);
+    const rows = await readSyntheticRows(engine, key.sourceId, `p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND p.frontmatter->>'synthetic_owner' = $3)`, [[...itemKeys], key.ownerKey]);
     return new Map(rows.map(row => [row.slug, pageItemRow(row, row.frontmatter?.synthetic_owner === key.ownerKey)]));
   },
   legacyEvidence: (engine, key, rows) => pageVersionEvidence(engine, key.sourceId, rows, "v.frontmatter->>'synthetic_producer' = 'synthetic'"),
