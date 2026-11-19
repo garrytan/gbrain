@@ -1,6 +1,6 @@
 file	equal	stopped
 test/engine-parity/alias-fanout-reads.test.ts	9	0
-test/engine-parity/alias-trust.test.ts	5	0
+test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/chunk-reads.test.ts	9	0
 test/engine-parity/chunks.test.ts	13	1
 test/engine-parity/cli-capabilities.test.ts	2	0
@@ -38,7 +38,7 @@ test/engine-parity/keyword-visibility.test.ts	5	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-reads.test.ts	9	0
 test/engine-parity/link-temporal.test.ts	13	0
-test/engine-parity/links.test.ts	30	0
+test/engine-parity/links.test.ts	31	0
 test/engine-parity/open-loops.test.ts	4	0
 test/engine-parity/pages.test.ts	24	1
 test/engine-parity/persistence-declaration.test.ts	6	0

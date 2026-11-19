@@ -79,7 +79,7 @@ getPage	pages	yes	82	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	324	yes	yes	yes	serves
+putPage	pages	yes	326	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -219,8 +219,8 @@ relationalFanout	links	yes	4	yes	yes	yes	serves
 relationalChainHop	links	yes	4	no	yes	yes	serves
 getBacklinkCounts	links	yes	4	no	yes	yes	serves
 getAdjacencyBoosts	links	yes	4	no	yes	yes	serves
-getContentFlagsByPageIds	links	yes	3	no	yes	yes	serves
-getUnverifiedExtractionPageIds	links	yes	3	no	yes	yes	serves
+getContentFlagsByPageIds	links	yes	4	no	yes	yes	serves
+getUnverifiedExtractionPageIds	links	yes	4	no	yes	yes	serves
 getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	4	no	yes	yes	serves
 getSalienceScores	links	yes	5	yes	yes	yes	serves
@@ -331,9 +331,9 @@ updateSlug	sync_aliases	yes	13	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
-resolveAliases	sync_aliases	yes	10	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	16	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
+resolveAliases	sync_aliases	yes	11	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	17	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	12	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
