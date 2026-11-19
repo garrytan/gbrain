@@ -131,5 +131,36 @@ for (const kind of testBackends()) {
       await setMemberEmail(engine, 'owner-example', OWNER_MAIL);
       expect((await ownerIdentity(engine)).identifiers).toEqual([{ kind: 'member_email', value: OWNER_MAIL }]);
     });
+
+    test('an account stored with capitals still proves the page that spells it the same way', async () => {
+      await googleSource(engine, 'mail-a', 'Alice@Example.com');
+      await person(engine, 'people/alice-example', 'Alice Example', { email: 'Alice@Example.com' });
+      const id = await ownerIdentity(engine);
+      expect(id.identifiers).toEqual([{ kind: 'google_account', value: OWNER_MAIL, source_id: 'mail-a' }]);
+      expect(id.entity).toEqual({ slug: 'people/alice-example', source_id: 'default', basis: 'identifier_page' });
+    });
+
+    test('pages titled like the owner email never crowd out the pages that carry it', async () => {
+      await googleSource(engine, 'mail-a', OWNER_MAIL);
+      for (let i = 0; i < 55; i++) await person(engine, `a-title/flood-${String(i).padStart(2, '0')}`, OWNER_MAIL);
+      await person(engine, 'people/alice-example', 'Alice Example', { email: OWNER_MAIL });
+      await person(engine, 'people/alice-work', 'Alice Work', { email: OWNER_MAIL });
+      const id = await ownerIdentity(engine);
+      expect(id.conflicts).toEqual([{ kind: 'several_pages', pages: [{ slug: 'people/alice-example', source_id: 'default' }, { slug: 'people/alice-work', source_id: 'default' }] }]);
+    }, 60_000);
+
+    test('an unloadable schema pack is reported, not answered silently', async () => {
+      await googleSource(engine, 'mail-a', OWNER_MAIL);
+      await person(engine, 'people/alice-example', 'Alice Example', { email: OWNER_MAIL });
+      await engine.setConfig('schema_pack', 'unavailable-fixture');
+      try {
+        const id = await ownerIdentity(engine);
+        expect(id.degraded).toBe('person_types_unavailable');
+        expect(id.entity.basis).toBe('reserved_page');
+      } finally {
+        await engine.executeRaw("DELETE FROM config WHERE key = 'schema_pack'");
+      }
+      expect((await ownerIdentity(engine)).degraded).toBeUndefined();
+    });
   });
 }

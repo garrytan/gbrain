@@ -78,5 +78,18 @@ for (const kind of testBackends()) {
       expect(c.details).toMatchObject({ several_pages: true, entity_basis: 'reserved_page' });
       expect(c.message).toContain('several person pages');
     });
+
+    test('an unloadable schema pack warns instead of reporting ok', async () => {
+      await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('mail-a', 'mail-a', jsonb_build_object('kind', 'google', 'g_account', $1::text))", [OWNER_MAIL]);
+      await engine.setConfig('schema_pack', 'unavailable-fixture');
+      try {
+        const c = await ownerIdentityCheck(engine);
+        expect(c.status).toBe('warn');
+        expect(c.details).toMatchObject({ person_types_unavailable: true });
+        expect(c.message).toContain('person types could not be loaded');
+      } finally {
+        await engine.executeRaw("DELETE FROM config WHERE key = 'schema_pack'");
+      }
+    });
   });
 }

@@ -4908,6 +4908,7 @@
               "identifier_shared": 0,
               "identifiers": 0,
               "owner_member_set": false,
+              "person_types_unavailable": false,
               "several_pages": false,
               "unbound_google_sources": 0
             },
@@ -10484,6 +10485,7 @@
               "identifier_shared": 0,
               "identifiers": 0,
               "owner_member_set": false,
+              "person_types_unavailable": false,
               "several_pages": false,
               "unbound_google_sources": 0
             },

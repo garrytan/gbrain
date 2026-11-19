@@ -43,6 +43,8 @@ export interface ExactIdentityStatementOpts {
   types: EntityTypeFilter;
   /** Untrusted caller: quarantined and (with excludePrivate) private pages are never candidates. */
   remote?: { excludePrivate: boolean };
+  /** Probe only the email arms (the owner identity proves a page by its email alone, so title matches never take the limit). */
+  emailsOnly?: boolean;
   limit: number;
 }
 
@@ -73,7 +75,7 @@ function emailArms(sourceIds: string[], emails: string[]): SqlFragment[] {
 
 export function exactIdentityStatement(opts: ExactIdentityStatementOpts): { text: string; params: unknown[] } {
   const { probes, sourceIds } = opts;
-  const arms: SqlFragment[] = [sqlFragment`SELECT p.id FROM pages p
+  const arms: SqlFragment[] = opts.emailsOnly ? [] : [sqlFragment`SELECT p.id FROM pages p
        WHERE p.source_id = ANY(${sourceIds}::text[]) AND lower(p.title) = ANY(${probes.titleKeys}::text[] || lower(${probes.titleRaw}::text))`];
   if (probes.basenames.length) {
     arms.push(sqlFragment`SELECT p.id FROM pages p

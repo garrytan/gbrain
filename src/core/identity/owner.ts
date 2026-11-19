@@ -38,6 +38,8 @@ export interface OwnerIdentity {
   entity: OwnerEntity;
   conflicts: OwnerIdentityConflict[];
   skipped_sources: SkippedSource[];
+  /** Set when the schema pack's person types could not be loaded, so no person page was searched and the entity is the fallback. */
+  degraded?: 'person_types_unavailable';
 }
 
 const LOCAL_OWNER = '';
@@ -64,7 +66,13 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
 
   const claims = new Map<string, Set<string>>();
   const claim = (value: string, who: string) => (claims.get(value) ?? claims.set(value, new Set()).get(value)!).add(who);
-  for (const m of people) { const e = email(m.email); if (e) claim(e, m.id); }
+  const spellings = new Map<string, Set<string>>();
+  const spelled = (raw: unknown) => {
+    const e = email(raw);
+    if (e) (spellings.get(e) ?? spellings.set(e, new Set([e])).get(e)!).add((raw as string).trim());
+    return e;
+  };
+  for (const m of people) { const e = spelled(m.email); if (e) claim(e, m.id); }
 
   const sources = await engine.executeRaw<{ id: string; account: string | null; members: string[] | null }>(
     `SELECT s.id, s.config->>'g_account' AS account,
@@ -75,7 +83,7 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
   const skipped: SkippedSource[] = [];
   const googleOf = new Map<string, string[]>();
   for (const s of sources) {
-    const account = email(s.account);
+    const account = spelled(s.account);
     if (!account) continue;
     const bound = s.members ?? [];
     const owners = bound.length ? bound : onlyOwner ? [key] : [];
@@ -110,12 +118,14 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
     : { slug: RESERVED_OWNER_SLUG, source_id: null, basis: 'reserved_page' };
   const emails = [...new Set(identifiers.filter(i => i.kind !== 'member_link').map(i => i.value))].sort();
   let entity = fallback;
+  let degraded: OwnerIdentity['degraded'];
   if (emails.length) {
     const sourceIds = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
-    const types = (await resolvePersonTypes(engine, sourceIds)).filter;
+    const resolved = await resolvePersonTypes(engine, sourceIds);
+    if (resolved.status === 'pack_unavailable') degraded = 'person_types_unavailable';
     const { text, params } = exactIdentityStatement({
-      probes: { titleKeys: [], titleRaw: emails[0]!, basenames: [], aliasKeys: [], emails },
-      sourceIds, types, limit: CANDIDATE_CAP,
+      probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: [...new Set(emails.flatMap(e => [...(spellings.get(e) ?? [e])]))].sort() },
+      sourceIds, types: resolved.filter, emailsOnly: true, limit: CANDIDATE_CAP,
     });
     const wanted = new Set(emails);
     const pages = (await engine.executeRaw<ExactIdentityRow>(text, params))
@@ -124,5 +134,5 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
     if (pages.length === 1) entity = { ...pages[0]!, basis: 'identifier_page' };
     else if (pages.length > 1) conflicts.push({ kind: 'several_pages', pages });
   }
-  return { member, identifiers, entity, conflicts, skipped_sources: skipped };
+  return { member, identifiers, entity, conflicts, skipped_sources: skipped, ...(degraded ? { degraded } : {}) };
 }
