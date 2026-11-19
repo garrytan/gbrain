@@ -192,6 +192,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
   facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
     'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint', 'readFactEntitySlugById', 'readSupersessionReplacement', 'linkSupersededFact', 'listLivePageTitles', 'listPageAliasNames', 'listCaptureDuplicateCandidates', 'computeFactFingerprints', 'listClaimConflictPairs', 'countClaimConflictPairs', 'listUnarchivedSourceIds'],
 
+  // facts_conversation: conversation fact publication and relink
+  facts_conversation: ['readNewestConversationFactId', 'findSpentConversationRequest', 'listConversationBatchRequests', 'readStoredConversationEntry', 'readPrincipalCounters', 'countConversationPagesToExtract', 'listMergedEntityAliases', 'moveConversationSourceWindows', 'stampConversationSourceWindows', 'countActiveConversationFacts', 'readConversationSlotValueHash', 'deleteConversationOutcomeRows', 'listPurgeTombstoneMatches',
+    'maxConversationRowNum', 'listHeldFactSlots', 'countPageConversationFacts', 'countConversationWindowFacts', 'countConversationFactsOutsideWindows', 'clearConversationPageFacts', 'findSameClaimFenceRow', 'findOntologyTwin', 'readRelinkSource', 'factRelinkAttemptsTableExists', 'readReextractOutcomeRow', 'listUnbackedConversationRows', 'listUnlinkedConversationRows', 'listEntityHintPages', 'lockPageById', 'listClearedRelinkedFacts', 'countEmbeddedFactsAmong'],
+
   // trust_tier_reads: stamped-tier reads of core memory, the trust scan, belief history, page history and valid time
   trust_tier_reads: ['listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
     'listVersionTrustTiers', 'listVersionReasonWriters', 'listValidTimeIdentities', 'pickValidTimeEdition',

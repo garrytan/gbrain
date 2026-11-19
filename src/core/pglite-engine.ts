@@ -196,6 +196,8 @@ import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as filesOpsImpl from './engine-sql/files-ops.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
+import * as factsConversationImpl from './engine-sql/facts-conversation.ts';
+import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
@@ -1632,6 +1634,38 @@ export class PGLiteEngine implements BrainEngine {
   listClaimConflictPairs(sourceId: string, auditSources: string[], cap: number) { return factsTrustImpl.listClaimConflictPairs(this.rawRead, sourceId, auditSources, cap); }
   countClaimConflictPairs(sourceId: string, auditSources: string[]) { return factsTrustImpl.countClaimConflictPairs(this.rawRead, sourceId, auditSources); }
   listUnarchivedSourceIds() { return factsTrustImpl.listUnarchivedSourceIds(this.rawRead); }
+
+  // Facts statements, conversation fact publication and relink (engine-sql/facts-conversation.ts).
+  readNewestConversationFactId(sourceId: string, slug: string) { return factsConversationImpl.readNewestConversationFactId(this.rawRead, sourceId, slug); }
+  findSpentConversationRequest(principalKind: string, principalId: string, requestId: string, digest: string) { return factsConversationImpl.findSpentConversationRequest(this.rawRead, principalKind, principalId, requestId, digest); }
+  listConversationBatchRequests(principalKind: string, principalId: string, sourceId: string, anchorSlug: string) { return factsConversationImpl.listConversationBatchRequests(this.rawRead, principalKind, principalId, sourceId, anchorSlug); }
+  readStoredConversationEntry(id: string, generation: string) { return factsConversationImpl.readStoredConversationEntry(this.rawRead, id, generation); }
+  readPrincipalCounters(key: string) { return factsConversationImpl.readPrincipalCounters(this.rawRead, key); }
+  countConversationPagesToExtract(sourceId: string, pageTypes: string[], force: boolean) { return factsConversationImpl.countConversationPagesToExtract(this.rawRead, sourceId, pageTypes, force); }
+  listMergedEntityAliases(sourceId: string, slugs: string[]) { return factsConversationImpl.listMergedEntityAliases(this.rawRead, sourceId, slugs); }
+  moveConversationSourceWindows(sourceId: string, slug: string, moves: ReadonlyArray<{ from: string; to: FactsConversationSql.SourceWindow }>) { return factsConversationImpl.moveConversationSourceWindows(this.rawRead, sourceId, slug, moves); }
+  stampConversationSourceWindows(pairs: ReadonlyArray<{ id: number; w: FactsConversationSql.SourceWindow | null }>) { return factsConversationImpl.stampConversationSourceWindows(this.rawRead, pairs); }
+  countActiveConversationFacts(sourceId: string, slug: string) { return factsConversationImpl.countActiveConversationFacts(this.rawRead, sourceId, slug); }
+  readConversationSlotValueHash(sourceId: string, entitySlug: string, dimension: string, validFrom: Date | string) { return factsConversationImpl.readConversationSlotValueHash(this.rawRead, sourceId, entitySlug, dimension, validFrom); }
+  deleteConversationOutcomeRows(sourceId: string, slug: string) { return factsConversationImpl.deleteConversationOutcomeRows(this.rawRead, sourceId, slug); }
+  listPurgeTombstoneMatches(sourceId: string, claims: { facts: string[]; visibilities: string[]; entitySlugs: Array<string | null>; sources: Array<string | null> }) { return factsConversationImpl.listPurgeTombstoneMatches(this.rawRead, sourceId, claims); }
+  maxConversationRowNum(sourceId: string, slug: string) { return factsConversationImpl.maxConversationRowNum(this.rawRead, sourceId, slug); }
+  listHeldFactSlots(sourceId: string, slug: string) { return factsConversationImpl.listHeldFactSlots(this.rawRead, sourceId, slug); }
+  countPageConversationFacts(sourceId: string, slug: string) { return factsConversationImpl.countPageConversationFacts(this.rawRead, sourceId, slug); }
+  countConversationWindowFacts(sourceId: string, slug: string, key: string) { return factsConversationImpl.countConversationWindowFacts(this.rawRead, sourceId, slug, key); }
+  countConversationFactsOutsideWindows(sourceId: string, slug: string, keys: readonly string[]) { return factsConversationImpl.countConversationFactsOutsideWindows(this.rawRead, sourceId, slug, keys); }
+  clearConversationPageFacts(sourceId: string, slug: string, windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }) { return factsConversationImpl.clearConversationPageFacts(this.rawRead, sourceId, slug, windows); }
+  findSameClaimFenceRow(sourceId: string, slug: string, fact: string, source: string | null) { return factsConversationImpl.findSameClaimFenceRow(this.rawRead, sourceId, slug, fact, source); }
+  findOntologyTwin(sourceId: string, slug: string, factId: number) { return factsConversationImpl.findOntologyTwin(this.rawRead, sourceId, slug, factId); }
+  readRelinkSource(sourceId: string) { return factsConversationImpl.readRelinkSource(this.rawRead, sourceId); }
+  factRelinkAttemptsTableExists() { return factsConversationImpl.factRelinkAttemptsTableExists(this.rawRead); }
+  readReextractOutcomeRow(sourceId: string, slug: string) { return factsConversationImpl.readReextractOutcomeRow(this.rawRead, sourceId, slug); }
+  listUnbackedConversationRows(sourceId: string, slugs: string[]) { return factsConversationImpl.listUnbackedConversationRows(this.rawRead, sourceId, slugs); }
+  listUnlinkedConversationRows(sourceId: string, slugs: string[]) { return factsConversationImpl.listUnlinkedConversationRows(this.rawRead, sourceId, slugs); }
+  listEntityHintPages(sourceId: string, slugs: string[]) { return factsConversationImpl.listEntityHintPages(this.rawRead, sourceId, slugs); }
+  lockPageById(pageId: number) { return factsConversationImpl.lockPageById(this.rawRead, pageId); }
+  listClearedRelinkedFacts(sourceId: string, slug: string) { return factsConversationImpl.listClearedRelinkedFacts(this.rawRead, sourceId, slug); }
+  countEmbeddedFactsAmong(sourceId: string, ids: number[]) { return factsConversationImpl.countEmbeddedFactsAmong(this.rawRead, sourceId, ids); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }
