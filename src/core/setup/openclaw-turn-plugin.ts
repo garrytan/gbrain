@@ -18,11 +18,23 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { bunSpawnSync } from '../spawn.ts';
-import { openclawStateDir, renderBrainFirstTurnRule, type BrainFirstAccess } from './brain-first.ts';
+import { openclawConfigPath, openclawStateDir, parseJson5ish, renderBrainFirstTurnRule, type BrainFirstAccess } from './brain-first.ts';
 
 export const OPENCLAW_TURN_PLUGIN_ID = 'gbrain-turn-rule';
 
-export interface OpenclawTurnPluginOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip'; path: string; detail: string; commands?: string[] }
+export interface OpenclawTurnPluginOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip'; path: string; detail: string; commands?: string[]; unchanged?: true }
+
+/** Whether OpenClaw's config already loads the plugin at dir, enables it, lets its plugin policy (plugins.enabled, allow, deny) load it and allows it conversation access (so no CLI call is needed). */
+export function openclawPluginRegistered(id: string, dir: string): boolean {
+  try {
+    const cfg = parseJson5ish(readFileSync(openclawConfigPath(), 'utf8')) as { plugins?: { enabled?: unknown; allow?: unknown; deny?: unknown; load?: { paths?: unknown }; entries?: Record<string, { enabled?: unknown; hooks?: { allowConversationAccess?: unknown } }> } } | undefined;
+    const plugins = cfg?.plugins;
+    const entry = plugins?.entries?.[id];
+    const paths = Array.isArray(plugins?.load?.paths) ? plugins!.load!.paths as unknown[] : [];
+    const allowed = plugins?.enabled !== false && !(Array.isArray(plugins?.deny) && plugins!.deny.includes(id)) && !(Array.isArray(plugins?.allow) && plugins!.allow.length > 0 && !plugins!.allow.includes(id));
+    return allowed && !!entry && entry.enabled !== false && entry.hooks?.allowConversationAccess === true && paths.includes(dir);
+  } catch { return false; }
+}
 
 export function openclawTurnPluginDir(): string {
   return join(openclawStateDir(), 'gbrain', OPENCLAW_TURN_PLUGIN_ID);
@@ -119,6 +131,7 @@ export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun:
   } catch (e) {
     return { action: 'print', path: dir, detail: `the plugin could not be written to ${dir} (${(e as Error).message})` };
   }
+  if (!changed && openclawPluginRegistered(OPENCLAW_TURN_PLUGIN_ID, dir)) return { action: 'keep', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} (before_prompt_build) at ${dir}, already installed, enabled and allowed in OpenClaw, so no openclaw command ran`, unchanged: true };
   if (!bin) return { action: 'print', path: dir, detail: `plugin written to ${dir}; no openclaw on PATH, so run these on the OpenClaw host, then restart the gateway`, commands: commands.map(shown) };
   const run = opts.run ?? defaultRun;
   for (const [i, argv] of commands.entries()) {
