@@ -20,6 +20,7 @@ pub mod journal;
 pub mod keys;
 pub mod kv;
 pub mod links;
+mod owner_only;
 mod page_columns;
 mod page_index;
 mod page_projection;
