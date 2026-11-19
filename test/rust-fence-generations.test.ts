@@ -5,7 +5,7 @@
  *  - Protects: publishFenceGeneration, clearFenceHold and fenceHoldEntries send the statements they always sent, byte
  *    for byte, now that each is an engine member (engine-sql/fence-holds.ts). The generation key lock still makes two
  *    writers of one key run one after the other, so only one of them sees and clears a held row; on a Rust brain the
- *    store's writer gate does the same, and a fence publish there reaches past fence.ts to the generation read.
+ *    store's writer gate does the same, and a fence publish there runs to the end without a raw statement.
  *  - Regression: the four statements went through `executeRaw`, which the Rust engine refuses, so a fence publish (the
  *    projection a forget, a put_page or a sync runs), a readable fence clearing its hold, and the held list's file read
  *    all stopped at fence.ts on a Rust brain.
@@ -14,8 +14,7 @@
  *  - Seam: the engine's own executeRaw (PGLite) or the transaction's (Rust) is wrapped to record each statement; nothing
  *    else is replaced. Postgres runs when DATABASE_URL is set (testBackends). The Rust half needs the addon: skipped
  *    without it unless GBRAIN_TEST_RUST_ADDON_REQUIRED=1.
- *  - Not covered: a whole fence publish on Rust. It stops at publish.ts readLiveGeneration (`executeRaw`), since the
- *    store holds no `derived_generations` rows; the Rust two-writer case therefore sees no held row on either writer.
+ *  - Not covered: the generation ledger statements of publish.ts, which test/rust-derived-generations.test.ts pins.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -26,6 +25,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { clearFenceHold, fenceHoldEntries, fenceOwnerKey, fenceReadOf, publishFenceGeneration, FACT_FENCE_KIND, FENCE_GENERATION_KINDS, type FenceGenerationKind } from '../src/core/generations/fence.ts';
 import { generationKeyLock } from '../src/core/generations/publish.ts';
+import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { openRustBrain, removeBrainDir, rustArmAddonPath } from './engine-parity/rust-arm.ts';
 
@@ -135,6 +135,7 @@ describe('fence generation statements', () => {
   });
 
   postgresRun('Postgres: the advisory lock holds the second writer until the first commits', async () => {
+    assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!);
     const engine = new PostgresEngine();
     await engine.connect({ database_url: process.env.DATABASE_URL!, poolSize: 4 } as never);
     try {
@@ -147,30 +148,28 @@ describe('fence generation statements', () => {
     }
   }, 60_000);
 
-  rustRun('Rust: the store write is the lock, and a fence publish reaches past fence.ts', async () => {
+  rustRun('Rust: the store write is the lock, and a fence publish runs without a raw statement', async () => {
     const brain = await openRustBrain();
     const engine = brain.engine as unknown as BrainEngine;
     try {
-      // The writer gate runs the two writers one after the other; the store holds no held row, so neither sees one.
-      expect(await twoWriters(engine)).toEqual({ counts: [0, 0], events: ['A-locked', 'A-done', 'B-locked', 'B-done'] });
       await engine.putPage(SLUG, { type: 'person', title: 'Alice', compiled_truth: 'body' });
+      // The page is live, so a deleted-page retire has no proof: the store keeps one held `no_proof` row.
+      expect(await engine.transaction(tx => publishFenceGeneration(tx, { ...KEY, slug: SLUG, read: fenceReadOf({ body: null, timeline: null }), items: [],
+        retire: [{ key: 'fact:1', identityHash: 'x' }], originGone: true, writer: 'deleted_page' }))).toMatchObject({ state: 'held', reason: 'no_proof' });
+      // The writer gate runs the two writers one after the other: only the first sees and clears the held row.
+      expect(await twoWriters(engine)).toEqual({ counts: [1, 0], events: ['A-locked', 'A-done', 'B-locked', 'B-done'] });
       const reached: string[] = [];
-      let refusal: unknown = null;
-      try {
-        await engine.transaction(async tx => {
-          const lock = tx.lockGenerationKey.bind(tx);
-          const raw = tx.executeRaw.bind(tx);
-          tx.lockGenerationKey = (async (k: string) => { reached.push('lockGenerationKey'); return lock(k); }) as typeof tx.lockGenerationKey;
-          tx.executeRaw = (async (sql: string, params?: unknown[]) => { reached.push(sql); return raw(sql, params); }) as typeof tx.executeRaw;
-          return publishFenceGeneration(tx, { ...KEY, slug: SLUG, read: fenceReadOf({ body: '## Facts block', timeline: null }),
-            items: [{ key: 'row:1:abc', identityHash: 'abc' }], retire: [], writer: 'projection' });
-        });
-      } catch (e) { refusal = e; }
-      // The lock answers; the first raw statement is publish.ts readLiveGeneration's, which the engine refuses.
-      expect(reached[0]).toBe('lockGenerationKey');
-      expect(reached[1]).toContain('derived_generations');
-      expect(reached.some(s => s.includes('pg_advisory_xact_lock'))).toBe(false);
-      expect((refusal as { code?: string } | null)?.code ?? String(refusal)).toMatch(/raw_sql|capability/);
+      const outcome = await engine.transaction(async tx => {
+        const lock = tx.lockGenerationKey.bind(tx);
+        const raw = tx.executeRaw.bind(tx);
+        tx.lockGenerationKey = (async (k: string) => { reached.push('lockGenerationKey'); return lock(k); }) as typeof tx.lockGenerationKey;
+        tx.executeRaw = (async (sql: string, params?: unknown[]) => { reached.push(sql); return raw(sql, params); }) as typeof tx.executeRaw;
+        return publishFenceGeneration(tx, { ...KEY, slug: SLUG, read: fenceReadOf({ body: '## Facts block', timeline: null }),
+          items: [{ key: 'row:1:abc', identityHash: 'abc' }], retire: [], writer: 'projection' });
+      });
+      expect(outcome).toEqual({ state: 'published', generation: 1 });
+      expect(reached).toEqual(['lockGenerationKey']);
+      expect(await fenceHoldEntries(engine, ['default'])).toEqual([]);
     } finally {
       await engine.disconnect().catch(() => {});
       removeBrainDir(brain.dir);

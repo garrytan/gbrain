@@ -68,19 +68,15 @@ export const generationKeyLock = (key: GenerationKey) => `gbrain:generation:${ke
 export async function lockGeneration(tx: BrainEngine, adapter: GenerationAdapter<unknown>, key: GenerationKey, itemKeys: readonly string[]): Promise<void> {
   const pages = adapter.lockKeys(key, itemKeys).sort((a, b) => a.slug.localeCompare(b.slug));
   if (pages.length) await tx.lockPageKeys(pages);
-  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [generationKeyLock(key)]);
+  await tx.lockGenerationKey(generationKeyLock(key));
 }
 
 /** The live generation of `key` with its owned items, or null. */
 export async function readLiveGeneration(db: BrainEngine, key: GenerationKey): Promise<LiveGeneration | null> {
-  const [row] = await db.executeRaw<{ id: number; generation: number; input_pin: string | null; input_size: number | null; locator: string | null }>(
-    `SELECT id, generation, input_pin, input_size, locator FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
-    [key.sourceId, key.kind, key.ownerKey]);
+  const row = await db.readLiveGenerationRow(key);
   if (!row) return null;
-  const items = await db.executeRaw<{ item_key: string; identity_hash: string }>(
-    `SELECT item_key, identity_hash FROM derived_generation_items WHERE generation_id=$1 AND action IN ('published','kept','adopted','revived')`, [row.id]);
-  return { id: Number(row.id), generation: Number(row.generation), inputPin: row.input_pin, inputSize: row.input_size === null ? null : Number(row.input_size),
-    items: new Map(items.map(item => [item.item_key, item.identity_hash])), locator: row.locator };
+  return { id: row.id, generation: row.generation, inputPin: row.input_pin, inputSize: row.input_size,
+    items: new Map(row.items.map(item => [item.item_key, item.identity_hash])), locator: row.locator };
 }
 
 export function generationFenced(reason: 'stale_generation' | 'pin_moved', key: GenerationKey, detail: string) {
@@ -97,24 +93,11 @@ export async function activateGeneration(tx: BrainEngine, key: GenerationKey, li
   activationId?: string; locator?: string | null;
 }, items: readonly LedgerItem[]): Promise<{ id: number; generation: number }> {
   const generation = (live?.generation ?? 0) + 1;
-  if (live) await tx.executeRaw(`UPDATE derived_generations SET state='superseded', updated_at=now() WHERE id=$1 AND state='live'`, [live.id]);
-  const [created] = await tx.executeRaw<{ id: number }>(
-    `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, run_id, operation_id, input_pin, input_size, completeness, item_set_hash, restore_of,
-       activation_id, locator)
-     VALUES ($1,$2,$3,$4,'live',$5,$6,$7,$8,$9::text::jsonb,$10,$11,$12,$13) RETURNING id`,
-    [key.sourceId, key.kind, key.ownerKey, generation, row.runId ?? null, row.operationId, row.input?.pin ?? null, row.input?.size ?? null,
-      JSON.stringify(row.completeness), row.setHash, row.restoreOf ?? null, row.activationId ?? null, row.locator ?? live?.locator ?? null]);
-  const id = Number(created!.id);
-  if (live) await tx.executeRaw('UPDATE derived_generations SET superseded_by=$1 WHERE id=$2', [id, live.id]);
-  if (items.length) {
-    await tx.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage, preimage_bytes, pending)
-      SELECT $1, i.item_key, i.identity_hash, i.action, i.preimage, i.preimage_bytes, i.pending
-      FROM jsonb_to_recordset($2::text::jsonb) AS i(item_key text, identity_hash text, action text, preimage jsonb, preimage_bytes integer, pending boolean)`,
-      [id, JSON.stringify(items.map(item => ({ item_key: item.key, identity_hash: item.identityHash, action: item.action, preimage: item.preimage?.json ?? null,
-        preimage_bytes: item.preimage?.bytes ?? null, pending: item.pending === true })))]);
-  }
-  await tx.executeRaw(`WITH held AS (DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' RETURNING 1)
-    DELETE FROM derived_generation_attempts WHERE source_id=$1 AND kind=$2 AND owner_key=$3`, [key.sourceId, key.kind, key.ownerKey]);
+  const id = await tx.activateGenerationRows(key, live?.id ?? null, { generation, runId: row.runId ?? null, operationId: row.operationId,
+    inputPin: row.input?.pin ?? null, inputSize: row.input?.size ?? null, completeness: JSON.stringify(row.completeness), setHash: row.setHash,
+    restoreOf: row.restoreOf ?? null, activationId: row.activationId ?? null, locator: row.locator ?? live?.locator ?? null },
+  items.map(item => ({ item_key: item.key, identity_hash: item.identityHash, action: item.action, preimage: item.preimage?.json ?? null,
+    preimage_bytes: item.preimage?.bytes ?? null, pending: item.pending === true })));
   return { id, generation };
 }
 
@@ -143,21 +126,11 @@ export const MAX_GENERATION_ATTEMPTS = 3;
 export async function recordHeld(tx: BrainEngine, key: GenerationKey, config: GenerationsConfig, request: PublishRequest<unknown>, setHash: string,
   reason: HeldReason, context: Record<string, unknown>): Promise<PublishOutcome> {
   const holdId = holdIdFor(key, request.input?.pin ?? null, config, setHash, reason);
-  const [existing] = await tx.executeRaw<{ id: number; hold_id: string }>(
-    `SELECT id, hold_id FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held'`, [key.sourceId, key.kind, key.ownerKey]);
-  if (existing?.hold_id === holdId) {
-    await tx.executeRaw('UPDATE derived_generations SET attempts=attempts+1, updated_at=now() WHERE id=$1', [existing.id]);
-    return { state: 'held', reason, holdId, context };
-  }
-  if (existing) await tx.executeRaw('DELETE FROM derived_generations WHERE id=$1', [existing.id]);
   const proposal = request.items.map(item => ({ key: item.key, content: item.content, identityHash: item.identityHash }));
   const bytes = jsonBytes(proposal);
-  await tx.executeRaw(
-    `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, run_id, operation_id, hold_id, input_pin, input_size, item_set_hash,
-       held_reason, held_context, proposal, proposal_bytes, attempts)
-     VALUES ($1,$2,$3,0,'held',$4,$5,$6,$7,$8,$9,$10,$11::text::jsonb,$12::text::jsonb,$13,1)`,
-    [key.sourceId, key.kind, key.ownerKey, request.runId ?? null, `held:${holdId}`, holdId, request.input?.pin ?? null, request.input?.size ?? null, setHash,
-      reason, JSON.stringify({ ...context, partial: request.partial === true }), bytes <= HELD_PROPOSAL_MAX_BYTES ? JSON.stringify(proposal) : null, bytes]);
+  await tx.recordHeldGenerationRow(key, { holdId, runId: request.runId ?? null, inputPin: request.input?.pin ?? null, inputSize: request.input?.size ?? null,
+    setHash, reason, context: JSON.stringify({ ...context, partial: request.partial === true }),
+    proposal: bytes <= HELD_PROPOSAL_MAX_BYTES ? JSON.stringify(proposal) : null, proposalBytes: bytes });
   return { state: 'held', reason, holdId, context };
 }
 
