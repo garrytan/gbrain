@@ -183,6 +183,7 @@ test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
+test/forget-one-id-9738.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/function-search-path-upgrade-parity.test.ts
 test/g4-forget-fence-edit.test.ts
@@ -446,6 +447,7 @@ test/page-embedding-lease.serial.test.ts
 test/page-history-guards-gbra286.test.ts
 test/page-prepare-shared-origin-6517.test.ts
 test/page-purge-batch-sweep-6884.test.ts
+test/page-purge-claim-sweep-9743.test.ts
 test/page-purge-journal-timeout-6511.test.ts
 test/page-spend-reservation.test.ts
 test/page-state-engine.test.ts
@@ -599,6 +601,7 @@ test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-name-stores-9068.test.ts
+test/purge-pending-not-failed-9742.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
