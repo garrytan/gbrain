@@ -4076,6 +4076,8 @@ export interface BrainEngine {
   upsertWriteGateHold(input: TrustWriteGateSql.WriteGateHoldRowInput): Promise<number>;
   /** Holds, highest id first. */
   listWriteGateHoldRows(opts: TrustWriteGateSql.WriteGateHoldListOpts): Promise<TrustWriteGateSql.WriteGateHoldRow[]>;
+  /** The owner's write-gate allow rules as stored, by id: active ones only unless `includeRemoved`, in the given sources (all when none). */
+  listTrustAllowRuleRows(opts?: TrustWriteGateSql.TrustAllowRuleListOpts): Promise<Array<Record<string, unknown>>>;
   /** One hold by id, any status. */
   getWriteGateHoldRow(id: number): Promise<TrustWriteGateSql.WriteGateHoldRow | null>;
   /** Mark a held row released or dropped; false when it does not exist or was already decided. */

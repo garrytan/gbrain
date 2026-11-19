@@ -140,6 +140,10 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
 | `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
 
+`listTrustAllowRuleRows` (the owner's allow rules, `trust_allow_rules`) answers `[]` without a store call: the store
+keeps no allow rule, because `trust allow` writes one through `executeRaw`, which the Rust engine refuses. So
+`trust review` and the write gate's allow check read an empty rule set on Rust instead of a refusal.
+
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
 `page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the
 eligibility SQL and fence overlay, the trust reads that join facts or takes, the `to_regclass` checks in

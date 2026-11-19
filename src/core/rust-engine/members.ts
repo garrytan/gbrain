@@ -488,6 +488,7 @@ export const RUST_ENGINE_MEMBERS = {
   deleteStaleWriteGateReceipts: 'facts',
   upsertWriteGateHold: 'facts',
   listWriteGateHoldRows: 'facts',
+  listTrustAllowRuleRows: 'facts',
   getWriteGateHoldRow: 'facts',
   decideWriteGateHold: 'facts',
   // trust: the trust decision queue (engine-sql/trust-proposals.ts)
