@@ -139,7 +139,7 @@ export function storePrivacyPolicy(
   }
   const text = normalizeConceptInputs(rendered());
   for (const form of FACT_FORMS) {
-    const baseline = withoutCallerAccess(() => form.sql('facts'));
+    const baseline = renderForStoreCaller({}, () => form.sql('facts'));
     if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
   }
   if (opts.callerReaders) {
@@ -147,8 +147,7 @@ export function storePrivacyPolicy(
     const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
     for (const form of FACT_FORMS) {
-      const canonical = withoutCallerAccess(() =>
-        withCallerAccess({ ...readers, hidePrivate: true }, () => form.sql('facts')));
+      const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => form.sql('facts'));
       if (text !== normalizeConceptInputs(canonical)) continue;
       const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
       const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
@@ -166,7 +165,7 @@ export function storePrivacyPolicy(
  */
 export function storeFloorPolicy(member: string): StorePrivacyPolicy {
   const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
-  const baseline = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
+  const baseline = renderForStoreCaller({}, () => remoteProvenanceFloorSql('facts'));
   if (text === normalizeConceptInputs(baseline)) return { ...factPolicyFlags(baseline), entityPrivacy: false, provenanceOnly: true };
   refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant or owner read changes it');
 }

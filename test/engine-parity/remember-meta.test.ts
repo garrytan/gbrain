@@ -13,6 +13,9 @@
  *    context (`applyTransactionSettings` inside `transaction`). No typed write records a write-gate receipt or a
  *    derivation input, so the flagged and derivation arms are compared only in their empty answer.
  *    Fact and page ids differ between arms: rows are named by text or slug.
+ *  - The hook's own fact read (listFactsSince with excludePrivate) runs under the MCP caller's record, which carries
+ *    the schema version its request read; the Rust policy match rendered its reference text without that version, so
+ *    the read refused ("excludePrivate for a caller whose member pages, grants or lineage widen the policy").
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -20,6 +23,8 @@ import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { activationVerdicts } from '../../src/core/eligibility/activation.ts';
 import { factsFromQuotedPages, quoteFacts } from '../../src/core/search/transcript-quote.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -103,5 +108,24 @@ describe('engine parity: the remember _meta hook reads', () => {
     expect(trusted).toEqual(fromPages);
     expect(untrusted).toEqual(['Agent remembered', 'Backstop from a chat page', 'Backstop from a note', 'Fence row on a chat page', 'Fence row on a note']);
     return { fromPages, trusted, untrusted };
+  });
+
+  parityTest('listFactsSince and listFactsBySession hide a fact held on a private page from a remote caller whose record carries the schema version its request read', {
+    methods: ['putPage', 'insertFacts', 'listFactsSince', 'listFactsBySession'],
+  }, async (engine) => {
+    const REMOTE_POLICY = { privacyRelaxed: false, restricted: false, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, schemaVersion: LATEST_SCHEMA_VERSION };
+    const REMOTE = { identity: [], hidePrivate: true, restricted: false, remotePolicy: REMOTE_POLICY };
+    await engine.putPage('notes/open', { type: 'note', title: 'Open', compiled_truth: 'x' });
+    await engine.putPage('notes/private', { type: 'note', title: 'Private', compiled_truth: 'x', frontmatter: { visibility: 'private' } });
+    for (const [fact, slug] of [['Open fact', 'notes/open'], ['Private fact', 'notes/private']] as const) {
+      await engine.insertFacts([{ row_num: 1, source_markdown_slug: slug, fact, source: 'fence', source_session: 'session-a',
+        entity_slug: 'people/alice', visibility: 'world', valid_from: day(1) }], { source_id: SRC });
+    }
+    const opts = { activeOnly: true, limit: 10, excludePrivate: true, fingerprint: true };
+    const since = await withCallerAccess(REMOTE, () => engine.listFactsSince(SRC, new Date(0), opts));
+    const session = await withCallerAccess(REMOTE, () => engine.listFactsBySession(SRC, 'session-a', opts));
+    const out = { since: since.map(f => f.fact).sort(), session: session.map(f => f.fact).sort() };
+    expect(out).toEqual({ since: ['Open fact'], session: ['Open fact'] });
+    return out;
   });
 });
