@@ -510,6 +510,11 @@ export class PostgresEngine implements BrainEngine {
     return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
+  /** A caller access read: this engine's executeRaw (a statement fault a test injects reaches it), or `preparationRead` under a read deadline. */
+  private callerAccessRead<T>(fn: (exec: accessControlImpl.MemberLookupRead) => Promise<T>): Promise<T> {
+    return this._pageTransaction || readDeadline() === undefined ? fn(this) : this.preparationRead(fn);
+  }
+
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
   private jitOffRead<T>(callback: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
     return this.readTransaction(tx => withSearchJitOff(tx, this._pageTransaction, () => callback(tx)));
@@ -1277,9 +1282,10 @@ export class PostgresEngine implements BrainEngine {
   listRetiredDeactivations() { return connectGateImpl.listRetiredDeactivations(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw')); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
-  // The member lookup runs through this engine's executeRaw, as access/caller.ts liveIdentity did.
-  readLiveMember(via: MemberBindingVia, key: string) { return accessControlImpl.readLiveMember(this, via, key); }
-  readFolderAccess(readers: readonly string[]) { return accessControlImpl.readFolderAccess(this, readers); }
+  // The member lookup and the folder access read run through this engine's executeRaw, as access/caller.ts did; under a
+  // preparer's read deadline they run as the other typed preparation reads do (preparationRead), ending at the deadline.
+  readLiveMember(via: MemberBindingVia, key: string) { return this.callerAccessRead(exec => accessControlImpl.readLiveMember(exec, via, key)); }
+  readFolderAccess(readers: readonly string[]) { return this.callerAccessRead(exec => accessControlImpl.readFolderAccess(exec, readers)); }
   listAppliedPolicyRevisions() { return this.preparationRead(exec => accessControlImpl.listAppliedPolicyRevisions(unscopedExecutor(exec, 'access: applied revision read ran unscoped through executeRaw'))); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }

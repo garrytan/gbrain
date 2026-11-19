@@ -1977,6 +1977,7 @@
           "private applyForwardReferenceBootstrap",
           "private autocommitSql",
           "private batchRetry",
+          "private callerAccessRead",
           "private checkoutGauge",
           "private chunkRead",
           "private cliReads",

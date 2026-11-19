@@ -708,6 +708,7 @@
         "batchLoadEmotionalInputs",
         "batchRetry",
         "bindPageOrigin",
+        "callerAccessRead",
         "cancelJobs",
         "chunkRead",
         "claimHousekeepingTurn",

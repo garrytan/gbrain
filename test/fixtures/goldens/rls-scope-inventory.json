@@ -4656,6 +4656,7 @@
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
         "bindPageOrigin": "none",
+        "callerAccessRead": "none",
         "cancelJobs": "none",
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",

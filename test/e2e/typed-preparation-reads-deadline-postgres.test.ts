@@ -12,6 +12,8 @@
  * - while another session holds `pages` ACCESS EXCLUSIVE, the lookup ends as `preparation_deadline`
  *   at the budget, and no statement of it is left running on the server;
  * - without a deadline the same read answers as before.
+ * The caller access reads (readLiveMember, readFolderAccess) keep the same bound while another session holds their
+ * table ACCESS EXCLUSIVE.
  * Fails when a typed preparation read goes back to the unbounded pool path.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -85,5 +87,55 @@ describe.skipIf(!hasDatabase())('typed preparation reads keep the preparation de
         await holder.end();
       }
     }, 30_000);
+  }
+});
+
+const callerReads = [
+  ['readLiveMember', 'access_members', 'FROM access_members m', (e: PostgresEngine) => e.readLiveMember('member', 'alice-example')],
+  ['readFolderAccess', 'access_pending_coverage', 'FROM access_pending_coverage', (e: PostgresEngine) => e.readFolderAccess(['member:alice-example'])],
+] as const;
+
+describe.skipIf(!hasDatabase())('caller access reads keep the preparation deadline (Postgres)', () => {
+  for (const [name, table, mark, run] of callerReads) {
+    test(`${name}: without a deadline it answers as before`, async () => {
+      await run(boundedReads(engine!, startClaimPhase()) as PostgresEngine);
+    });
+
+    for (const [view, opts] of views) {
+      test(`${view}: an expired budget refuses ${name} before it is sent`, async () => {
+        const reads = boundedReads(engine!, startClaimPhase(Date.now() - 2_000, undefined, 1_000), opts) as PostgresEngine;
+        const error = await run(reads).then(() => null, (e: unknown) => e);
+        expect(error).toBeInstanceOf(PreparationDeadlineError);
+        expect((error as PreparationDeadlineError).sqlstate).toBeNull();
+      });
+
+      test(`${view}: ${name} blocked on ${table} ends at the budget and leaves nothing on the server`, async () => {
+        const holder = postgres(databaseUrl, { max: 2, prepare: false, onnotice: () => {} });
+        const dropped = Promise.withResolvers<void>();
+        const acquired = Promise.withResolvers<void>();
+        const tx = holder.begin(async sql => { await sql.unsafe(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`); acquired.resolve(); await dropped.promise; })
+          .catch(error => { acquired.reject(error); });
+        try {
+          await acquired.promise;
+          const budgetMs = 500;
+          const started = Date.now();
+          const reads = boundedReads(engine!, startClaimPhase(started, undefined, budgetMs), opts) as PostgresEngine;
+          const release = setTimeout(() => dropped.resolve(), 6_000);
+          const error = await run(reads).then(() => null, (e: unknown) => e);
+          clearTimeout(release);
+          expect(error).toBeInstanceOf(PreparationDeadlineError);
+          expect((error as PreparationDeadlineError).code).toBe('preparation_deadline');
+          expect(Date.now() - started).toBeLessThan(budgetMs + 3_000);
+          const active = await holder.unsafe(
+            `SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='active' AND query LIKE $1`,
+            [`%${mark}%`]);
+          expect(Array.from(active)).toEqual([]);
+        } finally {
+          dropped.resolve();
+          await tx;
+          await holder.end();
+        }
+      }, 30_000);
+    }
   }
 });
