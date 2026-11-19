@@ -19,11 +19,15 @@ import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persist
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
+import type { GitHoldRecordsQuery, GitHoldReportInputs } from '../../engine-sql/sync-hold-reads.ts';
+import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
+import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
+import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember, requireTextColumn } from './common.ts';
 
 /** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
 export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
@@ -72,6 +76,44 @@ export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: 
 /** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
 export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
 
+/** No hold rows exist on this engine (see readHeldPageRows), so no source has a hold record. */
+export const readGitHoldRecords: StoreMember<[opts?: GitHoldRecordsQuery], Array<{ record: never }>> = async () => [];
+
+/** No retry request exists on this engine: `gbrain sources retry-held` writes it through caller raw SQL, which refuses. */
+export const readGitHoldRetryRequest: StoreMember<[fingerprint: string], null> = async () => null;
+
+/**
+ * No hold summary exists on this engine (see readHeldPageRows). The mirror flag is the text of the source's
+ * `mirror_read_only` config key, as `config->>'mirror_read_only'` reads it; null when unset or the source is absent.
+ */
+export const readGitHoldReportInputs: StoreMember<[sourceId: string, fingerprint: string], GitHoldReportInputs> = async (brain, sourceId) => {
+  const source: SourceStateRow | null = await storeCall({ member: 'readGitHoldReportInputs', sourceId }, () => brain.readSourceState(sourceId));
+  const flag = source?.config?.mirror_read_only;
+  return { summary: null, mirror: flag === undefined || flag === null ? null : typeof flag === 'string' ? flag : JSON.stringify(flag) };
+};
+
+
+/** The source row's sync point (getSource) and the journal's outstanding requests of its current incarnation. */
+export const readWriteWatermarkRow: StoreMember<[sourceId: string], WriteWatermarkRow> = async (brain, sourceId) => {
+  const member = 'readWriteWatermarkRow';
+  const source: SourceDetailRow | null = await storeCall({ member, sourceId }, () => brain.getSource(sourceId));
+  const state: SourceStateRow | null = source ? await storeCall({ member, sourceId }, () => brain.readSourceState(sourceId)) : null;
+  const journal = await storeCall({ member, sourceId }, () => brain.readRequestWatermark(sourceId, state?.incarnation ?? null)) as Pick<WriteWatermarkRow, 'pending_min' | 'pending_count' | 'pending_since' | 'newest_sequence'>;
+  return { last_commit: source?.last_commit ?? null, last_sync_at: source?.last_sync_at ?? null, ...journal };
+};
+
+/** This engine keeps no host bindings, so the checkout is the source's own path. */
+export const readSourceCheckoutRoot: StoreMember<[sourceId: string, hostId: string | null], SourceCheckoutRoot | null> = async (brain, sourceId) => {
+  const state: SourceStateRow | null = await storeCall({ member: 'readSourceCheckoutRoot', sourceId }, () => brain.readSourceState(sourceId));
+  return state ? { incarnation: state.incarnation, root: state.local_path } : null;
+};
+
+/** The store holds one vector column, so `column` is the text column; it keeps no embedding budget rows, so `held` is 0. */
+export const readUnembeddedPageSummary: StoreMember<[sourceId: string, column: string], UnembeddedPageSummary> = async (brain, sourceId) => {
+  await requireTextColumn(brain, 'readUnembeddedPageSummary');
+  const row: UnembeddedPageSummary = await storeCall({ member: 'readUnembeddedPageSummary', sourceId }, () => brain.readUnembeddedPageSummary(sourceId));
+  return { ...row, oldest: row.oldest == null ? null : new Date(String(row.oldest)) };
+};
 
 /** The request a principal admitted under `requestId`, or null. */
 export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =

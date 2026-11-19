@@ -1025,12 +1025,12 @@ pub(crate) fn today(now_us: i64) -> String {
 // Multiranges
 // ---------------------------------------------------------------------------------------------
 
-type DateRange = (Option<String>, Option<String>);
+pub(crate) type DateRange = (Option<String>, Option<String>);
 /// One referrer of a group, before ordering: effective date (us), source id, slug, page id, page type.
 type ReferrerGroupEntry = (i64, String, String, u64, String);
 
 /// Parses a `datemultirange` literal of half-open ranges (`[a,b)`, `(,b)`, `[a,)`, `(,)`).
-fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
+pub(crate) fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
     let bad = || invalid(format!("malformed multirange literal: \"{text}\""));
     let inner = text
         .trim()

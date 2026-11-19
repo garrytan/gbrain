@@ -33,6 +33,7 @@
 
 use crate::Store;
 use crate::chunks::read_chunks;
+use crate::env::iso;
 use crate::error::{INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
@@ -49,6 +50,9 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
+mod edge_filter;
+use edge_filter::edge_passes;
+pub use edge_filter::{DuringWindow, EdgeTemporalPolicy};
 pub(crate) mod link_temporal;
 pub use link_temporal::{
     ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
@@ -203,6 +207,8 @@ pub struct FanoutOptions {
     pub depth: u32,
     pub include_mentions: bool,
     pub limit: usize,
+    /// `temporal` with the walk's `excludePrivate`: the relationship filter on every step edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
 }
 
 /// `ChainHopOpts`, the part the store reads. `neighborCap` arrives clamped to 1..=1000.
@@ -222,6 +228,9 @@ pub struct ChainHopOptions {
     pub object_types: Vec<String>,
     pub degree_link_types: Vec<String>,
     pub neighbor_cap: usize,
+    /// `temporal` with the hop's `excludePrivate`: the relationship filter on every step and
+    /// degree edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
 }
 
 /// `DerivedLinkOrigin` without the refused `snapshot`.
@@ -358,7 +367,7 @@ impl<'a> Pages<'a> {
 }
 
 /// `rankingLinkSql`: the link may feed a ranking signal.
-fn ranks(link: &LinkRecord) -> bool {
+pub(crate) fn ranks(link: &LinkRecord) -> bool {
     !NON_RANKING_LINK_TYPES.contains(&link.link_type.as_str())
 }
 
@@ -1253,6 +1262,7 @@ impl Store {
                 edges: Vec::new(),
             });
         }
+        let today = iso(self.env.now_micros())[..10].to_string();
         let mut nodes: HashMap<u64, FanoutNode> = HashMap::new();
         let mut incident: HashMap<u64, Vec<LinkRecord>> = HashMap::new();
         while let Some(row) = stack.pop() {
@@ -1308,6 +1318,11 @@ impl Store {
                     || link_types
                         .as_ref()
                         .is_some_and(|t| !t.contains(link.link_type.as_str()))
+                {
+                    continue;
+                }
+                if let Some(temporal) = &options.temporal
+                    && !edge_passes(&*read, &link, temporal, &today)?
                 {
                     continue;
                 }
@@ -1397,6 +1412,13 @@ impl Store {
             suppress_flagged: options.suppress_flagged,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
+        let today = iso(self.env.now_micros())[..10].to_string();
+        let live = |link: &LinkRecord| -> Result<bool> {
+            match &options.temporal {
+                Some(temporal) => edge_passes(&*read, link, temporal, &today),
+                None => Ok(true),
+            }
+        };
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
         let frontier: BTreeSet<u64> = frontier.iter().copied().collect();
         let toward_object = options.toward == "object";
@@ -1420,7 +1442,8 @@ impl Store {
                 ) else {
                     continue;
                 };
-                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? {
+                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? || !live(&link)?
+                {
                     continue;
                 }
                 let forward = has(&options.subject_types, &lf.page_type)
@@ -1512,6 +1535,7 @@ impl Store {
                     || !has(&options.degree_link_types, &link.link_type)
                     || !not_mentions(&link)
                     || !ranks(&link)
+                    || !live(&link)?
                 {
                     continue;
                 }

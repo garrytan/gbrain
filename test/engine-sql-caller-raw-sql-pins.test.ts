@@ -14,7 +14,11 @@
 import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
+import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
+import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
+import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { planManualClient } from '../src/core/oauth-provider.ts';
@@ -29,6 +33,7 @@ import { OAUTH_TOKEN_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { hashToken } from '../src/core/utils.ts';
 import { activationSuppressedSql, pageEligibleSql } from '../src/core/eligibility/sql.ts';
 import { quarantineFilterFragment } from '../src/core/quarantine.ts';
+import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -904,6 +909,193 @@ const PINS: Pin[] = [
                 state = CASE WHEN state = 'complete' AND $2::int > 0 THEN 'pending' ELSE state END
           WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`],
   },
+  {
+    from: 'src/core/entities/resolve.ts:162 tryOrgDirVariant',
+    case: { method: 'readLiveSlugs', variant: 'default', run: e => e.readLiveSlugs('default', ['orgs/acme', 'organizations/acme']) },
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])'],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:360 findExactBasenameCandidates',
+    case: { method: 'readLiveSlugs', variant: 'limit_2', run: e => e.readLiveSlugs('default', ['people/alice-example', 'companies/alice-example'], { limit: 2 }) },
+    texts: [`SELECT slug FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
+        LIMIT 2`],
+  },
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+  ] as const).map(([privacy, predicate]): Pin => ({
+    from: `src/core/entities/resolve.ts:478 resolveStrictEntityReference live (privacy ${privacy})`,
+    case: { method: 'readLivePageTypes', variant: privacy, run: e => e.readLivePageTypes('default', ['people/alice-example'], privacy) },
+    texts: () => [`SELECT p.slug, p.type FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${predicate()}`],
+  })),
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+  ] as const).flatMap(([privacy, predicate]): Pin[] => [
+    {
+      from: `src/core/entities/resolve.ts:519 resolveStrictEntityReference same name (privacy ${privacy})`,
+      case: { method: 'readTrigramCandidates', variant: `same_name_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'same_name', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
+      texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
+          WHERE p.source_id = $1 AND p.deleted_at IS NULL ${predicate()} AND NOT ${retiredPageSql('p')}
+            AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
+          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+          LIMIT 5`],
+    },
+    {
+      from: `src/core/entities/resolve.ts:567 entityReferenceCandidates near (privacy ${privacy})`,
+      case: { method: 'readTrigramCandidates', variant: `near_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'near', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
+      texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} ${predicate()}
+        AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
+      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+      LIMIT 20`],
+    },
+  ]),
+  {
+    from: 'src/core/entities/resolve.ts:857 tryFuzzyMatch',
+    case: { method: 'readTrigramCandidates', variant: 'fuzzy', run: e => e.readTrigramCandidates('default', { arm: 'fuzzy', titleLc: 'alice example', slugFragment: 'alice-example' }) },
+    texts: () => [`SELECT slug, title, type,
+         GREATEST(
+           similarity(lower(title), $2),
+           similarity(slug, $3)
+         ) AS score
+       FROM pages
+       WHERE source_id = $1
+         AND deleted_at IS NULL
+         AND NOT ${retiredPageSql('pages')}
+         AND (
+           lower(title) % $2
+           OR slug ILIKE '%' || $3 || '%'
+         )
+       ORDER BY score DESC, slug ASC
+       LIMIT 5`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:686 findPrefixCandidates',
+    case: { method: 'readPrefixCandidates', variant: 'patterns', run: e => e.readPrefixCandidates('default', { patterns: ['people/alice', 'people/alice-%'] }) },
+    texts: () => [`SELECT p.slug,
+              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
+               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                AS connection_count
+       FROM pages p
+       WHERE p.source_id = $1
+         AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}
+         AND p.slug LIKE ANY($2::text[])
+       ORDER BY connection_count DESC, p.slug ASC
+       LIMIT 10`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:769 tryPrefixExpansion',
+    case: { method: 'readPrefixCandidates', variant: 'pattern', run: e => e.readPrefixCandidates('default', { pattern: 'people/alice-%' }) },
+    texts: () => [`SELECT p.slug,
+                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
+                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                  AS connection_count
+         FROM pages p
+         WHERE p.source_id = $1
+           AND p.deleted_at IS NULL
+           AND NOT ${retiredPageSql('p')}
+           AND p.slug LIKE $2
+         ORDER BY connection_count DESC, p.slug ASC
+         LIMIT 5`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:732 tryUnambiguousPrefixExpansion dirs',
+    case: { method: 'readPrefixDirs', variant: 'default', run: e => e.readPrefixDirs('default', ['people/alice', 'people/alice-%']) },
+    texts: () => [`SELECT DISTINCT split_part(slug, '/', 1) AS dir FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')} AND slug LIKE ANY($2::text[])
+        LIMIT 2`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:739 tryUnambiguousPrefixExpansion exact titles',
+    case: { method: 'readPrefixTitleMatches', variant: 'default', run: e => e.readPrefixTitleMatches('default', ['companies/acme', 'companies/acme-%'], 'Acme') },
+    texts: () => [`SELECT slug, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')}
+          AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
+        LIMIT 3`],
+  },
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+  ] as const).map(([privacy, predicate]): Pin => ({
+    from: `src/core/entities/resolve.ts:552 entityReferenceCandidates named (privacy ${privacy})`,
+    case: { method: 'readNamedEntitySlugs', variant: privacy, run: e => e.readNamedEntitySlugs('default', ['companies/acme', 'orgs/acme'], privacy) },
+    texts: () => [`SELECT p.slug FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${predicate()}
+      ORDER BY p.slug LIMIT 5`],
+  })),
+  ...([
+    ['all', {}],
+    ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
+  ] as const).map(([variant, opts]): Pin => ({
+    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant})`,
+    case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
+    texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
+    ORDER BY s.id,h.fingerprint`],
+  })),
+  {
+    from: 'src/core/sync-dispatch-read.ts:51 syncDispatchRow',
+    case: { method: 'readSyncDispatchRow', variant: 'default', run: e => e.readSyncDispatchRow('default') },
+    texts: () => [`SELECT s.id, s.archived, s.config, s.incarnation::text AS incarnation, s.local_path,
+  EXISTS(SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=s.id AND b.source_incarnation=s.incarnation) AS claimed,
+  EXISTS(SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain') AS company_receipt,
+  (SELECT COALESCE(jsonb_agg(m.enabled), '[]'::jsonb) FROM (${MANAGED_MODE_SQL}) m) AS modes
+  FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`],
+  },
+  {
+    // An equivalent statement: the caller read `created_at` alone; the member also reads `archived`, which the check ignores.
+    from: 'src/core/persistence/sync-authority.ts:122 validateSyncAuthority (SELECT created_at FROM sources WHERE id=$1)',
+    case: { method: 'readJobSourceState', variant: 'default', run: e => e.readJobSourceState('default') },
+    texts: ['SELECT archived, created_at FROM sources WHERE id = $1'],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1186 readGitHoldRetryPaths',
+    case: { method: 'readGitHoldRetryRequest', variant: 'default', run: e => e.readGitHoldRetryRequest('default:1') },
+    texts: ['SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1452,1458 buildHoldReport',
+    case: { method: 'readGitHoldReportInputs', variant: 'default', run: e => e.readGitHoldReportInputs('default', 'default:1') },
+    texts: [`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
+      COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
+      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
+      COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
+    FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`, "SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1"],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:88,92 readWriteWatermark',
+    case: { method: 'readWriteWatermarkRow', variant: 'default', run: e => e.readWriteWatermarkRow('default') },
+    texts: [`SELECT s.last_commit, s.last_sync_at, p.pending_min, p.pending_count, p.pending_since
+    FROM sources s LEFT JOIN LATERAL (SELECT min(r.sequence) AS pending_min, count(*) AS pending_count, min(r.created_at) AS pending_since FROM persistence_requests r
+      WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','deferred','running','recovering')) p ON true WHERE s.id=$1`,
+    'SELECT max(sequence) AS sequence FROM persistence_requests'],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:104 readCheckoutRoot',
+    case: { method: 'readSourceCheckoutRoot', variant: 'default', run: e => e.readSourceCheckoutRoot('default', null) },
+    texts: [`SELECT s.incarnation::text AS incarnation,
+      COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
+        WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:132 readAppliedWatermark',
+    case: { method: 'readUnembeddedPageSummary', variant: 'default', run: e => e.readUnembeddedPageSummary('default', 'embedding') },
+    texts: () => [`WITH w AS (SELECT DISTINCT p.id, p.updated_at FROM content_chunks cc
+        JOIN pages p ON p.id=cc.page_id WHERE ${`cc.${quoteIdentifier('embedding')}`} IS NULL AND p.source_id=$1 AND p.deleted_at IS NULL AND ${chunkGenerationFilter('p', 'cc')}
+          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip'))
+      SELECT count(*) AS pages, min(w.updated_at) AS oldest,
+        (SELECT count(*) FROM w JOIN page_embedding_budget b ON b.page_id=w.id JOIN pages p ON p.id=w.id WHERE ${budgetRowAppliesFilter('b', 'p')}) AS held FROM w`],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */
@@ -925,6 +1117,9 @@ function pinnedReferrersCte(excludePrivate: boolean, floored: boolean): string {
          AND f.id NOT IN (SELECT id FROM tgt)${excludePrivate ? ` AND ${privatePagesFilterFastForCaller('f')}` : ''} AND ${pageEligibleSql('f', floored ? { floor: 'operator_curated' } : undefined)} AND ${quarantineFilterFragment('f')}
     )`;
 }
+
+/** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */
+const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
 function CARD_ROW_COLUMNS(): string {

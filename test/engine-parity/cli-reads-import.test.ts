@@ -2,7 +2,7 @@
  * BrainEngine parity — the typed reads the CLI import and extract paths ran through `executeRaw`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listSourceRecords, readSourceIncarnation, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
+ *  - Contract: listSourceRecords, readSourceIncarnation, readSyncDispatchRow, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
  *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), and so do the page labels pageActivationVerdicts builds
@@ -17,7 +17,7 @@
  *    a relation, never by value; reads with no ORDER BY are sorted before they are compared.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, sorted } from './harness.ts';
+import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { pageActivationVerdicts } from '../../src/core/eligibility/activation.ts';
@@ -65,6 +65,24 @@ describe('engine parity: CLI import reads', () => {
     const config = typeof work?.config === 'string' ? JSON.parse(work.config) : work?.config;
     return { config, incarnationIsUuid: UUID.test(String(work?.incarnation)), unknown };
   });
+
+  parityTest('readSyncDispatchRow returns one routing row: the source columns, no claim or company receipt, and the persistence mode; an unknown id has null columns',
+    { methods: ['readSyncDispatchRow'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'work', { kind: 'storage', keep: 2 }, '/var/tmp/l11-work');
+      await createSource(engine, backend, 'gone');
+      await archiveSource(engine, backend, 'gone');
+      const view = async (id: string) => {
+        const row = await engine.readSyncDispatchRow(id);
+        if (!row) return row;
+        const config = typeof row.config === 'string' ? JSON.parse(row.config) : row.config;
+        return { ...row, incarnation: row.incarnation === null ? null : UUID.test(row.incarnation), config };
+      };
+      const out = { work: await view('work'), gone: await view('gone'), unknown: await view('no-such-source') };
+      expect(out.work).toEqual({ id: 'work', archived: false, config: { kind: 'storage', keep: 2 }, incarnation: true, local_path: '/var/tmp/l11-work', claimed: false, company_receipt: false, modes: [false] });
+      expect(out.gone).toEqual({ id: 'gone', archived: true, config: {}, incarnation: true, local_path: null, claimed: false, company_receipt: false, modes: [false] });
+      expect(out.unknown).toEqual({ id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes: [false] });
+      return out;
+    });
 
   parityTest('hasCompanyBrainReceipt is false for a source with no ingestion receipt', { methods: ['hasCompanyBrainReceipt'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
