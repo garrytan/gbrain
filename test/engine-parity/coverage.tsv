@@ -79,7 +79,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	94	no	yes	yes	serves
+transaction	lifecycle	yes	95	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -87,7 +87,7 @@ getPage	pages	yes	113	yes	yes	yes	serves
 readPageSnapshot	pages	yes	28	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	445	yes	yes	yes	serves
+putPage	pages	yes	446	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
@@ -321,7 +321,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	47	yes	yes	yes	serves
-insertFacts	facts	yes	56	no	yes	yes	serves
+insertFacts	facts	yes	57	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	28	no	yes	yes	serves
 listFactsByEntity	facts	yes	20	yes	yes	yes	serves
@@ -384,7 +384,7 @@ readPersistenceBrainId	import_guards	yes	4	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	3	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	4	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	40	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	41	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -730,7 +730,7 @@ readSourceLocalPath	memory_mutation_reads	yes	1	no	yes	yes	serves
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	serves
 hasLiveFileBackedPage	memory_mutation_reads	yes	1	no	yes	yes	serves
 factReadableUnder	memory_mutation_reads	yes	1	no	yes	yes	serves
-readRemoteForgetTier	memory_mutation_reads	yes	1	no	yes	yes	serves
+readRemoteForgetTier	memory_mutation_reads	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

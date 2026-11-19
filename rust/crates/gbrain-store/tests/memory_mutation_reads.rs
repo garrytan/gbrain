@@ -4,7 +4,7 @@
 
 mod memory_env;
 
-use gbrain_store::facts::InsertFactsArgs;
+use gbrain_store::facts::{InsertFactsArgs, OwnerOnlyForm};
 use gbrain_store::memory_mutation_reads::{FactReadableQuery, RemoteFloor, RemoteForgetTierQuery};
 use gbrain_store::sources::SourceInput;
 use memory_env::{Brain, brain};
@@ -212,6 +212,7 @@ fn a_remote_forget_reads_the_tier_of_a_world_fact_under_the_remote_floor() {
             remote_floor: floor.map(|honor_aliases| RemoteFloor {
                 honor_aliases,
                 restricted: true,
+                owner_only: OwnerOnlyForm::Fn,
             }),
         })
         .unwrap()
@@ -234,10 +235,41 @@ fn a_remote_forget_reads_the_tier_of_a_world_fact_under_the_remote_floor() {
             remote_floor: Some(RemoteFloor {
                 honor_aliases: true,
                 restricted,
+                owner_only: OwnerOnlyForm::Fn,
             }),
         })
         .unwrap()
     };
     assert_eq!(named(true), None);
     assert_eq!(named(false), None);
+}
+
+#[test]
+fn the_remote_floor_hides_a_fact_the_owner_only_test_counts_in_each_form() {
+    let b = brain("memory-mutation-reads-remote-forget-owner-only");
+    page(&b, "notes/open", json!({}), None);
+    let open = fact(&b, "default", "open world", "notes/open", "world", 1);
+    source(&b, "vis-chat", None, json!({ "kind": "imessage" }));
+    let chat = fact(&b, "vis-chat", "chat world", "notes/chat", "world", 1);
+    let tier = |id: u64, source: &str, owner_only: OwnerOnlyForm| {
+        b.read_remote_forget_tier(&RemoteForgetTierQuery {
+            fact_id: id as i64,
+            source_id: source.into(),
+            remote_floor: Some(RemoteFloor {
+                honor_aliases: true,
+                restricted: true,
+                owner_only,
+            }),
+        })
+        .unwrap()
+    };
+    // `closed`: an owner-only source exists, so every fact counts.
+    assert_eq!(tier(open, "default", OwnerOnlyForm::Closed), None);
+    assert_eq!(tier(chat, "vis-chat", OwnerOnlyForm::Closed), None);
+    // `fn`: only the fact of the owner-only source counts; a fact with no mark in another source shows.
+    assert!(tier(open, "default", OwnerOnlyForm::Fn).is_some());
+    assert_eq!(tier(chat, "vis-chat", OwnerOnlyForm::Fn), None);
+    // `off`: the owner's floor tests nothing.
+    assert!(tier(open, "default", OwnerOnlyForm::Off).is_some());
+    assert!(tier(chat, "vis-chat", OwnerOnlyForm::Off).is_some());
 }

@@ -10,7 +10,8 @@
  *    or only a world one, hides one on a deleted or quarantined page or below the trust floor, and with excludePrivate
  *    one whose provenance page is private; readRemoteForgetTier answers the stored tier of a world fact of the source,
  *    and under the remote floor (restricted brain, unrestricted brain, owner) none whose provenance page is private or
- *    names readers.
+ *    names readers. Under the floor a non-owner reader also loses a fact the owner-only test counts: every fact while
+ *    any source is owner-only before schema version 320 (the closed form), only a fact of an owner-only source after.
  *  - Regression: `gbrain remember` and `gbrain forget` read these before every write; an engine that drops a clause
  *    admits a write to an archived source, strikes the wrong file, or lets a member withdraw a fact it cannot read;
  *    a remote forget that misreads the tier forgets a fact the owner confirmed, or files a proposal for a hidden one.
@@ -23,6 +24,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -213,5 +217,53 @@ describe('engine parity: memory mutation reads', () => {
       expect(Object.values(out.wrongSource).every(v => v === null)).toBe(true);
       expect(out.unknown).toEqual([null, null]);
       return out;
+    });
+
+  parityTest('readRemoteForgetTier applies the owner-only test of the remote floor: closed with no schema version, per source with one',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'readRemoteForgetTier'] }, async (engine, backend) => {
+      await engine.putPage('notes/open', note('Open'));
+      const facts: Array<{ fact: string; sourceId: string; page: string | null }> = [
+        { fact: 'open world', sourceId: 'default', page: 'notes/open' },
+        { fact: 'no page', sourceId: 'default', page: null },
+        { fact: 'chat world', sourceId: 'vis-chat', page: 'notes/chat' },
+      ];
+      const ids = new Map<string, number>();
+      const insert = async (r: typeof facts[number], i: number) => {
+        const out = await declared(engine, 'operator_curated', tx => tx.insertFacts([{
+          fact: r.fact, entity_slug: 'people/e-example', source_markdown_slug: r.page, row_num: i + 1, kind: 'fact',
+          visibility: 'world', source: 'fence', valid_from: new Date(Date.UTC(2026, 7, 1 + i)),
+        }] as never, { source_id: r.sourceId }));
+        ids.set(r.fact, out.ids[0]!);
+      };
+      await insert(facts[0]!, 0);
+      await insert(facts[1]!, 1);
+      const tiers = async (remoteFloor: boolean, only = facts) => {
+        const out: Record<string, string | null> = {};
+        for (const r of only) out[r.fact] = await engine.readRemoteForgetTier({ factId: ids.get(r.fact)!, sourceId: r.sourceId, remoteFloor });
+        return out;
+      };
+      // No owner-only source yet: the floor passes both facts, so the answers below are not vacuous.
+      const before = await tiers(true, facts.slice(0, 2));
+      await createSource(engine, backend, 'vis-chat', { kind: 'imessage' });
+      await engine.putPage('notes/chat', note('Chat'), { sourceId: 'vis-chat' });
+      await insert(facts[2]!, 2);
+      // The harness brain records no schema version: the closed form counts every fact as owner-only while any source is.
+      const closed = await tiers(true);
+      const closedOwner = await withCallerAccess({ owner: true }, () => tiers(true));
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      // Schema version 320 or later: only a fact of an owner-only source is owner-only. No fact here has a mark.
+      const fn = await withEngineScope(engine, () => tiers(true));
+      const fnUnrestricted = await withEngineScope(engine, () => withCallerAccess({ restricted: false }, () => tiers(true)));
+      const fnOwner = await withEngineScope(engine, () => withCallerAccess({ owner: true }, () => tiers(true)));
+      const plain = await withEngineScope(engine, () => tiers(false));
+      const all = { 'open world': 'operator_curated', 'no page': 'operator_curated', 'chat world': 'operator_curated' };
+      expect(before).toEqual({ 'open world': 'operator_curated', 'no page': 'operator_curated' });
+      expect(closed).toEqual({ 'open world': null, 'no page': null, 'chat world': null });
+      expect(closedOwner).toEqual(all);
+      expect(fn).toEqual({ 'open world': 'operator_curated', 'no page': 'operator_curated', 'chat world': null });
+      expect(fnUnrestricted).toEqual(fn);
+      expect(fnOwner).toEqual(all);
+      expect(plain).toEqual(all);
+      return { before, closed, closedOwner, fn, fnUnrestricted, fnOwner, plain };
     });
 });

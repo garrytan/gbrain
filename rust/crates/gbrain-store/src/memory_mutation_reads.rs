@@ -16,6 +16,7 @@ use crate::facts::{
     read_fact,
 };
 use crate::links::no_nul;
+use crate::owner_only::{OwnerOnlyForm, fact_owner_only};
 use crate::pages::read_page;
 use crate::sources::read_source;
 use crate::trust::TrustPolicy;
@@ -57,6 +58,9 @@ pub struct RemoteFloor {
     pub honor_aliases: bool,
     /// The caller record's `restricted` flag: whether the brain holds member-access restrictions.
     pub restricted: bool,
+    /// The form of the floor's owner-only test: `off` for the owner, else `closed` or `fn` by the
+    /// caller's schema version (`ownerOnlyFactAllowedSql`).
+    pub owner_only: OwnerOnlyForm,
 }
 
 impl Store {
@@ -137,8 +141,9 @@ impl Store {
 
     /// `readRemoteForgetTier`: the stored tier of fact `fact_id` when it belongs to `source_id` and
     /// is a `world` fact, and with `remote_floor` its provenance page passes the page policy for
-    /// the empty identity (`privateProvenanceFilterFragment`; the store keeps no owner-only source or
-    /// folder rule, so those conjuncts hide nothing). `None` otherwise.
+    /// the empty identity and the fact passes the floor's owner-only test
+    /// (`privateProvenanceFilterFragment`; the store keeps no folder rule, so that conjunct hides
+    /// nothing). `None` otherwise.
     pub fn read_remote_forget_tier(&self, q: &RemoteForgetTierQuery) -> Result<Option<String>> {
         no_nul("readRemoteForgetTier", &[("sourceId", &q.source_id)])?;
         let Ok(id) = u64::try_from(q.fact_id) else {
@@ -156,7 +161,9 @@ impl Store {
                 honor_aliases: floor.honor_aliases,
                 ..PrivacyPolicy::default()
             };
-            if hidden_by_provenance_page(&*read, &row, &policy, floor.restricted)? {
+            if hidden_by_provenance_page(&*read, &row, &policy, floor.restricted)?
+                || fact_owner_only(&*read, &row.source_id, floor.owner_only)?
+            {
                 return Ok(None);
             }
         }

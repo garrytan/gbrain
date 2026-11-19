@@ -20,7 +20,7 @@ import {
   currentCallerAccess, privacyAliasSql, privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql, withCallerAccess, withoutCallerAccess,
 } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { normalizeConceptInputs, storePrivacyPolicy } from './private-provenance.ts';
+import { normalizeConceptInputs, ownerOnlyFormIn, storePrivacyPolicy, type StoreOwnerOnlyForm } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -66,20 +66,23 @@ export const factReadableUnder: Member<'factReadableUnder'> = (brain, spec) => {
 /**
  * The remote provenance floor as the store reads it: the rendering with no caller record (which reads pending folder
  * coverage live), or the rendering of a fresh record carrying only the caller's `restricted` and `owner` flags and its
- * schema version (remotePolicy). The floor never reads the caller's identity, and the store keeps no owner-only source,
- * folder rule or pending coverage, so those forms differ only in text the store answers the same way, except
- * `restricted: false`, which drops the origin test (sent as a flag). Any other rendering refuses.
+ * schema version (remotePolicy). The floor never reads the caller's identity, and the store keeps no folder rule or
+ * pending coverage, so those forms differ only in text the store answers the same way, except `restricted: false`,
+ * which drops the origin test (sent as a flag), and the owner-only test, whose form (none for the owner, else the
+ * closed or the v320 form by schema version) is sent as `ownerOnly`. Any other rendering refuses.
  */
-function storeRemoteFloor(member: string): { honorAliases: boolean; restricted: boolean } {
-  const got = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
+function storeRemoteFloor(member: string): { honorAliases: boolean; restricted: boolean; ownerOnly: StoreOwnerOnlyForm } {
+  const rendered = remoteProvenanceFloorSql('facts');
+  const got = normalizeConceptInputs(rendered);
+  const ownerOnly = ownerOnlyFormIn(rendered, 'facts', 'facts');
   const unscoped = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
-  if (got === normalizeConceptInputs(unscoped)) return { honorAliases: unscoped.includes(privacyAliasSql('pp')), restricted: true };
+  if (got === normalizeConceptInputs(unscoped)) return { honorAliases: unscoped.includes(privacyAliasSql('pp')), restricted: true, ownerOnly };
   const { restricted, owner, remotePolicy } = currentCallerAccess();
   const fresh = withoutCallerAccess(() => withCallerAccess({ restricted, owner, remotePolicy }, () => remoteProvenanceFloorSql('facts')));
   if (got !== normalizeConceptInputs(fresh)) {
     refuseMember(member, 'a remote provenance floor the store does not model (a labelled-only caller, folder coverage or a relaxed privacy setting)');
   }
-  return { honorAliases: fresh.includes(privacyAliasSql('pp')), restricted };
+  return { honorAliases: fresh.includes(privacyAliasSql('pp')), restricted, ownerOnly };
 }
 
 export const readRemoteForgetTier: Member<'readRemoteForgetTier'> = (brain, spec) => {

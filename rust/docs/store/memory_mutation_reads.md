@@ -14,7 +14,7 @@ from the source, fact and page records the other families write
 | `brain.readFactEntitySlug(id, sourceId)` | the fact's `entity_slug` when the fact belongs to the source, else null | `readFactEntitySlug` |
 | `brain.hasLiveFileBackedPage(sourceId, slugs)` | whether a page of the source among the slugs is live and has a `source_path` | `hasLiveFileBackedPage` |
 | `brain.factReadableUnder({ id, sourceId, anyVisibility, minTrust, suppressFlagged, excludePrivate })` | whether the caller reads the fact | `factReadableUnder` |
-| `brain.readRemoteForgetTier({ factId, sourceId, remoteFloor })` | the fact's stored `trust_tier` when it belongs to the source and is `world`, else null; `remoteFloor` is null or `{ honorAliases, restricted }` | `readRemoteForgetTier` |
+| `brain.readRemoteForgetTier({ factId, sourceId, remoteFloor })` | the fact's stored `trust_tier` when it belongs to the source and is `world`, else null; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }` | `readRemoteForgetTier` |
 
 ## Rules
 
@@ -26,8 +26,11 @@ from the source, fact and page records the other families write
 - `readRemoteForgetTier` with `remoteFloor` also drops a fact whose provenance page exists and fails the page policy
   for the empty identity (`hidden_by_provenance_page` in `facts/privacy.rs`): `privateProvenanceFilterFragment`, the
   provenance half of the fact policy, with no entity gate. With `restricted: false` (a brain that holds no
-  member-access restrictions) the member-access part is only "names no readers", with no origin test. The store keeps
-  no owner-only source, folder rule or pending coverage, so those conjuncts hide nothing.
+  member-access restrictions) the member-access part is only "names no readers", with no origin test. It also drops a
+  fact the floor's owner-only test counts (`fact_owner_only` in `owner_only.rs`), in the form `ownerOnly` names:
+  `closed` (no schema version, or one before 320) counts every fact while any source is owner-only, `fn` counts a fact
+  of an owner-only source, and `off` (the owner's floor) counts none. The store keeps no folder rule or pending
+  coverage, so those conjuncts hide nothing.
 - A negative fact id reads as no fact (null or false), as the SQL `WHERE id=$1` does.
 - The TypeScript member (`src/core/rust-engine/store-members/memory-mutation-reads.ts`) refuses with
   `engine_capability_missing`:
@@ -37,6 +40,7 @@ from the source, fact and page records the other families write
   - `excludePrivate` for a caller policy `storePrivacyPolicy` refuses;
   - `readRemoteForgetTier` under `remoteFloor` when `remoteProvenanceFloorSql('facts')` renders other text than with
     no caller record or with a fresh record carrying only the caller's `restricted`, `owner` and schema version (a
-    labelled-only caller, folder coverage or a relaxed privacy setting).
+    labelled-only caller, folder coverage or a relaxed privacy setting). The member reads `ownerOnly` off the rendered
+    floor (`ownerOnlyFormIn`).
 - Pinned by `test/engine-parity/memory-mutation-reads.test.ts` on every arm and by
   `crates/gbrain-store/tests/memory_mutation_reads.rs`.
