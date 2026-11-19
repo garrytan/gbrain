@@ -137,3 +137,35 @@ describe('a failed lexical arm is stamped in meta.degraded (#5324)', () => {
     expect(degraded.map(d => d.stage)).not.toContain('title_arm_failed');
   });
 });
+
+// An engine that refuses an option (engine_capability_missing, raised only by
+// the Rust engine) must reach the caller, never read as an empty lexical arm.
+// Any other error keeps the fail-open path above, which is all PGLite and
+// Postgres can raise: neither engine produces engine_capability_missing.
+describe('a refused lexical option reaches the caller', () => {
+  const refusal = () => Object.assign(new Error('option excludePrivate'), { code: 'engine_capability_missing' });
+
+  test('a refused keyword arm rethrows the refusal (identity), not an empty result', async () => {
+    const err = refusal();
+    const engine = fakeEngine({ searchKeyword: () => Promise.reject(err), searchTitles: async () => [] });
+    let caught: unknown;
+    try { await hybridSearch(engine, QUERY, { limit: 5 }); } catch (e) { caught = e; }
+    expect(caught).toBe(err);
+  });
+
+  test('a refused title arm rethrows the refusal (identity), not an empty result', async () => {
+    const err = refusal();
+    const engine = fakeEngine({ searchKeyword: async () => [], searchTitles: () => Promise.reject(err) });
+    let caught: unknown;
+    try { await hybridSearch(engine, QUERY, { limit: 5 }); } catch (e) { caught = e; }
+    expect(caught).toBe(err);
+  });
+
+  test('the envelope form of the refusal is rethrown too', async () => {
+    const err = Object.assign(new Error('refused'), { envelope: { code: 'engine_capability_missing' } });
+    const engine = fakeEngine({ searchKeyword: () => Promise.reject(err), searchTitles: async () => [] });
+    let caught: unknown;
+    try { await hybridSearch(engine, QUERY, { limit: 5 }); } catch (e) { caught = e; }
+    expect(caught).toBe(err);
+  });
+});
