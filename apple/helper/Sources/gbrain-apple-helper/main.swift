@@ -61,7 +61,7 @@ func printJSON<T: Encodable>(_ value: T) {
     if let data = try? encoder.encode(value) { print(String(decoding: data, as: UTF8.self)) }
 }
 
-func admin(_ fields: [String: String], timeout: TimeInterval = 30, success: String? = nil) -> Never {
+func admin(_ fields: [String: String], timeout: TimeInterval = SendSetup.offWait, success: String? = nil) -> Never {
     let port = loadConfig().1.port
     guard case .answered(let status, let body) = AdminClient.post(port: port, fields: fields, timeout: timeout) else {
         fail("GBrain Helper isn't answering on 127.0.0.1:\(port). Check it is running: launchctl print gui/\(getuid())/\(HelperIdentity.bundleId)", code: 69)
@@ -123,7 +123,8 @@ case "send-setup":
                           lockConfig: { let lockFile = lockConfigFile(); return { Darwin.close(lockFile) } },
                           loadConfig: { loadConfig().0 },
                           saveConfig: save,
-                          post: { fields, timeout in AdminClient.post(port: loadConfig().1.port, fields: fields, timeout: timeout) })
+                          post: { fields, timeout in AdminClient.post(port: loadConfig().1.port, fields: fields, timeout: timeout) },
+                          helperRunning: { HelperProcess.running(named: name) })
     let result = arguments.contains("--off") ? setup.off() : setup.on()
     result.out.forEach { print($0) }
     if let err = result.err { FileHandle.standardError.write(Data("\(name): \(err)\n".utf8)) }
