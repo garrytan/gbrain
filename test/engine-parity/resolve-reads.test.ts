@@ -176,4 +176,20 @@ describe('engine parity: entity resolver reads', () => {
         other: [{ slug: 'orgs/widget', connection_count: 0 }],
       });
     });
+
+  parityTest('readPrefixDirs names the entity directories of the live, non-retired prefix pages, at most two',
+    { methods: ['readPrefixDirs'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      await engine.putPage('projects/alice-retired', page('project', 'Alice Retired', { superseded_by: 'people/alice-example' }), { sourceId: 'default' });
+      const dirs = (patterns: string[]) => engine.readPrefixDirs('default', patterns);
+      const result = {
+        one: await dirs(['people/alice', 'people/alice-%']),
+        // people, companies and hosts all match; which two come back is not set, so only the count is compared.
+        capped: (await dirs(['people/alice-%', 'companies/alice-%', 'hosts/alice-%'])).length,
+        retired: await dirs(['projects/alice-%']),
+        deleted: await dirs(['people/gone']),
+        other: await engine.readPrefixDirs('other', ['orgs/%']),
+      };
+      expect(result).toEqual({ one: ['people'], capped: 2, retired: [], deleted: [], other: ['orgs'] });
+    });
 });

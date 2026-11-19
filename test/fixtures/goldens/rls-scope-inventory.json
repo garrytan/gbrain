@@ -5470,6 +5470,7 @@
         "readPersistenceBrainId": "none",
         "readPlainSyncSource": "none",
         "readPrefixCandidates": "none",
+        "readPrefixDirs": "none",
         "readPrivateQueueState": "none",
         "readProjectionReadiness": "none",
         "readProjectionReadinessGeneration": "none",

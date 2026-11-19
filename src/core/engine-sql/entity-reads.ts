@@ -333,3 +333,14 @@ export async function readPrefixCandidates(exec: LegacyUnscopedRead, sourceId: s
   const { text, params } = renderFragment(fragment);
   return exec.executeRaw<PrefixCandidateRow>(text, params);
 }
+
+/**
+ * The distinct entity directories (`split_part(slug, '/', 1)`) of the live, non-retired pages of the source whose slug
+ * matches any LIKE pattern, at most two and in no set order: tryUnambiguousPrefixExpansion asks only whether there is one.
+ */
+export async function readPrefixDirs(exec: LegacyUnscopedRead, sourceId: string, patterns: readonly string[]): Promise<string[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT split_part(slug, '/', 1) AS dir FROM pages
+        WHERE source_id = ${sourceId} AND deleted_at IS NULL AND NOT ${trustedSql(retiredPageSql('pages'))} AND slug LIKE ANY(${[...patterns]}::text[])
+        LIMIT 2`);
+  return (await exec.executeRaw<{ dir: string }>(text, params)).map(r => r.dir);
+}

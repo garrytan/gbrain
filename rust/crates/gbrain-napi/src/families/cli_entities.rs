@@ -137,6 +137,18 @@ impl Brain {
         })
     }
 
+    /// `readPrefixDirs(sourceId, patterns)`: the distinct entity directories of the prefix pages,
+    /// at most two.
+    #[napi]
+    pub fn read_prefix_dirs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_prefix_dirs(&source_id, &patterns))
+    }
+
     /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
     /// target, or `null`; a `null` policy reads every page.
     #[napi]

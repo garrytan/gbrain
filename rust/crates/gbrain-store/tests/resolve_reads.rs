@@ -273,3 +273,20 @@ fn the_prefix_candidate_read_counts_ranking_links_and_chunks() {
     );
     assert_eq!(read(&["people/alice-%", "companies/alice-%"], 1).len(), 1);
 }
+
+#[test]
+fn the_prefix_directory_read_names_at_most_two_directories() {
+    let dir = TempDir::new("resolve-prefix-dirs");
+    let store = seeded(&dir);
+    let dirs = |patterns: &[&str]| {
+        store
+            .read_prefix_dirs("default", &strings(patterns))
+            .unwrap()
+    };
+    assert_eq!(dirs(&["people/alice-%"]), strings(&["people"]));
+    assert_eq!(
+        dirs(&["people/alice-%", "companies/alice-%", "organizations/%"]),
+        strings(&["companies", "people"])
+    );
+    assert!(dirs(&["people/gone"]).is_empty());
+}

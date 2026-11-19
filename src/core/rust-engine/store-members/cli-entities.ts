@@ -72,6 +72,10 @@ export const readLivePageTypes: StoreMember<[sourceId: string, slugs: readonly s
     return storeCall({ member: 'readLivePageTypes', sourceId }, () => brain.readLivePageTypes(sourceId, [...slugs], policy ?? null)) as Promise<LivePageTypeRow[]>;
   };
 
+/** entities/resolve.ts: the distinct entity directories of the prefix pages, at most two. */
+export const readPrefixDirs: StoreMember<[sourceId: string, patterns: readonly string[]], string[]> = (brain, sourceId, patterns) =>
+  storeCall({ member: 'readPrefixDirs', sourceId }, () => brain.readPrefixDirs(sourceId, [...patterns])) as Promise<string[]>;
+
 /** entities/resolve.ts: the prefix candidates with their connection counts; one pattern caps at five, a list at ten. */
 export const readPrefixCandidates: StoreMember<[sourceId: string, q: PrefixCandidateQuery], PrefixCandidateRow[]> = (brain, sourceId, q) => {
   const taken = takeOptions('readPrefixCandidates', q, ['patterns', 'pattern']);

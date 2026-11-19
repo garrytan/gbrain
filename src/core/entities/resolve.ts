@@ -695,12 +695,7 @@ async function tryUnambiguousPrefixExpansion(
   if (candidates.length === 0) return null;
   const patterns = PREFIX_EXPANSION_DIRS.flatMap(dir => [`${dir}/${token}`, `${dir}/${token}-%`]);
   try {
-    const dirs = await engine.executeRaw<{ dir: string }>(
-      `SELECT DISTINCT split_part(slug, '/', 1) AS dir FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')} AND slug LIKE ANY($2::text[])
-        LIMIT 2`,
-      [source_id, patterns],
-    );
+    const dirs = await engine.readPrefixDirs(source_id, patterns);
     if (dirs.length !== 1) return null;
     const rows = await engine.executeRaw<{ slug: string; title: string | null }>(
       `SELECT slug, title FROM pages

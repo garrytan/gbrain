@@ -341,6 +341,13 @@ const PINS: Pin[] = [
          ORDER BY connection_count DESC, p.slug ASC
          LIMIT 5`],
   },
+  {
+    from: 'src/core/entities/resolve.ts:732 tryUnambiguousPrefixExpansion dirs',
+    case: { method: 'readPrefixDirs', variant: 'default', run: e => e.readPrefixDirs('default', ['people/alice', 'people/alice-%']) },
+    texts: () => [`SELECT DISTINCT split_part(slug, '/', 1) AS dir FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')} AND slug LIKE ANY($2::text[])
+        LIMIT 2`],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

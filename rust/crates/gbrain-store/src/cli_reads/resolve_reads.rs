@@ -204,4 +204,22 @@ impl Store {
         rows.truncate(limit);
         Ok(rows)
     }
+
+    /// `readPrefixDirs(sourceId, patterns)`: the distinct `split_part(slug, '/', 1)` of the live,
+    /// non-retired pages of the source whose slug matches any LIKE pattern, at most two (the SQL
+    /// sets no order; these come in byte order).
+    pub fn read_prefix_dirs(&self, source_id: &str, patterns: &[String]) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut dirs = BTreeSet::new();
+        for page in all_pages(&*read)? {
+            if page.source_id == source_id
+                && page.deleted_at_us.is_none()
+                && !retired(&page.frontmatter)
+                && patterns.iter().any(|p| sql_like(&page.slug, p))
+            {
+                dirs.insert(page.slug.split('/').next().unwrap_or_default().to_string());
+            }
+        }
+        Ok(dirs.into_iter().take(2).collect())
+    }
 }

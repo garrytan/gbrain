@@ -600,6 +600,7 @@ export const RUST_ENGINE_MEMBERS = {
   readLivePageTypes: 'pages',
   readTrigramCandidates: 'pages',
   readPrefixCandidates: 'pages',
+  readPrefixDirs: 'pages',
   readRetirementHop: 'pages',
   readEntityCardRows: 'pages',
   readExtractionLagCounts: 'pages',

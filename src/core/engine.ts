@@ -3549,6 +3549,8 @@ export interface BrainEngine {
   readTrigramCandidates(sourceId: string, q: TrigramCandidateQuery): Promise<TrigramCandidateRow[]>;
   /** The resolver's prefix candidates (slug LIKE a pattern, or any of the patterns), most connected first. */
   readPrefixCandidates(sourceId: string, q: PrefixCandidateQuery): Promise<PrefixCandidateRow[]>;
+  /** The distinct entity directories of the resolver's live, non-retired prefix pages, at most two. */
+  readPrefixDirs(sourceId: string, patterns: readonly string[]): Promise<string[]>;
   /**
    * One hop of a retirement chain (entities/resolve.ts `followRetirement`): the live page at `slug`, whether it is
    * retired (`retiredPageSql`) and its trimmed `superseded_by` (else `merged_into`) target; null when no live page sits
