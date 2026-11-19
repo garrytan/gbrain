@@ -82,7 +82,8 @@ export function pageGateTrust(row: Pick<WriteRequest, 'operation' | 'intent'>, t
 }
 
 export async function storedPageTier(engine: BrainEngine, sourceId: string, slug: string): Promise<TrustTier | null> {
-  const [row] = await engine.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  // The page row as stored, soft-deleted or not (the SQL this replaced read no deleted_at).
+  const [row] = await engine.readPageTrustRows({ keys: [{ source_id: sourceId, slug }], includeDeleted: true });
   return row ? storedTrustTier(row.trust_tier) : null;
 }
 

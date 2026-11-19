@@ -11,8 +11,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::cycle::{
-    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, PageCoordinate,
-    WorldFactCount,
+    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FenceRowOccupantQuery,
+    PageCoordinate, WorldFactCount,
 };
 
 #[napi]
@@ -120,6 +120,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: PageCoordinate = required(args, "maxFenceRowNum args")?;
             s.max_fence_row_num(&a)
+        })
+    }
+
+    /// `readFenceRowOccupant({ sourceId, slug, rowNum })`: resolves the occupying row's id, or null.
+    #[napi]
+    pub fn read_fence_row_occupant<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FenceRowOccupantQuery = required(args, "readFenceRowOccupant args")?;
+            s.read_fence_row_occupant(&a)
         })
     }
 

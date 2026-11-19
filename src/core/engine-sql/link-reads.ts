@@ -218,7 +218,7 @@ export async function listPagesTitledIn(exec: LegacyUnscopedRead, queryLower: st
   return rows<TitledPage>(exec, sqlFragment`WITH titled AS MATERIALIZED (SELECT id FROM pages WHERE title IS NOT NULL AND length(title) >= 3 AND strpos(${queryLower}, lower(title)) > 0)
      SELECT p.id, p.slug, p.title, p.type, p.source_id FROM pages p
      WHERE p.id IN (SELECT id FROM titled) AND ${readFilter('p', scope, true)}
-     ORDER BY p.source_id, p.slug LIMIT 50`);
+     ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT 50`);
 }
 
 /** Each word to its lexemes under the brain's full-text config, sorted as the tsvector holds them (fact relevance). */

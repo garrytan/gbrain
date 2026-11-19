@@ -944,6 +944,9 @@ pub struct GetChunksOptions {
     pub include_deleted: bool,
     pub include_embedding: bool,
     pub include_unsealed: bool,
+    /// `requireSafeChunks`: only a page past the chunker-version fence (`safeChunksFilter(p)`)
+    /// has chunks to read.
+    pub require_safe_chunks: bool,
 }
 
 /// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`.
@@ -1161,7 +1164,8 @@ impl Store {
     /// when its `text_projection_revision` equals its `knowledge_revision` (the chunks are sealed),
     /// so a page that was never sealed, or whose revision moved since (a tag change, a soft
     /// delete), reads as no chunks unless `include_unsealed` is set. `include_embedding` returns
-    /// each stored vector.
+    /// each stored vector. `require_safe_chunks` reads no chunks of a page before the
+    /// chunker-version fence (`chunker_version >= SAFE_FENCE_CHUNKER_VERSION`; none recorded fails).
     pub fn get_chunks_with(&self, slug: &str, options: &GetChunksOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let scope_default = if options.source_id.is_none()
@@ -1180,6 +1184,9 @@ impl Store {
         if !options.include_unsealed
             && page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str())
         {
+            return Ok(Vec::new());
+        }
+        if options.require_safe_chunks && !crate::chunk_queries::safe_chunks(&page) {
             return Ok(Vec::new());
         }
         chunk_rows(&*read, &page, options.include_embedding)

@@ -20,10 +20,9 @@
  * deferring rotate to the back and cannot starve the rest.
  */
 import type { BrainEngine } from '../engine.ts';
-import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
-import { DUE, OWNS_FENCE_ROWS } from '../engine-sql/facts-purge.ts';
+import type { FactsReconcileOutcome } from '../engine-sql/facts-purge.ts';
 
-export type FactsReconcileOutcome = 'complete' | 'deferred' | 'invalid' | 'cancelled';
+export type { FactsReconcileOutcome } from '../engine-sql/facts-purge.ts';
 
 export interface FactsReconcileDrainOpts {
   /** Most pages one run drains beyond its explicit slug list. */
@@ -34,11 +33,6 @@ export interface FactsReconcileDrainOpts {
 
 export const FACTS_DRAIN_PAGE_LIMIT = 250;
 export const FACTS_DRAIN_BUDGET_MS = 60_000;
-/** Upper bound on pages one run settles in bulk as having no fence and no fence rows. */
-const FACTLESS_SETTLE_LIMIT = 10_000;
-
-const RETRYABLE = `NOT COALESCE(r.outcome = 'invalid' AND r.attempted_revision IS NOT DISTINCT FROM p.knowledge_revision, false)`;
-
 /**
  * Record one page's reconcile outcome. `revision` is the `knowledge_revision`
  * the reconcile read: nothing is recorded when the page has moved on since,
@@ -52,34 +46,17 @@ export async function settleFactsReconcile(
   outcome: FactsReconcileOutcome,
   revision?: string | null,
 ): Promise<void> {
-  await db.executeRaw(
-    `INSERT INTO page_facts_reconcile AS r (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
-     SELECT p.id, CASE WHEN $3 = 'complete' THEN p.knowledge_revision END, CASE WHEN $3 = 'complete' THEN now() END,
-            $3, p.knowledge_revision, now()
-       FROM pages p
-      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
-        AND ($5::boolean OR p.knowledge_revision IS NOT DISTINCT FROM $4::uuid)
-     ON CONFLICT (page_id) DO UPDATE SET
-       reconciled_revision = CASE WHEN EXCLUDED.outcome = 'complete' THEN EXCLUDED.reconciled_revision ELSE r.reconciled_revision END,
-       reconciled_at = CASE WHEN EXCLUDED.outcome = 'complete' THEN EXCLUDED.reconciled_at ELSE r.reconciled_at END,
-       outcome = EXCLUDED.outcome,
-       attempted_revision = EXCLUDED.attempted_revision,
-       attempted_at = EXCLUDED.attempted_at`,
-    [sourceId, slug, outcome, revision ?? null, revision === undefined],
-  );
+  await db.settleFactsReconcile(sourceId, slug, outcome, revision);
 }
 
 /**
  * Lock the page row against concurrent writers for the rest of the
- * transaction and confirm it is still the revision the reconcile read.
- * `SELECT … FOR SHARE` fires no trigger and changes nothing.
+ * transaction and confirm it is still the revision the reconcile read
+ * (engine member; on PGLite and Postgres `SELECT … FOR SHARE`, which fires
+ * no trigger and changes nothing).
  */
 export async function lockReconcileRevision(tx: BrainEngine, sourceId: string, slug: string, revision: string | null): Promise<boolean> {
-  const rows = await tx.executeRaw<{ knowledge_revision: string | null }>(
-    `SELECT knowledge_revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE`,
-    [sourceId, slug],
-  );
-  return rows.length === 1 && (rows[0]!.knowledge_revision ?? null) === revision;
+  return tx.lockReconcileRevision(sourceId, slug, revision);
 }
 
 /**
@@ -94,29 +71,7 @@ export async function selectFactsReconcileDrain(
   sourceId: string,
   opts: FactsReconcileDrainOpts,
 ): Promise<string[]> {
-  const marker = `%${FACTS_FENCE_BEGIN}%`;
-  await engine.executeRaw(
-    `INSERT INTO page_facts_reconcile AS r (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
-     SELECT p.id, p.knowledge_revision, now(), 'complete', p.knowledge_revision, now()
-       FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ${DUE}
-        AND p.compiled_truth NOT LIKE $2 AND p.timeline NOT LIKE $2
-        AND NOT ${OWNS_FENCE_ROWS}
-      ORDER BY p.id
-      LIMIT $3
-     ON CONFLICT (page_id) DO UPDATE SET
-       reconciled_revision = EXCLUDED.reconciled_revision, reconciled_at = EXCLUDED.reconciled_at,
-       outcome = EXCLUDED.outcome, attempted_revision = EXCLUDED.attempted_revision, attempted_at = EXCLUDED.attempted_at`,
-    [sourceId, marker, FACTLESS_SETTLE_LIMIT],
-  );
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ${DUE} AND ${RETRYABLE}
-      ORDER BY r.attempted_at ASC NULLS FIRST, p.id ASC
-      LIMIT $2`,
-    [sourceId, opts.pageLimit ?? FACTS_DRAIN_PAGE_LIMIT],
-  );
-  return rows.map(r => r.slug);
+  return engine.selectFactsReconcileDrain(sourceId, opts.pageLimit ?? FACTS_DRAIN_PAGE_LIMIT);
 }
 
 export interface FactsReconcileBacklog {

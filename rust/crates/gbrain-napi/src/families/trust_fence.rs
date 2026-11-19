@@ -1,6 +1,7 @@
 //! The fence guard's read of a page's fact rows with their trust tier (`gbrain_store::facts`,
-//! `list_fence_fact_rows`), the held fence cells of a world-only fact read (`list_held_fence_cells`), and the fence
-//! overlay's read of one page (`read_fence_overlay_rows`).
+//! `list_fence_fact_rows`), the held fence cells of a world-only fact read (`list_held_fence_cells`), the fence
+//! overlay's read of one page (`read_fence_overlay_rows`), and the fence append's restore of its page's trust
+//! (`gbrain_store::pages`, `restore_page_trust`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! The method decodes its argument, runs one `Store` call on the pool through `Brain::run`, and
@@ -57,6 +58,20 @@ impl Brain {
         self.run(env, move |s| {
             let input: FenceOverlayInput = required(input, "readFenceOverlayRows input")?;
             s.read_fence_overlay_rows(&input)
+        })
+    }
+
+    /// `restorePageTrust({ pageId, trustTier, writeOrigin })`: sets the page's tier and origin
+    /// back through the trust stamp; resolves null.
+    #[napi]
+    pub fn restore_page_trust<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: gbrain_store::pages::PageTrustRestore = required(spec, "restorePageTrust spec")?;
+            s.restore_page_trust(&a)
         })
     }
 }

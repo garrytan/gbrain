@@ -14,8 +14,8 @@
  * inputs, so only the holding page and a backstop's named page mark a fact quoted.
  *
  * Refused (not exported): `matchSavedFacts`, `readFactForOwnerAction`, `listStandingPreferences`,
- * `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`,
- * `write_origin`, the write-gate receipts), but no store read for them is built yet. The
+ * and `countDerivedFactTaint` (`listRestatedPrivateCopies` is served by facts-trust-reads.ts). The store keeps the columns
+ * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
  * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
  */
 import type { BrainEngine } from '../../engine.ts';

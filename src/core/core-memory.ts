@@ -140,10 +140,13 @@ export function coreChars(pages: readonly Pick<CorePage, 'chars'>[]): number {
   return pages.reduce((sum, p, i) => sum + p.chars + (i > 0 ? 2 : 0), 0);
 }
 
-/** Session order: `default` first, then other sources; within a source by priority then slug. */
+/** UTF-8 byte order, as `COLLATE "C"` sorts text; never the process locale. */
+const byteOrder = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/** Session order: `default` first, then other sources; within a source by priority then slug. Text in byte order. */
 export function orderCorePages<T extends Pick<CorePage, 'source_id' | 'slug' | 'priority'>>(pages: readonly T[]): T[] {
   return [...pages].sort((a, b) => (a.source_id === 'default' ? 0 : 1) - (b.source_id === 'default' ? 0 : 1)
-    || a.source_id.localeCompare(b.source_id) || a.priority - b.priority || a.slug.localeCompare(b.slug));
+    || byteOrder(a.source_id, b.source_id) || a.priority - b.priority || byteOrder(a.slug, b.slug));
 }
 
 export interface CoreBlock {
@@ -335,9 +338,9 @@ export async function applyCoreSensitivity(pages: readonly CorePage[]): Promise<
 export async function pendingCoreNotices(exec: Pick<BrainEngine, 'executeRaw'>, sourceIds?: readonly string[]): Promise<Array<{ source_id: string; slug: string; revision: string | null; actor: string; created_at: string }>> {
   try {
     return await exec.executeRaw(
-      `SELECT DISTINCT ON (source_id, slug) source_id, slug, revision, actor, created_at::text AS created_at
+      `SELECT DISTINCT ON (source_id COLLATE "C", slug COLLATE "C") source_id, slug, revision, actor, created_at::text AS created_at
          FROM core_edit_notices WHERE acked_at IS NULL ${sourceIds ? 'AND source_id = ANY($1::text[])' : ''}
-        ORDER BY source_id, slug, id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
+        ORDER BY source_id COLLATE "C", slug COLLATE "C", id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
   } catch {
     return [];
   }

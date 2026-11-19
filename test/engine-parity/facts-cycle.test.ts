@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: listActiveFactsForEntity, listFreshExtractionOutcomes, listFenceRowGroups, readFactSubject,
  *    listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
- *    listStoredFenceFactRows and countWorldFacts return the same observable result on every engine arm (PGLite always;
+ *    readFenceRowOccupant, listStoredFenceFactRows and countWorldFacts return the same observable result on every engine arm (PGLite always;
  *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes what enrich grounds on, which pages
  *    extract-conversation-facts skips, what the v0.32.2 verify and extract_facts reconcile compare, what consolidate
@@ -236,6 +236,31 @@ describe('engine parity: facts command, cycle and fence reads', () => {
       otherSource: await engine.maxFenceRowNum('other', 'n/a'),
     };
     expect(result).toEqual({ page: 5, none: 0, otherSource: 0 });
+    return result;
+  });
+
+  parityTest('readFenceRowOccupant answers the fact holding a row number of the page coordinate, null for none', { methods: ['readFenceRowOccupant', 'listFactsForPage'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await fenced(engine, [
+      { fact: 'first holder', row_num: 4, source_markdown_slug: 'n/a' },
+      // A second fact at a held row is skipped (one fact per fence row), so the first stays the occupant.
+      { fact: 'second holder', row_num: 4, source_markdown_slug: 'n/a' },
+      { fact: 'other row', row_num: 7, source_markdown_slug: 'n/a' },
+      { fact: 'other page', row_num: 4, source_markdown_slug: 'n/b' },
+    ]);
+    const label = new Map((await engine.listFactsForPage('default', 'n/a')).map((r) => [Number(r.id), r.fact]));
+    const of = async (sourceId: string, slug: string, rowNum: number) => {
+      const id = await engine.readFenceRowOccupant(sourceId, slug, rowNum);
+      return id === null ? null : label.get(Number(id)) ?? 'unlabelled';
+    };
+    const result = {
+      held: await of('default', 'n/a', 4),
+      single: await of('default', 'n/a', 7),
+      freeRow: await of('default', 'n/a', 5),
+      noPage: await of('default', 'n/none', 4),
+      otherSource: await of('other', 'n/a', 4),
+    };
+    expect(result).toEqual({ held: 'first holder', single: 'other row', freeRow: null, noPage: null, otherSource: null });
     return result;
   });
 

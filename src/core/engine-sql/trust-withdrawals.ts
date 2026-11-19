@@ -3,6 +3,8 @@
  * its caller ran through `executeRaw`, with the same text and parameters, on the engine's own raw path; only its home
  * moved. Statements that also read `facts` stay with their callers. `isFactWithdrawn` and `isFactPurged` also read
  * `fact_purges` (facts/purge-schema.ts): every writer runs them before it saves a claim (facts/withdrawal.ts).
+ * `readSourcePurgeFlags` is the per-source purge probe of the import overlay (facts/purge-overlay.ts): whether the
+ * source has any fact or take purge tombstone.
  *
  * `readFactCacheWatermark` is the hot-memory cache's watermark (facts/meta-hook.ts): the ledger's row count and newest
  * withdrawal, plus a digest of the folder access rules and pending coverage, so a forget or a rulebook install in any
@@ -114,4 +116,12 @@ export async function readTrustGeneration(exec: LegacyUnscopedRead): Promise<str
     'SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1');
   if (row?.generation === undefined || row.generation === null) throw new Error('trust generation unreadable: trust_policy_state has no row');
   return String(row.generation);
+}
+
+/** Whether the source has any fact purge tombstone and any take purge tombstone (one indexed probe each). */
+export async function readSourcePurgeFlags(exec: LegacyUnscopedRead, sourceId: string): Promise<{ facts: boolean; takes: boolean }> {
+  const [row] = await exec.executeRaw<{ facts: boolean; takes: boolean }>(`SELECT
+    EXISTS (SELECT 1 FROM fact_purges WHERE source_id=$1) AS facts,
+    EXISTS (SELECT 1 FROM take_purges WHERE source_id=$1) AS takes`, [sourceId]);
+  return { facts: row?.facts === true, takes: row?.takes === true };
 }

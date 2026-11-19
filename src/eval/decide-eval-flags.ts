@@ -339,10 +339,8 @@ export type DecideSpend = Partial<Record<DecideSlot, { input_tokens: number; cos
 /** decide_spend totals by slot in `engine` (flushes buffered rows first). */
 export async function decideSpendTotals(engine: BrainEngine): Promise<DecideSpend> {
   await flushDecideWrites();
-  const rows = await engine.executeRaw<{ slot: DecideSlot; tokens: number | string; cost: number | string; n: number | string }>(
-    'SELECT slot, COALESCE(SUM(input_tokens), 0) AS tokens, COALESCE(SUM(cost_usd), 0) AS cost, COUNT(*) AS n FROM decide_spend GROUP BY slot',
-  ).catch(() => []);
-  return Object.fromEntries(rows.map((r) => [r.slot, { input_tokens: Number(r.tokens), cost_usd: Number(r.cost), requests: Number(r.n) }]));
+  const rows = await engine.listDecideSpendBySlot().catch(() => []);
+  return Object.fromEntries(rows.map((r) => [r.slot, { input_tokens: r.input_tokens, cost_usd: r.cost_usd, requests: r.requests }]));
 }
 
 export function spendDelta(before: DecideSpend, after: DecideSpend): DecideSpend {

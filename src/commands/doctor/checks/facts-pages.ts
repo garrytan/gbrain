@@ -24,7 +24,7 @@ export async function factsUndatedLines(engine: BrainEngine): Promise<Omit<Check
   try {
     const rows = await engine.executeRaw<{ slug: string; source_id: string; segmented: boolean; body: string | null }>(
       `SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, ${boundedBodyPrefixSql('p')} AS body
-         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id, p.slug`);
+         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`);
     const segmented = rows.filter(r => r.segmented).length;
     const pages = rows.flatMap(r => {
       const lines = r.segmented || r.body == null ? [] : undatedFactLines(r.body);

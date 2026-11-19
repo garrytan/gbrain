@@ -189,3 +189,57 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
     return { external, operator, undeclared };
   });
 });
+
+describe('engine parity: a fence append sets its page trust back', () => {
+  parityTest('restorePageTrust lowers freely, raises only under a promotion, and sets the origin the caller passes', {
+    methods: ['putPage', 'readPageTrustRows', 'restorePageTrust', 'applyTransactionSettings', 'transaction'],
+  }, async (engine) => {
+    const page = { type: 'note' as const, title: 'Kept', compiled_truth: 'Kept body.', timeline: '' };
+    const owner = { channel: 'owner-example' };
+    await withWriteTrustSettings(engine, ['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+      ['operator_curated', 'operator_curated', JSON.stringify(owner)], (tx) => tx.putPage('notes/kept', page));
+    const trust = async () => {
+      const [row] = await engine.readPageTrustRows({ keys: [{ source_id: SRC, slug: 'notes/kept' }] });
+      return { tier: row!.trust_tier, origin: row!.write_origin ?? null };
+    };
+    const [kept] = await engine.readPageTrustRows({ keys: [{ source_id: SRC, slug: 'notes/kept' }] });
+    const pageId = Number(kept!.id);
+    const agent = ['gbrain.write_trust_tier', 'gbrain.write_origin'];
+    const agentValues = ['agent_written', JSON.stringify({ channel: 'agent-example' })];
+    // The fence append: an agent rewrite lowers the page, then the restore raises it back under the page's own promotion.
+    const appended = await withWriteTrustSettings(engine, agent, agentValues, async (tx) => {
+      await tx.putPage('notes/kept', { ...page, compiled_truth: 'Kept body, appended.' });
+      const lowered = await (async () => {
+        const [row] = await tx.readPageTrustRows({ ids: [pageId] });
+        return { tier: row!.trust_tier, origin: row!.write_origin ?? null };
+      })();
+      await tx.applyTransactionSettings(['gbrain.write_trust_promotion'], ['operator_curated']);
+      await tx.restorePageTrust({ pageId, trustTier: 'operator_curated', writeOrigin: JSON.stringify(owner) });
+      return lowered;
+    });
+    const restored = await trust();
+    // A lower needs no promotion; a null origin clears it.
+    await withWriteTrustSettings(engine, agent, agentValues,
+      (tx) => tx.restorePageTrust({ pageId, trustTier: 'external_untrusted', writeOrigin: null }));
+    const lowered = await trust();
+    // A raise a declared writer makes without a promotion keeps the stored tier.
+    await withWriteTrustSettings(engine, agent, agentValues,
+      (tx) => tx.restorePageTrust({ pageId, trustTier: 'operator_curated', writeOrigin: JSON.stringify(owner) }));
+    const unpromoted = await trust();
+    // A raise the promotion does not cover keeps the stored tier too.
+    await withWriteTrustSettings(engine, [...agent, 'gbrain.write_trust_promotion'], [...agentValues, 'tool_observed'],
+      (tx) => tx.restorePageTrust({ pageId, trustTier: 'operator_curated', writeOrigin: null }));
+    const capped = await trust();
+    // An unknown page id writes nothing.
+    await withWriteTrustSettings(engine, agent, agentValues,
+      (tx) => tx.restorePageTrust({ pageId: 987_654, trustTier: 'agent_written', writeOrigin: null }));
+    const after = await trust();
+    expect(appended).toEqual({ tier: 'agent_written', origin: { channel: 'agent-example' } });
+    expect(restored).toEqual({ tier: 'operator_curated', origin: owner });
+    expect(lowered).toEqual({ tier: 'external_untrusted', origin: null });
+    expect(unpromoted.tier).toBe('external_untrusted');
+    expect(capped.tier).toBe('external_untrusted');
+    expect(after).toEqual(capped);
+    return { appended, restored, lowered, unpromoted, capped, after };
+  });
+});

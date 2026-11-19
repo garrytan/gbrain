@@ -134,7 +134,6 @@ src/core/mcp-request-log-retention.ts	kind_compare	2
 src/core/migrate.ts	kind_compare	4
 src/core/migration-orchestration-lock.ts	kind_compare	2
 src/core/migration-preludes.ts	kind_compare	3
-src/core/minions/budget-meter.ts	kind_compare	2
 src/core/minions/db-probe.ts	kind_compare	1
 src/core/minions/embed-backfill-admission.ts	kind_compare	4
 src/core/minions/no-worker.ts	kind_compare	2

@@ -1,7 +1,7 @@
 //! The fact purge ledger: the `fact_purges` table (src/core/facts/purge-schema.ts).
 //!
 //! A purge tombstone says "this claim, at this visibility, about this subject, was purged from this
-//! source and may not be saved again". It lives at `F 0x0C source \0 visibility \0 subject \0
+//! source and may not be saved again". It lives at `F 0x0F source \0 visibility \0 subject \0
 //! fact_hash \0` with the JSON value [`PurgeRecord`]; the key is the table's primary key. `subject`
 //! `*` covers every subject. `fact_hash` is the claim's fingerprint (`gbrain_fact_fingerprint`).
 //!
@@ -30,7 +30,7 @@ use crate::{get_json, put_json};
 use serde::{Deserialize, Serialize};
 
 /// The byte after `keys::FACT` that marks a purge tombstone.
-const PURGE: u8 = 0x0C;
+const PURGE: u8 = 0x0F;
 
 /// The two values of the table's `visibility` CHECK.
 const VISIBILITIES: [&str; 2] = ["private", "world"];

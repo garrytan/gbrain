@@ -122,7 +122,7 @@ async function readNoncanonicalPrivate(engine: BrainEngine, sourceIds?: string[]
     FROM pages p JOIN sources s ON s.id=p.source_id
     WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
       AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE lower(k)='visibility') AND p.frontmatter->>'visibility' IS DISTINCT FROM 'private'
-    ORDER BY p.source_id, p.slug`, [ids]);
+    ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`, [ids]);
   const stored = candidates.filter(row => noncanonicalPrivateRequest('', typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter));
   return { held: Number(heldRow?.n ?? 0), stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
 }

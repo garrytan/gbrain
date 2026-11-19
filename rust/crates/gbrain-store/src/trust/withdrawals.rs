@@ -402,6 +402,15 @@ impl Store {
         Ok(found)
     }
 
+    /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the store's fact
+    /// purge ledger, `facts/purge_ledger.rs`) and a take purge tombstone. The store keeps no take
+    /// purge ledger (`take_purges` has no Rust writer), so the second is false.
+    pub fn read_source_purge_flags(&self, source_id: &str) -> Result<(bool, bool)> {
+        no_nul("readSourcePurgeFlags", &[("sourceId", source_id)])?;
+        let facts = crate::facts::purge_ledger::has_fact_purges(&*self.read()?, source_id)?;
+        Ok((facts, false))
+    }
+
     /// `readTrustGeneration`: the trust policy generation as decimal text. The store keeps no
     /// `trust_policy_state` row and no triggers that bump it, so it answers its commit sequence:
     /// it moves on every commit, a superset of the events that bump the SQL generation (tier and
@@ -505,6 +514,34 @@ mod tests {
             ..SourceInput::default()
         })
         .unwrap();
+    }
+
+    #[test]
+    fn source_purge_flags_read_the_fact_purge_ledger() {
+        let s = store();
+        source(&s, "default");
+        source(&s, "work");
+        assert_eq!(
+            s.read_source_purge_flags("default").unwrap(),
+            (false, false)
+        );
+        s.insert_fact_purge(&crate::facts::purge_ledger::FactPurgeInsert {
+            source_id: "default".into(),
+            visibility: "world".into(),
+            subject: "*".into(),
+            fact_hash: fact_fingerprint("Acme raised 5M."),
+            request_id: None,
+            actor: None,
+            reason: None,
+        })
+        .unwrap();
+        assert_eq!(s.read_source_purge_flags("default").unwrap(), (true, false));
+        assert_eq!(s.read_source_purge_flags("work").unwrap(), (false, false));
+        assert_eq!(
+            s.read_source_purge_flags("missing").unwrap(),
+            (false, false)
+        );
+        assert!(s.read_source_purge_flags("a\0b").is_err());
     }
 
     #[test]

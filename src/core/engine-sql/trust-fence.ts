@@ -9,6 +9,7 @@
  * The writer's tier (`gbrain.write_trust_tier`) and the opened fact ids (`gbrain.write_open_facts`) are transaction-local
  * settings the SQL reads itself; this member passes neither.
  */
+import type { BrainEngine } from '../engine.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
 import { trustRankSql } from '../trust/tier.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -50,4 +51,15 @@ export async function listFenceFactRows(exec: LegacyUnscopedRead, target: FenceR
         AND (${above} OR (${held}) OR ${opened})
       ORDER BY f.row_num FOR UPDATE OF f`)).rows;
   return rows;
+}
+
+/** What a fence append restores on its page after the page write (trust/fence-append.ts withPageTierKept). */
+export interface PageTrustRestore { pageId: number; trustTier: string; /** JSON text, or null for none. */ writeOrigin: string | null }
+
+/**
+ * Puts back the page's trust tier and write origin a fence append's page write restamped. The tier trigger still runs: a
+ * raise back to the prior tier needs the promotion the caller opens (persistence/context.ts withTrustPromotion).
+ */
+export async function restorePageTrust(raw: Pick<BrainEngine, 'executeRaw'>, spec: PageTrustRestore): Promise<void> {
+  await raw.executeRaw('UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE id=$1', [spec.pageId, spec.trustTier, spec.writeOrigin]);
 }

@@ -320,7 +320,7 @@ describe('engine parity: typed trust tier reads', () => {
         tier: r.tier, successor_tier: r.successor_tier, segmented: r.segmented, successor_pruned: r.successor_pruned,
         replaced: r.replaced_at instanceof Date || typeof r.replaced_at === 'string', since: r.recorded_since != null,
         competing: Array.isArray(r.competing) ? r.competing.map(ord) : r.competing,
-        undated: Number(r.undated), large: Number(r.large_versions), segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at,
+        undated: Number(r.undated), large: Number(r.large_versions), segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at instanceof Date,
       });
       const spec = { pageId, excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 };
       const march = norm(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-03-01' }));
@@ -436,7 +436,7 @@ describe('engine parity: typed trust tier reads', () => {
       reason: r.reason, introduced: r.introduced_because, tier: r.tier, successor_tier: r.successor_tier, segmented: r.segmented,
       successor_pruned: r.successor_pruned, replaced: r.replaced_at instanceof Date, since: r.recorded_since instanceof Date,
       competing: Array.isArray(r.competing) ? r.competing.map(ord) : r.competing, undated: Number(r.undated), large: Number(r.large_versions),
-      segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at, created: r.created_at instanceof Date,
+      segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at instanceof Date, created: r.created_at instanceof Date,
     });
   };
 
@@ -474,7 +474,7 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'pickValidTimeEdition reads the reason a version was replaced for; the Rust store keeps none and refuses the write',
+    'pickValidTimeEdition reads the reason a version was replaced for and the reason the next edition was introduced for',
     { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
     async (engine) => {
       const write = (validFrom: string) => engine.putPage('vt/reason', { type: 'note', title: 'VT', compiled_truth: `body ${validFrom}`, timeline: '', frontmatter: { valid_from: validFrom } });
@@ -492,7 +492,39 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'pickValidTimeEdition reads the gap a version history records; the Rust store records none and refuses the write',
+    'a large page keeps its newest five large versions, and the pick reads the marks the prune leaves',
+    { methods: ['putPage', 'createVersion', 'getVersions', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const labels = new Map<string, string>();
+      const write = (body: string, validFrom: string) =>
+        engine.putPage('vt/pruned', { type: 'note', title: 'VT', compiled_truth: body, timeline: '', frontmatter: { valid_from: validFrom } });
+      const snap = async (label: string, reason?: string) =>
+        labels.set(String((await engine.createVersion('vt/pruned', { sourceId: 'default', reason })).id), label);
+      await write('Small.', '2026-01-01');
+      await snap('small', 'grew');
+      await write('x'.repeat(1024 * 1024 + 1), '2026-06-01');
+      for (let i = 1; i <= 6; i++) await snap(`large${i}`);
+      const kept = (await engine.getVersions('vt/pruned', { sourceId: 'default', includeBody: false })).map((v) => labels.get(String(v.id)));
+      expect(kept).toEqual(['large6', 'large5', 'large4', 'large3', 'large2', 'small']);
+      const pageId = (await engine.getPage('vt/pruned', { sourceId: 'default' }))!.id;
+      const view = pickView(labels);
+      const spec = { pageId, pinOrd: null, inlineMaxBytes: 1024 * 1024 };
+      const trusted = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-03-01', excludePrivate: false }));
+      const remote = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-03-01', excludePrivate: true }));
+      const july = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-07-01', excludePrivate: false }));
+      // large2 follows a pruned edition: the small version's reason does not introduce it.
+      const [large2] = [...labels].find(([, l]) => l === 'large2')!;
+      const pinned = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-07-01', excludePrivate: false, pinOrd: Number(large2) }));
+      expect(trusted).toMatchObject({ ord: 'small', successor_pruned: true, reason: 'grew', large: 5, gap: true });
+      expect(remote).toMatchObject({ ord: 'small', successor_pruned: true, reason: null, gap: true });
+      expect(july).toMatchObject({ ord: 'current', introduced: null, gap: true });
+      expect(pinned).toMatchObject({ ord: 'large2', successor_pruned: false, introduced: null });
+      return { kept, trusted, remote, july, pinned };
+    },
+  );
+
+  parityTest(
+    'pickValidTimeEdition reads the gap a version history records',
     { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
     async (engine) => {
       await engine.putPage('vt/gap', { type: 'note', title: 'VT', compiled_truth: 'body', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
