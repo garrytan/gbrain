@@ -18,7 +18,7 @@ import { runIMessageSync, type IMessageState } from '../src/core/imessage/imessa
 import { parseIMessageSourceConfig } from '../src/core/imessage/source-config.ts';
 import { imessageHelper } from '../src/core/apple/helper-client.ts';
 import { imessageChatKey, imessagePagePath } from '../src/core/imessage/render.ts';
-import { connectorDbCursorKey, readConnectorDbCursor } from '../src/core/connectors/db-cursor.ts';
+import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../src/core/connectors/db-cursor.ts';
 import { connectorIdentity } from '../src/core/persistence/connector-identity.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { slugifyPath } from '../src/core/sync.ts';
@@ -78,10 +78,11 @@ const helper = (fake: FakeHelper) => imessageHelper({ sourceId: 'test', port: 47
 const run = (id: string, cfg: ReturnType<typeof parseIMessageSourceConfig>, fake: FakeHelper, extra: { now?: number; full?: boolean } = {}) =>
   runIMessageSync(engine, id, cfg, { ...options, ...(extra.full ? { full: true } : {}) }, { helper: helper(fake), now: () => extra.now ?? NOW });
 const dayFile = (threadId: string, daysAgo: number) => imessagePagePath(imessageChatKey(threadId), dayOf(daysAgo));
-async function stateOf(id: string): Promise<IMessageState> {
+async function cursorKey(id: string) {
   const [src] = await engine.executeRaw<{ incarnation: string; local_path: string | null; config: Record<string, unknown> }>('SELECT incarnation::text AS incarnation,local_path,config FROM sources WHERE id=$1', [id]);
-  return (await readConnectorDbCursor(engine, connectorDbCursorKey(id, src!.incarnation, connectorIdentity('imessage', src!.config, src!.local_path)))).state as IMessageState;
+  return connectorDbCursorKey(id, src!.incarnation, connectorIdentity('imessage', src!.config, src!.local_path));
 }
+const stateOf = async (id: string) => (await readConnectorDbCursor(engine, await cursorKey(id))).state as IMessageState;
 const pageCount = async (id: string) => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [id]))[0]!.n;
 
 for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
@@ -180,6 +181,38 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     await run(id, cfg, fake, { now: NOW + 60_000 });
     expect(commits(repo)).toBe(c1);
     expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'remote_changed' });
+  });
+
+  test('a run that committed and stopped before the import: the next run commits nothing and imports the committed days', async () => {
+    const { repo, id, cfg } = await setup();
+    const fake = mac();
+    await run(id, cfg, fake);
+    const c1 = commits(repo);
+    const state = await stateOf(id);
+    // The state the run saved right after its commit: the owned record, and the chats as they were before the run.
+    await writeConnectorDbCursor(engine, await cursorKey(id), { ...state, chats: {} });
+    await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [id]);
+    const result = await run(id, cfg, fake);
+    expect(result.added).toBe(3);
+    expect(commits(repo)).toBe(c1);
+    expect(git(repo, 'status', '--porcelain').stdout).toBe('');
+  });
+
+  test('with --full and no helper on this Mac, the pages are rebuilt from the folder, held days left out', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    const fake = mac();
+    await run(id, cfg, fake);
+    writeFileSync(join(folder, dayFile(ALICE, 1)), 'my own notes\n');
+    fake.chats[0]!.messages[2]!.text = 'Running twenty minutes late.';
+    await run(id, cfg, fake, { now: NOW + 60_000 });
+    await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [id]);
+    const c1 = commits(repo);
+    const down = imessageHelper({ sourceId: id, port: 47001, token: HELPER_TEST_TOKEN, fetchImpl: (async () => { throw new Error('connect ECONNREFUSED'); }) as unknown as typeof fetch });
+    const result = await runIMessageSync(engine, id, cfg, { ...options, full: true }, { helper: down, now: () => NOW + 120_000 });
+    expect(result.added).toBe(2);
+    expect(commits(repo)).toBe(c1);
+    expect(await pageCount(id)).toBe(2);
+    await expect(runIMessageSync(engine, id, cfg, { ...options }, { helper: down, now: () => NOW + 180_000 })).rejects.toMatchObject({ code: 'apple_helper_not_running' });
   });
 
   test('a mass removal removes nothing and keeps the days', async () => {

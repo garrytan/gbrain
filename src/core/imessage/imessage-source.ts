@@ -39,7 +39,8 @@ import { IMESSAGE_THREADS_LIMIT, helperNotRunning, imessageHelper, type IMessage
 import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessageDay, shownMessages } from './render.ts';
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
 import { resolveOwnedDestination, type OwnedDatabaseOnlyReason } from '../owned-folder/destination.ts';
-import { commitOwnedBatch, OWNER_FILE, README_FILE, type OwnedFolderState, type OwnedHold } from '../owned-folder/writer.ts';
+import { git } from '../git/git-run.ts';
+import { commitOwnedBatch, ownedConflict, OWNER_FILE, README_FILE, type OwnedFolderState, type OwnedHold } from '../owned-folder/writer.ts';
 import { ownedFolderRel } from '../owned-folder/paths.ts';
 
 export interface IMessageChatState {
@@ -112,15 +113,23 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   const runStart = now();
   const runId = randomUUID();
   let helper = deps.helper;
-  if (!helper) {
-    const port = await helperPort(engine);
-    if (port === null) throw helperNotRunning(sourceId, null, `config ${IMESSAGE_HELPER_PORT_KEY} is not set`);
-    const key = resolveApiToken('imessage', cfg.tokenEnv);
-    if (!key) throw imessageAuthRequired(sourceId, cfg);
-    helper = imessageHelper({ sourceId, port, token: key.token });
-  }
   const signal = opts.signal;
-  const threads = await helper.threads(signal);
+  // With --full and no helper on this Mac, the run rebuilds the database pages from the owned folder (below).
+  let unreachable: OperationError | null = null;
+  let threads: IMessageThread[] = [];
+  try {
+    if (!helper) {
+      const port = await helperPort(engine);
+      if (port === null) throw helperNotRunning(sourceId, null, `config ${IMESSAGE_HELPER_PORT_KEY} is not set`);
+      const key = resolveApiToken('imessage', cfg.tokenEnv);
+      if (!key) throw imessageAuthRequired(sourceId, cfg);
+      helper = imessageHelper({ sourceId, port, token: key.token });
+    }
+    threads = await helper.threads(signal);
+  } catch (error) {
+    if (!opts.full || !(error instanceof OperationError) || error.code !== 'apple_helper_not_running') throw error;
+    unreachable = error;
+  }
 
   const [source] = await engine.executeRaw<{ incarnation: string; local_path: string | null; config: Record<string, unknown> }>(
     'SELECT incarnation::text AS incarnation,local_path,config FROM sources WHERE id=$1', [sourceId]);
@@ -129,6 +138,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   const state: IMessageState = managed ? { ...emptyState(), ...managed.state<IMessageState>(emptyState()) }
     : { ...emptyState(), ...(await readConnectorDbCursor(engine, cursorKey)).state as IMessageState | null };
 
+  const chatsBefore = structuredClone(state.chats);
   const summary: Summary = { status: 'synced', added: 0, modified: 0, deleted: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], factsRetired: 0, failedFiles: 0 };
   const holds = await ConnectorHoldSession.open(engine, sourceId, managed, emptyState(), state.item_holds, { full: opts.full });
   const newest = () => Object.values(state.chats).map(c => c.committed_to).filter((v): v is string => !!v).sort().at(-1) ?? null;
@@ -155,6 +165,33 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       ownedDays ? ` The ${ownedDays} day file(s) committed under ${ownedFolderRel(sourceId)}/ earlier stay there; gbrain sources remove ${sourceId} removes them.` : ''}${
       destination.reason === 'remote_changed' ? ` If the new destination is right, run: gbrain sources rebind ${sourceId}` : ''}\n`);
   }
+  /** Imports every day file this source committed, from the blob it recorded, skipping held days; asks nothing of the Mac. */
+  const rebuildFromFolder = async (root: string): Promise<SyncResult> => {
+    const held = owned?.held ?? {};
+    const rel = ownedFolderRel(sourceId);
+    for (const [path, blob] of Object.entries(owned!.files)) {
+      const m = /^imessage\/([^/]+)\/(\d{4}-\d{2}-\d{2})\.md$/.exec(path);
+      if (!m || held[path]) continue;
+      const [, chatKey, day] = m as unknown as [string, string, string];
+      await handle(`${chatKey}/${day}`, async () => {
+        const bytes = git(root, ['cat-file', 'blob', blob]);
+        if (bytes.code !== 0) throw ownedConflict(`${rel}/${path}`, 'has no committed copy gbrain can read', sourceId);
+        await publishConnectorPage(ctx, { relPath: path, markdown: bytes.stdout, commitMessage: `imessage(${sourceId}): ${chatKey} ${day}`,
+          privateMessage: `imessage(${sourceId}): ${chatKey} ${day} is private; database only`, retireReason: 'the iMessage day was rebuilt from the owned folder' });
+      }, slugifyPath(path));
+    }
+    if (summary.failedFiles > 0) summary.status = 'partial';
+    state.item_holds = holds.finish();
+    await save(false);
+    await holds.complete();
+    process.stderr.write(`[gbrain notice imessage_rebuilt_from_folder] iMessage source ${sourceId}: the helper on this Mac is not reachable (${unreachable!.message}), so the database pages were rebuilt from ${rel}/${Object.keys(held).length ? `, leaving out ${Object.keys(held).length} held day(s)` : ''}. Nothing new was read from Messages.\n`);
+    await afterConnectorPublish(ctx, opts);
+    return { status: summary.status === 'partial' ? 'partial' : summary.added + summary.modified > 0 ? 'synced' : 'up_to_date',
+      fromCommit: null, toCommit: '', added: summary.added, modified: summary.modified, deleted: 0, renamed: 0,
+      chunksCreated: summary.chunksCreated, embedded: summary.embedded, pagesAffected: summary.pagesAffected,
+      ...(summary.failedFiles > 0 ? { failedFiles: summary.failedFiles, filesImported: summary.added + summary.modified, reason: 'connector_item_failures' as const } : {}),
+      ...connectorHoldsResult(sourceId, holds.summary()) };
+  };
   const ops: DayOp[] = [];
   const horizons = new Map<string, number>();
   const heldPaths = new Set(Object.keys(owned?.held ?? {}));
@@ -166,6 +203,10 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       return false;
     }
   };
+  if (unreachable) {
+    if (destination.record !== 'folder' || !ownedDays) throw unreachable;
+    return rebuildFromFolder(destination.root);
+  }
 
   /** Queues a day page; the run commits every queued file at once, then imports the rows (applyOp). */
   const publishDay = (thread: IMessageThread, chatKey: string, day: string, messages: IMessageMessage[], fp: string) => {
@@ -306,8 +347,13 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     Object.assign(held, batch.held);
     state.owned = { incarnation: source.incarnation, push_urls: owned?.push_urls ?? destination.pushUrls, files,
       last_batch: batch.sha ?? owned?.last_batch ?? null, last_batch_at: batch.sha ? new Date(now()).toISOString() : owned?.last_batch_at ?? null, held };
-    // The commit is recorded before any row is imported, so a run that stops here finds its own files next time.
-    if (batch.sha) await save(false);
+    // The commit is recorded before any row is imported, with the chats as they were before this run: a run that stops
+    // here reads the same window again next time, finds its own files unchanged and imports them.
+    if (batch.sha) {
+      const live = state.chats;
+      state.chats = chatsBefore;
+      try { await save(false); } finally { state.chats = live; }
+    }
     if (!folderRefused) for (const hold of Object.values(batch.held)) {
       process.stderr.write(`[gbrain notice ${hold.code}] iMessage source ${sourceId}: ${hold.detail}; that day is in the database only until it is fixed.\n`);
     }
