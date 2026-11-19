@@ -523,7 +523,6 @@ src/core/maintenance/status.ts	execute_raw	1
 src/core/meetings/meetings-source.ts	execute_raw	3
 src/core/mentions/newer-mentions.ts	execute_raw	1
 src/core/mentions/pass.ts	execute_raw	33
-src/core/mentions/referrers.ts	execute_raw	1
 src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
@@ -564,7 +563,6 @@ src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	7
 src/core/ops/admin.ts	execute_raw	2
 src/core/ops/attribution.ts	execute_raw	8
-src/core/ops/backlinks-paged.ts	execute_raw	2
 src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/context.ts	execute_raw	1

@@ -55,7 +55,7 @@ test/engine-parity/persistence-declaration.test.ts	6	0
 test/engine-parity/persistence.test.ts	29	0
 test/engine-parity/private-page-reads.test.ts	7	0
 test/engine-parity/raw-sql.test.ts	0	4
-test/engine-parity/referrer-reads.test.ts	3	0
+test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/retrieval-coverage.test.ts	12	1
 test/engine-parity/search-reads.test.ts	15	1

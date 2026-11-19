@@ -43,7 +43,7 @@ function parseLimit(p: Record<string, unknown>, fallback: number | undefined): n
 async function scopeSources(ctx: OperationContext, policy: PageReadPolicy): Promise<string[]> {
   if (policy.sourceIds?.length) return policy.sourceIds;
   if (policy.sourceId) return [policy.sourceId];
-  return (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(r => r.id);
+  return ctx.engine.listSourceIds();
 }
 
 /** The entity page's source: the first source in scope holding a live page with this slug. */
@@ -146,7 +146,7 @@ export async function backlinkTypeFilter(ctx: OperationContext, p: Record<string
   if (resolved) await assertKnownType(ctx, resolved.scope, type);
   const aliasSources: string[] = [];
   const aliases: string[] = [];
-  for (const { id } of await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')) {
+  for (const id of await ctx.engine.listSourceIds()) {
     const pairs = typeAliasPairs(await loadSourcePack(ctx.engine, id));
     pairs.stored.forEach((stored, i) => {
       if (pairs.canonical[i] !== type) return;

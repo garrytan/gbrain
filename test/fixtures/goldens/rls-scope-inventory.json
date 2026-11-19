@@ -2686,6 +2686,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLocalPaths#default": {
         "flagOffLanes": [
           "pool"
@@ -5153,6 +5164,7 @@
         "listSharedSkillPackRoots": "none",
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
+        "listSourceIds": "none",
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",
@@ -5347,6 +5359,7 @@
         "readReferrerRecordPages": "none",
         "readReferrerRows": "none",
         "readReferrerTargetCounts": "none",
+        "readReferrerTypes": "none",
         "readRetirementHop": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",

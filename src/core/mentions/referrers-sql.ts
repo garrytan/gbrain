@@ -106,6 +106,11 @@ export const REFERRER_TARGET_SOURCES_SQL = 'SELECT source_id FROM pages WHERE sl
 /** The referrer page's type filter: `$6` a canonical or stored type, or null for every type. */
 const REFERRER_TYPE_FILTER = `($6::text IS NULL OR canonical_type = $6 OR type = $6)`;
 
+/** The canonical and stored types among the referrers (no type filter). Params: the five of `referrersCte`. */
+export function referrerTypesSql(scope: ReferrerSqlScope): string {
+  return `${referrersCte(scope)} SELECT DISTINCT canonical_type, type FROM typed`;
+}
+
 /** The referrer page's total. Params: the five of `referrersCte`, then $6 the type (or null). */
 export function referrerCountSql(scope: ReferrerSqlScope): string {
   return `${referrersCte(scope)} SELECT count(*)::int AS n FROM typed WHERE ${REFERRER_TYPE_FILTER}`;

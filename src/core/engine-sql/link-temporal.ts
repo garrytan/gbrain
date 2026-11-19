@@ -27,7 +27,7 @@ import {
 import { pipelined } from '../page-state/transactions.ts';
 import {
   REFERRER_RECORD_PAGES_SQL, REFERRER_TARGET_SOURCES_SQL, referrerCountSql, referrerGroupsSql, referrerPageDetailsSql, referrerRecordCandidatesSql,
-  referrerRowsSql, referrerTargetCountsSql,
+  referrerRowsSql, referrerTargetCountsSql, referrerTypesSql,
 } from '../mentions/referrers-sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { SqlExecutor } from './executor.ts';
@@ -518,6 +518,22 @@ export type ReferrerRowScope = Omit<ReferrerGroupScope, 'perGroup'> & { type: st
 
 /** One referring page of a referrer page: its canonical type and its date (UTC microsecond text). */
 export type ReferrerRow = Omit<ReferrerGroupRow, 'gtotal'>;
+
+/** The observed-type read's scope: the referrer page's, with no type filter. */
+export type ReferrerTypeScope = Omit<ReferrerRowScope, 'type'>;
+
+/** One distinct canonical and stored type pair among the referrers; `type` is the stored type as the driver returns it. */
+export interface ReferrerTypeRow { canonical_type: string; type: string | null }
+
+/**
+ * The distinct `(canonical_type, type)` pairs among the referring pages `countReferrerRows` counts with no type filter,
+ * in no set order: the observed types the unknown-type error names.
+ */
+export async function readReferrerTypes(exec: Exec, target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: ReferrerTypeScope): Promise<ReferrerTypeRow[]> {
+  return exec.executeRaw<ReferrerTypeRow>(referrerTypesSql(scope),
+    [[...target.sources], [...target.slugs], [...scope.referrerSources], [...scope.storedTypes], [...scope.canonicalTypes]]);
+}
 
 /** How many referring pages `readReferrerRows` pages through (every page, no cursor). The read scope applies as in `readReferrerGroupRows`. */
 export async function countReferrerRows(exec: Exec, target: { sources: readonly string[]; slugs: readonly string[] },

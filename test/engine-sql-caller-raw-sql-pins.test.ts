@@ -284,6 +284,22 @@ const PINS: Pin[] = [
        ) x
       ORDER BY x.i, x.d DESC NULLS LAST, x.source_id, x.slug`],
   })),
+  ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
+    from: 'src/core/mentions/referrers.ts:131 referrerTypes (with referrersCte at mentions/referrers-sql.ts:43; lines at a4198fc65a)',
+    case: {
+      method: 'readReferrerTypes', variant: excludePrivate ? 'remote+floor' : 'local',
+      run: e => e.readReferrerTypes({ sources: ['default'], slugs: ['companies/acme-example'] }, {
+        referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], excludePrivate,
+        eligibility: floored ? { floor: 'operator_curated' } : undefined, includeQuarantined: false,
+      }),
+    },
+    texts: () => [`${pinnedReferrersCte(excludePrivate, floored)} SELECT DISTINCT canonical_type, type FROM typed`],
+  })),
+  {
+    from: 'src/core/ops/backlinks-paged.ts:46 scopeSources and :149 backlinkTypeFilter (at a4198fc65a)',
+    case: { method: 'listSourceIds', variant: 'default', run: e => e.listSourceIds() },
+    texts: ['SELECT id FROM sources ORDER BY id'],
+  },
   {
     from: 'src/core/mentions/referrers.ts:414 hydrateRecords (at 97bf5544dd)',
     case: { method: 'readReferrerRecordPages', variant: 'default', run: e => e.readReferrerRecordPages([7, 3]) },

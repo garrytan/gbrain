@@ -281,6 +281,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readReferrerRows': OOS.linkTemporal,
   'readReferrerRecordCandidates': OOS.linkTemporal,
   'readReferrerRecordPages': OOS.linkTemporal,
+  'readReferrerTypes': OOS.linkTemporal,
   'countSearchVectorRows': OOS.linkTemporal,
   'replaceSearchVectorTriggerFunction': OOS.linkTemporal,
   'backfillSearchVectors': OOS.linkTemporal,
@@ -497,7 +498,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
-  'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
+  'listStaleSyncSourceIds': 'sources', 'listSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
   // files
@@ -972,6 +973,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
   ...variants('listStaleSyncSourceIds', [['default', (e) => e.listStaleSyncSourceIds()]]),
+  ...variants('listSourceIds', [['default', (e) => e.listSourceIds()]]),
   ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
   ...variants('lockSourceRow', [['default', (e) => e.lockSourceRow(SRC)]]),
   ...variants('readSourceChunkerVersion', [['default', (e) => e.readSourceChunkerVersion(SRC)]]),
