@@ -22,7 +22,7 @@ import { cliEquivalent } from '../core/ops/cli-equivalent.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { clampSurface, filterOpsForSurface, isReadOnlyOperation, itemParamKeys, paramCallable, paramCeiling, surfaceWiderThan, type McpSurface } from './surface.ts';
 
-export { paramCallable };
+export { itemParamKeys, paramCallable };
 
 const PERSISTENT_ROUTE = 'To keep the full surface for new sessions, set GBRAIN_SURFACE=full in the env of this harness\'s MCP server entry for gbrain '
   + '(`claude mcp add gbrain -e GBRAIN_SURFACE=full -- …`, the env table of the Codex server entry, or the plugin\'s GBRAIN_SURFACE setting on launcher installs), '

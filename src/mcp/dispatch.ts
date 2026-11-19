@@ -40,8 +40,7 @@ import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNoti
 import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
-import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
-import { itemParamKeys } from './surface.ts';
+import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, itemParamKeys, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
 import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { takeHttpBehaviorNotice, takeLocalBehaviorNotice } from '../core/behavior-change-notice.ts';
