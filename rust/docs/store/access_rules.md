@@ -61,9 +61,12 @@ other and the second sees the first's revision. A second write of one revision n
 | `brain.readAccessPolicyMarks(sourceId, operationId?)` | `{ applied, approved, operation? }` | `POLICY_MARKS_SQL`, `OPERATION_MARKS_SQL` |
 | `brain.replaceAccessInvalidCoverage(sourceId, prefixes, detail)` | replaces the invalid prefixes; an empty list clears them | `DELETE_INVALID_SQL`, `INSERT_INVALID_SQL` |
 
-The store does not stamp a page when it is written, so `pages_restamped` counts a page written under an existing rule
-on a later restamp where PGLite does not. What a caller can read does not change: the store judges each read against
-the rules it holds.
+The store stamps a page when it is written, as the trigger `pages_access_stamp_folder_rules` does: a page record put
+under a key that held no record of the same page (an insert, a rename or a move) takes the `0x05` rule ids that cover
+it now when its source has access state, and none otherwise, in the same write (`FlaggingWriter`,
+`access_policy::stamp_page_put`). A put over the same page keeps its ids, as an UPDATE that names no slug, source or
+stamp column does. So `pages_restamped` counts the same pages as on PGLite and Postgres. What a caller can read does
+not depend on the stamps: the store judges each read against the rules it holds.
 
 The store has no row-level security, so `readFolderAccess` never returns the `'!unreadable'` row and the unreadable
 part of `isFolderRestricted` is always false.
@@ -108,8 +111,9 @@ owner-only form reopens one (`a_policy_missing_its_defaulted_fields_still_hides_
   `findPagesByTitles`). The `restrictFolder` and `seedAccessPolicy` fixtures (`test/engine-parity/harness.ts`) write
   the state.
 - `crates/gbrain-store/src/access_policy.rs` (unit tests): a revision number or operation id refuses a second write,
-  a refused rule change leaves no rule, the restamp counts drifted pages, page prefixes cover one page, and invalid
-  coverage is replaced and cleared.
+  a refused rule change leaves no rule, the restamp counts drifted pages, a page written or renamed under a rule is
+  stamped in its write, page prefixes cover one page, and invalid coverage is replaced and cleared.
 - `test/engine-parity/access-policy.test.ts`: on every arm, a rule added through `policy.ts` hides the folder, a
   removal waits for approval and then shows it, the pending prefix between install and restamp, the revision count, a
-  rule change refused part way, and two concurrent rule changes that cannot both apply against one revision.
+  rule change refused part way, two concurrent rule changes that cannot both apply against one revision, and a page
+  written or renamed under an applied rule that a later restamp does not count.

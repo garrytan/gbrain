@@ -13,8 +13,10 @@
 //!
 //! The restamp (`restampAccessWindow`, `finishAccessRestamp`) keeps each page's restamped rule ids
 //! (`pages.folder_rule_ids`) under sub-tag [`STAMP`] and counts the pages whose kept ids differ from
-//! the rules now. Page writes do not stamp on this engine and the page policy judges against the
-//! rules as they are, so a page written under a rule counts as restamped the first time.
+//! the rules now. A page record put under a new key (an insert, a rename) takes its ids in the same
+//! write ([`stamp_page_put`], from `FlaggingWriter`), as the trigger `pages_access_stamp_folder_rules`
+//! does, so a restamp counts the same pages as on Postgres. The page policy judges against the rules
+//! as they are, not against the kept ids.
 //!
 //! See rust/docs/store/access_rules.md.
 
@@ -184,6 +186,46 @@ fn coverage_key(source_id: &str, prefix: &str, reason: &str) -> Vec<u8> {
 
 fn stamp_key(source_id: &str, page_id: u64) -> Vec<u8> {
     key(STAMP, &[source_id.as_bytes(), &page_id.to_be_bytes()])
+}
+
+/// The identity of a stored page record, without decoding the rest of it.
+#[derive(Deserialize)]
+struct PageIdentity {
+    id: u64,
+    source_id: String,
+    slug: String,
+}
+
+/// The id of the page record `value`, `None` when it does not decode.
+pub(crate) fn page_record_id(value: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<PageIdentity>(value)
+        .ok()
+        .map(|p| p.id)
+}
+
+/// The page write half of the restamp, as the trigger `pages_access_stamp_folder_rules` does on
+/// PGLite and Postgres: a page record put under a key that held no record of the same page (an
+/// insert, a rename or a move) takes the rule ids that cover it now when its source has access
+/// state, and none otherwise. A put over the same page (any other column) keeps its kept ids, as
+/// an UPDATE that names no slug, source or stamp column does. `prior` is the id the key held.
+pub(crate) fn stamp_page_put(tx: &mut dyn KvWrite, prior: Option<u64>, value: &[u8]) -> Result<()> {
+    let Ok(page) = serde_json::from_slice::<PageIdentity>(value) else {
+        return Ok(());
+    };
+    if prior == Some(page.id) {
+        return Ok(());
+    }
+    let k = stamp_key(&page.source_id, page.id);
+    let now = if has_state(&*tx, &page.source_id)? {
+        rule_ids(&*tx, &page.source_id, &page.slug)?
+    } else {
+        None
+    };
+    match now {
+        Some(ids) => put_json(tx, &k, &ids),
+        None if tx.get(&k)?.is_some() => tx.delete(&k),
+        None => Ok(()),
+    }
 }
 
 fn revision_row(r: PolicyRevisionRecord) -> AccessRevisionRow {
@@ -856,6 +898,27 @@ mod tests {
             .unwrap();
         assert_eq!(s.finish_access_restamp("default").unwrap(), 1);
         assert!(!s.is_folder_restricted("default", "team/plan").unwrap());
+    }
+
+    #[test]
+    fn a_page_written_or_renamed_under_a_rule_is_stamped_in_its_write() {
+        let s = store();
+        page(&s, "notes/open");
+        s.ensure_access_policy_state("default").unwrap();
+        s.insert_access_policy_revision(&revision(1, "a", None))
+            .unwrap();
+        s.apply_access_rule_changes("default", &changes(&[("team", "team/")], &[], 1))
+            .unwrap();
+        assert_eq!(s.finish_access_restamp("default").unwrap(), 0);
+        page(&s, "team/new");
+        page(&s, "team/new");
+        page(&s, "notes/later");
+        assert_eq!(s.finish_access_restamp("default").unwrap(), 0);
+        s.update_slug("notes/open", "team/moved", Some("default"))
+            .unwrap();
+        s.update_slug("team/new", "notes/out", Some("default"))
+            .unwrap();
+        assert_eq!(s.finish_access_restamp("default").unwrap(), 0);
     }
 
     #[test]

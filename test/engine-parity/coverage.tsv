@@ -82,7 +82,7 @@ getPage	pages	yes	95	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	394	yes	yes	yes	serves
+putPage	pages	yes	395	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -336,7 +336,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	17	no	yes	yes	serves
+updateSlug	sync_aliases	yes	18	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -694,8 +694,8 @@ readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
 readAccessStateUnreadable	write_misc	no	0	no	-	-	-
 applyAccessRuleChanges	write_misc	yes	4	no	yes	yes	serves
-restampAccessWindow	write_misc	yes	1	no	yes	yes	serves
-finishAccessRestamp	write_misc	yes	1	no	yes	yes	serves
+restampAccessWindow	write_misc	yes	2	no	yes	yes	serves
+finishAccessRestamp	write_misc	yes	2	no	yes	yes	serves
 insertAccessPolicyRevision	write_misc	yes	3	no	yes	yes	serves
 markAccessRevisionsApplied	write_misc	yes	1	no	yes	yes	serves
 approveAccessPolicyRevision	write_misc	yes	1	no	yes	yes	serves
