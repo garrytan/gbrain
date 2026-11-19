@@ -10,7 +10,8 @@
  *    it; listValidTimeIdentities lists the live pages with a slug in the source scope by source; pickValidTimeEdition
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
  *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
- *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
+ *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
  *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
@@ -33,6 +34,8 @@ import { operations } from '../../src/core/operations.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
+import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
+import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -691,4 +694,38 @@ describe('engine parity: typed trust tier reads', () => {
       return { seeded, raisedMover, plainMover };
     },
   );
+  // GST-687 quoting: get_timeline, the chronicle reads and get_chunks look up each row's page type (and get_chunks its
+  // page's slug and source) by page id. Ids differ between arms, so answers are keyed by slug.
+  parityTest('listPageRefsByIds, pageTypesById and quoteTimelineRows read each page by id: deleted pages and other sources included, unknown ids absent', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'listPageRefsByIds'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('quote/chat', { type: 'chat' as never, title: 'Chat', compiled_truth: 'chat body', timeline: '' });
+    await engine.putPage('quote/note', { type: 'note', title: 'Note', compiled_truth: 'note body', timeline: '' });
+    await engine.putPage('quote/gone', { type: 'transcript' as never, title: 'Gone', compiled_truth: 'gone body', timeline: '' });
+    await engine.putPage('quote/elsewhere', { type: 'person', title: 'Elsewhere', compiled_truth: 'other body', timeline: '' }, { sourceId: 'other' });
+    const idOf = async (slug: string, sourceId = 'default') => Number((await engine.getPage(slug, { sourceId }))!.id);
+    const ids = { chat: await idOf('quote/chat'), note: await idOf('quote/note'), gone: await idOf('quote/gone'), elsewhere: await idOf('quote/elsewhere', 'other') };
+    await engine.softDeletePage('quote/gone', { sourceId: 'default' });
+    const missing = Math.max(...Object.values(ids)) + 100_000;
+    const types = await pageTypesById(engine, [ids.chat, ids.note, ids.gone, ids.elsewhere, ids.chat, missing]);
+    const byName = Object.fromEntries(Object.entries(ids).map(([name, id]) => [name, types.get(id) ?? null]));
+    expect(byName).toEqual({ chat: 'chat', note: 'note', gone: 'transcript', elsewhere: 'person' });
+    expect({ size: types.size, missing: types.has(missing), empty: (await pageTypesById(engine, [])).size }).toEqual({ size: 4, missing: false, empty: 0 });
+    const refs = (await engine.listPageRefsByIds([ids.elsewhere, ids.gone, ids.note, ids.chat, ids.note, missing])).map(({ id, ...ref }) => ref);
+    expect(refs).toEqual([
+      { source_id: 'default', slug: 'quote/chat', type: 'chat' },
+      { source_id: 'default', slug: 'quote/note', type: 'note' },
+      { source_id: 'default', slug: 'quote/gone', type: 'transcript' },
+      { source_id: 'other', slug: 'quote/elsewhere', type: 'person' },
+    ]);
+    expect(await engine.listPageRefsByIds([])).toEqual([]);
+    const rows = [
+      { page_id: ids.chat, summary: 'said a thing', trust_tier: 'operator_curated' },
+      { page_id: ids.note, summary: 'wrote a thing', trust_tier: 'operator_curated' },
+    ];
+    const quoted = await quoteTimelineRows({ engine, remote: true }, 'quote/chat', rows);
+    expect(quoted.map(r => ('quoted' in r ? r.quoted : null))).toEqual(['transcript', null]);
+    return { byName, refs, quoted: quoted.map(r => ({ quoted: 'quoted' in r ? r.quoted : null, summary: r.summary })) };
+  });
 });

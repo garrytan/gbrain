@@ -278,3 +278,54 @@ fn sources_survive_a_reopen() {
         2
     );
 }
+
+#[test]
+fn a_fresh_brain_records_the_callers_initial_config_and_a_reopen_keeps_its_own() {
+    let dir = TempDir::new("cfg-initial");
+    let path = dir.path().join("brain");
+    let options = OpenOptions {
+        initial_config: vec![
+            ("embedding_model".into(), "acme:embed-1".into()),
+            ("embedding_dimensions".into(), "1024".into()),
+        ],
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, options).unwrap();
+    assert_eq!(
+        store.get_config("embedding_model").unwrap().as_deref(),
+        Some("acme:embed-1")
+    );
+    assert_eq!(
+        store.get_config("embedding_dimensions").unwrap().as_deref(),
+        Some("1024")
+    );
+    store.close();
+    // A reopen with another identity does not rewrite the rows the brain was created with.
+    let other = OpenOptions {
+        initial_config: vec![("embedding_model".into(), "other:model".into())],
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, other).unwrap();
+    assert_eq!(
+        store.get_config("embedding_model").unwrap().as_deref(),
+        Some("acme:embed-1")
+    );
+    store.close();
+    // With no initial config a fresh brain has no embedding identity of its own.
+    let bare = dir.path().join("bare");
+    let store = Store::open_dir(&bare, OpenOptions::default()).unwrap();
+    assert_eq!(store.get_config("embedding_model").unwrap(), None);
+}
+
+#[test]
+fn initial_config_refuses_the_version_key() {
+    let dir = TempDir::new("cfg-initial-version");
+    let options = OpenOptions {
+        initial_config: vec![("version".into(), "1".into())],
+        ..OpenOptions::default()
+    };
+    let Err(err) = Store::open_dir(&dir.path().join("brain"), options) else {
+        panic!("a version row in initial config must be refused");
+    };
+    assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
+}

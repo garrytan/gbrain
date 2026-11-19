@@ -13,7 +13,9 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
+use gbrain_store::trust::tier_reads::{
+    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+};
 use gbrain_store::trust::valid_time::{
     AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
     VersionEditionQuery,
@@ -83,6 +85,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: VersionIdsQuery = required(args, "listVersionReasonWriters args")?;
             s.list_version_reason_writers(&a)
+        })
+    }
+
+    /// `listPageRefsByIds({ ids })`: resolves the source, slug and type of each listed page.
+    #[napi]
+    pub fn list_page_refs_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageIdsQuery = required(args, "listPageRefsByIds args")?;
+            s.list_page_refs_by_ids(&a)
         })
     }
 

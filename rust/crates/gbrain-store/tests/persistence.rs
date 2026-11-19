@@ -9,8 +9,8 @@ use gbrain_store::journal::Principal;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::{
     ClaimRelease, ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
-    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCompletion,
-    WriteRequestInsert,
+    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCancellation,
+    WriteCompletion, WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -339,6 +339,91 @@ fn completion_that_overflows_the_reservation_changes_nothing() {
         "queued"
     );
     assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+}
+
+fn cancellation(id: &str, expect_state: &str, token: Option<&str>) -> WriteCancellation {
+    let mut completion = completion(id, "cancelled", 0);
+    completion.outcome = json!({});
+    completion.error_code = Some("cancelled".into());
+    completion.error_message = Some("Cancelled before publication.".into());
+    WriteCancellation {
+        completion,
+        expect_state: expect_state.into(),
+        expect_execution_token: token.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_cancel_ends_a_queued_request_once_and_keeps_what_it_may_not_end() {
+    let dir = TempDir::new("persist-cancel");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        store
+            .cancel_write_row(&cancellation(REQ_2, "queued", None))
+            .unwrap(),
+        None
+    );
+    let stale = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale["status"], "kept");
+    assert_eq!(stale["row"]["state"], "queued");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let done = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
+    assert_eq!(done["row"]["state"], "cancelled");
+    assert_eq!(done["row"]["error_code"], "cancelled");
+    assert_eq!(done["row"]["outcome"], json!({}));
+    for key in keys() {
+        assert_eq!(counter(&store, &key)["outstanding_count"], 0);
+    }
+    let again = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(again["status"], "kept");
+    assert_eq!(again["row"]["state"], "cancelled");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 0);
+}
+
+#[test]
+fn a_cancel_keeps_a_request_claimed_under_another_token_and_one_too_large_to_record() {
+    let dir = TempDir::new("persist-cancel-kept");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let other = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(other["status"], "kept");
+    let mut big = cancellation(&id, "running", Some(TOKEN));
+    big.completion.result_bytes = 5000;
+    let too_large = store.cancel_write_row(&big).unwrap().unwrap();
+    assert_eq!(too_large["status"], "too_large");
+    assert_eq!(too_large["row"]["state"], "running");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let mut wrong = cancellation(&id, "running", Some(TOKEN));
+    wrong.completion.state = "failed".into();
+    assert!(store.cancel_write_row(&wrong).is_err());
+    let done = store
+        .cancel_write_row(&cancellation(&id, "running", Some(TOKEN)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
 }
 
 #[test]

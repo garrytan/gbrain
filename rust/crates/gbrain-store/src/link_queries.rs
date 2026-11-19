@@ -53,10 +53,10 @@ use std::rc::Rc;
 pub(crate) mod link_temporal;
 pub use link_temporal::{
     ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
-    KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship, ManualWriteInput,
-    ManualWriteResult, NoteRow, NoteRowsInput, PageStatusInput, PageStatusRow, RecordMetadataInput,
-    RecordMetadataRows, RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput,
-    StateWrite,
+    InboundEdgeRow, KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship,
+    ManualWriteInput, ManualWriteResult, NoteRow, NoteRowsInput, PageStatusInput, PageStatusRow,
+    RecordMetadataInput, RecordMetadataRows, RelationshipEvidence, RelationshipKey,
+    SearchVectorCounts, StaleKeysInput, StateWrite,
 };
 mod retrieval_coverage;
 pub use retrieval_coverage::{

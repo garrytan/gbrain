@@ -680,7 +680,8 @@ pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<St
 
 /// The `truth_lead` of segmented page `page_id`: the raw prefix of its compiled truth that the last flip stored, `None`
 /// for an inline page, a shell no flip has published or a missing page (PGLite's NULL column). The bounded body prefix
-/// reads (`left(coalesce(compiled_truth, truth_lead), ..)`, page-window/bounded-lead.ts) take it for a segmented page.
+/// reads (`left(coalesce(compiled_truth, truth_lead), ..)`, page-window/bounded-lead.ts) and the entity card
+/// (`coalesce(compiled_truth, truth_lead)`) take it for a segmented page, whose `compiled_truth` is NULL.
 pub(crate) fn truth_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     Ok(read_body_state(read, page_id)?.and_then(|state| state.truth_lead))
 }

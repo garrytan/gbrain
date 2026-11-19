@@ -17,7 +17,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow, PageReadPolicy, SalienceOpts, SalienceResult,
 } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
+import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /** `pageReadFilter`'s source filter: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope. */
 function sourceScope(opts: Record<string, unknown>): unknown[] | null {
@@ -91,7 +91,7 @@ export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_
     ['sourceId', 'sourceIds', 'takesHoldersAllowList', 'excludePrivate', 'minTrust', 'suppressFlagged'], [
       // Hybrid search's post-fusion stage hands its whole option bag (search options plus applyBacklinks, floorRatio,
       // graphSignalsEnabled, query, titleBoost...) to this read; readSalienceScores reads only the page policy out of it.
-      'requireSafeChunks', ...HYBRID_BAG_KEYS,
+      'requireSafeChunks', ...HYBRID_BAG_KEYS, ...WHOKNOWS_KEYS,
     ]);
   const excludePrivate = storePagePolicy('getSalienceScores', o.excludePrivate, { callerReaders: true });
   const rows = (await storeCall({ member: 'getSalienceScores' }, () => brain.getSalienceScores({

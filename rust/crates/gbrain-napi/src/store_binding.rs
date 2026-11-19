@@ -61,6 +61,12 @@ pub struct BrainOpenOptions {
     /// Opt-in: let many write transactions run at once. Off unless this is true or
     /// `GBRAIN_RUST_CONCURRENT_WRITES=1` is set.
     pub concurrent_writes: Option<bool>,
+    /// The embedding identity a fresh brain records as config `embedding_model` and
+    /// `embedding_dimensions`, resolved by the caller the way the SQL engines resolve it.
+    pub embedding_model: Option<String>,
+    pub embedding_dimensions: Option<u32>,
+    /// What a fresh brain records as config `chunk_strategy`.
+    pub chunk_strategy: Option<String>,
 }
 
 #[napi]
@@ -177,6 +183,17 @@ impl Brain {
                 }
                 if let Some(by) = options.created_by {
                     opts.created_by = by;
+                }
+                if let Some(model) = options.embedding_model {
+                    opts.initial_config.push(("embedding_model".into(), model));
+                }
+                if let Some(dims) = options.embedding_dimensions {
+                    opts.initial_config
+                        .push(("embedding_dimensions".into(), dims.to_string()));
+                }
+                if let Some(strategy) = options.chunk_strategy {
+                    opts.initial_config
+                        .push(("chunk_strategy".into(), strategy));
                 }
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see

@@ -23,7 +23,7 @@ import type { EngineConfig } from './types.ts';
 import type { GBrainConfig } from './config.ts';
 import { capabilityMissing } from './rust-engine/errors.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
-import { openRustStore, type RustStore, type StoreBrain } from './rust-engine/store.ts';
+import { openRustStore, seedEmbeddingIdentity, type RustStore, type StoreBrain } from './rust-engine/store.ts';
 import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
@@ -166,7 +166,7 @@ export class RustEngine {
       // serves, so no call reaches this engine without it. A call that comes meanwhile waits for this election.
       onLock: async () => {
         this._leaveClient();
-        const store = await openRustStore(this.addon, this.databasePath);
+        const store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
         if (generation !== this._generation) {
           await store.close().catch(() => undefined);
           throw mapStoreError({ code: 'store_closed' }, { member: 'connect' });

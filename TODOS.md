@@ -12,6 +12,9 @@
 ## Rust engine lane 4 follow-ups (filed 2026-11-19)
 
 - [ ] **P3 — rust-owner-read-rule: a forget by an owner bound to a member refuses on a Rust brain.** **What:** `ownerReachesFact` (`src/core/rust-engine/store-members/memory-mutation-reads.ts`) answers only for an owner with no member identity, whose read rule is `FALSE`. For an owner bound to a member, `ownerReadPolicyFragment` (`src/core/search/private-visibility.ts`) renders GST-2490's owner read rule: `lineageAccessSql` for the member's own page (readers, satisfied folder rules, lineage origins and the owner-only test) and the privacy part. The Rust store models none of the lineage rule, so the member refuses with `engine_capability_missing`, and `gbrain forget` by such an owner stops on Rust while PGLite and Postgres answer. The refusal is pinned by `test/engine-parity/forget-reach-reads.test.ts` ("an owner bound to a member"). **Fix:** serve the owner read rule in the store (`rust/crates/gbrain-store/src/memory_mutation_reads.rs`): lineage origins of the member page, satisfied folder rules and the readers test for the given identity, then flip the parity case to equal on every arm. **Effort:** M. **Priority:** P3.
+## Rust engine trust generation follow-ups (filed 2026-11-18)
+
+- [ ] **P3 — rust-trust-generation-counter: a real trust generation counter in the Rust store.** **What:** on a Rust brain, `readTrustGeneration` (`rust/crates/gbrain-store/src/trust/withdrawals.rs`) answers the store's commit sequence, which moves on every commit. The SQL engines bump `trust_policy_state.generation` only on the trust-relevant writes (eligibility/generation-schema.ts triggers). So the hot-memory cache (`src/core/facts/meta-hook.ts`, keyed on that generation) rebuilds after any Rust write, not only after a trust change. Answers stay correct; only the cache hit rate is lower. **Fix (a later speed fix):** keep a generation counter in the store that moves only on the writes that bump the SQL generation, serve it from `read_trust_generation`, and add a parity case that an unrelated write leaves it steady. **Effort:** M. **Priority:** P3.
 
 ## Rust engine lane 8 follow-ups (filed 2026-11-19)
 
@@ -27,12 +30,21 @@
 
 ## Rust engine lane 12 follow-ups (filed 2026-11-19)
 
+Note (decision by the Rust engine owner, not the project owner): `gbrain embeddings enable` writes `embedding_model` and `embedding_dimensions` through `setConfig` only when the vector column does not exist; PGLite and Postgres always have that column, so default brains see no change.
+
 - [ ] **P3 — rust-owner-readiness-other-process: a Rust brain's readiness fix names no other process's serve.** **What:** `lockOwnerFor` (`src/core/readiness.ts`) names a Rust brain's lock owner only when this process's own `gbrain serve` owns the store (`src/core/rust-engine/owned-brains.ts`, an in-process read). When another process owns it, the fix has no stop-the-server step, where PGLite's names `kill <pid>` from the lock file (`peekLock`). The Rust owner lock lives behind the owner IPC election, and reading it is async while `lockOwnerFor` is sync. **Fix:** an async (or cached) read of the Rust owner's pid and transport, then name it as PGLite does, with a readiness case for a second process. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — rust-refused-caller-forms: the caller forms the Rust store still refuses.** **What:** the store page and fact policies refuse, as typed `engine_capability_missing` refusals, a caller who is an owner with lineage, an owner without lineage, a member through lineage, a `labelledOnly` grant, a caller under folder rules, a caller with audiences, and the relaxed policy. Each such caller gets a refusal on Rust where PGLite answers. **Fix:** serve each form in the store policy with a parity case per form (briefed separately). **Effort:** M. **Priority:** P3.
 - [x] **P3 — embedding-plane-has-vectors: three sites still ask Postgres directly whether a table holds a vector.** **Done (rust-engine/embed-configured):** all three sites call `hasStoredVectors`; `test/rust-embedding-vector-presence.test.ts` pins it. **What:** `src/commands/init-embedding-plane.ts:24`, `src/commands/init.ts:1044` and the doctor check `src/commands/doctor/checks/embedding-plane.ts:25` run `SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL)` through `executeRaw`, which a Rust brain refuses. `engine.hasStoredVectors(store)` (`src/core/engine-sql/embedding-catalog.ts`) answers the same question on every engine. **Fix:** call `hasStoredVectors` at those three sites. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — rust-image-vector-columns: a Rust brain reads `embedding_image` and `embedding_multimodal` as absent.** **What:** `readChunkVectorColumn` on Rust answers `{ exists: false }` for every column but `embedding` (the store keeps no image or multimodal vectors), while Postgres and PGLite declare both at 1024. The doctor's vector-plan check (`src/commands/doctor/checks/vector-plan.ts`) reads the configured column, so a brain configured for a multimodal column reports it missing on Rust. **Fix:** decide whether the Rust store keeps image vectors; until then the answer is the true Rust state. **Effort:** M. **Priority:** P3.
 - [ ] **P3 — meta-hook-facts-since-rust: the facts meta hook reads a refusal as no new facts on Rust.** **What:** `src/core/facts/meta-hook.ts:236` calls `listFactsSince` with `excludePrivate` for the MCP caller. On a Rust brain the store refuses that read for a caller whose member pages, grants or lineage widen the policy (`excludePrivate for a caller whose member pages, grants or lineage widen the policy`, from `src/core/rust-engine/store-members/private-provenance.ts:161` through `src/core/rust-engine/store-members/facts.ts:94`), and the hook is fail-soft, so it adds no facts block. The census shows the refusal in `get_page`, `get_chunks` and `think`; the tool answers stay equal to PGLite and Postgres because the fixture brain has no new facts. **Fix:** serve the widened caller forms in the store fact policy (the same work as alias-caller-policy above), or rethrow capability refusals in the hook once a caller needs to see them; then add a parity case with a new fact for a widened caller. **Effort:** M. **Priority:** P3.
 - [ ] **P3 — readiness-enable-fix-postgres-text: the embeddings readiness fix differs between Postgres and PGLite.** **What:** `enableArgv` (`src/core/readiness.ts`) gives a keyless host brain `gbrain init --force --embedding-model <m> --embedding-dimensions <n>`. On PGLite it adds `--path <database_path>`, and while a `gbrain serve` holds the PGLite lock `exclusiveFix` wraps it in a first step `kill <serve pid>` (actor `user`), so the notice reads `fix: kill <serve pid>`. On Postgres the command has no `--path` and no stop step (`lockOwnerFor` returns null for Postgres), so the notice names the bare `gbrain init --force ...`, which re-inits the configured `database_url`. Example with a Voyage key: PGLite `kill <pid>`, then `gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <db>`; Postgres `gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024`. **Fix:** decide whether Postgres should name `gbrain embeddings enable` (it changes only the embedding fields) instead of `init --force`, and pin the chosen text per engine in `test/rust-engine-readiness-fix.test.ts`. **Effort:** S. **Priority:** P3.
+## Rust engine lane 13 follow-ups (filed 2026-11-19)
+
+- [ ] **P3 — rust-access-token-keyspace: a Rust brain keeps no access tokens.** **What:** `listAccessTokens` answers `[]` on Rust (`src/core/rust-engine/store-members/write-misc.ts`), because the store has no `access_tokens` keyspace: minting, revoking, rescoping and the bearer check are raw SQL on `access_tokens`, which the Rust engine refuses. So `gbrain auth list` lists no tokens on a Rust brain, and no token can be created there. **Fix:** add an access-token keyspace to the Rust store with typed members for mint, revoke, rescope, last-used and the bearer lookup, then serve `listAccessTokens` from it; the `listAccessTokens` parity cases in `test/engine-parity/write-misc.test.ts` then move the minted-token case from stopped to equal. **Effort:** M. **Priority:** P3.
+
+## Rust engine prep-deadline follow-ups (filed 2026-11-19)
+
+- [ ] **P3 — segmented-staging-deadline: segmented body staging writes do not stop at the preparation deadline.** **What:** a managed sync that stages a segmented page body calls five engine methods through its bounded preparer view that are writes, not preparation reads: `transaction`, `openBodyStaging`, `setBodyStagingState`, `allocateBodyOccurrenceIds` and `stageSegmentChunks`. They run on the plain pool, so a lock or a dead connection there can hold the preparation past its deadline. `test/e2e/typed-preparation-reads-guard-postgres.test.ts` names them in `UNBOUNDED_ALLOWED` for that reason. **Fix:** bounding them is a separate write design (a deadline for writes, what a cut-off staging leaves behind, and how the next attempt resumes it), not a typed preparation read; once designed, move each method out of the allowlist with a fail-first test. **Effort:** M. **Priority:** P3.
 
 ## Rust engine relink lane follow-ups (filed 2026-11-18)
 
@@ -71,10 +83,21 @@
 - [ ] **P3 — refusal-parenthesis-typed: the doctor's trust scan shows a Rust capability refusal as a plain check error.** **What:** a Rust refusal whose reason has its own parenthesis (`countUnscannedTrustRows (the takes table, ...)`) does not match the `TYPED` pattern in `test/rust-cli-parity.serial.test.ts` (`/does not support \w+ yet \(it needs the \w+ capability\)/`), so `trust_scan` waits in that test's `untypedWarnings` list. The pattern only sees it because the catch in `src/commands/doctor/checks/trust-scan.ts` turns every error that is not a missing schema object into `checkError('trust_scan', ...)`, which hides that the engine refused the read. **Fix:** report a capability refusal from that catch as a typed refusal (`rethrowCapabilityRefusal` or its check form, `src/core/engine-capability-refusal.ts`), widen `TYPED` to accept a parenthesized reason, then remove `trust_scan` from `untypedWarnings`. **Effort:** S. **Priority:** P3.
 - [ ] **P2 — rust-belief-ledger: a Rust brain keeps no belief ledger, so belief history refuses there.** **What:** `readBeliefHistoryRows` and `listVisibleBeliefLifetimes` refuse on Rust (`src/core/rust-engine/store-members/trust-tier-reads.ts`) because the store has no `belief_events` or `belief_page_lifetimes`: every write of them goes through `executeRaw`, which Rust refuses, so a store read could only answer an empty ledger. The executeRaw sites to move: `src/core/belief/append.ts:81` (`tombstoned`, reads `fact_purges`), `:100`, `:117` and `:124` (`applyRedactions`, reads, inserts and releases `belief_redactions`), `:153` (`appendBeliefEvents`, reads the source purge epoch), `:175` (`appendBeliefEvents`, inserts `belief_events`), `:199` (`markBeliefCommits`, inserts `belief_commit_marks`); `src/core/belief/lifetimes.ts:19` (`readOpenLifetimes`), `:26` (`endLifetime`), `:31` and `:35` (`mintLifetime`), `:41` (`renameLifetime`), `:57` (`resolveLifetimes`). **Fix:** a ledger in the trust key range, not reserved in `keys.rs` until the lane starts: `t 0x09 source incarnation id` for an event, `t 0x0a lifetime` for a page lifetime (with an open-lifetime index by source, incarnation and slug), `t 0x0b source claim_fp id` for the claim index the later-private test reads; a typed `appendBeliefEvents` writer (event row, redactions, tombstones, purge epoch, commit marks) and typed lifetime writers (read open, mint, end, rename, resolve) on all three engines; then serve both reads with parity cases that write events through the real writers. **Effort:** L (about 3 to 5 days: two new record families, about 13 executeRaw sites in 2 writer files plus their callers, redaction and purge rules, parity and mutants). **Priority:** P2.
 
+## Rust engine lane 11 follow-ups (filed 2026-11-19)
+
+- [ ] **P3 — rust-plain-sync-last-commit: a Rust brain reads `last_commit` as null for a plain-directory sync.** **What:** `readPlainSyncSource` (the typed read behind `src/commands/sync/plain-directory.ts`) returns `last_commit` as null on Rust, because the Rust store keeps no sync commit for a source yet (`rust/crates/gbrain-store/src/cli_reads/sources.rs`). PGLite and Postgres return the stored commit. So on Rust, a source that synced from Git and then lost its checkout is not refused with `sync_not_applicable` (the `source.last_commit` check in `plain-directory.ts`); it syncs the folder as a plain directory instead. **Fix:** store the last sync commit on the Rust source record (serde default, so stored records keep their bytes), return it from `readPlainSyncSource`, and add a parity case where a Git-synced source loses its checkout and is refused on every engine. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — sibling-catches-refusal: the identity-sibling reads hide a capability refusal.** **What:** `readIdentitySiblings` and `siblingCanonical` in `src/core/mentions/siblings.ts` catch every error and answer an empty group or null, and `factEntitySlugs` reads its page with `getPage(...).catch(() => null)`. On a Rust brain, `siblingCanonical` runs an `executeRaw`, which Rust refuses (`raw_sql`), so entity resolution (`src/core/entities/resolve.ts`) and the entity card read that refusal as "no sibling group" with no error. The entity card's own catches rethrow `engine_capability_missing` (decision B on rust-engine/entity-card-typed), but these internal catches were left as they are because the module is shared. **Fix:** rethrow capability refusals in those catches (`rethrowCapabilityRefusal`, `src/core/engine-capability-refusal.ts`), with a fail-first case per catch, or close this when the sibling reads are typed on Rust. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — identity-list-collate: pin `COLLATE "C"` on the identity list order.** **What:** `listEntityIdentityRows` (`src/core/engine-sql/entity-identities.ts`) orders by `entity_id`, `canonical DESC`, `source_id` and `slug` with no collation. PGLite and the Rust store sort in byte order; a Postgres database with a locale collation (en_US.utf8) orders punctuation and case differently, so identity members can list in another order there. The byte-order case in `test/engine-parity/entity-identities.test.ts` re-sorts the Postgres answer for now. **Fix:** order each text column `COLLATE "C"` and drop the re-sort. **Effort:** S. **Priority:** P3.
+- [ ] **P2 — rust-owner-only-page-policy: the Rust page policy does not read owner-only sources.** **What:** `page_hidden` (`rust/crates/gbrain-store/src/facts/privacy.rs`) has no owner-only rule, while the no-caller page policy `storePagePolicy` compares against includes `NOT ownerOnlyPageSql(...)`. A Rust page read served under `excludePrivate` can therefore show a page of an owner-only source (an `owner_only` flag or an `imessage` kind) to a non-owner caller. `listEntityIdentityRows` refuses typed while such a source exists; other families that serve `excludePrivate` (for example `findPagesByTitles`) do not. **Fix:** carry the owner-only rule in the store policy, or refuse in `storePagePolicy` while an owner-only source exists. **Effort:** M. **Priority:** P2.
+
+## Rust engine fact-widening follow-ups (filed 2026-11-19)
+
+- [ ] **P2 — rust-widened-caller-policies: Rust refuses a caller whose page or fact policy reads more than readers and grants.** **What:** the Rust store judges a page or fact by a reader identity and a set of private-readable sources (`PrivacyPolicy` in `rust/crates/gbrain-store/src/facts/privacy.rs`). A caller whose rendered policy adds anything else still refuses typed with `engine_capability_missing`: a labelled-only caller (`labelledOnlySql`), an owner opt-in read (`ownerOptInPage`), an audience read (`audiencePages`, `audienceIdentities`), a lineage read (`access.members_read_lineage`), and a member-page fact read the fact policy does not model. The refusals are `storePageTextPolicy` and `storePagePolicy` (`src/core/rust-engine/store-members/private-provenance.ts`, "excludePrivate for a caller whose member pages, grants or lineage widen the policy"), `storePrivacyPolicy` (same file, the fact form), `storeFloorPolicy` (the remote provenance floor of a labelled-only or owner read; it reaches `findActiveSingleFact` on the fact write paths), `storeVisibility` (`fact-visibility.ts`), `callerPolicy` (`page-visibility.ts`, `readPageHiddenFromCaller` and `readCallerPageAccess`) and the snapshot check of `pickValidTimeEdition`. A plain caller, a member caller and a private-readable grant are served. **Fix:** carry the labelled identity, owner page, audience pages and lineage flag in `PrivacyPolicy`, judge them in `page_hidden`, `version_hidden` and the fact judge, then drop each refusal with a fail-first parity case per caller kind on all three engines. **Effort:** L. **Priority:** P2.
+
 ## Rust engine lane 6 follow-ups (filed 2026-11-18)
 
 - [ ] **P2 — rust-write-receipts-beyond-timeline: Rust facts, takes and page versions carry no write receipt.** **What:** The Rust store now stamps the seven write-receipt columns on timeline rows from the write context (`gbrain.write_request`, `gbrain.write_principal_kind`, `gbrain.write_principal_id`; `rust/crates/gbrain-store/src/timeline/receipt.rs`), as PGLite's `gbrain_stamp_write_attribution` trigger does. Three gaps remain. (1) Facts: the Rust fact rows read every receipt column NULL (`facts/purge.rs` writes them as nulls). (2) Takes: the Rust take read (`TakeRecord::to_json`, `rust/crates/gbrain-store/src/takes.rs`) returns none of the receipt columns, so `toTake` (`src/core/rust-engine/store-members/takes.ts`) passes rows without them, and `listTakes`/`searchTakes` refuse an eligibility policy with `floor` or `suppressFlagged`. (3) Page versions: `toCreatedVersion` (`src/core/rust-engine/store-codec.ts`) fills `write_request_id`, `write_principal_kind`, `write_principal_id` and the `archived_*` columns with null. Timeline and take rows now carry their stamped `trust_tier` and `write_origin` (`trust/row_trust.rs`), and `readRowTrustRows` serves `timeline_entries`, `facts` and `takes` with the contested reference, so `stampRowTrust` works on Rust. **Fix:** stamp each table from `WriteTrust.attribution` the way `timeline/receipt.rs` does (insert stamp, `write_*` kept, `last_*` moved only on a content change, `serde(default)` fields so stored records keep their bytes), then serve the eligibility `floor` and `suppressFlagged` on the Rust take reads, and add a fail-first parity case per table on all three engines. **Effort:** L. **Priority:** P2.
-- [ ] **P3 — The entity card hides a refused timeline read.** **What:** `src/core/verbs/entity-card.ts` reads the card timeline with `getTimeline(...).catch(() => [])`, so an engine that refuses the read (a Rust brain asked for an eligibility policy) shows an empty timeline instead of the refusal. **Fix:** rethrow capability refusals there (`rethrowCapabilityRefusal`, `src/core/engine-capability-refusal.ts`) once a caller needs to see them, or close this when timeline eligibility is served on Rust. **Effort:** S. **Priority:** P3.
+- [x] **P3 — The entity card hides a refused timeline read.** **Done (rust-engine/entity-card-typed):** the card timeline read catches with `failOpen` (`src/core/verbs/entity-card.ts`), which rethrows `engine_capability_missing` and keeps the empty fallback for any other error; the timeline case in `test/entity-card-capability-refusal.test.ts` failed before the change and passes after it. **What (as filed):** `src/core/verbs/entity-card.ts` reads the card timeline with `getTimeline(...).catch(() => [])`, so an engine that refuses the read (a Rust brain asked for an eligibility policy) shows an empty timeline instead of the refusal. **Fix:** rethrow capability refusals there (`rethrowCapabilityRefusal`, `src/core/engine-capability-refusal.ts`) once a caller needs to see them, or close this when timeline eligibility is served on Rust. **Effort:** S. **Priority:** P3.
 
 ## Rust engine search follow-ups (filed 2026-11-18, #9730)
 
@@ -272,7 +295,6 @@ Context: `docs/guides/core-memory.md`, `docs/architecture/key-files/core-memory.
 - [ ] **P3 — Pressure notice record-after-write.** **What:** the once-per-segment state is written before the hook's stdout lands; a deadline-expired turn loses that segment's notice. **Fix:** commit the state after the write, like the session-start deferred records. **Effort:** S.
 
 ## Dependency hygiene (filed 2026-10-06, GBRA-40)
-
 
 ## Contributor audit wave follow-ups (filed 2026-10-05, GBRA-40)
 
@@ -795,7 +817,6 @@ Evidence for each item is in `docs/test-audit/2026-09-29/`.
 - [ ] **P3 — TODO-G: under-5-minute first skillopt run.**
   **What:** the first-ever run still takes ~20 minutes (bootstrap, review, strengthen judges). **Fix:** ship a pre-reviewed sample benchmark for one bundled skill and add a validated `split` param to the `run_skillopt` MCP op so agents can run the 15-task starter (`1:1:1`) without the CLI. **Effort:** M. **Priority:** P3.
 
-
 ## Remote MCP over Tailscale follow-ups (filed 2026-09-17, follow-up from v0.51.3.0, `gbrain mcp expose` wave)
 
 - [ ] **P2 — Real-tailnet e2e door for `gbrain mcp expose`.**
@@ -907,7 +928,6 @@ Evidence for each item is in `docs/test-audit/2026-09-29/`.
   **What:** `.github/workflows/heavy-tests.yml` pins `HERMES_INSTALL_SHA256` against the bytes served at the vendor's stable install URL, which upstream edits often: the pin has needed four refreshes in four weeks (latest #4991, fixes #4990) and one was stale within hours of being observed, so every upstream edit is a red nightly until someone re-reviews the upstream diff and re-pins the two homes (the workflow constant + `docs/mcp/HERMES-CLI-PIN.md`). The door also stays red at its Preconditions step until the `ANTHROPIC_API_KEY` repo secret is set; the re-pin restores digest + payload + version verification, not a green job. **How (maintainer design call):** fetch the bootstrapper from the upstream repo at a reviewed commit (the door already commit-pins the PAYLOAD via `HERMES_GIT_COMMIT`, so a commit-pinned bootstrapper is consistent; the served-URL door was kept deliberately as the real user install path — weigh that against a roughly weekly re-pin chore), or keep the served-URL pin and accept the chore. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — `extract_facts`: heal an attribute-only fence edit in place instead of wipe+reinsert.**
   **What:** since #4870 the reconcile treats a `visibility` / `notability` cell edit as drift and re-syncs the page through the same atomic wipe+reinsert the other drift classes use. That transports the edit but re-embeds every row on the page (a paid call when an embedding key is configured; NULL embeddings until re-embedded when it is not) and rotates the rows' ids. **Why:** the v0.50.1.0 ship found the keyless case through `test/e2e/phantom-redirect.test.ts` round 12 (the seed disagreed with its fence, so the reconcile wiped the migrated row); the test seed was fixed, the reconcile was not. An attribute-only drift with matching content key, row number and struck-state can be a per-row `UPDATE facts SET visibility, notability` under the same page lock. **Effort:** S. **Priority:** P3.
-
 
 ## Community fix wave follow-ups (filed 2026-09-07, search-eval train)
 
@@ -1742,7 +1762,6 @@ deferred M-effort issues above are NOT repeated here.
   during the run. **Why:** the e2e covers the arc; the hammer covers
   contention shapes. Effort: M. Priority: P3.
 
-
 ## Key-aware model routing wave follow-ups (filed 2026-08-17; plan: ~/.claude/plans/system-instruction-you-are-working-enchanted-lark.md)
 
 - [ ] **P2 — More providers in `PROVIDER_TIER_DEFAULTS` (+ discovery).** **What:**
@@ -1972,7 +1991,6 @@ deferred M-effort issues above are NOT repeated here.
   (behavior-preserving v1). Move the check to the fallback boundary for
   `mode: 'oneshot'` jobs. **Effort:** S.
 
-
 ## Skill-bridge (cathedral-7) follow-ups (plan: ~/.claude/plans/system-instruction-you-are-working-witty-fern.md)
 
 - [ ] **P2 — codex/opencode native skills-dir + codex multi-plugin observation
@@ -2096,7 +2114,6 @@ deferred M-effort issues above are NOT repeated here.
   cathedral-5 codex round-2 finding #5, dispositioned as documented
   limitation + this TODO. Start: `src/core/sweep.ts:466` +
   `src/commands/hook.ts` corpus writers. Effort: M (CC). Priority: P3.
-
 
 ## Fix-wave #4116-#4168 follow-ups (filed 2026-08-16; plan: ~/.claude/plans/system-instruction-you-are-working-compiled-tide.md)
 
@@ -2265,8 +2282,6 @@ deferred M-effort issues above are NOT repeated here.
   wave receipt. Out-of-sample confirmation of any future temporal mechanism is the
   LoCoMo temporal slice (P3 entry at the top of this file).
 
-
-
 ## chennai fix-wave follow-ups (filed 2026-08-16)
 
 - [ ] **P1 — read_latency_under_sync hangs from 6a905a1e (#4143); 6a905a1e's
@@ -2433,13 +2448,10 @@ deferred M-effort issues above are NOT repeated here.
   name-based revoke. Build only if operators ask. **Where:**
   `src/commands/agent.ts`. **Effort:** S. **Priority:** P3.
 
-
-
 ## Security-sweep mitigation follow-ups (filed 2026-08-16)
 
 - [ ] **P1 — `gbrain upgrade` binary lane returns success exit status on failure (autopilot false-success).** **What:** `runUpgrade`'s `binary` case logs every failure reason (`smoke_failed`, `download_failed`, `integrity_failed`, `integrity_unavailable`, `version_mismatch`, `replace_failed`) but never sets a non-zero CLI exit verdict, so callers see exit 0. **Why:** autopilot (`src/commands/autopilot.ts`) can read a false success, record "applied," relaunch, and then mark a transiently-unavailable version permanently bad — an amplification loop, now more reachable because `integrity_unavailable` fires on ordinary GitHub API rate limits. **Context:** PRE-EXISTING for the whole binary lane (not introduced by the v0.46.12.3 integrity work); surfaced by that PR's adversarial review with 2-model consensus. Fix needs care: distinguish hard-fail (`integrity_failed`/`version_mismatch` → exit non-zero, autopilot should NOT mark-bad on a security rejection) from transient (`integrity_unavailable` → retry, not a version fault), with autopilot-loop tests — hence its own PR, not a rushed rider. **Start:** `src/commands/upgrade.ts` binary case + `setCliExitVerdict` + `src/commands/autopilot.ts` upgrade handling.
 - [ ] **P3 — Self-update GitHub API rate-limit resilience.** **What:** each `gbrain upgrade` makes 2 unauthenticated `api.github.com` calls (the release by tag + attestations), 60/hr/IP; corporate NAT / CI fleets hit 403 → `integrity_unavailable` → fail-closed. **Why:** a hard availability regression for shared-egress fleets vs the pre-integrity path. **Options:** honor an ambient `GH_TOKEN`/`GITHUB_TOKEN` when present (weigh against widening what a leaked env token authorizes), or a small bounded retry with backoff, and align the attestation fetch timeout (10s) with the download budget so a slow-but-working link doesn't spuriously fail. **Start:** `defaultFetchRelease`/`defaultFetchAttestation` in `src/core/binary-self-update.ts`.
-
 
 - [ ] **P3 — Integrity for the from-source / `latest-stable` install paths.** **What:** the
   compiled-binary self-update now verifies the GitHub build-provenance attestation before
@@ -2834,7 +2846,6 @@ deferred M-effort issues above are NOT repeated here.
       with the Cat 13 follow-ups).
   (c) The autocut_min_top re-tune requirement (outside-voice F16, filed at
       the P2 calibration TODO above) is rule R2 of the same A/B. -->
-
 
 The hosted provider retired on 2026-09-04. This section was filed in
 v0.46.3.0; the historical comparison above retains its original measurements.
@@ -3245,7 +3256,6 @@ review-deferred, not fix-now). Grouped by component.
   12m57s → 5m42s (56.0% shorter). The 4–5 minute projection remains unmet.
   **Completed:** v0.50.4.0 (2026-09-16).
 
-
 - [ ] **P1 — Test-infra pass Ships 2+3: remaining serial burn-down and E2E lane
   moves.** **What:** the approved test-infra plan
   (`~/.claude/plans/system-instruction-you-are-working-sprightly-bee.md`, Ship 1
@@ -3510,7 +3520,6 @@ The shipped fix is safe without them; these harden the opt-in further.
   consider a dampener (warn on count change, re-warn weekly) so
   blocked_by_failures/pull_failed stay visible.
 
-
 ## #2416 follow-ups (query-steering wave)
 
 - [x] **P2 — MCP-envelope `hint` field for concept-shaped `search` calls.**
@@ -3654,7 +3663,6 @@ master before starting, several fixes landed independently).
   holder's lock reaped → two writers (the #2348 class, version-skew-triggered). The reap marker
   quarantines repair, not the concurrent open. Cheap hardening: double-read the lock file (~50ms
   apart) before declaring it corrupt.
-
 
 - [ ] **P2 — graceful PGLite close on SIGTERM for the remaining long-running paths.**
   The torn-WAL genesis this wave repairs is an unclean shutdown: `src/core/process-cleanup.ts`
@@ -4392,7 +4400,6 @@ context). Deliberately scoped OUT of that PR. See plan + GSTACK REVIEW REPORT at
   them. Migrate to `jsonb_to_recordset` via the shared `batch-rows.ts` pattern if/when
   one is observed failing, or proactively for completeness. `markPagesExtractedBatch`
   is NOT in this set (slugs/source-ids/timestamps only — no free text).
-
 
 - [ ] **P3 — Single-source the batch INSERT SQL strings.** After #1861 the
   links/timeline/takes `INSERT ... jsonb_to_recordset(($1::jsonb)->'rows')` SQL is
@@ -6439,7 +6446,6 @@ contributor traps.
 
 - [ ] **v0.40+: ingest webhook provenance pass-through.** v0.39.3.0 CV6 closed the spoofing surface by IGNORING client-supplied provenance params for remote callers (ctx.remote !== false). The webhook path stamps server-side `webhook` provenance anyway, so today's behavior is unchanged. When trusted webhook integrations (a service running in the same trust domain as the server) need to declare their own source_kind (`linear`, `notion`, etc.), build a separate trusted-call surface for them — NOT by reopening put_page's wire schema. Possibilities: signed JWT with `provenance_authority: true` claim, or a different Minion job type `ingest_authoritative` that bypasses the CV6 guard.
 
-
 ## v0.39.1+ schema-cathedral follow-ups (filed during v0.39.0.0 ship)
 
 - [ ] **T18 follow-through — DELETE `skills/_brain-filing-rules.{md,json}`.** v0.39.0.0 shipped step (a) of the 4-step deprecation sequence: `gbrain schema show --as-filing-rules` emits the JSON shape the legacy file held. v0.39.1 ships steps (b) + (c) + (d): migrate `filing-audit.ts:79`, `synthesize.ts:619`, `patterns.ts:305`, `check-resolvable.ts:196+:226` to consume `gbrain schema show --as-filing-rules` output; update 5 test files (filing-audit.test.ts, check-resolvable.test.ts, dry-fix.test.ts, resolver.test.ts, cycle-patterns.test.ts); then DELETE the two files. Codex finding #3 from /plan-eng-review made this load-bearing — premature deletion makes protected synthesize/patterns phases fail with NO_ALLOWLIST. Sequencing matters.
@@ -6447,7 +6453,6 @@ contributor traps.
 - [ ] **T16 follow-through — hermetic eval-schema-authoring CLI harness.** v0.39.0.0 shipped the aggregator (`aggregateVerdict`) + scaffold, deleted unwired in the test-reduction fix wave (recover from git history); v0.39.1 wires the in-process PGLite engine + fixture brain replay (3 fixtures: 1 hand-curated `notion-refugee` + 2 synthetic via faker per D6(eng)). Pattern: mirror `src/eval/longmemeval/harness.ts`.
 - [ ] **T1.5 follow-through — wire `whoknows` / `find_experts` / `enrichment-service` / `facts/eligibility` to consume pack-aware type sets.** v0.39.0.0 added the seam (`activePack` parameter threaded through parseMarkdown/import/sync). The runtime sites that compute their type filter still use the v0.38 hardcoded constants. v0.39.1 migrates each call site to read from `loadActivePackForOp(ctx)` + use `expertTypesFromPack` / `extractableTypesFromPack` (helpers already exist in `src/core/schema-pack/`). Per the T19 closure fix, this is now safe to wire (federated_read with divergent packs throws permission_denied at the load step).
 - [ ] **D14 thesis retro — authoring vs derivation framing.** v0.39.0.0 ships the cathedral with 6 verbs marked experimental-tier + T15 schema-events audit + T23 `gbrain schema usage` for measurement. v0.40+ retro reads 60-90 days of usage telemetry and decides which experimental verbs to deprecate per codex's derivation-thesis structural argument. Pass condition: each verb gets >=5% of the cathedral's invocations. Below 5% = deprecation candidate.
-
 
 ## v0.37.x brainstorm cost-cathedral follow-ups (filed during T12)
 
@@ -6507,7 +6512,6 @@ contributor traps.
 
 - [x] **v0.37.x: Guard cli.ts `main()` so importing `buildGatewayConfig` doesn't print help.** v0.37.6.0 exported `buildGatewayConfig` from `src/cli.ts` for test access. Importing it triggers the file's top-level `main()` which prints help to stdout during tests — functionally harmless (tests pass) but noisy. Fix: wrap `main()` in `if (import.meta.main)` so it only runs when cli.ts is the entry point, not when imported. Touches one line; trivial. Filed during v0.37.6.0 implementation.
 
-
 ## v0.37.4.0 pgGraph CI scaffolding follow-ups (v0.37.x+)
 
 - [ ] **T8 truncation signal — defer until dedupe-then-cap SQL + Postgres parity E2E.** v0.37.4.0 ships `frontierCap` as the actually-useful protection but strips the `onTruncation` callback after /review adversarial pass (Claude + Codex both flagged). Two bugs in the v1 algorithm: (a) FALSE POSITIVE — `count == cap` at a depth fires the callback even when the graph organically has exactly cap unique nodes at that depth with no truncation; (b) FALSE NEGATIVE — recursive `LIMIT N` runs BEFORE outer `SELECT DISTINCT`, so diamond graphs (one parent fans out to N+5 candidates with duplicates) can have the LIMIT eat its slots on dupes, then DISTINCT collapses to <cap unique nodes, missing real truncation. Fix shape: rewrite both engine impls to dedupe candidates (by `(slug, id)` or page id, source-scoped) BEFORE applying the LIMIT — i.e., `(SELECT DISTINCT ON ... ORDER BY slug, id LIMIT N)` inside the recursive term instead of post-CTE DISTINCT. Then write the missing `test/e2e/engine-parity-frontier-cap.test.ts` (Postgres against PGLite, identical chosen slugs when cap fires + stable ordering). Restore `TruncationInfo` + `opts.onTruncation` to `TraverseGraphOpts` with the cap-after-dedupe shape. Callers that need truncation visibility in the interim can compare `result.length` against expected fanout bounds. /review found it; not a blocker for v0.37.4.0 because the cap itself works correctly and is back-compat (default unset = no behavior change).
@@ -6564,7 +6568,6 @@ contributor traps.
   the false-positive cases. Decide based on real-world hit rate after
   the v0.36.x wave is in production for a few weeks.
 
-
 ## v0.35.6.0 floor-ratio gate follow-ups (v0.36.x+)
 
 - [ ] **v0.36.x: Run gbrain-side floor-ratio ablation before flipping any mode-bundle default.** v0.35.6.0 ships the gate default-off (`MODE_BUNDLES[*].floor_ratio = undefined`) because the SkyTwin labeled-retrieval ablation that surfaced the regression isn't reproducible on gbrain's own eval surfaces from outside. Before any mode-bundle default flip, run the gate at `floor_ratio: undefined`, 0.85, 0.90, 0.95 across `gbrain eval longmemeval`, `gbrain eval whoknows`, `gbrain eval suspected-contradictions`, and the BrainBench-Real replay (sibling gbrain-evals repo). Quantify per-mode P@k / R@k / nDCG@k / top-1 stability deltas. Look for: regression on queries that genuinely need the long-tail boost (specific entity lookups, low-frequency topics) vs improvement on queries where weak-overlap pages were leapfrogging. The corpus-level finding determines whether tokenmax (most exposure to the failure mode) should flip first, or whether the gate stays a per-call opt-in indefinitely. Filed during v0.35.6.0 codex outside-voice review.
@@ -6575,13 +6578,11 @@ contributor traps.
 
 - [ ] **v0.36.x: Reranker top-N expansion when floor-ratio narrows the candidate pool.** Floor-ratio can suppress a legitimate candidate that would have made it to the reranker's top-N. Sanity check after the v0.36 ablation: if tokenmax with `floor_ratio: 0.85` and `reranker_top_n_in: 30` shows the reranker seeing a meaningfully different set than without the gate, consider expanding `reranker_top_n_in` when floor is set (e.g. 30 → 40) so the reranker still has 30 floor-eligible candidates to reorder. Cheap mitigation if the data supports it. Not a blocker.
 
-
 ## dreamy-thompson wave follow-ups (v0.36.x)
 
 - [ ] **v0.36.x: runThink full rewrite — drop ThinkLLMClient indirection.** v0.36's fix(think) wave landed a gateway-backed adapter at `src/core/think/index.ts:225-251` so `gbrain config set anthropic_api_key` works over MCP stdio (closed #952). The adapter routes through `gateway.chat()` but `runThink` still carries the `ThinkLLMClient` interface as the test seam — it's the last LLM-using path that doesn't use the canonical `__setChatTransportForTests` seam v0.31.12 established for chat/embed. Cleanup: drop `ThinkLLMClient`, drop the `opts.client` injection point, migrate the 12+ existing tests (`test/think-pipeline.test.ts:144,181,222`, `test/think-gateway-adapter.test.ts`, plus 9+ others that stub the interface) to `__setChatTransportForTests`. Pros: codebase consistency, one fewer test-stub pattern, easier to add provider switching for think once it routes through gateway natively. Cons: 12+ test files need migration. Blocked by: v0.36 wave landing on master (so the adapter exists to lean on while migrating tests). Plan reference: D5 + D7 in `~/.claude/plans/ok-i-spun-up-dreamy-thompson.md`.
 
 - [ ] **v0.36.x: Supabase parity test fixture for `applyForwardReferenceBootstrap`.** v0.36 fixed the underlying bug (bootstrap now uses the DDL connection from `initSchema` so probes run inside the advisory-lock scope) per codex P1 from /ship adversarial review. What remains is the TEST FIXTURE that proves it: the new pre-v18/pre-v34/pre-v60 E2E tests run against local Docker Postgres but not against Supabase-shape pooler topology (transaction pooler + statement_timeout). Real Supabase upgrades have failed multiple times on this exact connection-topology divergence (#699, #820 lineage). Fix: a test fixture that exercises the probe path against deriveDirectUrl + transaction pooler + statement_timeout. Cons: requires Supabase fixture infra OR careful mocking of the connection-selection logic in `db.ts`'s `getDDLConnection` path.
-
 
 ## kinshasa-v3 follow-ups (v0.35.4.0)
 
@@ -6592,7 +6593,6 @@ contributor traps.
 - [ ] **v0.36.x: `PREFIX_EXPANSION_DIRS` is hardcoded to `['people', 'companies']` in `src/core/entities/resolve.ts:97`.** New entity directories (funds, advisors, deals, etc.) require a code change to opt in. Consider a config-driven list (`entities.prefix_expansion_dirs: [...]` in `gbrain.yml`) so operators can extend without forking. Filed during v0.35.4.0 plan-eng-review.
 
 - [ ] **v0.36.x: Sweep the banned private-agent-name references out of `CHANGELOG.md`.** Three pre-existing lines in `CHANGELOG.md` (around lines 2537, 2606, 3304) reference the name that `scripts/check-privacy.sh` enforces against. Pre-existing on master, not introduced by v0.35.4.0; `CHANGELOG.md` is on the script's allow-list so master CI is green, but they still violate the spirit of CLAUDE.md's privacy rule (the allow-list is a meta-documentation exception, not a license to add new references). Replace with `your OpenClaw` or `Garry's OpenClaw` per the script's own suggestion text. Trivial cleanup PR. Filed during v0.35.4.0 privacy audit.
-
 
 ## embed --stale follow-ups (v0.34.4.0)
 
@@ -6615,7 +6615,6 @@ contributor traps.
 - [x] **v0.34.x: `gbrain sources purge` FK error UX.** DONE on `garrytan/cathedral-6`: `clientsReferencingSource` + `formatClientReferentsBlock` in `src/core/destructive-guard.ts` pre-check remove/purge/auto-purge in `src/commands/sources.ts` and print the named-client refusal (revoke hint included) instead of the raw FK violation; `assessDestructiveImpact` carries `oauthClientCount`.
 
 - [ ] **v0.34.x: `hybrid.ts:223` explicit-pick refactor.** The SearchOpts rebuild manually picks fields from HybridSearchOpts. This is the bug shape that caused the original v0.34.1 P0 leak — a new SearchOpts field is silently dropped if not manually added here. The wave added `sourceId` + `sourceIds` to the pick; future fields will keep hitting this footgun. Fix: refactor to spread + TypeScript `Pick<>` helper that narrows HybridSearchOpts → SearchOpts type-safely.
-
 
 ## functional-area-resolver follow-ups (v0.32.3.0)
 
@@ -8081,7 +8080,6 @@ Covered by the import stdout/checkpoint and queued-import error regressions.
   operation snapshots, now recheck active sources on every authenticated
   request. The scalar archived source also clears effective scopes.
 
-
 ### ~~(v0.42.20.0 follow-up) Decouple the op-dispatch force-exit timer~~
 **Completed:** v0.42.39.0 (2026-06-10)
 
@@ -8707,7 +8705,6 @@ flow + recovery messaging).
 **Depends on:** decision on whether to deprecate the bare name or dual-publish
 during a transition window.
 
-
 ## v0.32.6 follow-ups from PR #880 (gbrain-context post-Codex recalibration)
 
 These items were demoted from the PR #880 scope because they depend on
@@ -9086,7 +9083,6 @@ respective shapes. Small, mechanical; pinned by `test/init-embed-check.test.ts`
   The env-var form (`GBRAIN_ALLOW_UNVERIFIED_REMOTE=1`) is the cloud path and needs
   no engine, so this is convenience-only; fix = route these two keys through the
   no-engine CLI dispatch. Filed from the v0.45.9.0 Codex adversarial pass.
-
 
 - [ ] **P3 — plugin-based hook distribution for Claude Code.** Ship gbrain's
   hooks as a Claude Code plugin (`hooks/hooks.json` + `.claude-plugin/plugin.json`
@@ -10157,7 +10153,6 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   generalized to a real source) before raising the default above 3.
   **Context:** filed from the ranker wave R1 fix (v0.48.4.0); the per-brain
   opt-out is `gbrain config set search.relational_rerank_pin off`. **Effort:** M.
-
 
 - [ ] **P2 — ontology reads ignore fact-level `visibility` for remote
   callers.** **What:** `getOntology` / `findOntologyConflicts` (both engines)

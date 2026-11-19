@@ -3,7 +3,7 @@
  * windows for evidence delivery (getChunkWindows), the pages with a body but no chunks
  * (countChunklessPagesWithContent, listChunklessPagesWithContent), the import's deleteChunksExcept, and the chunk reads
  * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
- * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, currentCodeChunksExist,
+ * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, hasUnsealedPages, currentCodeChunksExist,
  * listQualifiedSymbolNames, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
  * resolveFrozenHits).
  *
@@ -26,7 +26,7 @@ import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
 import { DEF_TYPES } from '../../chunkers/def-types.ts';
 import type {
   CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow,
-  WithdrawalChunkKey, WithdrawalChunkRow,
+  UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow,
 } from '../../engine-sql/chunk-reads.ts';
 import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -196,6 +196,27 @@ export const codeChunksExist: StoreMember<[sourceId: string | undefined, policy?
     const scope = { sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy('codeChunksExist', o.excludePrivate, { callerReaders: true }) ?? null };
     return !!(await storeCall({ member: 'codeChunksExist' }, () => brain.codeChunksExist({ served: false, withSymbol: false, scope })));
   };
+
+/**
+ * Search's safe-index probe: a live page in scope below the chunker-version fence, under the type list and the
+ * hard-excluded slug prefixes. `pageReadFilter` reads no `allSources` or safe-chunk key, so neither does the store.
+ */
+export const hasUnsealedPages: StoreMember<[scope: UnsealedPageScope], boolean> = async (brain, scope) => {
+  const taken = takeOptions('hasUnsealedPages', scope, ['sourceId', 'sourceIds', 'excludePrivate', ...TRUST_KEYS, 'types', 'excludeSlugPrefixes'],
+    ['allSources', 'requireSafeChunks', ...UNREAD_BY_FILTER]);
+  if (namesNoSource(taken)) return false;
+  const o = taken as UnsealedPageScope;
+  const input = {
+    scope: {
+      sourceId: o.sourceId, sourceIds: o.sourceIds,
+      excludePrivate: storePagePolicy('hasUnsealedPages', o.excludePrivate, { callerReaders: true }) ?? null,
+      minTrust: o.minTrust || null, suppressFlagged: o.suppressFlagged === true,
+    },
+    types: o.types ?? null,
+    excludeSlugPrefixes: o.excludeSlugPrefixes ?? [],
+  };
+  return !!(await storeCall({ member: 'hasUnsealedPages' }, () => brain.hasUnsealedPages(input)));
+};
 
 export const currentCodeChunksExist: StoreMember<[scope: CodeChunkScope, predicate: 'any' | 'with_symbol'], boolean> =
   async (brain, scope, predicate) => {

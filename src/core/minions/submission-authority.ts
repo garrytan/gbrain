@@ -10,6 +10,7 @@ import { catalogueError } from '../error-catalogue.ts';
 import { STOP_PRODUCERS, legacyRecoveryHint, selectCommand } from './legacy-selection.ts';
 import { normalizeSlugPrefix } from '../ops/context.ts';
 import { hasScope } from '../scope.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
@@ -145,8 +146,8 @@ export async function assertCurrentRemoteJobPrincipal(engine: BrainEngine, autho
   let scopes: string[], sourceId: string | undefined;
   if (principal.kind === 'oauth_client') {
     // No fallback projections: an incomplete auth schema cannot authorize background work.
-    const [row] = await engine.executeRaw<Record<string, unknown>>(
-      'SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1', [principal.id]);
+    const found = await engine.readOauthClient(principal.id);
+    const row = found && requireOauthClientColumns(found as unknown as Record<string, unknown>, ['client_id', 'deleted_at', 'scope', 'source_id', 'bound_slug_prefixes', 'surface', 'allowed_operations']);
     if (!row || row.deleted_at != null) deny('OAuth client is missing or revoked', `OAuth client ${principal.id} was deleted or revoked, so this job does not run. Reconnect with a current client and submit a new job.`);
     scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/).filter(Boolean) : [];
     sourceId = typeof row.source_id === 'string' ? row.source_id : undefined;
@@ -235,8 +236,8 @@ async function assertCurrentAgent(engine: BrainEngine, a: RemoteAgentAuthority, 
     return;
   }
   // Preserve the older explicit authority shape for already accepted jobs.
-  const [row] = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT deleted_at, scope, source_id, bound_tools, bound_source_id, bound_slug_prefixes FROM oauth_clients WHERE client_id = $1', [a.principal.id]);
+  const found = await engine.readOauthClient(a.principal.id);
+  const row = found && requireOauthClientColumns(found as unknown as Record<string, unknown>, ['deleted_at', 'scope', 'source_id', 'bound_tools', 'bound_source_id', 'bound_slug_prefixes']);
   if (!row || row.deleted_at != null) deny('agent owner is missing or revoked', `OAuth client ${a.principal.id}, which owns this agent job, was deleted or revoked. Reconnect with a current client and submit a new job.`);
   const scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/) : [];
   if (!hasScope(a.grant.scopes, 'agent') || !hasScope(scopes, 'agent')) deny('original and current grants must include agent scope',

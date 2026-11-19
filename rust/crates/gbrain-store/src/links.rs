@@ -16,7 +16,8 @@
 //! `invalid_argument`; the TypeScript shell must not send it to this engine.
 //!
 //! `traverse_paths_detailed` orders rows by `(depth, from_slug, to_slug, from_source_id,
-//! to_source_id)` like PGLite, then by `link_type` and link id, where PGLite's order is undefined.
+//! to_source_id, link_type, link id)`, as the SQL does (`link_type COLLATE "C"`: `str` compares
+//! bytes).
 
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, PAGE_NOT_FOUND, Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};

@@ -7,7 +7,7 @@ import type { TraverseGraphOpts } from '../../engine.ts';
 import type { EdgeTemporalOpts, LinkReadScope } from '../../link-validity.ts';
 import type { GraphNode, GraphPath, PageReadScope } from '../../types.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
-import { checkTemporalDates } from './link-refresh.ts';
+import { checkTemporalDates } from './link-temporal-dates.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 type PathOpts = { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' };

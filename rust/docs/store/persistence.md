@@ -51,6 +51,7 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | `brain.readAdmissionRate(principalKind, principalId)` | `{ first_request_id, admissions, age_seconds, gross, net }`: the id of the brain's first request (lowest sequence), then over the latest 1000 requests of the principal (all principals when both are null) their count, the age in seconds of the oldest of them, the mean terminal reservation and the mean compacted receipt size (authority, outcome, error detail and client request id, plus each of its effects' data and kind and 1 KiB of headroom, at most the reservation). The means and the age are null when there are no requests | `readAdmissionRate` |
 | `brain.stampWriteClaim({ id, token, leaseMs, phaseJson })` | the claimed row with `passed_sync` and `seen_sequence`, or `null` when the refresh barrier holds it | `stampWriteClaim` |
 | `brain.completeWriteRow(completion)` | the ended row (with `purge_has_facts`, whether the source holds a fact purge tombstone, and `purge_has_pages`, always false, when `probePurges`), or `null` when the result and the request's effects do not fit the reservation. The whole reservation stays charged while an effect is unfinished; otherwise the result and effect bytes are kept. Releases the counters; a terminal counter shorter than the release is clamped to zero and counted in config `persistence.true_up.clamped`. A completion that would take a counter below zero changes nothing and rejects with `constraint_violation` | `completeWriteRow` |
+| `brain.cancelWriteRow(cancellation)` | `null` when the request does not exist; `{ status: 'kept', row }` with the row unchanged when it is terminal, publishing, in recovery, or no longer in `expectState` under `expectExecutionToken`; `{ status: 'too_large', row }` when the result does not fit the reservation; else `{ status: 'cancelled', row }` with the row `completeWriteRow` ends. The read, the check and the completion run in one store write, so of two cancels of one request exactly one ends it. A state other than `cancelled` rejects with `constraint_violation` | `cancelWriteRow` |
 | `brain.releaseUnpublishedClaim({ id, token, reason, charge })` | `true` when the request was `running` under that token with no recovery record and no publication begun; it is back in `queued` with `reason` as its blocked reason, no token and no lease. `charge` counts one preparation attempt and keeps the claim phase; otherwise the phase is cleared | `releaseUnpublishedClaim` |
 | `brain.renewWriteClaim({ id, token, leaseMs, phaseJson })` | `true` when the claim is still `running` under that token; the lease is extended and the phase replaced when one is given | `renewWriteClaim` |
 | `brain.expireStaleWriteClaims({ hostId, charge, deadOwners })` | the number of claims returned to `queued`: an expired lease, or a phase owner in `deadOwners` (`pid:nonce:start`), with publication not started; at most 100, oldest first. `charge` counts one preparation attempt for a claim that expired while preparing | `expireStaleWriteClaims` |
@@ -61,6 +62,28 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 Rows have a null `worktree_id`, so the worktree terms of the claim statements are answered as Postgres
 answers them for a null worktree. `select_claimable_write` (the claim head read) exists in the store
 but has no binding.
+
+## Receipt list
+
+The candidate page that `list_write_requests` (`persistence/control.ts` `listWriteRequests`) authorizes and pages
+(`crates/gbrain-store/src/persistence/receipt_list.rs`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listWriteRequestRows({ kind, id }, sourceId, filter)` | the `WriteRequest` rows of the principal in the source, newest sequence first, at most `filter.limit`. A source that is missing or archived, or a request from an earlier incarnation of the source, gives no row | `listWriteRequestRows` |
+
+The filter is `{ before, limit, slugPrefixes, operations, slugAllowList }`. A null list skips its check and an empty
+list matches no row, as the SQL `IS NULL OR EXISTS` terms do.
+
+- `before` is a sequence as decimal text; only lower sequences are listed. Text that is not a `u64` refuses with
+  `invalid`.
+- `slugPrefixes` match the lower-case slug (Postgres `lower`). An empty prefix matches nothing. A prefix that ends
+  in `/` matches the slugs that start with it; any other prefix matches the slug itself or the slugs under it.
+- `operations` match `authority.attestedOp` (a JSON value that is not a string as its JSON text), else `operation`.
+- `slugAllowList` holds exact slugs (case-sensitive) or `<prefix>/*`, which matches the slugs that start with
+  `<prefix>/`.
+
+Lengths count characters, as Postgres `left` and `length` do.
 
 ## Steps that need one transaction
 

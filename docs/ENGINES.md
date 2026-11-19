@@ -1753,8 +1753,6 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
   active column refuses, `rust/docs/store/embeddings.md`);
 - a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
   (only the files on disk can say whether another page already holds that file, and the store cannot read them);
-- `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
-  not have, so an empty answer would be wrong to give;
 - a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
 - a vector search with `where`, a date bound, `minTrust` or `suppressFlagged`, and a take vector search with
   `eligibility.floor` or `eligibility.suppressFlagged` (`rust/docs/store/vectors.md`);

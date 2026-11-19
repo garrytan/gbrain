@@ -9,7 +9,7 @@ import { executeRawJsonb } from '../sql-query.ts';
 import type { SqlExecutor } from './executor.ts';
 
 /** The registered ids among `sourceIds`, by id, read `FOR SHARE` so none disappears before the caller's page-guard lock. */
-export async function lockRegisteredSourceIds(exec: SqlExecutor, sourceIds: readonly string[]): Promise<string[]> {
+export async function lockRegisteredSourceIds(exec: Pick<SqlExecutor, 'executeRaw'>, sourceIds: readonly string[]): Promise<string[]> {
   if (!sourceIds.length) return [];
   const rows = await exec.executeRaw<{ id: string }>(
     'SELECT id FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', [[...sourceIds]]);

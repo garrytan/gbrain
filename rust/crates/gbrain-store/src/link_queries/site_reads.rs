@@ -5,6 +5,8 @@
 //! Members: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
 //! listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages.
+//! readEntityInboundEdges reads the links countInboundLinks counts (`kept_inbound_links`), with
+//! their temporal columns, in link_temporal.rs.
 //!
 //! Each method reads what its statement reads and keeps the statement's tests: a "live" page here
 //! is `deleted_at IS NULL` alone unless the statement also asks for `pageReadFilter(.., live)`.
@@ -17,7 +19,7 @@ use crate::error::Result;
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::links::{in_links, out_links};
+use crate::links::{LinkRecord, in_links, out_links};
 use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use crate::sources::{SourceRecord, all_sources};
 use crate::stats::EntityTypeFilter;
@@ -144,6 +146,55 @@ fn is_entity(filter: &EntityTypeFilter, page: &PageRecord) -> bool {
         .find(|b| b.source_id == page.source_id)
         .map_or(&filter.types, |b| &b.types)
         .contains(&page.page_type)
+}
+
+/// The inbound links `countInboundLinks` counts and `readEntityInboundEdges` reads, each with its
+/// referrer's slug, in link id order.
+pub(super) fn kept_inbound_links(
+    read: &dyn KvRead,
+    input: &InboundCountInput,
+) -> Result<Vec<(LinkRecord, String)>> {
+    let Some(target) = read_page(read, &input.source_id, &input.slug)? else {
+        return Ok(Vec::new());
+    };
+    let mut pages = Pages::new(read);
+    let mut kept = Vec::new();
+    for link in in_links(read, target.id)? {
+        if !not_mentions(&link) {
+            continue;
+        }
+        let Some(from) = pages.get(link.from_page_id)? else {
+            continue;
+        };
+        if from.source_id != input.source_id || !live(&from) {
+            continue;
+        }
+        let origin = match link.origin_page_id {
+            Some(id) => match pages.get(id)? {
+                Some(origin) => Some(origin),
+                None => continue,
+            },
+            None => None,
+        };
+        if let Some(policy) = &input.exclude_private {
+            if page_hidden(read, &from, policy)? {
+                continue;
+            }
+            if let Some(origin) = &origin
+                && page_hidden(read, origin, policy)?
+            {
+                continue;
+            }
+        }
+        if let Some(origin) = &origin
+            && (!live(origin) || (input.origin_same_source && origin.source_id != input.source_id))
+        {
+            continue;
+        }
+        kept.push((link, from.slug.clone()));
+    }
+    kept.sort_by_key(|(link, _)| link.id);
+    Ok(kept)
 }
 
 fn live(page: &PageRecord) -> bool {
@@ -358,47 +409,7 @@ impl Store {
     /// the origin must be readable; an origin must be live, in `sourceId` with `originSameSource`.
     pub fn count_inbound_links(&self, input: &InboundCountInput) -> Result<u64> {
         let read = self.read()?;
-        let Some(target) = read_page(&*read, &input.source_id, &input.slug)? else {
-            return Ok(0);
-        };
-        let mut pages = Pages::new(&*read);
-        let mut n = 0u64;
-        for link in in_links(&*read, target.id)? {
-            if !not_mentions(&link) {
-                continue;
-            }
-            let Some(from) = pages.get(link.from_page_id)? else {
-                continue;
-            };
-            if from.source_id != input.source_id || !live(&from) {
-                continue;
-            }
-            let origin = match link.origin_page_id {
-                Some(id) => match pages.get(id)? {
-                    Some(origin) => Some(origin),
-                    None => continue,
-                },
-                None => None,
-            };
-            if let Some(policy) = &input.exclude_private {
-                if page_hidden(&*read, &from, policy)? {
-                    continue;
-                }
-                if let Some(origin) = &origin
-                    && page_hidden(&*read, origin, policy)?
-                {
-                    continue;
-                }
-            }
-            if let Some(origin) = &origin
-                && (!live(origin)
-                    || (input.origin_same_source && origin.source_id != input.source_id))
-            {
-                continue;
-            }
-            n += 1;
-        }
-        Ok(n)
+        Ok(kept_inbound_links(&*read, input)?.len() as u64)
     }
 
     /// `listLinkEndpointPages`: `[{ slug, source_id, type, knowledge_revision }]`, the live pages of

@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: page version snapshots (create / list / revert), raw sidecar
- *    data and file metadata rows behave identically on every engine arm
+ *    data and file metadata rows (listFiles' order included) behave identically on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; a Rust arm later through
  *    test/engine-parity/harness.ts).
  *  - Regression: an engine that snapshots the wrong fields, orders history
@@ -326,6 +326,33 @@ describe('engine parity: raw data + files', () => {
         bob: forBob.map(fileView),
         orphan: fileView(orphan),
         empty: await engine.listFilesForPage(-1),
+      };
+    },
+  );
+
+  // `gbrain files list [slug]` reads listFiles: the census found the Rust engine refused it (its SQL ran through
+  // sqlQueryForEngine). Equal filenames under one slug come back in insertion (id) order on every engine.
+  parityTest(
+    'listFiles lists every file by page slug then filename, or one slug in any source, up to the limit',
+    { methods: ['upsertFile', 'listFiles'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      await engine.upsertFile({ page_slug: 'people/bob', filename: 'b.png', storage_path: 'default/b.png', content_hash: 'h1' });
+      await engine.upsertFile({ source_id: 'work', page_slug: 'people/alice', filename: 'z.png', storage_path: 'work/z.png', content_hash: 'h2', mime_type: 'image/png', size_bytes: 9 });
+      await engine.upsertFile({ filename: 'loose.png', storage_path: 'default/loose.png', content_hash: 'h3' });
+      await engine.upsertFile({ page_slug: 'people/alice', filename: 'a.png', storage_path: 'default/a.png', content_hash: 'h4' });
+      await engine.upsertFile({ source_id: 'work', page_slug: 'people/alice', filename: 'a.png', storage_path: 'work/a.png', content_hash: 'h5' });
+      const paths = (rows: FileRow[]) => rows.map((f) => f.storage_path);
+      const all = await engine.listFiles({ limit: 100 });
+      expect(paths(all)).toEqual(['default/a.png', 'work/a.png', 'work/z.png', 'default/b.png', 'default/loose.png']);
+      const alice = await engine.listFiles({ pageSlug: 'people/alice', limit: 100 });
+      expect(paths(alice)).toEqual(['default/a.png', 'work/a.png', 'work/z.png']);
+      return {
+        all: all.map(fileView),
+        firstTwo: paths(await engine.listFiles({ limit: 2 })),
+        alice: alice.map(fileView),
+        nobody: await engine.listFiles({ pageSlug: 'people/nobody', limit: 100 }),
+        none: await engine.listFiles({ limit: 0 }),
       };
     },
   );

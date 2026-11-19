@@ -43,6 +43,7 @@ mod dream;
 mod embedding_catalog;
 mod embedding_install;
 mod embeddings;
+mod entity_identities;
 mod eval_capture;
 mod extraction;
 mod facts;

@@ -169,6 +169,7 @@ Reserved tags:
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
+| entity_identities | `i` | `ENTITY_IDENTITY` | yes |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -522,9 +523,10 @@ store keeps the same rule in `pages.rs`.
   `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
 - **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
   time, so it needs none.
-- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal and the valid-time body
-  read are typed engine members (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`,
-  `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
+- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal, the valid-time body
+  read, the append path's tail-digest body read and the page write gate's stored tier read are typed engine members
+  (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`, `sealImportedPage`, `readLivePageBody`,
+  `readInlinePageRegions`, `readStoredPageTier`; SQL in `engine-sql/write-guards.ts`). The store answers them in
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
@@ -1259,6 +1261,18 @@ rebuild counts and the retrieval coverage counts. Detail: `rust/docs/store/link_
   the refresh after a link write and the temporal and wanted steps of a derived-link publication run in one store
   transaction, as on PGLite and Postgres.
 
+### entity_identities
+
+Cross-source identity groups (migration v137): manual links, lookups, the canonical twin. Detail: `rust/docs/store/entity_identities.md`.
+
+- **Files:** `gbrain-store/src/entity_identities.rs`, `gbrain-napi/src/families/entity_identities.rs`, `store-members/entity-identities.ts`.
+- **Tag:** `i` (`ENTITY_IDENTITY`). Cascade on page delete: yes (`remove_page_rows` drops the page's membership and its group key).
+- **Keys:** `i 0x01 <page id BE8>` to the membership JSON; `i 0x02 <entity_id> 0x00 <page id BE8>` (empty, the group index).
+- **Members (5), capability:** `entity_identities` (5): `linkEntityIdentityRow`, `unlinkEntityIdentityRow`, `listEntityIdentityRows`, `readEntityIdentityIdsForPages`, `readCanonicalTwin`.
+- **Postgres tables:** `entity_identities`; SQL in `src/core/engine-sql/entity-identities.ts`.
+- **Parity cases:** `test/engine-parity/entity-identities.test.ts`.
+- **Known gap:** the store page policy has no owner-only rule, so the list refuses a policy read typed while an owner-only source exists (TODOS `rust-owner-only-page-policy`).
+
 ### timeline_queries
 
 Timeline reads by date and event projections.
@@ -1864,7 +1878,9 @@ and write provenance on content rows, and the trust records.
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
   - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
-    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
+    (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
+    caller's eligibility) honour a read eligibility.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,

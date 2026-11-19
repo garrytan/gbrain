@@ -116,6 +116,21 @@ export async function readPageIndexingState(exec: LegacyUnscopedRead, pageId: nu
   return { chunker_version: projection?.chunker_version ?? null, corpus_generation: projection?.corpus_generation ?? null, page_kind: kind.page_kind };
 }
 
+/** The body columns of a page, read raw (no withdrawal overlay): NULL on a segmented page. */
+export interface InlinePageRegionsRow { compiled_truth: string | null; timeline: string | null }
+
+/** The stored body columns of page `pageId`, live or a tombstone (page-body/tail-digest.ts inlineRegions), or null when no page has the id. */
+export async function readInlinePageRegions(exec: LegacyUnscopedRead, pageId: number): Promise<InlinePageRegionsRow | null> {
+  const [row] = await exec.executeRaw<InlinePageRegionsRow>('SELECT compiled_truth, timeline FROM pages WHERE id=$1', [pageId]);
+  return row ?? null;
+}
+
+/** The stored `trust_tier` of the page `slug` names in the source, live or a tombstone (trust/page-write.ts storedPageTier), or null without one. */
+export async function readStoredPageTier(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  return row ? row.trust_tier : null;
+}
+
 /** Whether the brain holds any segment storage: a body staging or a segment text. The vacuum skips its sweep without either. */
 export async function hasSegmentStorage(exec: LegacyUnscopedRead): Promise<boolean> {
   const [row] = await exec.executeRaw<{ present: boolean }>(

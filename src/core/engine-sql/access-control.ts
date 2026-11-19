@@ -206,3 +206,43 @@ export async function readLiveMember(exec: MemberLookupRead, via: LiveMemberVia,
   const [row] = await exec.executeRaw<LiveMemberRow>(LIVE_MEMBER_SQL[via], [key]);
   return row ? { id: row.id, groups: row.groups ?? [] } : null;
 }
+
+/** An applied folder rule and the readers it names. */
+export interface FolderRuleRow {
+  source_id: string;
+  rule_id: string;
+  readable_by: string[];
+}
+
+/** A folder prefix that reads as nobody: a narrowing being stamped, an invalid policy file, or `!unreadable`. */
+export interface FolderCoverageRow {
+  source_id: string;
+  prefix: string;
+}
+
+/** The applied folder rules whose readers meet `readers`, and every prefix that reads as nobody. */
+export interface FolderAccessRows {
+  rules: FolderRuleRow[];
+  coverage: FolderCoverageRow[];
+}
+
+/** The statement access/caller.ts folderAccessForAll ran for the rules any of `readers` ($1) meets; pinned byte for byte. */
+export const FOLDER_RULES_READABLE_BY_SQL = 'SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]';
+
+/**
+ * The statement access/caller.ts folderAccessForAll ran for the folder coverage; a database role that cannot read the
+ * folder access tables adds `!unreadable` (covers everything). Pinned byte for byte.
+ */
+export const FOLDER_COVERAGE_SQL = `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`;
+
+/**
+ * The folder access rows a caller's record is built from (access/caller.ts folderAccessForAll): the applied rules any
+ * of `readers` meets (none read when `readers` is empty) and the folder coverage. A failure is thrown unchanged: the
+ * caller counts it as nothing satisfied and everything covered.
+ */
+export async function readFolderAccess(exec: MemberLookupRead, readers: readonly string[]): Promise<FolderAccessRows> {
+  const rules = readers.length ? await exec.executeRaw<FolderRuleRow>(FOLDER_RULES_READABLE_BY_SQL, [[...readers]]) : [];
+  const coverage = await exec.executeRaw<FolderCoverageRow>(FOLDER_COVERAGE_SQL);
+  return { rules, coverage };
+}

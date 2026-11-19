@@ -1,6 +1,6 @@
 /**
  * Raw source data and files attached to pages (BrainEngine putRawData, getRawData, upsertFile, getFile,
- * listFilesForPage). The store keeps the `raw_data` and `files` rows (rust/docs/store/raw_files.md). JSONB values
+ * listFilesForPage, listFiles). The store keeps the `raw_data` and `files` rows (rust/docs/store/raw_files.md). JSONB values
  * cross the binding as the `JSON.stringify` text PGLite binds, so `undefined` members and `toJSON` values behave the
  * same; timestamps come back as ISO strings and leave here as `Date`s.
  *
@@ -8,7 +8,7 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
-import type { FileRow, FileSpec } from '../../engine.ts';
+import type { FileRow, FileSpec, ListFilesOptions } from '../../engine.ts';
 import type { PageReadScope, RawData } from '../../types.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -53,6 +53,12 @@ export const upsertFile: StoreMember<[spec: FileSpec], { id: number; created: bo
 export const getFile: StoreMember<[sourceId: string, storagePath: string], FileRow | null> = async (brain, sourceId, storagePath) => {
   const row: FileRow | null = await storeCall({ member: 'getFile' }, () => brain.getFile(sourceId, storagePath));
   return row === null ? null : withDates(row, ['created_at']);
+};
+
+/** `listFiles` sends the slug (null for every file) and the limit; the store sorts text by bytes. */
+export const listFiles: StoreMember<[opts: ListFilesOptions], FileRow[]> = async (brain, opts) => {
+  const rows: FileRow[] = await storeCall({ member: 'listFiles' }, () => brain.listFiles(opts?.pageSlug ?? null, opts?.limit));
+  return rows.map((row) => withDates(row, ['created_at']));
 };
 
 export const listFilesForPage: StoreMember<[pageId: number], FileRow[]> = async (brain, pageId) => {

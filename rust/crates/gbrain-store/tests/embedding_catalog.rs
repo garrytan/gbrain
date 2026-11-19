@@ -47,6 +47,14 @@ fn an_empty_store_has_no_vector_column_and_no_vectors() {
         json!({ "exists": false, "dims": null })
     );
     assert_eq!(b.read_embedding_identity().unwrap(), Value::Null);
+    // The image columns are fixed `vector(1024)` on Postgres and PGLite: present with no text width.
+    for column in ["embedding_image", "embedding_multimodal"] {
+        assert_eq!(
+            b.read_chunk_vector_column(column).unwrap(),
+            json!({ "exists": true, "dims": 1024 }),
+            "{column}"
+        );
+    }
     for store in ["content_chunks", "facts", "query_cache", "takes"] {
         assert!(!has(&b, store), "{store}");
     }
@@ -66,11 +74,19 @@ fn a_configured_width_reads_as_the_declared_column() {
         b.read_chunk_vector_column("embedding").unwrap(),
         json!({ "exists": true, "dims": 1024 })
     );
-    // Only `embedding` exists: the store keeps no other vector column.
+    // A registry column does not exist: the store keeps no other text vector column.
     assert_eq!(
         b.read_chunk_vector_column("embedding_voyage").unwrap(),
         json!({ "exists": false, "dims": null })
     );
+    // The image columns keep their own width whatever the text width is.
+    for column in ["embedding_image", "embedding_multimodal"] {
+        assert_eq!(
+            b.read_chunk_vector_column(column).unwrap(),
+            json!({ "exists": true, "dims": 1024 }),
+            "{column}"
+        );
+    }
     assert_eq!(
         b.read_embedding_identity().unwrap(),
         json!({ "model": null, "dimensions": 1024 })
@@ -148,4 +164,58 @@ fn stored_vectors_give_the_width_and_model() {
     .unwrap();
     assert!(has(&b, "facts"));
     assert!(!has(&b, "query_cache"));
+}
+
+/// A take vector is current only at the take's `claim_rev`. Postgres's `addTakesBatch` sets
+/// `takes.embedding` to NULL when it changes a claim (`engine-sql/takes.ts`, the
+/// `ON CONFLICT ... CASE WHEN takes.claim IS DISTINCT FROM EXCLUDED.claim` arm) and keeps it when
+/// the claim is the same. The store keeps the old vector record, so the rule is what hides it.
+#[test]
+fn a_take_vector_is_current_only_at_the_claim_revision() {
+    let b = brain("catalog-take-rev");
+    b.set_config("embedding_dimensions", "8").unwrap();
+    let (page_id, _) = page(&b, "notes/t");
+    let take = |claim: &str| -> TakeInput {
+        de(json!({
+            "page_id": page_id, "row_num": 1, "claim": claim, "kind": "bet", "holder": "garry",
+            "weight": 0.5, "active": true,
+        }))
+    };
+    let embed = |take_id: u64, claim: &str| {
+        b.update_take_embeddings(&[TakeEmbeddingInput {
+            take_id,
+            embedding: basis(8),
+            claim: claim.to_string(),
+            model: "m1".to_string(),
+        }])
+        .unwrap();
+    };
+    let stale = || -> Vec<u64> {
+        b.list_stale_takes(&Default::default())
+            .unwrap()
+            .iter()
+            .map(|t| t["take_id"].as_u64().unwrap())
+            .collect()
+    };
+
+    b.add_takes_batch(&[take("a claim")]).unwrap();
+    let take_id = stale()[0];
+    embed(take_id, "a claim");
+    assert!(has(&b, "takes"));
+    assert!(stale().is_empty());
+
+    // The same claim again: Postgres keeps the vector, so it stays current.
+    b.add_takes_batch(&[take("a claim")]).unwrap();
+    assert!(has(&b, "takes"), "an unchanged claim keeps its vector");
+    assert!(stale().is_empty());
+
+    // A changed claim: Postgres nulls the vector; the store's old record no longer counts.
+    b.add_takes_batch(&[take("a reworded claim")]).unwrap();
+    assert!(!has(&b, "takes"), "a claim edit takes the vector away");
+    assert_eq!(stale(), vec![take_id]);
+
+    // A vector for the new claim is current again.
+    embed(take_id, "a reworded claim");
+    assert!(has(&b, "takes"));
+    assert!(stale().is_empty());
 }

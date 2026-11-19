@@ -48,6 +48,7 @@ pub mod dream;
 pub mod embedding_catalog;
 pub mod embedding_install;
 pub mod embeddings;
+pub mod entity_identities;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
@@ -112,6 +113,11 @@ pub struct OpenOptions {
     /// (`keyword/index_build.rs`). Off, the index is built only by
     /// [`Store::keyword_index_build_step`]; writes keep it in step either way.
     pub keyword_index_builder: bool,
+    /// Config rows a fresh brain starts with besides `version`, in the order given: the
+    /// caller's embedding identity (`embedding_model`, `embedding_dimensions`) and
+    /// `chunk_strategy`, the rows the SQL engines' schema seeds. The store has no default of
+    /// its own; an existing brain keeps the rows it has.
+    pub initial_config: Vec<(String, String)>,
 }
 
 impl Default for OpenOptions {
@@ -123,6 +129,7 @@ impl Default for OpenOptions {
             created_by: format!("gbrain-store {}", env!("CARGO_PKG_VERSION")),
             concurrent_writes: false,
             keyword_index_builder: true,
+            initial_config: Vec::new(),
         }
     }
 }
@@ -553,13 +560,21 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
 }
 
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`), the `default` source and a complete, empty
-/// keyword index.
+/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the
+/// `default` source and a complete, empty keyword index.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
+    for (key, value) in &options.initial_config {
+        if key.is_empty() || key == "version" {
+            return Err(StoreError::invalid(format!(
+                "initial config key {key:?} is not allowed"
+            )));
+        }
+        tx.put(&keys::text(keys::CONFIG, &[key.as_str()]), value.as_bytes())?;
+    }
     access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)?;
     // No documents yet, so the keyword index is complete.

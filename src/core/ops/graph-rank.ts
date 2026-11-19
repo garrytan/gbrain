@@ -161,7 +161,7 @@ async function attachDuplicates(ctx: OperationContext, rows: RankedEntity[], fil
       entityTypes: new Set(typesFor(filter, row.source_id)),
       omitQuarantined: ctx.remote !== false,
       privatePredicate: excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '',
-      retirementPrivacy: excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '',
+      retirementPrivacy: excludePrivate ? 'caller' : 'none',
     });
     if (duplicates.length) row.possible_duplicates = duplicates;
   }

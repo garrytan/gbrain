@@ -110,8 +110,8 @@ export async function readFactCacheWatermark(exec: LegacyUnscopedRead, sourceId:
   const [row] = await exec.executeRaw<{ withdrawals: number | string; latest_withdrawn_at: string | null; access_rules: string }>(
     `SELECT count(*)::int AS withdrawals,
        to_char(max(withdrawn_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS latest_withdrawn_at,
-       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id, rule_id), '')) FROM access_rules)
-         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id, prefix, reason), '')) FROM access_pending_coverage) AS access_rules
+       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id COLLATE "C", rule_id COLLATE "C"), '')) FROM access_rules)
+         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id COLLATE "C", prefix COLLATE "C", reason COLLATE "C"), '')) FROM access_pending_coverage) AS access_rules
      FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
   return { withdrawals: Number(row?.withdrawals ?? 0), latest_withdrawn_at: row?.latest_withdrawn_at ?? null, access_rules: row?.access_rules ?? '' };
 }

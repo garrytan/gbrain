@@ -81,10 +81,9 @@ export function pageGateTrust(row: Pick<WriteRequest, 'operation' | 'intent'>, t
   return stored && compareTrust(trust.tier, OWNER_TIER_FLOOR) < 0 ? { ...trust, tier: minTrust(trust.tier, stored) } : trust;
 }
 
-export async function storedPageTier(engine: BrainEngine, sourceId: string, slug: string): Promise<TrustTier | null> {
-  // The page row as stored, soft-deleted or not (the SQL this replaced read no deleted_at).
-  const [row] = await engine.readPageTrustRows({ keys: [{ source_id: sourceId, slug }], includeDeleted: true });
-  return row ? storedTrustTier(row.trust_tier) : null;
+export async function storedPageTier(engine: Pick<BrainEngine, 'readStoredPageTier'>, sourceId: string, slug: string): Promise<TrustTier | null> {
+  const tier = await engine.readStoredPageTier(sourceId, slug);
+  return tier === null ? null : storedTrustTier(tier);
 }
 
 /**

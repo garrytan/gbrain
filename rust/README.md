@@ -132,8 +132,10 @@ Rules for every method:
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
 
-`options` is `{ schemaVersion?: number, createdBy?: string }`. `schemaVersion` is what a fresh brain
-stores as config `version`; pass `LATEST_SCHEMA_VERSION`. `close` waits for calls already running,
+`options` is `{ schemaVersion?: number, createdBy?: string, embeddingModel?: string,
+embeddingDimensions?: number, chunkStrategy?: string }`. `schemaVersion` is what a fresh brain
+stores as config `version`; pass `LATEST_SCHEMA_VERSION`. The other three are config entries a fresh
+brain records ([docs/store/config.md](docs/store/config.md)). `close` waits for calls already running,
 then gives up the lock.
 
 ### Methods by family

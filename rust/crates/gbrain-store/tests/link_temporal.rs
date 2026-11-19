@@ -5,9 +5,9 @@ mod common;
 
 use common::TempDir;
 use gbrain_store::link_queries::{
-    ApplyTemporalInput, EdgeValidityInput, EvidenceInput, KeysForOriginInput, KeysForPagesInput,
-    KeysTouchingInput, ManualRelationship, ManualWriteInput, NoteRowsInput, PageStatusInput,
-    RecordMetadataInput, RelationshipKey, StaleKeysInput, StateWrite,
+    ApplyTemporalInput, EdgeValidityInput, EvidenceInput, InboundCountInput, KeysForOriginInput,
+    KeysForPagesInput, KeysTouchingInput, ManualRelationship, ManualWriteInput, NoteRowsInput,
+    PageStatusInput, RecordMetadataInput, RelationshipKey, StaleKeysInput, StateWrite,
 };
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -468,4 +468,63 @@ fn record_metadata_and_page_status() {
     );
     let counts = b.store.count_search_vector_rows().unwrap();
     assert_eq!(counts.pages, 3);
+}
+
+#[test]
+fn entity_inbound_edges_carry_the_scope_relationship_in_link_order() {
+    let b = Brain::new("lt-inbound");
+    let alice = b.page("alice");
+    let acme = b.page("acme");
+    b.page("bob");
+    b.page("carol");
+    b.link("alice", "acme", "works_at");
+    b.link("bob", "acme", "advises");
+    b.link("carol", "acme", "knows");
+    let mention = AddLinkOptions {
+        link_type: Some("mentions".into()),
+        link_source: Some("mentions".into()),
+        ..AddLinkOptions::default()
+    };
+    b.store.add_link("carol", "acme", &mention).unwrap();
+    b.write_state(
+        json!([state(
+            alice,
+            acme,
+            "all",
+            "{[2021-01-01,)}",
+            "live",
+            Value::Null
+        )]),
+        json!([]),
+    );
+    let read = |exclude: Value| {
+        let input: InboundCountInput = de(json!({
+            "slug": "acme", "sourceId": "default", "excludePrivate": exclude, "originSameSource": false,
+        }));
+        let n = b.store.count_inbound_links(&input).unwrap();
+        let rows =
+            serde_json::to_value(b.store.read_entity_inbound_edges(&input).unwrap()).unwrap();
+        (n, rows)
+    };
+    let (n, rows) = read(Value::Null);
+    assert_eq!(n, 3);
+    let rows = rows.as_array().unwrap();
+    let froms: Vec<&str> = rows
+        .iter()
+        .map(|r| r["from_slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(froms, ["alice", "bob", "carol"]);
+    assert_eq!(rows[0]["temporal_ranges"], "{[2021-01-01,)}");
+    assert_eq!(rows[0]["temporal_semantics"], "state");
+    assert_eq!(rows[0]["temporal_disputed"], false);
+    assert_eq!(rows[0]["temporal_undated_past"], 0);
+    assert_eq!(rows[0]["temporal_first_start"], "2021-01-01");
+    assert_eq!(rows[0]["temporal_recorded_at"], "2026-01-02T00:00:00.000Z");
+    assert_eq!(rows[0]["temporal_retired_at"], Value::Null);
+    assert_eq!(rows[1]["temporal_ranges"], Value::Null);
+    assert_eq!(rows[1]["temporal_semantics"], Value::Null);
+    // The world scope has no relationship row, so every temporal column is null under the policy.
+    let (n, rows) = read(json!({"honorAliases": false, "entityPrivacy": true}));
+    assert_eq!(n, 3);
+    assert_eq!(rows[0]["temporal_ranges"], Value::Null);
 }

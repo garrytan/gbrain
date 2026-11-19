@@ -193,6 +193,25 @@ impl Brain {
         })
     }
 
+    /// `listWriteRequestRows(principal, sourceId, filter)`: the principal's request rows in one live
+    /// source, newest sequence first, through the filter's cursor and fences.
+    #[napi]
+    pub fn list_write_request_rows<'env>(
+        &self,
+        env: &'env Env,
+        principal: Value,
+        source_id: String,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_write_request_rows(
+                &required(principal, "listWriteRequestRows principal")?,
+                &source_id,
+                &required(filter, "listWriteRequestRows filter")?,
+            )
+        })
+    }
+
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the row or `null`.
     #[napi]
     pub fn read_write_request_by_id<'env>(
@@ -236,6 +255,18 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.complete_write_row(&required(completion, "completeWriteRow completion")?)
+        })
+    }
+
+    /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `null` when the row does not exist.
+    #[napi]
+    pub fn cancel_write_row<'env>(
+        &self,
+        env: &'env Env,
+        cancellation: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.cancel_write_row(&required(cancellation, "cancelWriteRow cancellation")?)
         })
     }
 

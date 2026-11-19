@@ -6,17 +6,24 @@ import { catalogProvenance, grantCatalog, type CatalogProvenance } from './profi
 export type GrantDatabase = BrainEngine | SqlQuery;
 const query = (db: GrantDatabase): SqlQuery => typeof db === 'function' ? db : sqlQueryForEngine(db);
 
+/**
+ * The client's grant row. An engine reads it through the typed `readOauthClient` member (the same `SELECT *` on PGLite and
+ * Postgres, and a store read on the Rust engine); a bare `SqlQuery` keeps the statement.
+ */
 export async function readClientGrant(db: GrantDatabase, clientId: string): Promise<ClientGrant> {
-  const sql = query(db);
-  const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId}`;
-  if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
-  return grantFromRow(rows[0]);
+  const row: Record<string, unknown> | null = typeof db === 'function'
+    ? (await db`SELECT * FROM oauth_clients WHERE client_id = ${clientId}`)[0] ?? null
+    : await db.readOauthClient(clientId) as Record<string, unknown> | null;
+  if (!row) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
+  return grantFromRow(row);
 }
 
+/** The ids of the sources that are not archived: `listAllSources()` with no options is `archived IS NOT TRUE` (the column is NOT NULL). */
 export async function grantValidationContext(db: GrantDatabase, servingBrainId?: string): Promise<GrantValidationContext> {
-  const sql = query(db);
-  const sources = await sql`SELECT id FROM sources WHERE archived = false`;
-  return { ...grantCatalog(), activeSourceIds: new Set(sources.map(r => String(r.id))), servingBrainId };
+  const ids = typeof db === 'function'
+    ? (await db`SELECT id FROM sources WHERE archived = false`).map(r => String(r.id))
+    : (await db.listAllSources()).map(r => r.id);
+  return { ...grantCatalog(), activeSourceIds: new Set(ids), servingBrainId };
 }
 
 export interface GrantMutationOptions {

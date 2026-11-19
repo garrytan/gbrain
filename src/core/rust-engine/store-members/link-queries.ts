@@ -5,7 +5,7 @@
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
- * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
  * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
@@ -36,7 +36,8 @@ import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
 import type {
-  JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage,
+  EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary,
+  TitledPage,
 } from '../../engine-sql/link-reads.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
@@ -473,6 +474,17 @@ export const countInboundLinks: StoreMember<[slug: string, sourceId: string, opt
     const excludePrivate = storePagePolicy('countInboundLinks', opts.excludePrivate, CALLER_READERS) ?? null;
     return Number(await storeCall({ member: 'countInboundLinks' },
       () => brain.countInboundLinks({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource })));
+  };
+
+/** The entity card's incoming edges: the links countInboundLinks counts, by link id, with raw temporal columns. */
+export const readEntityInboundEdges: StoreMember<[slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }], EntityInboundEdgeRow[]> =
+  async (brain, slug, sourceId, opts) => {
+    const excludePrivate = storePagePolicy('readEntityInboundEdges', opts.excludePrivate, CALLER_READERS) ?? null;
+    const rows: EntityInboundEdgeRow[] = await storeCall({ member: 'readEntityInboundEdges' },
+      () => brain.readEntityInboundEdges({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource }));
+    // The store prints timestamps as ISO text; Postgres returns them as Date (timestamptz).
+    const at = (v: Date | string | null) => v == null ? null : new Date(v);
+    return rows.map(r => ({ ...r, temporal_recorded_at: at(r.temporal_recorded_at), temporal_retired_at: at(r.temporal_retired_at) }));
   };
 
 /** Automatic link preparation's endpoint pages: the origin source's rows first. */

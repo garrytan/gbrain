@@ -15,6 +15,7 @@ import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { ownerSpeaksForItself, sameAttestedActor } from '../access/member-facts.ts';
 import { perCallWriteSource, storedPerCallWriteSource } from '../access/attest-sources.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every(v => typeof v === 'string'); }
@@ -101,7 +102,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
 /** The engine authorization reads through: its raw statements plus the typed local writer and source membership reads. */
-export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLocalWriterRow' | 'readSourceMembership' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential' | 'readWriterSlugFence' | 'readWriteVisibilityProbe'>;
+export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLocalWriterRow' | 'readSourceMembership' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readLiveMember' | 'hasLabelledOnlyMember' | 'readOauthClient'>;
 function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
@@ -338,7 +339,8 @@ export async function authorizeTakeHolder(engine: AuthorityEngine, authority: Wr
     if (!row) deny('The owning token is revoked.');
     current = grantFromTokenRow(row).takesHolders ?? ['world'];
   } else if (authority.principal.kind === 'oauth_client') {
-    const [row] = await engine.executeRaw<{ takes_holders: unknown }>('SELECT takes_holders FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL', [authority.principal.id]);
+    const found = await engine.readOauthClient(authority.principal.id);
+    const row = found && found.deleted_at == null ? requireOauthClientColumns(found, ['takes_holders']) : undefined;
     if (!row) deny('The owning OAuth client is revoked.');
     current = row.takes_holders == null ? ['world'] : strings(row.takes_holders) ? row.takes_holders : [];
   }

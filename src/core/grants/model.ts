@@ -418,19 +418,31 @@ export function permissionsMirror(g: Pick<PrincipalGrant, 'sources' | 'allowedOp
 }
 
 /**
+ * The unified columns as values: source_grant, source_id, federated_read, allowed_operations, takes_holders (arrays as
+ * arrays, NULL as null). The typed token insert takes these; `tokenGrantColumnValues` is the same in text[] literals.
+ */
+export function tokenGrantColumnArrays(g: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>): {
+  source_grant: string; source_id: string | null; federated_read: string[] | null; allowed_operations: string[] | null; takes_holders: string[] | null;
+} {
+  const s = g.sources;
+  return {
+    source_grant: s.kind,
+    source_id: s.kind === 'scalar' || s.kind === 'federated' ? s.writeSource : null,
+    federated_read: s.kind === 'federated' ? [...s.readSources] : s.kind === 'none' ? [] : null,
+    allowed_operations: g.allowedOperations === null ? null : [...g.allowedOperations],
+    takes_holders: g.takesHolders === null ? null : [...g.takesHolders],
+  };
+}
+
+/**
  * Bind values for the unified columns, in order: source_grant, source_id,
  * federated_read, allowed_operations, takes_holders (arrays as text[]
  * literals, NULL as null). Pair with `TOKEN_GRANT_COLUMNS`.
  */
 export function tokenGrantColumnValues(g: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>): [string, string | null, string | null, string | null, string | null] {
-  const s = g.sources;
-  return [
-    s.kind,
-    s.kind === 'scalar' || s.kind === 'federated' ? s.writeSource : null,
-    s.kind === 'federated' ? pgArray(s.readSources) : s.kind === 'none' ? '{}' : null,
-    g.allowedOperations === null ? null : pgArray(g.allowedOperations),
-    g.takesHolders === null ? null : pgArray(g.takesHolders),
-  ];
+  const a = tokenGrantColumnArrays(g);
+  const lit = (v: string[] | null) => (v === null ? null : pgArray(v));
+  return [a.source_grant, a.source_id, lit(a.federated_read), lit(a.allowed_operations), lit(a.takes_holders)];
 }
 export const TOKEN_GRANT_COLUMNS = ['source_grant', 'source_id', 'federated_read', 'allowed_operations', 'takes_holders'] as const;
 /**

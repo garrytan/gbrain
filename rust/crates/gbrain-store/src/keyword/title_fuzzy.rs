@@ -20,6 +20,7 @@
 use super::index::{serves, title_trigram_pages};
 use super::trgm::{TRGM_SIMILARITY_THRESHOLD, trgm_similarity, trigram_bytes};
 use crate::Store;
+use crate::cli_reads::pg_text::pg_lower;
 use crate::error::{Result, StoreError};
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, read_page_by_id};
@@ -94,6 +95,13 @@ pub(crate) fn sql_like(text: &str, pattern: &str) -> bool {
         }
     }
     tokens[pi..].iter().all(|token| matches!(token, Like::Any))
+}
+
+/// SQL `ILIKE`: [`sql_like`] after both sides are lowered one character at a time with PGLite's
+/// case table (`pg_lower`), as Postgres lowers both sides for a multibyte database. `%`, `_` and
+/// `\` in the pattern stay wildcards and the escape.
+pub(crate) fn sql_ilike(text: &str, pattern: &str) -> bool {
+    sql_like(&pg_lower(text), &pg_lower(pattern))
 }
 
 /// A JS number bound to a `real` parameter: PG reads its text with `strtof`, and a finite value
@@ -359,6 +367,16 @@ mod tests {
         assert!(sql_like("people/é", "people/%"));
         assert!(sql_like("é", "_"));
         assert!(!sql_like("people", "people/%"));
+    }
+
+    #[test]
+    fn ilike_lowers_both_sides_first() {
+        // Postgres (en_US.utf8) and PGLite (C.UTF-8) agree on each of these.
+        assert!(sql_ilike("people/ada", "%ADA%"));
+        assert!(sql_ilike("Ä", "ä"));
+        assert!(sql_ilike("notes/a_b", "%A\\_B"));
+        assert!(!sql_ilike("notes/axb", "%A\\_B"));
+        assert!(!sql_ilike("people/adam", "%ADA"));
     }
 
     fn put(store: &Store, slug: &str, title: &str) {

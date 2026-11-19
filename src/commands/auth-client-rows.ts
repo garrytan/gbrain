@@ -1,75 +1,38 @@
 /**
  * `gbrain auth clients`'s client listing, split out of commands/auth.ts (which re-exports it) to keep that file under
- * its size ceiling: one SELECT on a current brain, a ladder of narrower projections on a brain from before each column.
+ * its size ceiling: the listOauthClients member (one read of whole rows, on PGLite, Postgres and a Rust brain), narrowed
+ * to the columns the listing shows.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { isMissingSchemaObject } from '../core/utils.ts';
+import { readSharedFromColumns } from '../core/grants/model.ts';
 import type { ClientRow } from './auth.ts';
 
+/** The columns a brain from before them leaves out of the row rather than reading as null. */
+const OPTIONAL_COLUMNS = ['allowed_operations', 'deleted_at', 'private_pages', 'private_facts'] as const;
+
 /**
- * Projection-widened client listing with a degrade ladder for pre-migration
- * brains: full shape (scope + surface + source-scoping columns) → source
- * columns without surface → the bare original triple. Drops the NEWEST
- * columns first; missing columns render as null. Only schema-shape errors
- * (undefined column/table) degrade — anything else (dropped connection,
- * permission) rethrows instead of silently narrowing the listing. One round
- * trip on a current brain (the widen adds columns, not queries). Exported
- * for the unit suite.
+ * The listing's rows: the columns of `ClientRow` out of each client's whole row. A brain from before a column returns
+ * rows without it, so the surface and source-scoping columns read as null there and the optional ones (operation
+ * snapshot, soft-revoke stamp, private pages, private facts) stay absent, which is what each caller already reads as
+ * "the brain predates this" (`unavailable` operations, no private axis). The secret hash and the other columns of the
+ * whole row go no further. Exported for the unit suite.
  */
 export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> {
-  // The columns each degrade tier drops; any other missing object rethrows.
-  const isSchemaShapeError = (e: unknown): boolean =>
-    isMissingSchemaObject(e, 'table', 'oauth_clients') ||
-    isMissingSchemaObject(e, 'column', ['private_facts', 'private_pages', 'allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages, private_facts,
-              COALESCE((to_jsonb(c)->>'read_shared_revision')::int = c.grant_revision, false) AS read_shared
-         FROM oauth_clients c ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the private-facts column: it reads as none.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the private-pages column: it reads as none.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the operation-snapshot columns: operations read `unavailable`.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the surface columns — fall through. Rethrow non-shape errors.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    const mid = await engine.executeRaw<Omit<ClientRow, 'surface' | 'surface_set_by'>>(
-      `SELECT client_id, client_name, scope, source_id, federated_read
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-    return mid.map(r => ({ ...r, surface: null, surface_set_by: null }));
-  } catch (e) {
-    // Brain predates the source-scoping columns — fall through likewise.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  const bare = await engine.executeRaw<Pick<ClientRow, 'client_id' | 'client_name' | 'scope'>>(
-    `SELECT client_id, client_name, scope FROM oauth_clients ORDER BY client_name, client_id`,
-  );
-  return bare.map(r => ({ ...r, surface: null, surface_set_by: null, source_id: null, federated_read: null }));
+  const rows = await engine.listOauthClients();
+  return rows.map((full) => {
+    const r = full as unknown as Record<string, unknown>;
+    const row: ClientRow = {
+      client_id: full.client_id,
+      client_name: full.client_name,
+      scope: full.scope,
+      surface: full.surface ?? null,
+      surface_set_by: full.surface_set_by ?? null,
+      source_id: full.source_id ?? null,
+      federated_read: full.federated_read ?? null,
+    };
+    for (const column of OPTIONAL_COLUMNS) if (column in r) (row as unknown as Record<string, unknown>)[column] = r[column];
+    // The shared-source read grant stands only while its stamp is the client's current grant revision.
+    row.read_shared = readSharedFromColumns(r.read_shared_revision, r.grant_revision);
+    return row;
+  });
 }

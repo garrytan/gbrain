@@ -11,6 +11,14 @@ The engine's `initSchema` (`src/core/rust-engine/store-members/init-schema.ts`) 
 has none: the stored embedding identity when there is one, else the gateway's model and width, else
 the install defaults (`voyage:voyage-4`, 1024). A stored width with no known model writes no model.
 
+`open` also writes the caller's `embeddingModel`, `embeddingDimensions` and `chunkStrategy` (each when
+given) as the config entries `embedding_model`, `embedding_dimensions` and `chunk_strategy`, for a fresh
+brain only, as PGLite's `initSchema` seeds them (`src/schema.sql`). A reopened brain keeps its own
+entries. The TypeScript engine passes the same identity PGLite seeds (`seedEmbeddingIdentity` in
+`src/core/rust-engine/store.ts`: the schema settings, then the gateway, then the defaults), so a chunk
+written with no model of its own carries the brain's model, as on PGLite. In Rust the rows come from
+`OpenOptions::initial_config`; an empty key or the key `version` is `invalid_argument`.
+
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.getConfig(key)` | `string \| null` | `getConfig` |

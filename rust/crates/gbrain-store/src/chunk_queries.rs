@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, HashMap};
 mod site_reads;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
-    FrozenHitsInput, QualifiedNamesInput, WithdrawalChunksInput, WithdrawalKey,
+    FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
 };
 
 /// `listChunklessPagesWithContent`'s default batch size.

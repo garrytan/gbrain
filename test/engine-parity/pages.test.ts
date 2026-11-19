@@ -806,6 +806,63 @@ describe('engine parity: pages', () => {
     },
   );
 
+  /** Pages for resolveSlugs' fuzzy half: near titles, a private and a reader-named look-alike, a deleted one, a tie. */
+  async function seedFuzzy(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'alt');
+    const page = (slug: string, title: string, frontmatter: Record<string, unknown> = {}, sourceId?: string) =>
+      engine.putPage(slug, { type: 'person', title, compiled_truth: `${title} body`, timeline: '', frontmatter }, sourceId ? { sourceId } : undefined);
+    await page('people/alice-example', 'Alice Example');
+    await page('people/alicia-example', 'Alicia Example');
+    await page('people/alina-other', 'Alina Other');
+    await page('companies/acme-example', 'Acme Example');
+    await page('people/secret-alice', 'Alice Example', { visibility: 'private' });
+    await page('people/readers-alice', 'Alice Example', { readable_by: ['alice-example'] });
+    await page('people/deleted-alice', 'Alice Example');
+    await engine.softDeletePage('people/deleted-alice');
+    // Written in reverse slug order, so a store that keeps insertion order is not sorted by accident.
+    await page('people/twin-c', 'Twin Title');
+    await page('people/twin-b', 'Twin Title');
+    await page('people/twin-a', 'Twin Title', {}, 'alt');
+  }
+  const FUZZY_PARTIALS = ['people/alice-example', 'People/Alice-Example', 'people/ali', 'Alise Exampel', 'people/ali_e',
+    'Twin Title', 'Alice Example', 'zzzz-nothing', ''];
+
+  parityTest(
+    "resolveSlugs' fuzzy half: exact first, slug ILIKE, a title typo, ties by slug, hidden pages stay hidden",
+    { methods: ['putPage', 'softDeletePage', 'resolveSlugs'] },
+    async (engine, backend) => {
+      await seedFuzzy(engine, backend);
+      const all = async (opts?: Parameters<BrainEngine['resolveSlugs']>[1]) => {
+        const got: Record<string, string[]> = {};
+        for (const partial of FUZZY_PARTIALS) got[partial] = await engine.resolveSlugs(partial, opts);
+        return got;
+      };
+      const trusted = await all();
+      const alt = await all({ sourceId: 'alt' });
+      const both = await all({ sourceIds: ['alt', 'default'] });
+      const open = await withCallerAccess({ identity: [], hidePrivate: true, restricted: false }, () => all({ excludePrivate: true }));
+      const member = await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => all({ excludePrivate: true }));
+      // Exact: a live page with the slug wins outright.
+      expect(trusted['people/alice-example']).toEqual(['people/alice-example']);
+      // Prefix: the slug contains the partial (ILIKE, so case and `_` follow Postgres).
+      expect(trusted['people/ali']).toContain('people/alicia-example');
+      expect(trusted['People/Alice-Example']).toContain('people/alice-example');
+      expect(trusted['people/ali_e']).toContain('people/alice-example');
+      // Typo: no slug contains it; the title trigrams carry it, best first.
+      expect(trusted['Alise Exampel'][0]).toBe('people/alice-example');
+      // Tie: equal similarity sorts by slug.
+      expect(both['Twin Title']).toEqual(['people/twin-a', 'people/twin-b', 'people/twin-c']);
+      expect(alt['Twin Title']).toEqual(['people/twin-a']);
+      // Hidden: a private page and a reader-named page leave the open caller's list, never a deleted page.
+      expect(trusted['Alice Example']).toContain('people/secret-alice');
+      expect(open['Alice Example']).not.toContain('people/secret-alice');
+      expect(open['Alice Example']).not.toContain('people/readers-alice');
+      expect(Object.values(trusted).flat()).not.toContain('people/deleted-alice');
+      expect(trusted['zzzz-nothing']).toEqual([]);
+      return { trusted, alt, both, open, member };
+    },
+  );
+
   parityTest('same slug in two sources stays separate', { methods: ['putPage', 'getPage', 'deletePage', 'resolveSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await engine.putPage('notes/a', NOTE);
@@ -882,4 +939,29 @@ describe('engine parity: pages', () => {
       return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };
     },
   );
+
+  parityTest('bumpPageRetrievals records a retrieval that the samplers read and staleBias ranks behind a never-retrieved page', { methods: ['bumpPageRetrievals', 'listPrefixSampledPages', 'listCorpusSample'] }, async (engine) => {
+    await seed(engine, [['wiki/vc/a', NOTE], ['wiki/vc/b', NOTE]]);
+    const a = Number((await engine.getPage('wiki/vc/a'))!.id);
+    await engine.bumpPageRetrievals([]);
+    await engine.bumpPageRetrievals([a, a, 987654]);
+    const plain = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'] });
+    const stale = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'], staleBias: true });
+    const first = plain[0]?.last_retrieved_at;
+    expect(first).toBeInstanceOf(Date);
+    // A second bump inside the 5-minute window leaves the recorded time alone.
+    await engine.bumpPageRetrievals([a]);
+    const again = (await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'] }))[0]?.last_retrieved_at;
+    const sample = sorted((await engine.listCorpusSample({ n: 10, seed: 3 })).map((r) => `${r.slug}:${r.last_retrieved_at instanceof Date}`));
+    const view = {
+      plain: plain.map((r) => `${r.slug}:${r.last_retrieved_at instanceof Date}`),
+      stale: stale.map((r) => `${r.slug}:${r.last_retrieved_at instanceof Date}`),
+      throttled: again instanceof Date && again.getTime() === (first as Date).getTime(),
+      sample,
+    };
+    expect(view).toEqual({
+      plain: ['wiki/vc/a:true'], stale: ['wiki/vc/b:false'], throttled: true, sample: ['wiki/vc/a:true', 'wiki/vc/b:false'],
+    });
+    return view;
+  });
 });

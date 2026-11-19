@@ -1,4 +1,5 @@
-//! Group 5 facts members, search relevance and trust reads: one `#[napi] impl Brain` block over `gbrain_store::facts::trust`.
+//! Group 5 facts members, search relevance and trust reads: one `#[napi] impl Brain` block over `gbrain_store::facts::trust`
+//! and `gbrain_store::facts::saved_match`.
 //!
 //! The TypeScript members (src/core/rust-engine/store-members/facts-trust.ts) resolve the caller's
 //! read policy and refuse what the store cannot answer.
@@ -9,6 +10,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 
 #[napi]
@@ -36,6 +38,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: UncomparableQuery = required(query, "countUncomparableFacts query")?;
             s.count_uncomparable_facts(&a)
+        })
+    }
+
+    /// `matchSavedFacts`: resolves the matched rows, most matched terms first, then newest.
+    #[napi]
+    pub fn match_saved_facts<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SavedFactsMatchQuery = required(query, "matchSavedFacts query")?;
+            s.match_saved_facts(&a)
         })
     }
 }
