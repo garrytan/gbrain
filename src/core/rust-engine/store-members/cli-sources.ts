@@ -6,9 +6,12 @@
  * (store side: the same cli_reads/sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
+
+export const readPlainSyncSource: StoreMember<[sourceId: string], PlainSyncSourceRow | null> = async (brain, sourceId) =>
+  (await storeCall({ member: 'readPlainSyncSource', sourceId }, () => brain.readPlainSyncSource(sourceId))) as PlainSyncSourceRow | null;
 
 export const listLocalPathSources: StoreMember<[], LocalPathSourceRow[]> = async (brain) =>
   (await storeCall({ member: 'listLocalPathSources' }, () => brain.listLocalPathSources())) as LocalPathSourceRow[];

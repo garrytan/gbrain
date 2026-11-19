@@ -477,7 +477,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
-  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
+  'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
@@ -552,7 +552,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
-  'findExactSlug': OOS.entityReads, 'readRetirementHop': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
+  'findExactSlug': OOS.entityReads, 'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,
@@ -946,6 +946,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
   ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('listLocalPathSources', [['default', (e) => e.listLocalPathSources()]]),
+  ...variants('readPlainSyncSource', [['default', (e) => e.readPlainSyncSource(SRC)]]),
   ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
@@ -1334,6 +1335,12 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['caller', (e) => e.readRetirementHop(SRC, SLUG, 'caller')],
     ['floor', (e) => e.readRetirementHop(SRC, SLUG, 'floor')],
     ['member_access', (e) => e.readRetirementHop(SRC, SLUG, 'member_access')],
+  ]),
+  ...variants('readEntityCardRows', [
+    ['name', (e) => e.readEntityCardRows(SRC, { titleLc: 'alice example', slugs: [SLUG], slugLike: '%/alice-example' })],
+    ['name+private', (e) => e.readEntityCardRows(SRC, { titleLc: 'alice example', slugs: [SLUG], slugLike: '%/alice-example' }, { excludePrivate: true })],
+    ['slugs', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] })],
+    ['slugs+private', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] }, { excludePrivate: true })],
   ]),
   ...variants('readExtractionLagCounts', [['default', (e) => e.readExtractionLagCounts({ sourceId: SRC, versionTs: '2000-01-01T00:00:00Z', attendance: true, held: true })]]),
   ...variants('readIgnoredPrivacyLabelPages', [

@@ -47,7 +47,8 @@ import { readRowReferences, referencesUnavailableNotice, type RecordGroupView, t
 import type { Notice } from '../agent-output.ts';
 import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
-import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { ENTITY_CARD_COLUMNS_SQL } from '../engine-sql/entity-reads.ts';
 import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 const EDGE_CAP = 10;
@@ -264,8 +265,8 @@ export interface CardPageRow {
 }
 
 /** The card's page-row projection over `pages` (bounded body prefix, last retrieval). */
-const CARD_ROW_COLUMNS = `slug, source_id, title, type, frontmatter, ${boundedBodyPrefixSql('pages')} AS compiled_truth, updated_at,
-              GREATEST(last_retrieved_at, (SELECT r.last_retrieved_at FROM page_retrievals r WHERE r.page_id = pages.id)) AS last_retrieved_at`;
+/** The card row columns, one copy with the typed candidate read (engine-sql/entity-reads.ts). */
+const CARD_ROW_COLUMNS = ENTITY_CARD_COLUMNS_SQL;
 
 /** Resolution arm rank: lower = higher confidence (frozen precedence ladder). */
 const ARM_ALIAS = 0;
@@ -315,8 +316,9 @@ export async function selectEntityCandidates(
   opts: { omitQuarantined?: boolean; suggest?: boolean; variants?: boolean } = {},
 ): Promise<EntityCandidates> {
   const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
-  // Predicate text lives ONCE (private-visibility.ts) — both card queries
-  // below select `FROM pages` unaliased, so qualify with the table name.
+  // Predicate text lives ONCE (private-visibility.ts). The two candidate reads
+  // apply it through readEntityCardRows' excludePrivate; the name-variant arm
+  // below selects `FROM pages` unaliased, so qualify with the table name.
   const privatePredicate = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '';
 
   const norm = normalizeAlias(trimmed);
@@ -351,16 +353,8 @@ export async function selectEntityCandidates(
   // card's tie-break needs. Guarded like the reflex.
   let rows: CardPageRow[] = [];
   try {
-    rows = await engine.executeRaw<CardPageRow>(
-      `SELECT ${CARD_ROW_COLUMNS}
-         FROM pages
-        WHERE deleted_at IS NULL
-          AND source_id = $1
-          AND ( lower(title) = $2
-             OR slug = ANY($3::text[])
-             OR slug LIKE $4 )${privatePredicate}`,
-      [sourceId, titleLc, exactSlugs, `%/${slug || trimmed}`],
-    );
+    rows = await engine.readEntityCardRows(sourceId, { titleLc, slugs: exactSlugs, slugLike: `%/${slug || trimmed}` },
+      { excludePrivate: scope.excludePrivate });
   } catch (e) {
     rethrowCapabilityMissing(e);
     rows = [];
@@ -376,12 +370,7 @@ export async function selectEntityCandidates(
   const missing = [...rankBySlug.keys()].filter(s => !rowBySlug.has(s));
   if (missing.length) {
     try {
-      const extra = await engine.executeRaw<CardPageRow>(
-        `SELECT ${CARD_ROW_COLUMNS}
-           FROM pages
-          WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])${privatePredicate}`,
-        [sourceId, missing],
-      );
+      const extra = await engine.readEntityCardRows(sourceId, { slugs: missing }, { excludePrivate: scope.excludePrivate });
       for (const r of extra) rowBySlug.set(r.slug, r);
     } catch (e) {
       rethrowCapabilityMissing(e);

@@ -64,6 +64,24 @@ describe('engine parity: source-resolution reads', () => {
     return { empty, rows };
   });
 
+  parityTest('readPlainSyncSource reads the path, last commit and config of a source that is not archived', { methods: ['readPlainSyncSource'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'plain', { kind: null, note: 'x' }, '/srv/brain/plain');
+    await createSource(engine, backend, 'gone', {}, '/srv/brain/gone');
+    await archiveSource(engine, backend, 'gone');
+    const result = {
+      plain: await engine.readPlainSyncSource('plain'),
+      gone: await engine.readPlainSyncSource('gone'),
+      missing: await engine.readPlainSyncSource('missing'),
+      default: (await engine.readPlainSyncSource('default'))?.last_commit ?? null,
+    };
+    expect(result.plain?.local_path).toBe('/srv/brain/plain');
+    expect(result.plain?.last_commit).toBeNull();
+    expect(result.plain?.config as Record<string, unknown> | null | undefined).toEqual({ kind: null, note: 'x' });
+    expect(result.gone).toBeNull();
+    expect(result.missing).toBeNull();
+    return result;
+  });
+
   parityTest('listSourceRoutingRows carries config, archived and whether default has a live page', { methods: ['listSourceRoutingRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'wiki', { role: 'storage_manifest' }, '/srv/brain/wiki');
     await createSource(engine, backend, 'old');

@@ -168,6 +168,15 @@ export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<Lo
   return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
 }
 
+/** The live (not archived) source a plain-directory sync reads (`plainDirectorySyncRoot`). */
+export interface PlainSyncSourceRow { local_path: string | null; last_commit: string | null; config: { kind?: unknown } | null }
+
+/** The registered path, last commit and config of a source that is not archived, or null. */
+export async function readPlainSyncSource(exec: LegacyUnscopedRead, sourceId: string): Promise<PlainSyncSourceRow | null> {
+  const [row] = await exec.executeRaw<PlainSyncSourceRow>('SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  return row ?? null;
+}
+
 /**
  * Every source row ordered by id, each carrying whether `default` holds a live page, in one statement (the request
  * config snapshot's `sources` read, #7147). Unscoped on master.
