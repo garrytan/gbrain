@@ -25,6 +25,7 @@ import { makeFakeSql, type FakeSql } from './helpers/fake-postgres-sql.ts';
 const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promise<unknown>]> = [
   ['listGuestSourceIds', 'SELECT s.id FROM sources s WHERE s.id = ANY', e => e.listGuestSourceIds(['default'])],
   ['readDatabaseClock', 'clock_timestamp()', e => e.readDatabaseClock()],
+  ['listStoredTimelineRowsOrdered', 'FROM timeline_entries WHERE page_id=$1 AND event_page_id IS NULL', e => e.listStoredTimelineRowsOrdered(1)],
 ];
 const views = [['managed sync (engineReads)', { engineReads: true }], ['page/maintenance preparer', {}]] as const;
 const never = () => new Promise<never>(() => {});
