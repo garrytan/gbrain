@@ -54,6 +54,115 @@ impl Brain {
         })
     }
 
+    /// `listSourcePagePaths(sourceId)`: the source's live, file-backed pages in slug byte order.
+    #[napi]
+    pub fn list_source_page_paths<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_source_page_paths(&source_id))
+    }
+
+    /// `readRenameStoredTitles(sourceId, paths, slugs)`: the live pages a rename confirmation
+    /// compares by source path or slug, in slug byte order.
+    #[napi]
+    pub fn read_rename_stored_titles<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        paths: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_rename_stored_titles(&source_id, &paths, &slugs)
+        })
+    }
+
+    /// `readLiveIdentityHolders(sourceId, ids, titles)`: the live pages holding a frontmatter id
+    /// or title, in slug byte order.
+    #[napi]
+    pub fn read_live_identity_holders<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        ids: Vec<String>,
+        titles: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_identity_holders(&source_id, &ids, &titles)
+        })
+    }
+
+    /// `readPageIdentity(pageId)`: `{ fm_id, title }` of a live page, or `null`.
+    #[napi]
+    pub fn read_page_identity<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page_id: u64 = required(page_id, "readPageIdentity pageId")?;
+            s.read_page_identity(page_id)
+        })
+    }
+
+    /// `writeSourceCommitAnchor(sourceId, commit, stampNewest, newestContentAt)`: the sync anchor
+    /// advance; `newestContentAt` counts only with `stampNewest`.
+    #[napi]
+    pub fn write_source_commit_anchor<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        commit: String,
+        stamp_newest: bool,
+        newest_content_at: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let newest = stamp_newest.then_some(newest_content_at.as_deref());
+            s.write_source_commit_anchor(&source_id, &commit, newest)
+        })
+    }
+
+    /// `writeSourceLocalPath(sourceId, localPath)`: the sync anchor's directory repoint.
+    #[napi]
+    pub fn write_source_local_path<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        local_path: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_source_local_path(&source_id, &local_path)
+        })
+    }
+
+    /// `writeSourceSyncHeartbeat(sourceId)`: the 0-change sync heartbeat (`last_sync_at` only).
+    #[napi]
+    pub fn write_source_sync_heartbeat<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.write_source_sync_heartbeat(&source_id))
+    }
+
+    /// `writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)`: the sync's upstream
+    /// observation of the source's checkout.
+    #[napi]
+    pub fn write_source_upstream_observation<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        checked_at: String,
+        commit: String,
+        behind: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_source_upstream_observation(&source_id, &checked_at, &commit, behind)
+        })
+    }
+
     /// `insertSource(id, name, localPath, config)`: the new `SourceRow`; `constraint_violation`
     /// when the id or the name is taken.
     #[napi]

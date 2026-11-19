@@ -944,6 +944,9 @@ pub struct GetChunksOptions {
     pub include_deleted: bool,
     pub include_embedding: bool,
     pub include_unsealed: bool,
+    /// `safeChunksFilter`: a page whose `chunker_version` is below the safe fence (or unset) reads
+    /// as no chunks.
+    pub require_safe_chunks: bool,
 }
 
 /// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`.
@@ -1180,6 +1183,9 @@ impl Store {
         if !options.include_unsealed
             && page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str())
         {
+            return Ok(Vec::new());
+        }
+        if options.require_safe_chunks && !crate::chunk_queries::safe_chunks(&page) {
             return Ok(Vec::new());
         }
         chunk_rows(&*read, &page, options.include_embedding)

@@ -27,7 +27,7 @@ and has no keys of its own.
 
 Each answer below is what Postgres gives for a brain that never wrote the missing data.
 
-- **Commit columns.** A source has no `last_commit` and no `newest_content_at`. Both read `null`.
+- **Commit columns.** A source's `last_commit` and `newest_content_at` are the sync anchor's last advance. Both read `null` before the first sync.
 - **Ingestion receipts.** The store keeps no `source_ingestion_receipts`, so `hasCompanyBrainReceipt` is `false`.
   The company-brain profile then reads the source as one that has not finished an ingestion.
 - **Guest sources.** The store has no `guest_sources` table and no row-level security. A guest source is a source

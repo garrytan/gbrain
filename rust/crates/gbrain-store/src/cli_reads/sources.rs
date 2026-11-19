@@ -1,5 +1,6 @@
 //! Source-resolution reads: `listLocalPathSources`, `listSourceRoutingRows`,
-//! `countDefaultSourceSplit` and `countSourcePages` (SQL in `src/core/engine-sql/sources.ts`).
+//! `countDefaultSourceSplit`, `countSourcePages` and `listSourcePagePaths` (SQL in
+//! `src/core/engine-sql/sources.ts`).
 //! Each reads one snapshot. `insertSource` is the CLI's plain source insert.
 
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
@@ -12,13 +13,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 
-/// The source a plain-directory sync reads (`PlainSyncSourceRow`). The store keeps no
-/// `last_commit`, so it is always null.
+/// The source a plain-directory sync reads (`PlainSyncSourceRow`). `last_commit` is the sync
+/// anchor's last advance, null before it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlainSyncSourceRow {
     pub local_path: Option<String>,
     pub last_commit: Option<String>,
     pub config: Map<String, Value>,
+}
+
+/// One live, file-backed page of a source: `SourcePagePath`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourcePagePath {
+    pub slug: String,
+    pub source_path: String,
+}
+
+/// The page fields `listSourcePagePaths` reads.
+#[derive(Deserialize)]
+struct PagePathFields {
+    slug: String,
+    #[serde(default)]
+    source_path: Option<String>,
+    #[serde(default)]
+    deleted_at_us: Option<i64>,
 }
 
 /// A source with a checkout path: `LocalPathSourceRow`.
@@ -116,7 +134,7 @@ impl Store {
             .filter(|s| !s.archived)
             .map(|s| PlainSyncSourceRow {
                 local_path: s.local_path,
-                last_commit: None,
+                last_commit: s.last_commit,
                 config: s.config,
             }))
     }
@@ -160,6 +178,42 @@ impl Store {
         })?;
         split.non_default_sources = others.len() as u64;
         Ok(split)
+    }
+
+    /// `listSourcePagePaths(sourceId)`: the live pages of the source that record a source path,
+    /// in slug byte order (the SQL engines order by `slug COLLATE "C"`).
+    pub fn list_source_page_paths(&self, source_id: &str) -> Result<Vec<SourcePagePath>> {
+        if source_id.contains('\0') {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        let mut failure = None;
+        scan_prefix(
+            &*read,
+            &keys::text(keys::PAGE, &[source_id, ""]),
+            false,
+            &mut |_, v| match serde_json::from_slice::<PagePathFields>(v) {
+                Ok(page) => {
+                    if let (None, Some(source_path)) = (page.deleted_at_us, page.source_path) {
+                        rows.push(SourcePagePath {
+                            slug: page.slug,
+                            source_path,
+                        });
+                    }
+                    true
+                }
+                Err(e) => {
+                    failure = Some(e.into());
+                    false
+                }
+            },
+        )?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        rows.sort_by(|a, b| a.slug.cmp(&b.slug));
+        Ok(rows)
     }
 
     /// `countSourcePages(sourceId, { includeDeleted })`: the pages of one source, soft-deleted
@@ -233,6 +287,11 @@ impl Store {
                 archived: false,
                 created_at_us: self.env.now_micros(),
                 chunker_version: None,
+                last_commit: None,
+                newest_content_at_us: None,
+                upstream_checked_at_us: None,
+                upstream_commit: None,
+                upstream_behind: None,
             };
             put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
             Ok(SourceRow::from(record))

@@ -7,6 +7,8 @@ last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow
 `incarnation` (a UUID that changes when a source is deleted and created again), with
 `last_sync_at` as an ISO string. The record also keeps the source's `chunker_version` stamp, absent
 until the first stamp; the import members read and write it ([import-members.md](import-members.md)).
+It keeps the sync anchor too: `last_commit` and `newest_content_at`, absent until the first sync
+advances them. Records written before these fields existed read them as absent.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -17,7 +19,15 @@ until the first stamp; the import members read and write it ([import-members.md]
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
 | `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
+| `brain.listSourcePagePaths(sourceId)` | `{ slug, source_path }[]`, the source's live pages that record a source path, in slug byte order | `listSourcePagePaths` (the full sync's stale-page reconcile) |
+| `brain.readRenameStoredTitles(sourceId, paths, slugs)` | `{ slug, source_path, title }[]`, the source's live pages whose source path is in `paths` or slug in `slugs`, in slug byte order | `readRenameStoredTitles` (a sync's rename confirmation) |
+| `brain.readLiveIdentityHolders(sourceId, ids, titles)` | `{ slug, source_path, fm_id, title }[]`, the source's live pages whose frontmatter `id` (as `->>` text) is in `ids` or title in `titles`, in slug byte order | `readLiveIdentityHolders` (a sync's rename confirmation) |
+| `brain.readPageIdentity(pageId)` | `{ fm_id, title }` of a live page, or `null` | `readPageIdentity` (a held rename decided again) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
+| `brain.writeSourceCommitAnchor(sourceId, commit, stampNewest, newestContentAt)` | `undefined`; sets `last_commit` and stamps `last_sync_at` now; with `stampNewest` also sets `newest_content_at` (an ISO time, or `null` to clear it); an unknown source changes nothing | `writeSourceCommitAnchor` (`writeSyncAnchor` of `src/core/sync-anchor.ts`) |
+| `brain.writeSourceLocalPath(sourceId, localPath)` | `undefined`; sets `local_path`; an unknown source changes nothing | `writeSourceLocalPath` (`writeSyncAnchor`, the `repo_path` repoint) |
+| `brain.writeSourceSyncHeartbeat(sourceId)` | `undefined`; sets `last_sync_at` to the store clock and leaves `last_commit` alone; an unknown source changes nothing | `writeSourceSyncHeartbeat` (the 0-change sync heartbeat in preflight) |
+| `brain.writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)` | `undefined`; sets `upstream_checked_at` (an ISO time; anything else refuses `invalid`), `upstream_commit` and `upstream_behind` (null allowed); an unknown source changes nothing | `writeSourceUpstreamObservation` (`recordUpstreamObservation`, after every sync) |
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
 to make a source, and the page methods below are source-scoped.
@@ -38,7 +48,8 @@ The source members below behave differently on the Rust engine. Each difference 
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
-- `last_commit` is `null` in the row that `gbrain sources` reads through `getSource`.
+- `writeSourceCommitAnchor` stamps `last_sync_at` from the process clock. The SQL engines use
+  the database clock (`now()`).
 - Restore-target and connector status sort sources by id in byte order on every engine.
 - `insertSource` refuses an id outside `[a-z0-9-]{1,32}` with `invalid_argument`. The SQL engines
   have no check on the id column, so they accept such an id. `sources add` validates the id

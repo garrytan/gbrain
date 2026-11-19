@@ -18,6 +18,7 @@ mod import_members;
 mod journal;
 mod large_page;
 mod links;
+mod op_checkpoints;
 mod page_visibility;
 mod pages;
 mod search;

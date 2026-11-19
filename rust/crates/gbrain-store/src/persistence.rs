@@ -11,9 +11,13 @@
 //! | Key | Record |
 //! |---|---|
 //! | `d 0x01 <counter key>` | one `persistence_counters` row (`CounterRecord`), JSON |
-//! | `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row (`housekeeping.rs`), JSON |
+//! | `d 0x02 <op> 0x00 <fingerprint>` | one `op_checkpoints` row (`housekeeping.rs`, `op_checkpoints.rs`), JSON |
 //! | `d 0x03 <principal_id> 0x00 <request_id>` | one `persistence_topology_changes` row (`topology.rs`), JSON |
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
+//! | `d 0x05 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoints.rs`), empty |
+//!
+//! The `d 0x02` rows are the whole `op_checkpoints` table: the housekeeping turn and the
+//! operation checkpoints (`op_checkpoints.rs`) keep the same row shape.
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -46,9 +50,11 @@ use serde_json::{Map, Value, json};
 
 mod effect_scans;
 mod housekeeping;
+mod op_checkpoints;
 mod projection_queue;
 mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
+pub use op_checkpoints::OpCheckpointRead;
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };

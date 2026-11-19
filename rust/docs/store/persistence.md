@@ -17,9 +17,10 @@ PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/
 | `j <journal id>` | the request key of that row (journal.rs) |
 | `W <writer id>` | one `persistence_local_writers` row (journal.rs) |
 | `d 0x01 <counter key>` | one `persistence_counters` row, JSON |
-| `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row, JSON |
+| `d 0x02 <op> 0x00 <fingerprint>` | one `op_checkpoints` row `{ completed_keys, updated_at_us }`, JSON (housekeeping.rs, op_checkpoints.rs) |
 | `d 0x03 <principal id> 0x00 <request id>` | one `persistence_topology_changes` row (a lifecycle receipt), JSON (topology.rs) |
 | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row `{ revision, reason, updated_at_us }`, JSON (projection_queue.rs) |
+| `d 0x05 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row, empty value (op_checkpoints.rs) |
 
 A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`).
 
@@ -105,6 +106,19 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
+
+## Operation checkpoints
+
+The load, record, append and clear statements of `op-checkpoint.ts` (`engine-sql/op-checkpoint.ts`), which a resumable
+sync runs. The housekeeping turn and these members keep the same `d 0x02` rows. No key part can hold NUL, so a
+checkpoint's paths sit under one prefix. Deleting the parent deletes its paths, as the foreign key cascade does.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readOpCheckpoint(op, fingerprint)` | `{ keys, corruptParent }`: the banked paths in byte order, then the parent's `completed_keys` elements as `jsonb_array_elements_text` gives them (a JSON null is dropped). `corruptParent` when the parent's `completed_keys` is not an array | `readOpCheckpoint` |
+| `brain.writeOpCheckpointKeys(op, fingerprint, keys)` | replaces the parent's `completed_keys` and stamps it; the paths stay | `writeOpCheckpointKeys` |
+| `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | creates the parent (`[]`) or stamps it, then banks each path; a banked path is a no-op. A path with NUL refuses `invalid` | `appendOpCheckpointPaths` |
+| `brain.deleteOpCheckpoint(op, fingerprint)` | deletes the parent and every banked path | `deleteOpCheckpoint` |
 
 ## Effect scans
 

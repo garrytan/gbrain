@@ -280,6 +280,78 @@ fn sources_survive_a_reopen() {
 }
 
 #[test]
+fn the_sync_anchor_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-anchor");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    store.upsert_source(&input("other", None)).unwrap();
+    assert_eq!(store.get_source("wiki").unwrap().unwrap().last_commit, None);
+    store
+        .write_source_commit_anchor("wiki", "c1", Some(Some("2026-01-02T03:04:05.000Z")))
+        .unwrap();
+    store
+        .write_source_commit_anchor("wiki", "c2", None)
+        .unwrap();
+    store.write_source_local_path("wiki", "/srv/wiki").unwrap();
+    // An unknown source changes nothing, as the UPDATE matches no row.
+    store
+        .write_source_commit_anchor("missing", "c9", None)
+        .unwrap();
+    store
+        .write_source_local_path("missing", "/srv/missing")
+        .unwrap();
+    assert!(
+        store
+            .write_source_commit_anchor("wiki", "c3", Some(Some("not a time")))
+            .is_err()
+    );
+    store.close();
+    let store = open(&dir);
+    let wiki = store.get_source("wiki").unwrap().unwrap();
+    assert_eq!(wiki.last_commit.as_deref(), Some("c2"));
+    assert!(wiki.last_sync_at.is_some());
+    assert_eq!(wiki.local_path.as_deref(), Some("/srv/wiki"));
+    let records = store.list_source_records().unwrap();
+    let newest = |id: &str| {
+        records
+            .iter()
+            .find(|r| r.id == id)
+            .and_then(|r| r.newest_content_at.clone())
+    };
+    assert_eq!(
+        newest("wiki").as_deref(),
+        Some("2026-01-02T03:04:05.000000Z")
+    );
+    store
+        .write_source_commit_anchor("wiki", "c4", Some(None))
+        .unwrap();
+    assert_eq!(
+        store
+            .list_source_records()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == "wiki")
+            .unwrap()
+            .newest_content_at,
+        None
+    );
+    assert_eq!(
+        store.get_source("other").unwrap().unwrap().last_commit,
+        None
+    );
+    assert_eq!(store.get_source("missing").unwrap(), None);
+    assert_eq!(
+        store
+            .read_plain_sync_source("wiki")
+            .unwrap()
+            .unwrap()
+            .last_commit
+            .as_deref(),
+        Some("c4")
+    );
+}
+
+#[test]
 fn a_fresh_brain_records_the_callers_initial_config_and_a_reopen_keeps_its_own() {
     let dir = TempDir::new("cfg-initial");
     let path = dir.path().join("brain");
