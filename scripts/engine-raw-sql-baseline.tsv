@@ -135,8 +135,6 @@ src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
 src/commands/extract.ts	execute_raw	3
-src/commands/files.ts	execute_raw	4
-src/commands/files.ts	sql_template	6
 src/commands/frontmatter-install-hook.ts	execute_raw	3
 src/commands/google-attachments.ts	execute_raw	3
 src/commands/google-setup-tail.ts	execute_raw	1
@@ -552,7 +550,6 @@ src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
-src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3

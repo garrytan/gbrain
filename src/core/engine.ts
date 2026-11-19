@@ -20,6 +20,7 @@ import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacemen
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
+import type * as FilesOpsSql from './engine-sql/files-ops.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -2405,6 +2406,50 @@ export interface BrainEngine {
   upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }>;
   getFile(sourceId: string, storagePath: string): Promise<FileRow | null>;
   listFilesForPage(pageId: number): Promise<FileRow[]>;
+
+  // The files commands' and file operations' statements (engine-sql/files-ops.ts).
+  /** `gbrain files list <slug>`: the files of one page by name, at most 100. Reads files. */
+  listFileRowsForSlug(slug: string): Promise<FilesOpsSql.FileRecord[]>;
+  /** `gbrain files list`: every file by page then name, at most 100. Reads files. */
+  listAllFileRows(): Promise<FilesOpsSql.FileRecord[]>;
+  /** Whether a files row already holds this hash at this storage path (`gbrain files upload` and `sync` skip it). Reads files. */
+  hasFileWithHash(contentHash: string, storagePath: string): Promise<boolean>;
+  /** `gbrain files verify`: every file by storage path, at most 1000. Reads files. */
+  listFileRowsForVerify(): Promise<FilesOpsSql.FileRecord[]>;
+  /** A source's checkout path for `gbrain files verify`, null when it has none or the source is unknown. Reads sources. */
+  readSourceLocalPathForVerify(sourceId: string): Promise<string | null>;
+  /** The files write of `gbrain files upload` (standard and smart): inserts the row, or on the same storage path takes the new hash, size and type and merges the metadata. Writes files. */
+  upsertCliFileRow(row: FilesOpsSql.FileRowScalars, metadata: FilesOpsSql.FileMetadata): Promise<void>;
+  /** The files write of the git lane of `gbrain files upload`: the same upsert naming the source. Writes files. */
+  upsertRawFileRow(row: FilesOpsSql.FileRowScalars & { source_id: string }, metadata: FilesOpsSql.FileMetadata): Promise<void>;
+  /** The files write of `gbrain files sync`: the same upsert as `upsertCliFileRow`. Writes files. */
+  upsertSyncFileRow(row: FilesOpsSql.FileRowScalars, metadata: FilesOpsSql.FileMetadata): Promise<void>;
+  /** Whether a source with this id exists. Reads sources. */
+  sourceIdExists(sourceId: string): Promise<boolean>;
+  /** The id of the page at this slug in this source, null when it has none. Reads pages. */
+  readPageIdInSource(slug: string, sourceId: string): Promise<number | null>;
+  /** The source, page id and hash of the files row at this storage path, null when none is stored. Reads files. */
+  readFileOwner(storagePath: string): Promise<FilesOpsSql.FileOwnerRow | null>;
+  /** Gives the files row at this storage path to a source and page. Writes files. */
+  claimFilePage(storagePath: string, sourceId: string, pageId: number): Promise<void>;
+  /** The files write of the file_upload operation: a conflict keeps the row's source and page when the new row names no page. Writes files. */
+  upsertOpFileRow(row: FilesOpsSql.FileRowScalars & { source_id: string; page_id: number | null }, metadata: FilesOpsSql.FileMetadata): Promise<void>;
+  /** file_list: the files of one page (or every page) the caller can read, at most 100; `excludePrivate` hides files attached to a private page. Reads files and pages. */
+  listReadableFileRows(slug: string | undefined, excludePrivate: boolean): Promise<FilesOpsSql.FileRecord[]>;
+  /** file_url: the stored path, type and size of the file at this path when the caller can read it, else null. Reads files and pages. */
+  readReadableFileForUrl(storagePath: string, excludePrivate: boolean): Promise<FilesOpsSql.FileRecord | null>;
+  /** file_register: the id of the page at this slug in this source when the caller can read it, undefined when it cannot or none exists. Reads pages. */
+  readReadablePageId(slug: string, sourceId: string, excludePrivate: boolean): Promise<number | undefined>;
+  /** file_register: how many files rows at this storage path the caller cannot read. Reads files and pages. */
+  countUnreadableFilesAt(storagePath: string, excludePrivate: boolean): Promise<number>;
+  /** file_register: how many rows at this storage path differ from the page, filename, source or page id. Reads files. */
+  countFilesRegisteredElsewhere(identity: FilesOpsSql.RegisteredFileIdentity): Promise<number>;
+  /** file_register: records the row, or refreshes it when the same identity holds the path; false when another holds it (nothing written). Writes files. */
+  registerFileRow(row: FilesOpsSql.FileRowScalars & { source_id: string; page_id: number | null }, metadata: FilesOpsSql.FileMetadata): Promise<boolean>;
+  /** file_verify: the size and hash of the file at this path when the caller can read it, else null. Reads files and pages. */
+  readReadableFileForVerify(storagePath: string, excludePrivate: boolean): Promise<{ size_bytes: unknown; content_hash: string } | null>;
+  /** file_verify: the storage paths and pages the caller can read, for one page or every page, at most 100. Reads files and pages. */
+  listReadableFilePaths(slug: string | undefined, excludePrivate: boolean): Promise<Array<{ storage_path: string; page_slug: string | null }>>;
 
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence
