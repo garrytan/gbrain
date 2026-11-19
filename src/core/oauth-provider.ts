@@ -679,7 +679,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
-    this.grants = new OAuthGrants({ sql: this.sql, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl, resourceUrl: options.resourceUrl });
+    this.grants = new OAuthGrants({ sql: this.sql, engine: options.engine, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl, resourceUrl: options.resourceUrl });
     // #2179 fail-closed: an unset DCR max is bounded by the operator's own
     // token TTL — never a fixed permissive ceiling — so a self-registering
     // client cannot elect a longer-lived token than the server default
@@ -729,6 +729,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // F1 hardening: bind client_id atomically so a wrong client cannot read
     // another client's PKCE challenge. Pre-fix the SELECT didn't filter on
     // client_id at all.
+    if (this.engine) return this.challengeOrRefuse(await this.engine.readOauthCodeChallenge(codeHash, client.client_id, Math.floor(Date.now() / 1000)));
     const rows = await this.sql`
       SELECT code_challenge FROM oauth_codes
       JOIN oauth_clients ON oauth_clients.client_id = oauth_codes.client_id
@@ -737,8 +738,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         AND oauth_codes.client_id = ${client.client_id}
         AND oauth_codes.expires_at > ${Math.floor(Date.now() / 1000)}
     `;
-    if (rows.length === 0) throw new InvalidGrantError('Authorization code not found or expired');
-    return rows[0].code_challenge as string;
+    return this.challengeOrRefuse(rows.length === 0 ? null : rows[0].code_challenge as string);
+  }
+
+  private challengeOrRefuse(challenge: string | null): string {
+    if (challenge === null) throw new InvalidGrantError('Authorization code not found or expired');
+    return challenge;
   }
 
   async exchangeAuthorizationCode(

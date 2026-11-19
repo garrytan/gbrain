@@ -7,9 +7,10 @@
  * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
  */
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
-import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller } from '../../engine-sql/access-credentials.ts';
+import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type LegacyTokenGrantColumns, normalizeOauthCodeRow, type OauthCodeInsert, type OauthCodeRow, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
+import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
 
 export const insertAccessToken: StoreMember<[row: AccessTokenInsert], { id: string }> = (brain, row) =>
   refusing('insertAccessToken', () => brain.insertAccessToken({ ...row, revoked_at: row.revoked_at?.toISOString() ?? null })) as Promise<{ id: string }>;
@@ -65,11 +66,40 @@ export const insertOauthToken: StoreMember<[row: OauthTokenInsert], void> = asyn
 };
 
 /**
- * The expired-credential sweep: the store's OAuth tokens that expired before `nowEpochSeconds` (any token type; a token
- * with no expiry stays). The store keeps no OAuth codes (rust/docs/store/oauth-tokens.md), so the count is the tokens'.
+ * The expired-credential sweep: the store's OAuth tokens (any token type; a token with no expiry stays) and codes that
+ * expired before `nowEpochSeconds`, in one write; the count of both, as the two DELETEs of the SQL engines count.
  */
 export const deleteExpiredOauthCredentials: StoreMember<[nowEpochSeconds: number], number> = async (brain, now) =>
-  Number(await storeCall({ member: 'deleteExpiredOauthCredentials' }, () => brain.deleteExpiredOauthTokens(now)));
+  Number(await storeCall({ member: 'deleteExpiredOauthCredentials' }, () => brain.deleteExpiredOauthCredentials(now)));
+
+/** The grant transaction's client read: the store's one write transaction is the lock `FOR UPDATE` takes on the SQL engines. */
+export const readOauthClientLocked: StoreMember<[clientId: string], OauthClientRow | null> = async (brain, clientId) => {
+  const raw = await storeCall({ member: 'readOauthClientLocked' }, () => brain.readOauthClient(clientId)) as Record<string, unknown> | null;
+  return raw ? normalizeOauthClientRow(raw) : null;
+};
+
+/** One authorization code; a repeated hash and a client with no row are refused as 23505 and 23503, as the SQL engines refuse them. */
+export const insertOauthCode: StoreMember<[row: OauthCodeInsert], void> = async (brain, row) => {
+  await refusing('insertOauthCode', () => brain.insertOauthCode({ ...row, scopes: [...row.scopes] }));
+};
+
+/** The code of this hash and client, `created_at` a Date and `expires_at` a number as PGLite and Postgres return them; or null. */
+export const readOauthCodeForUpdate: StoreMember<[codeHash: string, clientId: string], OauthCodeRow | null> = async (brain, codeHash, clientId) => {
+  const raw = await storeCall({ member: 'readOauthCodeForUpdate' }, () => brain.readOauthCodeForUpdate(codeHash, clientId)) as Record<string, unknown> | null;
+  return raw ? normalizeOauthCodeRow(raw) : null;
+};
+
+export const deleteOauthCode: StoreMember<[codeHash: string, clientId: string], void> = async (brain, codeHash, clientId) => {
+  await storeCall({ member: 'deleteOauthCode' }, () => brain.deleteOauthCode(codeHash, clientId));
+};
+
+export const readOauthCodeChallenge: StoreMember<[codeHash: string, clientId: string, nowEpochSeconds: number], string | null> = async (brain, codeHash, clientId, now) =>
+  (await storeCall({ member: 'readOauthCodeChallenge' }, () => brain.readOauthCodeChallenge(codeHash, clientId, now)) as string | null) ?? null;
+
+/** The tokens of one grant in one store write (the client row is read in that write): all land or none, refused as 23505 / 23503. */
+export const issueOauthTokens: StoreMember<[rows: readonly OauthTokenInsert[]], void> = async (brain, rows) => {
+  await refusing('issueOauthTokens', () => brain.issueOauthTokens(rows.map(row => ({ ...row, scopes: [...row.scopes] }))));
+};
 
 /**
  * The first-read conversion of a token still on the legacy shape: its grant columns, one more grant revision and its

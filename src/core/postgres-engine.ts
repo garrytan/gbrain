@@ -220,7 +220,7 @@ import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
 import * as jobsChecks from './engine-sql/jobs-checks.ts';
 import * as jobsWake from './engine-sql/jobs-wake.ts';
 import * as accessCredentials from './engine-sql/access-credentials.ts';
-import type { ActiveTokenGrantField, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
+import type { ActiveTokenGrantField, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
 import * as jobsInsight from './engine-sql/jobs-insight.ts';
 import * as jobsSpend from './engine-sql/jobs-spend.ts';
@@ -1434,6 +1434,12 @@ export class PostgresEngine implements BrainEngine {
   deleteExpiredOauthCredentials(nowEpochSeconds: number) { return accessCredentials.deleteExpiredOauthCredentials(this, nowEpochSeconds); }
   convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns) { return accessCredentials.convertLegacyAccessTokenGrant(this, id, columns); }
   insertOauthToken(row: OauthTokenInsert) { return accessCredentials.insertOauthToken(this, row); }
+  readOauthClientLocked(clientId: string) { return accessCredentials.readOauthClientLocked(this, clientId); }
+  insertOauthCode(row: OauthCodeInsert) { return accessCredentials.insertOauthCode(this, row); }
+  readOauthCodeForUpdate(codeHash: string, clientId: string) { return accessCredentials.readOauthCodeForUpdate(this, codeHash, clientId); }
+  deleteOauthCode(codeHash: string, clientId: string) { return accessCredentials.deleteOauthCode(this, codeHash, clientId); }
+  readOauthCodeChallenge(codeHash: string, clientId: string, nowEpochSeconds: number) { return accessCredentials.readOauthCodeChallenge(this, codeHash, clientId, nowEpochSeconds); }
+  issueOauthTokens(rows: readonly OauthTokenInsert[]) { return accessCredentials.issueOauthTokens(this, rows); }
   listAudienceAccessMembers(): Promise<string[]> { return accessControlImpl.listAudienceAccessMembers(this); }
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]> { return accessControlImpl.readAccessGroups(this, id); }
   listPagesNamingReader(principal: string): Promise<PageNamingReaderRow[]> { return accessControlImpl.listPagesNamingReader(this, principal); }

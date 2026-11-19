@@ -19,7 +19,8 @@ import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
-import { CREDENTIAL_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { CREDENTIAL_SQL, OAUTH_CODE_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
@@ -844,9 +845,9 @@ describe('the expired-credential sweep sends the same statements through an engi
 });
 
 describe('insertOauthToken sends what OAuthGrants.issue sends', () => {
-  // The drift pin: issue() stays on the grant transaction's SqlQuery (it runs under the client row lock, so an engine
-  // write on another connection would wait on the foreign key and deadlock), so the member's constant text and
-  // parameter order must keep matching the templates it was captured from. The refresh token is the second INSERT.
+  // The drift pin for a grant built without the transaction handle (mcp-provision, auth.ts): issue() sends the templates
+  // through the grant transaction's SqlQuery, so the member's constant text and parameter order must keep matching them.
+  // The next describe pins the handle route (what serve --http runs) against the same statements.
   const NOW = 1_700_000_000_000;
   const CLIENT = { client_id: 'pin-oauth', client_name: 'pin', grant_types: ['client_credentials'], scope: 'read write', client_secret_hash: hashToken('secret'),
     client_secret_expires_at: 0, deleted_at: null };
@@ -874,4 +875,68 @@ describe('insertOauthToken sends what OAuthGrants.issue sends', () => {
       expect(member.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual(template);
     });
   }
+});
+
+describe('the OAuth code flow and the token grant send the same statements through the transaction handle as through the SqlQuery', () => {
+  // serve --http hands the grant transaction's engine handle to OAuthGrants (`fn(sql, tx)`): the client lock, the code
+  // and the token INSERTs then run as members (a store with no raw SQL runs them in one write). A grant built without
+  // the handle keeps the templates. Both routes must send the same text and params, in the same order.
+  const NOW = 1_700_000_000_000;
+  const VERIFIER = 'v'.repeat(43);
+  const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url');
+  const REDIRECT = 'https://client.example/callback';
+  const CLIENT = { client_id: 'pin-code', client_name: 'pin', grant_types: ['authorization_code', 'client_credentials'], redirect_uris: [REDIRECT], scope: 'read write',
+    client_secret_hash: hashToken('secret'), client_secret_expires_at: 0, deleted_at: null, grant_revision: 0, registered_via: 'manual', attest_actor: false };
+  const CODE_ROW = { code_hash: 'x', client_id: 'pin-code', scopes: ['read'], code_challenge: CHALLENGE, code_challenge_method: 'S256', redirect_uri: REDIRECT,
+    state: null, resource: null, expires_at: NOW / 1000 + 300, created_at: new Date(NOW) };
+  const sentBy = async (variant: string, run: (e: any) => Promise<unknown>) => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'issue', variant, run: async e => { await run(e); },
+      rows: [[/FROM oauth_clients WHERE client_id = \$1/, [CLIENT]], [/FROM oauth_codes WHERE code_hash/, [CODE_ROW]], [/SELECT code_challenge FROM oauth_codes/, [{ code_challenge: CHALLENGE }]]] }));
+    expect(capture.error).toBeUndefined();
+    // The random code and token hashes differ per run; every other parameter must match.
+    return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: (s.params as unknown[]).map(p => typeof p === 'string' && /^[a-f0-9]{64}$/.test(p) ? 'hash' : p) }));
+  };
+  const grants = (e: any, handle: boolean) => new OAuthGrants({ sql: sqlQueryForEngine(e), ...(handle ? { engine: e } : {}),
+    transaction: fn => (handle ? fn(sqlQueryForEngine(e), e) : fn(sqlQueryForEngine(e))) as never, tokenTtl: 3600, refreshTtl: 86400, now: () => NOW });
+  const flow = (handle: boolean) => async (e: any) => {
+    const g = grants(e, handle);
+    const id = await g.begin('pin-code', { redirectUri: REDIRECT, codeChallenge: CHALLENGE, scopes: ['read'], state: undefined } as never);
+    const code = new URL(await g.decide(id, true)).searchParams.get('code')!;
+    await g.exchangeCode('pin-code', code, VERIFIER, REDIRECT, undefined, hashToken('secret'));
+    await g.clientCredentials('pin-code', 'secret');
+    await new GBrainOAuthProvider({ sql: sqlQueryForEngine(e), ...(handle ? { engine: e } : {}) }).challengeForAuthorizationCode({ client_id: 'pin-code' } as never, code);
+  };
+  test('begin, decide, the code lookup, exchangeCode and clientCredentials', async () => {
+    const template = await sentBy('flow-template', flow(false));
+    const member = await sentBy('flow-member', flow(true));
+    expect(template.map(s => s.text.trim().split(/\s+/).slice(0, 3).join(' '))).toEqual([
+      'SELECT * FROM', 'SELECT * FROM', 'INSERT INTO oauth_codes', 'SELECT * FROM', 'SELECT * FROM',
+      'DELETE FROM oauth_codes', 'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', 'INSERT INTO oauth_tokens', 'SELECT code_challenge FROM']);
+    expect(member).toEqual(template);
+  });
+  test('the member texts are the constants the templates were captured into', async () => {
+    const sent = await sentBy('flow-constants', flow(true));
+    const texts = new Set(sent.map(s => s.text));
+    for (const text of [OAUTH_CODE_SQL.client_for_update, OAUTH_CODE_SQL.insert, OAUTH_CODE_SQL.for_update, OAUTH_CODE_SQL.delete, OAUTH_CODE_SQL.challenge, OAUTH_TOKEN_SQL.insert_grant]) {
+      expect(texts.has(text)).toBe(true);
+    }
+  });
+  test('issueOauthTokens runs on the transaction handle, never on the pool', async () => {
+    // The client row is locked by the grant's transaction: a token INSERT on another connection waits on its foreign key.
+    const used: string[] = [];
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'issue', variant: 'handle', rows: [[/FROM oauth_clients WHERE client_id = \$1/, [CLIENT]]],
+      run: async pool => {
+        const names = ['readOauthClientLocked', 'issueOauthTokens'];
+        const originals = Object.fromEntries(names.map(name => [name, (pool as any)[name].bind(pool)]));
+        const tx = Object.create(pool);
+        for (const name of names) {
+          (pool as any)[name] = (...args: unknown[]) => { used.push(`pool.${name}`); return originals[name](...args); };
+          tx[name] = (...args: unknown[]) => { used.push(`tx.${name}`); return originals[name](...args); };
+        }
+        const g = new OAuthGrants({ sql: sqlQueryForEngine(pool), engine: pool, transaction: fn => fn(sqlQueryForEngine(tx), tx) as never, tokenTtl: 3600, refreshTtl: 86400, now: () => NOW });
+        await g.clientCredentials('pin-code', 'secret');
+      } }));
+    expect(capture.error).toBeUndefined();
+    expect(used).toEqual(['tx.readOauthClientLocked', 'tx.issueOauthTokens']);
+  });
 });

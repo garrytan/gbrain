@@ -12,6 +12,7 @@ never logs one.
 | --- | --- |
 | `brain.insertOauthToken(row)` | nothing. Writes `{ token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type }`; `expires_at` and `created_at` are epoch seconds, `created_at` falls back to the store clock, and a missing `grant_type` is NULL |
 | `brain.readOauthAccessTokenRows(hash, rung)` | `[row]` or `[]`: the access token with this hash whose client exists and is not soft-deleted, with the client's grant. `rung` 0 is the full row; each higher rung drops the columns an older schema lacks, as the TypeScript degrade ladder expects. Row keys at rung 0: `client_id, scopes, expires_at, resource, client_name, current_scopes, token_grant, current_grant, source_active, active_read_sources, source_id, federated_read, bound_slug_prefixes, surface, surface_set_by` |
+| `brain.issueOauthTokens(rows)` | nothing. Writes each row as `insertOauthToken` does, in order, in **one** write: a refusal on any row (23505, 23503) leaves none of them. |
 | `brain.deleteExpiredOauthTokens(now)` | how many tokens of any type it deleted: those whose `expires_at` is before `now` (epoch seconds). A NULL `expires_at` stays. One write |
 
 `current_grant` is the client row as JSON (`to_jsonb`), without `client_secret_hash`; `budget_usd_per_day` is a JSON number
@@ -40,15 +41,17 @@ Keys: `m 0x2C token_hash -> record` (times in microseconds, except `expires_at`)
 ## Callers
 
 The bearer check (`verifyAccessToken`, `src/core/oauth-provider.ts`) calls `readOauthAccessTokenRows`. Tests and tools
-insert through `insertOauthToken`. `OAuthGrants.issue` (`src/core/oauth-grants.ts`) still writes the token with the same
-statement text through the grant transaction's SqlQuery: it runs under the client row's `FOR UPDATE` lock, and an engine
-write on another pooled connection would wait for that lock on the foreign key and deadlock on PostgreSQL. The sweep of
-expired credentials calls `deleteExpiredOauthTokens`.
+insert through `insertOauthToken`. `OAuthGrants.issue` (`src/core/oauth-grants.ts`) writes the tokens of a grant through `issueOauthTokens`
+on the grant transaction's engine handle, after `readOauthClientLocked` took the client row: on PostgreSQL and PGLite the
+handle is the transaction's executor, never the pool (a write on another pooled connection would wait for the client row
+lock on the foreign key and deadlock), and on the store both reads and writes are one `Store::write`. A grant built
+without the handle keeps the same statements through the SqlQuery. The sweep of
+expired credentials calls `deleteExpiredOauthCredentials` (tokens and codes, [oauth-codes.md](oauth-codes.md)).
 
 Differences from PGLite and PostgreSQL:
 
-- Not kept: the secondary indexes, and the `oauth_codes` table.
+- Not kept: the secondary indexes. The `oauth_codes` table is kept, see [oauth-codes.md](oauth-codes.md).
 - An expired row stays until the sweep runs or its client is deleted; the bearer check refuses it either way.
 - `active_read_sources` is sorted by id; PostgreSQL's order is unspecified.
 - Still raw SQL, so a Rust brain refuses them: `revokeToken` and `revokeClient` in `oauth-grants.ts`, `grants/lifecycle.ts`,
-  `grants/service.ts`, and the two counts in `serve-http-admin-api.ts`.
+  `grants/service.ts`, the refresh-token read of `OAuthGrants.refresh`, and the two counts in `serve-http-admin-api.ts`.
