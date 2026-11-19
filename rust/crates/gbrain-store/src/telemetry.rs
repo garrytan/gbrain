@@ -190,7 +190,7 @@ pub(crate) fn pg_timestamptz_text(micros: i64) -> String {
     text
 }
 
-fn log_prefix() -> [u8; 2] {
+pub(crate) fn log_prefix() -> [u8; 2] {
     [keys::TELEMETRY, keys::TELEMETRY_MCP_REQUEST]
 }
 

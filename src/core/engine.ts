@@ -15,6 +15,7 @@ import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
 import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
+import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -4348,4 +4349,71 @@ export interface BrainEngine {
   listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
   /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  // Doctor reads, second set (engine-sql/doctor-acc.ts): the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer statements doctor checks ran through executeRaw.
+  /** Sources that hold folder access state, by id. */
+  listPolicySourceIds(): Promise<string[]>;
+  /** Whether the database role cannot read the folder access tables (row-level security hides them). */
+  isAccessStateUnreadable(): Promise<boolean>;
+  /** Folder and page rules that do not cover the pages derived from their pages, by source and rule id. */
+  listRawOnlyRules(): Promise<DoctorAccSql.RawOnlyRuleRow[]>;
+  /** Enabled members marked as an audience, by id. */
+  listAudienceMemberIds(): Promise<string[]>;
+  /** Enabled members that carry the labelled-only grant, by id. */
+  listLabelledOnlyMemberIds(): Promise<string[]>;
+  /** Every access member row with its groups, removed members only with `includeRemoved`. */
+  listAccessMemberRows(includeRemoved: boolean): Promise<DoctorAccSql.Row[]>;
+  /** Active tokens and live OAuth clients that carry an attest actor, as JSON rows. */
+  listAttestCredentialRows(): Promise<DoctorAccSql.AttestCredentialRow[]>;
+  /** Active (not revoked) API token rows, oldest first. */
+  listActiveAccessTokenRows(): Promise<DoctorAccSql.Row[]>;
+  /** OAuth client rows not deleted, by id. */
+  listActiveOauthClientRows(): Promise<DoctorAccSql.Row[]>;
+  /** Every OAuth client's id, auth method and secret hash. */
+  listOauthClientAuthShapes(): Promise<DoctorAccSql.OauthClientAuthShape[]>;
+  /** Federated read grants of live OAuth clients that name no source. */
+  listDanglingFederatedReads(): Promise<DoctorAccSql.DanglingFederatedRead[]>;
+  /** Derived-workspace sources (id ending in `suffix`) with no path, pages, facts or live client naming them. */
+  listOrphanWorkspaceSources(suffix: string): Promise<Array<{ id: string }>>;
+  /** Live clients that look self-registered with a scope matching `scopeRegex`; null when the grant audit schema is absent. */
+  listPrivilegedDcrClients(scopeRegex: string): Promise<DoctorAccSql.PrivilegedDcrClient[] | null>;
+  /** What the MCP request log occupies, in bytes (the engine's own measure). */
+  readMcpRequestLogBytes(): Promise<number>;
+  /** The MCP request log's row count: an estimate on Postgres, a count bounded to `limit` rows elsewhere. */
+  countMcpRequestLogRows(limit: number): Promise<number>;
+  /** Whether a request older than `days` days that retention would delete (operation not in `keepOperations`) is waiting. */
+  hasMcpLogRowsPastWindow(days: number, keepOperations: readonly string[]): Promise<boolean>;
+  /** `pages.knowledge_revision`: null when absent, else whether the column is NOT NULL (the revision backfill finished). */
+  readKnowledgeRevisionNotNull(): Promise<boolean | null>;
+  /** Which columns the provenance drift scan can read: trust tiers, then write attribution. */
+  readDriftSchema(): Promise<DoctorAccSql.DriftSchema>;
+  /** One batch of a source's live pages after page id `at.after`, or the page at `at.slug`, with the writer of its revision. */
+  listDriftLiveRows(schema: DoctorAccSql.DriftSchema, sourceId: string, at: { after?: number; slug?: string }): Promise<DoctorAccSql.DriftLiveRow[]>;
+  /** The versions of the given pages, oldest first, with the writer of each. */
+  listDriftVersionRows(schema: DoctorAccSql.DriftSchema, pageIds: number[]): Promise<DoctorAccSql.DriftVersionRow[]>;
+  /** Whether the index `name` exists (the origin index read on a non-Postgres engine). */
+  originIndexPresent(name: string): Promise<boolean>;
+  /** Decide calibration rows (`slot` null for every slot), retired ones only with `includeRetired`. */
+  listDecideCalibrationRows(slot: string | null, includeRetired: boolean): Promise<DoctorAccSql.Row[]>;
+  /** Resolved models of the decide receipts in the trailing window, newest first. */
+  listRecentResolvedModels(sinceHours: number): Promise<DoctorAccSql.Row[]>;
+  /** Decisions per slot whose receipts failed on mixed resolved models in the trailing window. */
+  listMixedModelDecisions(sinceHours: number): Promise<DoctorAccSql.Row[]>;
+  /** Per-slot decision counts, tokens, errors and egress refusals in the trailing window. */
+  listDecideSlotUsage(sinceHours: number): Promise<DoctorAccSql.Row[]>;
+  /** TypeSafe decide spend since `sinceIso`, in total and from remote callers. */
+  readDecideDailySpend(sinceIso: string): Promise<{ total: number; remote: number }>;
+  /** Decide receipt counts and latency per slot, mode, outcome and error reason in the trailing window (`slot` null for every slot). */
+  listDecideReceiptStats(sinceHours: number, slot: string | null): Promise<DoctorAccSql.Row[]>;
+  /** Pending memory proposals and the oldest one's age in whole hours. */
+  readPendingProposalSummary(): Promise<{ pending: number; oldest_hours: number | null }>;
+  /** Life Chronicle ledger rollups of the automatic rows. */
+  readChronicleLedgerStats(): Promise<DoctorAccSql.ChronicleLedgerStats>;
+  /** Pages holding live events a newer chronicle extraction did not produce, and how many such events. */
+  readChronicleDuplicateEvents(): Promise<DoctorAccSql.ChronicleDuplicateEvents>;
+  /** Retrieval feedback counts, last rating time, the busiest client's share and the lowest and highest page weights. */
+  readFeedbackStatus(): Promise<DoctorAccSql.FeedbackStatusRow>;
+  /** Sources with a coverage event (`subject_key = coverageKey`) in their current incarnation, by id. */
+  listBeliefCoveredSources(coverageKey: string): Promise<string[]>;
+  /** Context-volunteer events of the last 7 days per channel; null `sourceIds` reads the whole brain. */
+  listVolunteerChannels(sourceIds: readonly string[] | null): Promise<DoctorAccSql.VolunteerChannelRow[]>;
 }

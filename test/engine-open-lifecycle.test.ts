@@ -29,7 +29,7 @@ function transactionOn<T extends object>(engine: T): T {
 describe('decide spend cache', () => {
   test('a page transaction reads its engine\'s cached daily figure instead of querying again', async () => {
     let reads = 0;
-    const engine = { executeRaw: async () => { reads++; return [{ total: 2, remote: 1 }]; } } as unknown as BrainEngine;
+    const engine = { readDecideDailySpend: async () => { reads++; return { total: 2, remote: 1 }; } } as unknown as BrainEngine;
     const now = Date.now();
     expect(await dailySpend(engine, now)).toEqual({ total: 2, remote: 1 });
     expect(await dailySpend(transactionOn(engine), now)).toEqual({ total: 2, remote: 1 });

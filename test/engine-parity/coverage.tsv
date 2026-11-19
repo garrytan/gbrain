@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 747/747
+# covered: 780/780
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -46,6 +46,7 @@
 # doctor_derived: 27/27
 # doctor_persistence: 38/38
 # doctor_pages: 19/19
+# doctor_reads_acc: 33/33
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 11/11
@@ -86,7 +87,7 @@ getPage	pages	yes	93	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	416	yes	yes	yes	serves
+putPage	pages	yes	417	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	11	yes	yes	yes	serves
@@ -113,7 +114,7 @@ listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
-insertSource	pages	yes	1	no	yes	yes	serves
+insertSource	pages	yes	2	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
@@ -631,6 +632,39 @@ readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listFactsPageBodies	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
+listPolicySourceIds	doctor_reads_acc	yes	1	no	yes	yes	serves
+isAccessStateUnreadable	doctor_reads_acc	yes	1	no	yes	yes	serves
+listRawOnlyRules	doctor_reads_acc	yes	1	no	yes	yes	serves
+listAudienceMemberIds	doctor_reads_acc	yes	1	no	yes	yes	serves
+listLabelledOnlyMemberIds	doctor_reads_acc	yes	1	no	yes	yes	serves
+listAccessMemberRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listAttestCredentialRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listActiveAccessTokenRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listActiveOauthClientRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listOauthClientAuthShapes	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDanglingFederatedReads	doctor_reads_acc	yes	1	no	yes	yes	serves
+listOrphanWorkspaceSources	doctor_reads_acc	yes	1	no	yes	yes	serves
+listPrivilegedDcrClients	doctor_reads_acc	yes	1	no	yes	yes	serves
+readMcpRequestLogBytes	doctor_reads_acc	yes	1	no	yes	yes	serves
+countMcpRequestLogRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+hasMcpLogRowsPastWindow	doctor_reads_acc	yes	1	no	yes	yes	serves
+readKnowledgeRevisionNotNull	doctor_reads_acc	yes	1	no	yes	yes	serves
+readDriftSchema	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDriftLiveRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDriftVersionRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+originIndexPresent	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDecideCalibrationRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listRecentResolvedModels	doctor_reads_acc	yes	1	no	yes	yes	serves
+listMixedModelDecisions	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDecideSlotUsage	doctor_reads_acc	yes	1	no	yes	yes	serves
+readDecideDailySpend	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDecideReceiptStats	doctor_reads_acc	yes	1	no	yes	yes	serves
+readPendingProposalSummary	doctor_reads_acc	yes	1	no	yes	yes	serves
+readChronicleLedgerStats	doctor_reads_acc	yes	1	no	yes	yes	serves
+readChronicleDuplicateEvents	doctor_reads_acc	yes	1	no	yes	yes	serves
+readFeedbackStatus	doctor_reads_acc	yes	1	no	yes	yes	serves
+listBeliefCoveredSources	doctor_reads_acc	yes	1	no	yes	yes	serves
+listVolunteerChannels	doctor_reads_acc	yes	1	no	yes	yes	serves
 upsertFactRelinkAttempt	fact_relink_attempts	yes	8	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
 deleteFactRelinkMemos	fact_relink_attempts	yes	1	no	yes	yes	serves
@@ -767,7 +801,7 @@ recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	3	no	yes	yes	serves
 readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
-logMcpRequest	telemetry	yes	3	no	yes	yes	serves
+logMcpRequest	telemetry	yes	4	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
 readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
