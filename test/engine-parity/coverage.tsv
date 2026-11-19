@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 666/666
+# covered: 667/667
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -22,7 +22,7 @@
 # timeline: 19/19
 # ontology: 4/4
 # raw_files: 5/5
-# takes: 23/23
+# takes: 24/24
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
@@ -81,7 +81,7 @@ getPage	pages	yes	77	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	314	yes	yes	yes	serves
+putPage	pages	yes	315	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -260,7 +260,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	30	yes	yes	yes	serves
+addTakesBatch	takes	yes	31	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 listTakes	takes	yes	12	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
@@ -281,6 +281,7 @@ countOffGridTakeWeights	takes	yes	1	no	yes	yes	serves
 countTakes	takes	yes	1	no	yes	yes	serves
 planFactPurgeTakes	takes	yes	1	no	yes	yes	serves
 listTakeRowsForPage	takes	yes	1	no	yes	yes	serves
+listHeldFenceTakeRows	takes	yes	1	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	3	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
