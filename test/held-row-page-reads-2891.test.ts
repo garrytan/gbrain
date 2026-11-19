@@ -258,7 +258,7 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
 }
 
 test('GST-2891: a failed held-row lookup drops every fence row line (fail closed)', async () => {
-  const failing = { executeRaw: async () => { throw new Error('lookup failed'); } };
+  const failing = { listHeldFenceCells: async () => { throw new Error('lookup failed'); } };
   const kept = await dropHeldFenceRows(failing as never, [{ slug: 'people/alice-example', source_id: 'default',
     chunk_text: 'Prose.\n| 1 | Alice likes tea | fact | 1.0 | world | medium |  |  |  |  |\nMore prose.' }] as never) as Array<{ chunk_text: string }>;
   expect(kept.map(k => k.chunk_text)).toEqual(['Prose.\nMore prose.']);

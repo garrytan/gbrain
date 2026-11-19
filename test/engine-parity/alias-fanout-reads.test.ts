@@ -30,6 +30,9 @@ import { resolveQueryEntities } from '../../src/core/search/alias-fanout.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { createSource, parityArms } from './harness.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -115,6 +118,31 @@ describe('engine parity: alias fan-out reads', () => {
       expect(granted).toEqual(['people/acme-a', 'people/acme-b', 'people/acme-private', 'people/acme-readers']);
       expect(stranger).toEqual(['people/acme-a', 'people/acme-b']);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'findPagesByTitles under excludePrivate hides an owner-only source\'s pages, and under the closed form every page while one exists',
+    { methods: ['putPage', 'addLink', 'findPagesByTitles'] },
+    async (engine, backend) => {
+      await engine.putPage('people/acme-open', page('person', 'Acme Example'));
+      await engine.putPage('concepts/acme-synthesis', page('concept', 'Acme Example'));
+      const read = async (excludePrivate: boolean) => (await engine.findPagesByTitles(['acme example'], ['default', 'chat'], ['person', 'concept'], { excludePrivate }))
+        .map((r) => `${r.source_id}:${r.slug}`);
+      const before = await read(true);
+      // An owner-only source: a page with the same title, and the lineage input of the default-source concept.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await engine.putPage('people/acme-chat', page('person', 'Acme Example'), { sourceId: 'chat' });
+      await engine.addLink('concepts/acme-synthesis', 'people/acme-chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      const unfiltered = await read(false);
+      const closed = await read(true);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, () => read(true));
+      expect(before).toEqual(['default:concepts/acme-synthesis', 'default:people/acme-open']);
+      expect(unfiltered).toEqual(['chat:people/acme-chat', 'default:concepts/acme-synthesis', 'default:people/acme-open']);
+      expect(closed).toEqual([]);
+      expect(fn).toEqual(['default:people/acme-open']);
+      return { before, unfiltered, closed, fn };
     },
   );
 

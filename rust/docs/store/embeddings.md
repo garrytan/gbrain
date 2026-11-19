@@ -117,6 +117,20 @@ The store has one vector column, `embedding`, and no image vectors. The members 
 image row and a row with no vector, so a vector never lands in the wrong space. The store keeps a sha256
 text hash where PGLite keeps md5; both answer "the text has not changed since the vector was computed".
 
+## Vector catalog
+
+`embedding_catalog.rs` answers what the embedding commands ask Postgres's catalog (TS
+`engine-sql/embedding-catalog.ts`). The store has no column types, so:
+
+| Brain method | Returns | Members |
+|---|---|---|
+| `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, or for any other column, `{ exists: false, dims: null }` | `readChunkVectorColumn` |
+| `brain.readEmbeddingIdentity()` | `{ model, dimensions }` with the same width; the model is the first chunk vector's, else the config `embedding_model`; null with no width | `readEmbeddingIdentity` |
+| `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
+
+`listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
+`embedding_image` and `embedding_multimodal` read as absent: the store keeps no such vectors.
+
 ## Known edges
 
 - The stale queue keeps a held or capped page (`budgetLimited` is not kept). The plan then refuses the page

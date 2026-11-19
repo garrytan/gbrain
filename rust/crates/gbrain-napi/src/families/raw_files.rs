@@ -34,7 +34,7 @@ impl Brain {
         })
     }
 
-    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted? }?)`: `RawData[]`.
+    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted?, excludePrivate? }?)`: `RawData[]`.
     #[napi]
     pub fn get_raw_data<'env>(
         &self,

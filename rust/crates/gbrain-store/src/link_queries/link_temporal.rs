@@ -33,6 +33,7 @@ use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::{LinkRecord, in_links, out_links, put_link};
 use crate::pages::{PageRecord, all_pages, next_id, read_page, read_page_by_id};
+use crate::trust::valid_time::AmendmentsQuery;
 use crate::{Store, keys, put_json};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -144,7 +145,7 @@ impl RelationshipKey {
         }
     }
 
-    fn of_link(link: &LinkRecord) -> Self {
+    pub(crate) fn of_link(link: &LinkRecord) -> Self {
         RelationshipKey::new(link.from_page_id, link.to_page_id, &link.link_type)
     }
 }
@@ -595,7 +596,7 @@ fn transitions_of(
     }
 }
 
-fn relationship(
+pub(crate) fn relationship(
     read: &dyn KvRead,
     key: &RelationshipKey,
     scope: &str,
@@ -613,7 +614,7 @@ fn links_of(read: &dyn KvRead, key: &RelationshipKey) -> Result<Vec<LinkRecord>>
         .collect())
 }
 
-fn iso_ms(micros: i64) -> String {
+pub(crate) fn iso_ms(micros: i64) -> String {
     let full = iso(micros);
     format!("{}Z", &full[..full.len() - 4])
 }
@@ -677,7 +678,7 @@ fn check_no_nul(field: &str, value: &str) -> Result<()> {
     }
 }
 
-fn today(now_us: i64) -> String {
+pub(crate) fn today(now_us: i64) -> String {
     iso(now_us)[..10].to_string()
 }
 
@@ -767,8 +768,18 @@ pub(crate) fn canonical_multirange(text: &str) -> Result<String> {
     Ok(format!("{{{}}}", parts.join(",")))
 }
 
+/// `valid_ranges && daterange(from, until)`: some range overlaps `[from, until)`. An empty
+/// multirange overlaps nothing.
+pub(crate) fn multirange_overlaps(text: &str, from: &str, until: &str) -> bool {
+    parse_multirange(text).is_ok_and(|ranges| {
+        ranges.iter().any(|(lo, hi)| {
+            lo.as_deref().is_none_or(|l| l < until) && hi.as_deref().is_none_or(|h| h > from)
+        })
+    })
+}
+
 /// `valid_ranges @> date`.
-fn multirange_contains(text: &str, date: &str) -> bool {
+pub(crate) fn multirange_contains(text: &str, date: &str) -> bool {
     parse_multirange(text).is_ok_and(|ranges| {
         ranges.iter().any(|(lo, hi)| {
             lo.as_deref().is_none_or(|l| l <= date) && hi.as_deref().is_none_or(|h| date < h)
@@ -1729,6 +1740,64 @@ impl Store {
             status,
             links: links.into_iter().collect(),
         })
+    }
+
+    /// `listAmendmentsNotApplied`: the live pages with an `amends` link to the page whose relationship
+    /// (scope `world` under a policy, else `all`) starts after the edition took effect and on or before the date,
+    /// or has no start; each once, with the earliest start, by slug then source bytewise, at most `limit`.
+    pub fn list_amendments_not_applied(&self, q: &AmendmentsQuery) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let read = &*read;
+        let Ok(page_id) = u64::try_from(q.page_id) else {
+            return Ok(Vec::new());
+        };
+        let scope = if q.exclude_private.is_some() {
+            "world"
+        } else {
+            "all"
+        };
+        let mut pages = Pages::new(read);
+        let mut found: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
+        for link in in_links(read, page_id)? {
+            if link.link_type != "amends" {
+                continue;
+            }
+            let Some(from) = pages.get(link.from_page_id)?.filter(|p| live(p)) else {
+                continue;
+            };
+            if q.source_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&from.source_id))
+            {
+                continue;
+            }
+            if let Some(policy) = &q.exclude_private
+                && (page_hidden(read, &from, policy)?
+                    || !link_origin_shown(&mut pages, &link, policy)?)
+            {
+                continue;
+            }
+            let start = relationship(read, &RelationshipKey::of_link(&link), scope)?
+                .and_then(|r| r.first_start);
+            if let Some(start) = &start
+                && !(start.as_str() > q.edition_from.as_str() && start.as_str() <= q.as_of.as_str())
+            {
+                continue;
+            }
+            let since = found
+                .entry((from.slug.clone(), from.source_id.clone()))
+                .or_insert(None);
+            if let Some(start) = start
+                && since.as_ref().is_none_or(|s| start < *s)
+            {
+                *since = Some(start);
+            }
+        }
+        Ok(found
+            .into_iter()
+            .take(usize::try_from(q.limit).unwrap_or(usize::MAX))
+            .map(|((slug, source_id), since)| serde_json::json!({ "slug": slug, "source_id": source_id, "since": since }))
+            .collect())
     }
 
     /// `countSearchVectorRows`: the pages and chunks a keyword reindex would touch.

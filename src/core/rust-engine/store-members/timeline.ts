@@ -25,7 +25,9 @@ export const addTimelineEntriesBatch: StoreMember<[entries: TimelineBatchInput[]
 };
 
 export const getTimeline: StoreMember<[slug: string, opts?: TimelineOpts], TimelineEntry[]> = async (brain, slug, opts) => {
-  const { eligibility, ...taken } = takeOptions('getTimeline', opts, ['limit', 'after', 'before', 'sourceId', 'sourceIds', 'excludePrivate', 'eligibility']);
+  // engine-sql/timeline.ts getTimeline reads neither chunk safety nor a takes holder allow-list (readPolicyOpts sends both).
+  const { eligibility, ...taken } = takeOptions('getTimeline', opts,
+    ['limit', 'after', 'before', 'sourceId', 'sourceIds', 'excludePrivate', 'eligibility'], ['requireSafeChunks', 'takesHoldersAllowList']);
   const policy = eligibility as TimelineOpts['eligibility'];
   const scope = {
     ...taken, excludePrivate: storePagePolicy('getTimeline', taken.excludePrivate, { callerReaders: true }) ?? null,

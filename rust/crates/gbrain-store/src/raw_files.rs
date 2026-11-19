@@ -126,13 +126,15 @@ impl FileRecord {
     }
 }
 
-/// `getRawData` options: the page scope of `PageReadScope` plus `includeDeleted`.
+/// `getRawData` options: the page scope of `PageReadScope`, `includeDeleted`, and the page policy
+/// `excludePrivate` names (`privatePagesFilterForCaller('p')`): a page it hides has no raw data.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RawDataScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub include_deleted: bool,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// `FileSpec`. Numbers arrive as JSON numbers (whole or not) so a bad one fails as Postgres
@@ -382,10 +384,10 @@ impl Store {
         })
     }
 
-    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted? })`: the raw data of
-    /// every page by that slug in scope (`sourceIds` when not empty, else `sourceId` when not
-    /// empty, else every source), only `source` when one is given (not empty). Pages that are
-    /// soft deleted are skipped unless `includeDeleted`. PGLite gives no order; the store
+    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted?, excludePrivate? })`: the
+    /// raw data of every page by that slug in scope (`sourceIds` when not empty, else `sourceId`
+    /// when not empty, else every source), only `source` when one is given (not empty). Pages that
+    /// are soft deleted are skipped unless `includeDeleted`, and pages the page policy hides always. PGLite gives no order; the store
     /// returns scope order (`default` first, then by id), then source name.
     pub fn get_raw_data(
         &self,
@@ -407,6 +409,11 @@ impl Store {
                 continue;
             };
             if page.deleted_at_us.is_some() && !scope.include_deleted {
+                continue;
+            }
+            if let Some(policy) = &scope.exclude_private
+                && crate::facts::page_hidden(&*read, &page, policy)?
+            {
                 continue;
             }
             let rows: Vec<(Vec<u8>, RawRecord)> =

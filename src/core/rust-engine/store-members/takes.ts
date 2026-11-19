@@ -21,9 +21,16 @@ import type { TakeFenceRow } from '../../engine-sql/takes.ts';
 import type { SearchOpts } from '../../types.ts';
 import { GBrainError } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /** Page-read options these members accept and that change nothing here (no trust tiers or chunk safety on takes). */
 const IGNORED_READ_OPTIONS = ['minTrust', 'suppressFlagged', 'requireSafeChunks'] as const;
+
+/**
+ * The aggregate reads also ignore the options copy of the holder allow-list (`readPolicyOpts` adds it): their SQL
+ * filters holders by the `allowList` argument, which the ops pass the same list.
+ */
+const IGNORED_AGGREGATE_OPTIONS = [...IGNORED_READ_OPTIONS, 'takesHoldersAllowList'] as const;
 
 /** `SearchOpts` keys that do not change which takes `searchTakes` returns (its SQL never reads them). */
 const SEARCH_IGNORED = [
@@ -85,7 +92,7 @@ export const addTakesBatch: StoreMember<[rows: TakeBatchInput[], opts?: BatchOpt
 export const listTakes: StoreMember<[opts?: TakesListOpts], Take[]> = async (brain, opts = {}) => {
   const o = takeOptions('listTakes', opts, [
     'page_id', 'page_slug', 'holder', 'kind', 'active', 'resolved', 'takesHoldersAllowList', 'sortBy', 'oldestFirst',
-    'sinceOnOrBefore', 'limit', 'offset', 'sourceId', 'sourceIds', 'eligibility',
+    'sinceOnOrBefore', 'limit', 'offset', 'sourceId', 'sourceIds', 'eligibility', 'excludePrivate',
   ], IGNORED_READ_OPTIONS) as TakesListOpts;
   const offset = Math.max(0, Math.floor(o.offset ?? 0));
   const filter = {
@@ -104,6 +111,7 @@ export const listTakes: StoreMember<[opts?: TakesListOpts], Take[]> = async (bra
     offset: Number.isFinite(offset) ? offset : String(offset),
     source_ids: sourceScope(o),
     eligible_only: eligibleOnly('listTakes', o.eligibility),
+    exclude_private: storePagePolicy('listTakes', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   const rows: Take[] = await storeCall({ member: 'listTakes' }, () => brain.listTakes(filter));
   return rows.map(toTake);
@@ -113,14 +121,15 @@ export const searchTakes: StoreMember<
   [query: string, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility }],
   TakeHit[]
 > = async (brain, query, opts = {}) => {
-  const o = takeOptions('searchTakes', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility'], SEARCH_IGNORED) as
-    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility };
+  const o = takeOptions('searchTakes', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility', 'excludePrivate'], SEARCH_IGNORED) as
+    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility; excludePrivate?: boolean };
   const options = {
     query,
     limit: clampSearchLimit(o.limit, 30, 100),
     allow_list: allowList(o.takesHoldersAllowList),
     source_ids: sourceScope(o),
     eligible_only: eligibleOnly('searchTakes', o.eligibility),
+    exclude_private: storePagePolicy('searchTakes', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   return storeCall({ member: 'searchTakes' }, () => brain.searchTakes(options));
 };
@@ -208,7 +217,7 @@ export const resolveTake: StoreMember<[pageId: number, rowNum: number, resolutio
 
 export const getScorecard: StoreMember<[opts: TakesScorecardOpts, allowList: string[] | undefined], TakesScorecard> =
   async (brain, opts, list) => {
-    const o = takeOptions('getScorecard', opts, ['holder', 'domainPrefix', 'since', 'until', 'sourceId', 'sourceIds'], IGNORED_READ_OPTIONS) as TakesScorecardOpts;
+    const o = takeOptions('getScorecard', opts, ['holder', 'domainPrefix', 'since', 'until', 'sourceId', 'sourceIds', 'excludePrivate'], IGNORED_AGGREGATE_OPTIONS) as TakesScorecardOpts;
     const options = {
       holder: o.holder || null,
       domain_prefix: o.domainPrefix || null,
@@ -216,6 +225,7 @@ export const getScorecard: StoreMember<[opts: TakesScorecardOpts, allowList: str
       until: o.until || null,
       allow_list: list ? list : null,
       source_ids: sourceScope(o),
+      exclude_private: storePagePolicy('getScorecard', o.excludePrivate, { callerReaders: true }) ?? null,
     };
     const raw: Parameters<typeof finalizeScorecard>[0] = await storeCall({ member: 'getScorecard' }, () => brain.getScorecard(options));
     return finalizeScorecard(raw);
@@ -223,13 +233,14 @@ export const getScorecard: StoreMember<[opts: TakesScorecardOpts, allowList: str
 
 export const getCalibrationCurve: StoreMember<[opts: CalibrationCurveOpts, allowList: string[] | undefined], CalibrationBucket[]> =
   async (brain, opts, list) => {
-    const o = takeOptions('getCalibrationCurve', opts, ['holder', 'bucketSize', 'sourceId', 'sourceIds'], IGNORED_READ_OPTIONS) as CalibrationCurveOpts;
+    const o = takeOptions('getCalibrationCurve', opts, ['holder', 'bucketSize', 'sourceId', 'sourceIds', 'excludePrivate'], IGNORED_AGGREGATE_OPTIONS) as CalibrationCurveOpts;
     const bucketSize = o.bucketSize && o.bucketSize > 0 && o.bucketSize <= 1 ? o.bucketSize : 0.1;
     const options = {
       holder: o.holder || null,
       bucket_size: bucketSize,
       allow_list: list ? list : null,
       source_ids: sourceScope(o),
+      exclude_private: storePagePolicy('getCalibrationCurve', o.excludePrivate, { callerReaders: true }) ?? null,
     };
     return storeCall({ member: 'getCalibrationCurve' }, () => brain.getCalibrationCurve(options));
   };

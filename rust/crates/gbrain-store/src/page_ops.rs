@@ -114,7 +114,9 @@ pub struct FindPattern {
     pub like: String,
 }
 
-/// `FindPagesQuery` without `untrusted` (the TypeScript engine refuses it).
+/// `FindPagesQuery`. `untrusted` is a remote caller's read policy as a `PageReadScope` (`live`,
+/// `excludePrivate`, `minTrust`, `suppressFlagged`); when set, a found page must also pass it, as
+/// PGLite's `pageReadFilter(.., live)` does (so a quarantined page is hidden too).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct FindPagesQuery {
@@ -124,6 +126,7 @@ pub struct FindPagesQuery {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub exclude_slug_prefixes: Option<Vec<String>>,
+    pub untrusted: Option<PageReadScope>,
 }
 
 /// `PageCountQuery` without `untrusted`. `since` is an ISO string; `typeGroups` maps each type the
@@ -1066,6 +1069,16 @@ impl Store {
             .filter(|p| types.is_none_or(|t| t.contains(&p.page_type)))
             .filter(|p| !hidden.iter().any(|h| p.slug.starts_with(h.as_str())))
             .collect();
+        if let Some(scope) = &query.untrusted {
+            let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+            let mut kept = Vec::with_capacity(found.len());
+            for page in found {
+                if passes_read_scope(&*read, &page, scope, &trust, &sources)? {
+                    kept.push(page);
+                }
+            }
+            found = kept;
+        }
         found.sort_by(|a, b| {
             a.slug
                 .cmp(&b.slug)

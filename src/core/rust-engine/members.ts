@@ -33,6 +33,7 @@ export const RUST_ENGINE_MEMBERS = {
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
   readCurrentWriteTrust: 'transactions',
+  beginSnapshotRead: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
@@ -56,6 +57,10 @@ export const RUST_ENGINE_MEMBERS = {
   sealImportedPage: 'pages',
   readLivePageBody: 'pages',
   readPageIndexingState: 'pages',
+  readPageHiddenFromCaller: 'pages',
+  readCallerPageAccess: 'pages',
+  readWriteVisibilityProbe: 'pages',
+  readStoredBodyBytes: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',
@@ -133,6 +138,7 @@ export const RUST_ENGINE_MEMBERS = {
   listSharedSkillPackRoots: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',
+  isSourceClaimed: 'persistence_journal',
   // config
   getConfigValues: 'config',
   getConfig: 'config',
@@ -222,6 +228,8 @@ export const RUST_ENGINE_MEMBERS = {
   // keyword_search
   searchKeyword: 'keyword_search',
   scanExactBatch: 'keyword_search',
+  readExactSnippetChunks: 'keyword_search',
+  listExactRescanChunks: 'keyword_search',
   countKeywordPages: 'keyword_search',
   searchKeywordPages: 'keyword_search',
   searchTitles: 'keyword_search',
@@ -307,6 +315,7 @@ export const RUST_ENGINE_MEMBERS = {
   // graph
   traverseGraph: 'graph',
   rankEntities: 'graph',
+  readRankCoverage: 'graph',
   traversePaths: 'graph',
   traversePathsDetailed: 'graph',
   relationalFanout: 'graph',
@@ -328,6 +337,7 @@ export const RUST_ENGINE_MEMBERS = {
   countUnconsolidatedFacts: 'facts',
   listFenceRetireCandidates: 'facts',
   listFenceFactRows: 'facts',
+  listHeldFenceCells: 'facts',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
   findTrajectory: 'facts',
@@ -344,6 +354,13 @@ export const RUST_ENGINE_MEMBERS = {
   countFactRelinkOutcomes: 'facts',
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
+  countStaleFactEmbeddings: 'facts',
+
+  // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
+  readChunkVectorColumn: 'embeddings',
+  readEmbeddingIdentity: 'embeddings',
+  listEmbeddingStores: 'embeddings',
+  hasStoredVectors: 'embeddings',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
@@ -492,6 +509,8 @@ export const RUST_ENGINE_MEMBERS = {
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
+  readFactCacheWatermark: 'facts',
+  readTrustGeneration: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',
@@ -518,6 +537,7 @@ export const RUST_ENGINE_MEMBERS = {
   readPersistenceBrainId: 'persistence_journal',
   setWriteContext: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
+  readWriterSlugFence: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',
   readJournalLimitRows: 'persistence_journal',
   readHeldPageRows: 'persistence_journal',
@@ -593,6 +613,7 @@ export const RUST_ENGINE_MEMBERS = {
   selectProjectionWindowJobs: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
+  listAppliedPolicyRevisions: 'access_control',
   listActiveAccessMembers: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
@@ -767,6 +788,10 @@ export const RUST_ENGINE_MEMBERS = {
   listVersionReasonWriters: 'page_versions',
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
+  listAmendmentsNotApplied: 'links',
+  readPageVersionEdition: 'page_versions',
+  readCursorEdition: 'page_versions',
+  pageAwaitsRederive: 'pages',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

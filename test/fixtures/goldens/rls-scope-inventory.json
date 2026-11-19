@@ -2141,6 +2141,17 @@
         ],
         "flagOnScopes": []
       },
+      "isSourceClaimed#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listActiveTakesForPages#allowList": {
         "flagOffLanes": [
           "pool"
@@ -2175,6 +2186,17 @@
         "flagOnScopes": []
       },
       "listAllSources#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listAppliedPolicyRevisions#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4942,6 +4964,7 @@
         "backfillSearchVectors": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
+        "beginSnapshotRead": "none",
         "bindPageOrigin": "none",
         "cancelJobs": "none",
         "chunkRead": "none",
@@ -5001,6 +5024,7 @@
         "countSegmentedTimelinePages": "none",
         "countSourcePages": "none",
         "countStaleChunks": "direct",
+        "countStaleFactEmbeddings": "none",
         "countStaleFrontmatterKeyPages": "direct",
         "countStalePagesForExtraction": "direct",
         "countStaleTakes": "none",
@@ -5151,6 +5175,7 @@
         "hasPersistenceTable": "none",
         "hasRearmableTargets": "none",
         "hasSegmentStorage": "none",
+        "hasStoredVectors": "none",
         "hasSubagentToolExecution": "none",
         "hasSupersedeEdges": "none",
         "hasWakeCron": "none",
@@ -5175,6 +5200,7 @@
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
         "isFolderRestricted": "none",
+        "isSourceClaimed": "none",
         "jitOffRead": "none",
         "keywordBoundedRead": "direct",
         "keywordStatementTimeoutSetting": "none",
@@ -5190,6 +5216,8 @@
         "listActiveTakesForPages": "none",
         "listAllPageRefs": "none",
         "listAllSources": "none",
+        "listAmendmentsNotApplied": "none",
+        "listAppliedPolicyRevisions": "none",
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
@@ -5205,10 +5233,12 @@
         "listDueWakeWatches": "none",
         "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",
+        "listEmbeddingStores": "none",
         "listEnrichCandidates": "none",
         "listEvalCandidates": "none",
         "listEvalCaptureFailures": "none",
         "listExactIdentityCandidates": "none",
+        "listExactRescanChunks": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
         "listFactRelinkOutcomes": "none",
@@ -5230,6 +5260,7 @@
         "listFreshExtractionOutcomes": "none",
         "listGatedMirrorRequests": "none",
         "listGuestSourceIds": "none",
+        "listHeldFenceCells": "none",
         "listHeldFenceFactRows": "none",
         "listHostConsumerRows": "none",
         "listJobAttachmentNames": "none",
@@ -5361,6 +5392,7 @@
         "openPageEmbeddingHold": "none",
         "openWakeWatch": "none",
         "ownsSchemaTables": "none",
+        "pageAwaitsRederive": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "parkEffectRow": "none",
@@ -5393,18 +5425,24 @@
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
         "readBeliefHistoryRows": "none",
+        "readCallerPageAccess": "none",
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
         "readChildCompletions": "none",
+        "readChunkVectorColumn": "none",
         "readClientOpUsage": "none",
         "readCounterRows": "none",
         "readCurrentWriteTrust": "none",
+        "readCursorEdition": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingCompletion": "none",
+        "readEmbeddingIdentity": "none",
         "readEmbeddingStateCounts": "direct",
+        "readExactSnippetChunks": "none",
         "readExtractionLagCounts": "none",
+        "readFactCacheWatermark": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
         "readFieldUsageSamples": "none",
@@ -5441,12 +5479,14 @@
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
         "readPageEmbeddingBudget": "none",
+        "readPageHiddenFromCaller": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPageTitle": "none",
         "readPageTrustRows": "none",
+        "readPageVersionEdition": "none",
         "readPersistenceBrainId": "none",
         "readPrivateQueueState": "none",
         "readProjectionReadiness": "none",
@@ -5456,6 +5496,7 @@
         "readQueueHealthSignals": "none",
         "readQueuedPageChars": "none",
         "readQueuedSpendRows": "none",
+        "readRankCoverage": "none",
         "readReceiptBudget": "none",
         "readRequestEffects": "none",
         "readRowTrustRows": "none",
@@ -5469,9 +5510,11 @@
         "readSourceMembership": "none",
         "readSourceRow": "none",
         "readSourceState": "none",
+        "readStoredBodyBytes": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
+        "readTrustGeneration": "none",
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",
         "readWakeDoctor": "none",
@@ -5479,6 +5522,8 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriteVisibilityProbe": "none",
+        "readWriterSlugFence": "none",
         "readWriterVersionCutoff": "none",
         "recentWriterVersions": "none",
         "reclaimStalledJobs": "none",
