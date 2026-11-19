@@ -26,6 +26,7 @@ import { rebindOwnedSource } from '../src/commands/sources-rebind.ts';
 import { removeSource } from '../src/core/sources-ops.ts';
 import { purgeExpiredSources } from '../src/core/destructive-guard.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { resolveOwnedDestination } from '../src/core/owned-folder/destination.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 
 const DAY = 86_400_000;
@@ -286,6 +287,45 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     }
     expect(commits(repo)).toBe(c1);
     expect(await pageCount(id)).toBe(3);
+  });
+
+  test('a brain that starts serving several people writes nothing new to the folder and keeps the committed files', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    const fake = mac();
+    await run(id, cfg, fake);
+    const c1 = commits(repo);
+    await engine.setConfig('access.serves', 'several');
+    try {
+      fake.chats[0]!.messages[2]!.text = 'Running twenty minutes late.';
+      await run(id, cfg, fake, { now: NOW + 60_000 });
+      expect(commits(repo)).toBe(c1);
+      expect(existsSync(join(folder, dayFile(ALICE, 1)))).toBe(true);
+      expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'not_personal' });
+    } finally {
+      await engine.setConfig('access.serves', 'one');
+    }
+  });
+
+  test('a checkout whose Git ignores the folder keeps the pages in the database only', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    writeFileSync(join(repo, '.gitignore'), '.gbrain-owned/\n');
+    const c1 = commits(repo);
+    const result = await run(id, cfg, mac());
+    expect(result.added).toBe(3);
+    expect(commits(repo)).toBe(c1);
+    expect(existsSync(folder)).toBe(false);
+    expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'ignored' });
+  });
+
+  test('a managed brain resolves to database-only (D1: managed brains are the next PR)', async () => {
+    const { id } = await setup();
+    expect((await resolveOwnedDestination(engine, id, null)).record).toBe('folder');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      expect(await resolveOwnedDestination(engine, id, null)).toMatchObject({ record: 'database', reason: 'managed' });
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    }
   });
 
   test('a mass removal removes nothing and keeps the days', async () => {
