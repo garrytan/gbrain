@@ -41,6 +41,7 @@ pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
 pub mod embeddings;
+pub mod entity_identities;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;

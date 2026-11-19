@@ -39,6 +39,7 @@ mod code_edges;
 mod contradictions;
 mod dream;
 mod embeddings;
+mod entity_identities;
 mod eval_capture;
 mod extraction;
 mod facts;

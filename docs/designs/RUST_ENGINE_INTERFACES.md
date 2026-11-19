@@ -167,6 +167,7 @@ Reserved tags:
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
+| entity_identities | `i` | `ENTITY_IDENTITY` | yes |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -1150,6 +1151,18 @@ rebuild counts and the retrieval coverage counts. Detail: `rust/docs/store/link_
 - **Follow-ups:** When the transactions core item lands,
   the refresh after a link write and the temporal and wanted steps of a derived-link publication run in one store
   transaction, as on PGLite and Postgres.
+
+### entity_identities
+
+Cross-source identity groups (migration v137): manual links, lookups, the canonical twin. Detail: `rust/docs/store/entity_identities.md`.
+
+- **Files:** `gbrain-store/src/entity_identities.rs`, `gbrain-napi/src/families/entity_identities.rs`, `store-members/entity-identities.ts`.
+- **Tag:** `i` (`ENTITY_IDENTITY`). Cascade on page delete: yes (`remove_page_rows` drops the page's membership and its group key).
+- **Keys:** `i 0x01 <page id BE8>` to the membership JSON; `i 0x02 <entity_id> 0x00 <page id BE8>` (empty, the group index).
+- **Members (5), capability:** `entity_identities` (5): `linkEntityIdentityRow`, `unlinkEntityIdentityRow`, `listEntityIdentityRows`, `readEntityIdentityIdsForPages`, `readCanonicalTwin`.
+- **Postgres tables:** `entity_identities`; SQL in `src/core/engine-sql/entity-identities.ts`.
+- **Parity cases:** `test/engine-parity/entity-identities.test.ts`.
+- **Known gap:** the store page policy has no owner-only rule, so the list refuses a policy read typed while an owner-only source exists (TODOS `rust-owner-only-page-policy`).
 
 ### timeline_queries
 
