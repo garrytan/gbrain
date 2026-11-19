@@ -35,6 +35,8 @@ const BACKLOG_PAGES = 40;
 beforeAll(async () => {
   other = new PGLiteEngine();
   await other.connect({}); await other.initSchema();
+  // A schema snapshot (GBRAIN_PGLITE_SNAPSHOT) copies one brain id into every engine; a second brain has its own.
+  await other.executeRaw('UPDATE persistence_brain SET brain_id=gen_random_uuid()');
   if (backends.includes('pglite')) {
     const engine = new PGLiteEngine();
     await engine.connect({}); await engine.initSchema(); engines.push(engine);
