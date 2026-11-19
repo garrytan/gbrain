@@ -370,7 +370,7 @@ describe('engine parity: dream-cycle statements', () => {
     expect(sources.find(s => s.row === 1)?.source).toBe('a, b');
     expect(sources.find(s => s.row === 3)?.source).toBe('first');
 
-    await engine.resolveTake(pageId, 1, { quality: 'correct' } as never);
+    await engine.resolveTake(pageId, 1, { quality: 'correct', resolvedBy: 'garry' });
     const resolved = await engine.findConsolidatedTakes(pageId, 'Prefers email');
     expect(resolved[0]!.resolved_at).not.toBeNull();
     return { emptyMax, max, otherPage, found: found.length, wrongHolder, unknown, byMissingRow, sources, resolved: resolved[0]!.resolved_at != null };
