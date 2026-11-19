@@ -23,8 +23,8 @@
  *    parts and texts, takes, take proposals, review queue and proposal rows, decide and trust proposals, open loops, write
  *    gate holds and receipts, core edit notices, page view digests and segmented versions. Those members are compared on
  *    empty tables (they answer zero or nothing on every arm), so they pin the statement's shape and the answer for no
- *    rows, not a deletion. insertHoldingPagePurges and insertTakePurge return nothing and have no typed reader, so they
- *    are compared by running without error. Generated values (page ids, revisions, version ids) are compared by relation
+ *    rows, not a deletion. insertHoldingPagePurges returns nothing and has no typed reader, so it is compared by running
+ *    without error; insertTakePurge answers whether it stored the tombstone. Generated values (page ids, revisions, version ids) are compared by relation
  *    or shape, never by value.
  */
 import { describe, expect } from 'bun:test';
@@ -266,11 +266,11 @@ describe('engine parity: fact purge plan, transaction and segment-storage statem
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-a', REQ, 'local_cli:me', 'because', [held]);
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-a', REQ, 'local_cli:me', null, [held]);
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-a', REQ, 'local_cli:me', 'because', []);
-      await tx.insertTakePurge(SRC, '*', 'hash-a', REQ);
-      await tx.insertTakePurge(SRC, '*', 'hash-a', REQ);
-      return 'stored';
+      const first = await tx.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: 'hash-a', requestId: REQ });
+      const again = await tx.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: 'hash-a', requestId: REQ });
+      return { stored: 'stored', first, again };
     });
-    expect(answers).toBe('stored');
+    expect(answers).toEqual({ stored: 'stored', first: true, again: false });
     return answers;
   });
 

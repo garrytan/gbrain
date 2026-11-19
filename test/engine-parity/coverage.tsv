@@ -319,8 +319,8 @@ searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
-updateTake	takes	yes	2	no	yes	yes	serves
-supersedeTake	takes	yes	2	no	yes	yes	serves
+updateTake	takes	yes	3	no	yes	yes	serves
+supersedeTake	takes	yes	3	no	yes	yes	serves
 resolveTake	takes	yes	13	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
@@ -1029,7 +1029,7 @@ hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	1	no	yes	yes	serves
 readTrustGeneration	trust	yes	1	no	yes	yes	serves
-readSourcePurgeFlags	trust	yes	3	no	yes	yes	serves
+readSourcePurgeFlags	trust	yes	4	no	yes	yes	serves
 lockFactForWithdrawal	trust	yes	1	no	yes	yes	serves
 queueWithdrawalReview	trust	yes	1	no	yes	yes	serves
 listSegmentedPagesBySlug	trust	yes	1	no	yes	yes	serves

@@ -501,7 +501,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
         requestId: admitted.id, actor: `${principal.kind}:${principal.id}`, reason: p.reason });
       // GST-2492: a fact a holding page holds for an entity with no page is purged from that holding page as well.
       if (plan.subject !== '*') await tx.insertHoldingPagePurges(p.sourceId, current.visibility, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason, plan.factIds);
-      await tx.insertTakePurge(p.sourceId, plan.subject, current.fact_hash, admitted.id);
+      await tx.insertTakePurge({ sourceId: p.sourceId, subject: plan.subject, claimHash: current.fact_hash, requestId: admitted.id });
       const takes = plan.takes.length ? await tx.deletePurgedTakes(plan.takes.map(t => t.id)) : 0;
       const ids = plan.factIds;
       const review = await tx.deletePurgeReviewQueue(p.sourceId, ids.map(String))

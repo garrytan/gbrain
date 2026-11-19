@@ -134,7 +134,9 @@ counter is `M next_facts_id`.
 | `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
+| `F 0x0C source content_hash` | JSON: `slug`, `request_id`, `purged_at_us` | One `page_purges` row (primary key `(source_id, content_hash)`); `facts/page_purges.rs`. |
 | `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
+| `F 0x10 source subject claim_hash` | `TakePurgeRecord` (JSON: `request_id`, `purged_at_us`) | One `take_purges` row (primary key `(source_id, subject, claim_hash)`); `facts/take_purges.rs`. |
 
 ### Relink attempts (`facts/relink.rs`)
 
@@ -622,8 +624,8 @@ factHash, requestId, actor, reason })` stores a tombstone and answers true, or f
 (`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A visibility other than `private` or `world`, a
 `requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing source refuses as the
 foreign key does. `purge_fact` (facts/purge.ts) writes its main tombstone through this member; the holding-slug
-tombstones, the take and page purges, the purge epoch and the rest of the purge still run through `executeRaw`, which
-this engine refuses, so a full `purge_fact` does not run on Rust yet.
+tombstones, its take tombstone (`insertTakePurge`, served: see "The take purge ledger") and the rest of the purge are
+typed members too, and this engine still refuses most of those, so a full `purge_fact` does not run on Rust yet.
 The plan, dry run and `--match` reads are typed members: [purge-plan.md](purge-plan.md).
 
 Readers: the fence overlay's `purged`; `isFactPurged` (`is_fact_purged`: point reads for subject `*` and the entity)
@@ -828,7 +830,7 @@ read: the version-body SELECT of `rewriteVersionBodies` builds its WHERE, column
 | `listPurgeMatchCandidates` | The first 25 facts of the source whose text contains `text` (case folded), in id order, each cut to 160 characters. Reads facts. |
 | `lockPurgeSource` | Locks the source row for the purge transaction and returns its incarnation and archived flag, null for no such source. Reads sources; run it in the purge transaction. |
 | `insertHoldingPagePurges` | Stores a purge tombstone for each holding page that holds one of the facts about an entity with no page of its own, none twice. Writes fact_purges; run it in the purge transaction. |
-| `insertTakePurge` | Stores the text-free take purge tombstone for the claim fingerprint under the subject, none twice. Writes take_purges; run it in the purge transaction. |
+| `insertTakePurge` | Stores the text-free take purge tombstone for the claim fingerprint under the subject; false when the same (source, subject, fingerprint) one exists. Writes take_purges; run it in the purge transaction. |
 | `deletePurgedTakes` | Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. |
 | `deletePurgeReviewQueue` | Deletes the source's review queue rows naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_queue; run it in the purge transaction. |
 | `deletePurgeReviewProposals` | Deletes the source's review proposals naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_proposals; run it in the purge transaction. |
@@ -858,8 +860,29 @@ What the store would need to hold to answer them, by family:
 
 The parity cases seed pages, tags, versions, facts, chunks and write requests through the typed writers. Stagings, takes,
 review and proposal rows, gate holds and receipts, open loops, core edit notices and view digests have no typed fixture, so
-those members are compared on empty tables only; `insertHoldingPagePurges` and `insertTakePurge` return nothing and have no
-typed reader, so they are compared by running without error.
+those members are compared on empty tables only; `insertHoldingPagePurges` returns nothing and has no typed reader, so it is
+compared by running without error.
+
+## The take purge ledger
+
+`facts/take_purges.rs` keeps `take_purges` (key `F 0x10 source subject claim_hash`, the row after `F 0x0F`).
+`insertTakePurge({ sourceId, subject, claimHash, requestId })` stores a tombstone and answers true, or false when the
+key exists (`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A `requestId` that is not a UUID or a NUL
+character refuses with `invalid_argument`; a missing source refuses as the foreign key does. `purge_fact` writes its
+take tombstone through this member. The page purge's take tombstones (one per take of the page, fingerprinted in SQL)
+still go through `executeRaw`, so a page purge on Rust stops on that statement's refusal.
+
+Readers: `readSourcePurgeFlags`'s `takes` (any tombstone of the source, read in the same snapshot as `facts`) and the
+belief ledger's tombstone read (`tombstoned_hashes`: the hashes among the asked ones that a tombstone of the source
+names, under any subject).
+
+The guard (`refuse_purged_take`, the `takes_refuse_purged` trigger's `gbrain_refuse_purged_take`): the page the row's
+`page_id` names gives the source and the subject; a tombstone of that source under subject `*` or the page's slug
+that names the claim's fingerprint refuses with `purged_content` (`purged_content: this take claim was purged from this
+source and cannot be saved again`). A missing page, or a null page id or claim, refuses nothing. The trigger runs
+`BEFORE INSERT`, so `addTakesBatch` checks every proposed row, an unchanged upsert row too, before its NOT NULL, CHECK
+and conflict checks; `supersedeTake` checks the new row. `updateTake` sets no claim and page id and is not checked.
+The refusal rolls back the whole write. Deleting a source removes its take tombstones.
 
 ## Not modeled
 

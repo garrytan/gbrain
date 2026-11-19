@@ -3763,8 +3763,8 @@ export interface BrainEngine {
   lockPurgeSource(sourceId: string): Promise<FactsPurgeSql.PurgeSourceLock | null>;
   /** Stores a purge tombstone for each holding page that holds one of the facts about an entity with no page of its own, none twice. Writes fact_purges; run it in the purge transaction. */
   insertHoldingPagePurges(sourceId: string, visibility: string, factHash: string, requestId: string, actor: string, reason: string | null, factIds: number[]): Promise<void>;
-  /** Stores the text-free take purge tombstone for the claim fingerprint under the subject, none twice. Writes take_purges; run it in the purge transaction. */
-  insertTakePurge(sourceId: string, subject: string, claimHash: string, requestId: string): Promise<void>;
+  /** Stores the text-free take purge tombstone for the claim fingerprint under the subject; false when the same (source, subject, fingerprint) one exists. Writes take_purges; run it in the purge transaction. */
+  insertTakePurge(row: FactsPurgeSql.TakePurgeInsert): Promise<boolean>;
   /** Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. */
   deletePurgedTakes(takeIds: number[]): Promise<number>;
   /** Deletes the source's review queue rows naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_queue; run it in the purge transaction. */

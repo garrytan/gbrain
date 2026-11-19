@@ -99,3 +99,6 @@ export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
 export const upsertPagePurges: Member<'upsertPagePurges'> = async (brain, row) => {
   await storeCall({ member: 'upsertPagePurges', sourceId: row.sourceId }, () => brain.upsertPagePurges(row));
 };
+
+export const insertTakePurge: Member<'insertTakePurge'> = (brain, row) =>
+  storeCall({ member: 'insertTakePurge', sourceId: row.sourceId }, () => brain.insertTakePurge(row));

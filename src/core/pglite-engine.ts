@@ -1696,7 +1696,7 @@ export class PGLiteEngine implements BrainEngine {
   listPurgeMatchCandidates(sourceId: string, text: string) { return factsPurgeImpl.listPurgeMatchCandidates(this.rawRead, sourceId, text); }
   lockPurgeSource(sourceId: string) { return factsPurgeImpl.lockPurgeSource(this.rawRead, sourceId); }
   insertHoldingPagePurges(sourceId: string, visibility: string, factHash: string, requestId: string, actor: string, reason: string | null, factIds: number[]) { return factsPurgeImpl.insertHoldingPagePurges(this.rawRead, sourceId, visibility, factHash, requestId, actor, reason, factIds); }
-  insertTakePurge(sourceId: string, subject: string, claimHash: string, requestId: string) { return factsPurgeImpl.insertTakePurge(this.rawRead, sourceId, subject, claimHash, requestId); }
+  insertTakePurge(row: factsPurgeImpl.TakePurgeInsert) { return factsPurgeImpl.insertTakePurge(this.rawRead, row); }
   deletePurgedTakes(takeIds: number[]) { return factsPurgeImpl.deletePurgedTakes(this.rawRead, takeIds); }
   deletePurgeReviewQueue(sourceId: string, refs: string[]) { return factsPurgeImpl.deletePurgeReviewQueue(this.rawRead, sourceId, refs); }
   deletePurgeReviewProposals(sourceId: string, refs: string[]) { return factsPurgeImpl.deletePurgeReviewProposals(this.rawRead, sourceId, refs); }
