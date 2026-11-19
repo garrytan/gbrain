@@ -519,6 +519,38 @@ const PINS: Pin[] = [
       VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb)`],
   },
   {
+    from: 'src/commands/serve-http-admin-api.ts health-indicators expiring_soon (at dca1a50918)',
+    case: { method: 'countOauthAccessTokens', variant: 'between', run: e => e.countOauthAccessTokens(1, 2) },
+    texts: ["SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN $1 AND $2"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts stats active_tokens (at dca1a50918)',
+    case: { method: 'countOauthAccessTokens', variant: 'after', run: e => e.countOauthAccessTokens(1, null) },
+    texts: ["SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > $1"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts stats requests_today (at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDay', variant: 'all', run: e => e.countMcpRequestsLastDay('all') },
+    texts: ["SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts health-indicators total (at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDay', variant: 'traffic', run: e => e.countMcpRequestsLastDay('traffic') },
+    texts: ["SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts health-indicators errors (at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDay', variant: 'errors', run: e => e.countMcpRequestsLastDay('errors') },
+    texts: ["SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings', 'accepted_pending') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'"],
+  },
+  {
+    // New text: the agents list's per-row correlated subselects became one grouped read over the asked names.
+    from: 'src/commands/serve-http-admin-api.ts agents requests_today (grouped, new at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDayByToken', variant: 'default', run: e => e.countMcpRequestsLastDayByToken(['client-a']) },
+    texts: [`SELECT token_name, count(*)::int AS requests FROM mcp_request_log
+    WHERE token_name = ANY($1::text[]) AND created_at > now() - interval '24 hours' GROUP BY token_name ORDER BY token_name COLLATE "C"`],
+  },
+  {
     from: 'src/commands/auth.ts:180 list (at 837c389e52)',
     case: { method: 'listAccessTokens', variant: 'default', run: e => e.listAccessTokens() },
     texts: [`

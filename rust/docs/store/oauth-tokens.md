@@ -83,3 +83,6 @@ transaction on `readOauthClientForUpdate`, `deleteOauthClientTokens`, `deleteOau
   `deleted_at = COALESCE(deleted_at, now())` (`set_oauth_client_revision`): a second revoke keeps the first time.
 - `insertOauthGrantAudit(row)`: one `oauth_grant_audit` row whose documents are JSON text (`insert_oauth_grant_audit`,
   the audit key space of `client_grants.rs`). It works for a client that is gone: a `delete` writes its tombstone after the row.
+- `countOauthAccessTokens(from, to)`: the number of `access` tokens whose `expires_at` is between `from` and `to` inclusive, or after
+  `from` (exclusive) when `to` is null (`count_oauth_access_tokens`). A refresh token and a token with no expiry never count. The
+  admin dashboard's "expiring soon" and "active tokens".

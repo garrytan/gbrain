@@ -433,6 +433,21 @@ export const OAUTH_TOKEN_SQL = {
           VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))`,
 } as const;
 
+const OAUTH_TOKEN_COUNT_SQL = {
+  between: "SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN $1 AND $2",
+  after: "SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > $1",
+} as const;
+
+/**
+ * How many OAuth access tokens expire from `from` (epoch seconds, inclusive) to `to` (inclusive), or with no `to` any time
+ * after `from` (exclusive): the admin dashboard's "expiring soon" and "active tokens" counts. A refresh token and a token
+ * with no expiry never count.
+ */
+export async function countOauthAccessTokens(tx: Raw, from: number, to: number | null): Promise<number> {
+  const rows = await tx.executeRaw<{ count: number | string }>(to === null ? OAUTH_TOKEN_COUNT_SQL.after : OAUTH_TOKEN_COUNT_SQL.between, to === null ? [from] : [from, to]);
+  return Number(rows[0]?.count ?? 0);
+}
+
 /** One `oauth_tokens` row as `OAuthGrants.issue` writes it. `grant_type` left out is the INSERT for a schema without that column. */
 export interface OauthTokenInsert {
   token_hash: string;

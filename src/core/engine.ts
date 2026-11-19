@@ -117,7 +117,7 @@ import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContex
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
-import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type { McpLifetimeUsageRow, McpRequestCountKind, McpTokenRequestCount, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
@@ -1686,6 +1686,10 @@ export interface BrainEngine {
   readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number): Promise<McpLogPruneBatch>;
   readMcpLifetimeUsage(tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]>;
+  /** The request log rows of the last 24 hours: all of them, the traffic, or the failed traffic (the admin dashboard counts). */
+  countMcpRequestsLastDay(kind: McpRequestCountKind): Promise<number>;
+  /** Requests of the last 24 hours per asked token; a token with none has no row. */
+  countMcpRequestsLastDayByToken(tokenNames: readonly string[]): Promise<McpTokenRequestCount[]>;
   /** The chat usage ledger insert and the get_usage window read (SQL and contracts in engine-sql/chat-usage.ts). */
   logChatUsage(row: ChatUsageLogRow): Promise<void>;
   readChatUsage(days: number): Promise<ChatUsageWindow>;
@@ -3900,6 +3904,8 @@ export interface BrainEngine {
   touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
   /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both (a store that keeps none deletes none). */
   deleteExpiredOauthCredentials(nowEpochSeconds: number): Promise<number>;
+  /** OAuth access tokens expiring from `from` to `to` (epoch seconds, inclusive), or after `from` when `to` is null. */
+  countOauthAccessTokens(from: number, to: number | null): Promise<number>;
   /** Convert an access token still on the legacy shape to its grant columns on first read; the converted row, or null when none converted. */
   convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns): Promise<Record<string, unknown> | null>;
   /** Insert one OAuth token (the INSERTs of `OAuthGrants.issue`); a repeated hash is 23505, a client with no row 23503. */

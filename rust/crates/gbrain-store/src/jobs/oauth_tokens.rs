@@ -262,6 +262,43 @@ impl Store {
         Ok(json!([row]))
     }
 
+    /// `countOauthAccessTokens(from, to)`: the access tokens whose `expires_at` (epoch seconds) is from `from` to `to`
+    /// inclusive, or after `from` (exclusive) with no `to`. A refresh token and a token with a NULL `expires_at` never
+    /// count (the comparison with NULL is not true).
+    pub fn count_oauth_access_tokens(&self, from: i64, to: Option<i64>) -> Result<i64> {
+        let read = self.read()?;
+        let mut count = 0_i64;
+        let mut bad = None;
+        scan_prefix(
+            &*read,
+            &prefix(OAUTH_TOKEN),
+            false,
+            &mut |_, v| match serde_json::from_slice::<OauthTokenRecord>(v) {
+                Ok(r) => {
+                    let inside = r.token_type == "access"
+                        && r.expires_at.is_some_and(|e| match to {
+                            Some(to) => e >= from && e <= to,
+                            None => e > from,
+                        });
+                    if inside {
+                        count += 1;
+                    }
+                    true
+                }
+                Err(e) => {
+                    bad = Some(StoreError::invalid(format!(
+                        "unreadable OAuth token record: {e}"
+                    )));
+                    false
+                }
+            },
+        )?;
+        match bad {
+            Some(e) => Err(e),
+            None => Ok(count),
+        }
+    }
+
     /// `DELETE FROM oauth_tokens WHERE expires_at < $1 RETURNING 1`: removes every token (of any type) whose `expires_at`
     /// is before `now_epoch_seconds`, in one write, and returns how many went. A token with a NULL `expires_at` stays
     /// (`NULL < $1` is not true). For the sweep of expired credentials (`deleteExpiredOauthCredentials`).

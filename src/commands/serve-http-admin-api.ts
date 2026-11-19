@@ -73,7 +73,7 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
 }> {
   const sql = sqlQueryForEngine(engine);
   const now = Math.floor(Date.now() / 1000);
-  const [expiring] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN ${now} AND ${now + 86400}`;
+  const expiring = await engine.countOauthAccessTokens(now, now + 86400);
   // Excluded from the error numerator: success, success_with_warnings
   // (a warn-mode success) and accepted_pending (#5249: an admitted write
   // still in flight; its eventual failure is counted separately below);
@@ -81,9 +81,9 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
   // surface_change is an OPERATION value (audit rows carry
   // status='success'), so audit rows are excluded from BOTH counts —
   // they are records of operator/self actions, not traffic.
-  const [errors] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings', 'accepted_pending') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
-  const [total] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
-  const errorRate = (total as any).count > 0 ? ((errors as any).count / (total as any).count * 100).toFixed(1) : '0';
+  const errors = await engine.countMcpRequestsLastDay('errors');
+  const total = await engine.countMcpRequestsLastDay('traffic');
+  const errorRate = total > 0 ? (errors / total * 100).toFixed(1) : '0';
   // #5249/O-CEO-14: pending writes are tracked apart from the error rate —
   // how many are still in flight, how old the oldest is, and how many
   // reported as pending in the last 24 hours later ended without committing.
@@ -95,7 +95,7 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
     WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
       AND r.state IN ('conflict', 'failed', 'cancelled')`;
   return {
-    expiring_soon: (expiring as any).count,
+    expiring_soon: expiring,
     error_rate: `${errorRate}%`,
     pending_writes: (pending as any).count,
     oldest_pending_write_age_seconds: (pending as any).oldest_age_seconds,
@@ -206,24 +206,19 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
       // Unified view: OAuth clients + legacy API keys
-      const oauthClients = await sql`
-        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.source_id, c.federated_read,
-          c.created_at, c.token_ttl,
-          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
-        FROM oauth_clients c ORDER BY c.created_at DESC
-      `;
-      const legacyKeys = await sql`
-        SELECT a.id, a.name, 'api_key' as auth_type,
-          '{"bearer"}' as grant_types,
-          a.scopes,
-          a.created_at, null as token_ttl,
-          CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          a.last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
-        FROM access_tokens a ORDER BY a.created_at DESC
-      `;
+      // Engine members, so a Rust brain answers too; the request counts of the last day are one read over both lists.
+      const clients = (await engine.listOauthClients()).sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+      const apiKeys = await engine.listAccessTokens();
+      const today = new Map((await engine.countMcpRequestsLastDayByToken([...clients.map(c => c.client_id), ...apiKeys.map(k => k.name)])).map(r => [r.token_name, r.requests]));
+      const oauthClients = clients.map(c => ({
+        id: c.client_id, name: c.client_name, auth_type: 'oauth', grant_types: c.grant_types, scope: c.scope, source_id: c.source_id,
+        federated_read: c.federated_read, created_at: c.created_at, token_ttl: c.token_ttl,
+        status: c.deleted_at != null ? 'revoked' : 'active', requests_today: today.get(c.client_id) ?? 0,
+      }));
+      const legacyKeys = apiKeys.map(k => ({
+        id: k.id, name: k.name, auth_type: 'api_key', grant_types: '{"bearer"}', scopes: k.scopes, created_at: k.created_at, token_ttl: null,
+        status: k.revoked_at != null ? 'revoked' : 'active', last_used_at: k.last_used_at, requests_today: today.get(k.name) ?? 0,
+      }));
       // #6770: lifetime totals = rows still in the log + the pruned tally (mcp-request-log-retention.ts).
       const lifetime = await lifetimeUsage(engine, [...oauthClients.map(c => String(c.id)), ...legacyKeys.map(k => String(k.name))]);
       res.json([
@@ -272,15 +267,15 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
 
   app.get('/admin/api/stats', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const [clients] = await sql`SELECT count(*)::int as count FROM oauth_clients`;
-      const [tokens] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > ${Math.floor(Date.now() / 1000)}`;
-      const [requests] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'`;
-      const [apiKeys] = await sql`SELECT count(*)::int as count FROM access_tokens WHERE revoked_at IS NULL`;
+      const clients = await engine.listOauthClients();
+      const tokens = await engine.countOauthAccessTokens(Math.floor(Date.now() / 1000), null);
+      const requests = await engine.countMcpRequestsLastDay('all');
+      const apiKeys = (await engine.listAccessTokens()).filter(k => k.revoked_at == null);
       res.json({
-        connected_agents: (clients as any).count,
-        active_tokens: (tokens as any).count,
-        active_api_keys: (apiKeys as any).count,
-        requests_today: (requests as any).count,
+        connected_agents: clients.length,
+        active_tokens: tokens,
+        active_api_keys: apiKeys.length,
+        requests_today: requests,
       });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });

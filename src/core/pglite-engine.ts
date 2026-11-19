@@ -267,7 +267,7 @@ import * as telemetryImpl from './engine-sql/telemetry.ts';
 import * as chatUsageImpl from './engine-sql/chat-usage.ts';
 import * as fieldUsageImpl from './engine-sql/field-usage.ts';
 import * as aliasFanoutReadsImpl from './engine-sql/alias-fanout-reads.ts';
-import type { McpRequestLogRow, SearchTelemetryBucket } from './engine-sql/telemetry.ts';
+import type { McpRequestCountKind, McpRequestLogRow, SearchTelemetryBucket } from './engine-sql/telemetry.ts';
 import type { CodeChunkScope, CodeSymbolQuery, FrozenHitKey, UnsealedPageScope, WithdrawalChunkKey } from './engine-sql/chunk-reads.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
@@ -1771,6 +1771,7 @@ export class PGLiteEngine implements BrainEngine {
   readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller) { return accessCredentials.readActiveAccessTokenByHash(this, hash, caller); }
   touchAccessTokenLastUsed(id: string, unified: boolean) { return accessCredentials.touchAccessTokenLastUsed(this, id, unified); }
   deleteExpiredOauthCredentials(nowEpochSeconds: number) { return accessCredentials.deleteExpiredOauthCredentials(this, nowEpochSeconds); }
+  countOauthAccessTokens(from: number, to: number | null) { return accessCredentials.countOauthAccessTokens(this, from, to); }
   convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns) { return accessCredentials.convertLegacyAccessTokenGrant(this, id, columns); }
   insertOauthToken(row: OauthTokenInsert) { return accessCredentials.insertOauthToken(this, row); }
   readOauthClientLocked(clientId: string) { return accessCredentials.readOauthClientLocked(this, clientId); }
@@ -2334,6 +2335,8 @@ export class PGLiteEngine implements BrainEngine {
   readMcpLogPruneCutoff(days: number) { return telemetryImpl.readMcpLogPruneCutoff(this.engineSql, days); }
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number) { return telemetryImpl.pruneMcpRequestLogBatch(this.engineSql, cutoff, keepOperations, limit); }
   readMcpLifetimeUsage(tokenNames: readonly string[]) { return telemetryImpl.readMcpLifetimeUsage(this.telemetryRead, tokenNames); }
+  countMcpRequestsLastDay(kind: McpRequestCountKind) { return telemetryImpl.countMcpRequestsLastDay(this.telemetryRead, kind); }
+  countMcpRequestsLastDayByToken(tokenNames: readonly string[]) { return telemetryImpl.countMcpRequestsLastDayByToken(this.telemetryRead, tokenNames); }
   logChatUsage(row: chatUsageImpl.ChatUsageLogRow) { return chatUsageImpl.logChatUsage(this.engineSql, row); }
   readChatUsage(days: number) { return chatUsageImpl.readChatUsage(this.telemetryRead, days); }
   readFieldUsageSamples(query: fieldUsageImpl.FieldUsageQuery) { return fieldUsageImpl.readFieldUsageSamples(unscopedExecutor(this.engineSql, 'field usage samples: master engine.executeRaw, unscoped'), query); }

@@ -101,6 +101,10 @@ export const issueOauthTokens: StoreMember<[rows: readonly OauthTokenInsert[]], 
   await refusing('issueOauthTokens', () => brain.issueOauthTokens(rows.map(row => ({ ...row, scopes: [...row.scopes] }))));
 };
 
+/** OAuth access tokens expiring from `from` to `to` (epoch seconds, inclusive), or after `from` (exclusive) when `to` is null. */
+export const countOauthAccessTokens: StoreMember<[from: number, to: number | null], number> = async (brain, from, to) =>
+  Number(await storeCall({ member: 'countOauthAccessTokens' }, () => brain.countOauthAccessTokens(from, to)));
+
 /**
  * The first-read conversion of a token still on the legacy shape: its grant columns, one more grant revision and its
  * first use, or null when no token has the id or it already has a grant. The row leaves out `token_hash`, as every

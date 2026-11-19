@@ -150,3 +150,37 @@ fn a_grant_audit_row_outlives_its_client_and_reads_back_in_order() {
     .unwrap();
     assert!(b.insert_oauth_grant_audit(&bad).is_err());
 }
+
+#[test]
+fn access_tokens_are_counted_by_their_expiry_window() {
+    let b = brain("orev-count");
+    client(&b, "c1");
+    for (hash, kind, expires) in [
+        ("a-in", "access", 1_000),
+        ("a-edge-lo", "access", 900),
+        ("a-edge-hi", "access", 1_100),
+        ("a-after", "access", 1_101),
+        ("a-before", "access", 899),
+        ("r-in", "refresh", 1_000),
+    ] {
+        let row: OauthTokenInsert = serde_json::from_value(json!({
+            "token_hash": hash, "token_type": kind, "client_id": "c1", "scopes": ["read"],
+            "expires_at": expires, "created_at": 1_800_000_000,
+        }))
+        .unwrap();
+        b.insert_oauth_token(&row).unwrap();
+    }
+    let none: OauthTokenInsert = serde_json::from_value(json!({
+        "token_hash": "a-none", "token_type": "access", "client_id": "c1", "scopes": ["read"],
+        "created_at": 1_800_000_000,
+    }))
+    .unwrap();
+    b.insert_oauth_token(&none).unwrap();
+    assert_eq!(b.count_oauth_access_tokens(900, Some(1_100)).unwrap(), 3);
+    assert_eq!(
+        b.count_oauth_access_tokens(900, None).unwrap(),
+        3,
+        "after is exclusive: 1000, 1100 and 1101"
+    );
+    assert_eq!(b.count_oauth_access_tokens(2_000, None).unwrap(), 0);
+}

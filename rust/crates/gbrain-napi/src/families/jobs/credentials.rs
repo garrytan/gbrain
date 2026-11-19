@@ -154,6 +154,18 @@ impl Brain {
         })
     }
 
+    /// `countOauthAccessTokens(from, to)`: how many access tokens expire from `from` to `to` (epoch seconds, inclusive),
+    /// or after `from` when `to` is null.
+    #[napi]
+    pub fn count_oauth_access_tokens<'env>(
+        &self,
+        env: &'env Env,
+        from: i64,
+        to: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_oauth_access_tokens(from, to))
+    }
+
     /// `delete_expired_oauth_tokens(now)`: how many tokens with `expires_at` before `now` (epoch seconds) it deleted.
     #[napi]
     pub fn delete_expired_oauth_tokens<'env>(
