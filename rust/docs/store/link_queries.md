@@ -105,7 +105,7 @@ error rolls back the whole batch.
   live filter; the trusted unscoped call counts every page.
 - `getAdjacencyBoosts`: in-set linkers per page over the subgraph the ids induce, with the cross-source subset.
 - `relationalFanout`: every simple path from the seeds up to `depth` hops, grouped per reached page; the best path is
-  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the page's lowest-index chunk.
+  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the lowest-index chunk of the page's live body (`chunkGenerationProbe`): a staged chunk, one whose occurrence a deferred retire closed and an inline chunk left on a segmented page are never named.
 - `relationalChainHop`: one oriented step from the frontier, collapsed per neighbor, ordered by frontier id and lowest
   link id; the degree saturates at 300 (`CHAIN_DEGREE_SATURATION`).
 - `hasSupersedeEdges`: true when any `supersedes` link exists, in any source, to any page.

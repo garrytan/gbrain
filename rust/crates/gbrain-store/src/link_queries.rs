@@ -31,7 +31,7 @@
 //! chunk. See rust/docs/store/link_queries.md.
 
 use crate::Store;
-use crate::chunks::read_chunks;
+use crate::chunks::{in_live_body, read_chunks, read_segment_view, segmented};
 use crate::error::{INVALID_ARGUMENT, INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::keys;
@@ -312,14 +312,23 @@ impl<'a> Pages<'a> {
         }
     }
 
-    /// The page's lowest-ordinal chunk id. With `require_safe` (`requiresSafeChunks`), only a page sealed at the safe
+    /// The page's lowest-ordinal chunk id among the chunks of its live body (`chunkGenerationProbe`: an inline chunk of
+    /// a page that is not segmented, or a segmented chunk at or below the page's generation whose occurrence has a live
+    /// manifest row). A staged chunk, one whose occurrence a deferred retire closed and an inline chunk left on a
+    /// segmented page are never named. With `require_safe` (`requiresSafeChunks`), only a page sealed at the safe
     /// fence has one (`EXISTS (... safeChunksFilter('cp'))`).
     fn canonical_chunk(&mut self, page_id: u64, require_safe: bool) -> Result<Option<u64>> {
-        if require_safe && !self.get(page_id)?.is_some_and(|p| sealed_safe(&p)) {
+        let Some(page) = self.get(page_id)? else {
+            return Ok(None);
+        };
+        if require_safe && !sealed_safe(&page) {
             return Ok(None);
         }
+        let segmented_page = segmented(&page);
+        let view = read_segment_view(self.read, page_id)?;
         Ok(read_chunks(self.read, page_id)?
             .into_iter()
+            .filter(|c| in_live_body(c, segmented_page, &view))
             .min_by_key(|c| c.chunk_index)
             .map(|c| c.id))
     }

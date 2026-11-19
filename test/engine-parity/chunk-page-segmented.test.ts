@@ -197,6 +197,34 @@ describe('engine parity: chunk reads of a segmented page', () => {
   );
 
   parityTest(
+    'the canonical chunk a relational walk names for a segmented page is a chunk of its live body',
+    { methods: ['relationalFanout', 'getChunks', 'flipBodyGeneration', 'stageManifestRows', 'addLink'] },
+    async (engine) => {
+      const { pageId, occ } = await publish(engine);
+      // Generation 2 drops ONE, the occurrence whose chunk has the lowest chunk_index. Its chunk retire is deferred
+      // (retireMaxRows 0), so the chunk row stays while its manifest row is closed.
+      const staging = stagingInput({ slug: 'notes/big', pageId, mode: 'replace', baseGeneration: 1 });
+      await engine.openBodyStaging(staging);
+      await engine.stageManifestRows([
+        manifestRow({ pageId, occurrenceId: occ[1]!, genFrom: 2, seq: 0, text: TWO, byteStart: 0, stagingId: staging.id }),
+        manifestRow({ pageId, occurrenceId: occ[2]!, genFrom: 2, seq: 1, text: THREE, byteStart: TWO.body.byteLength, stagingId: staging.id }),
+      ]);
+      await engine.flipBodyGeneration(flipInput(pageId, 1, staging.id, [TWO, THREE],
+        { closeOccurrences: [occ[0]!, occ[1]!, occ[2]!], retireChunkOccurrences: [occ[0]!], retireMaxRows: 0 }));
+      await engine.setBodyStagingState(staging.id, 'committed');
+      await engine.putPage('people/reader', { type: 'person', title: 'Reader', compiled_truth: 'reads the big page', timeline: '' });
+      await engine.addLink('people/reader', 'notes/big', 'reads it', 'cites', 'manual');
+      const live = await engine.getChunks('notes/big', { includeUnsealed: true });
+      const wordOf = new Map(live.map((c) => [c.id, words([c.chunk_text])[0]]));
+      const [hit] = (await engine.relationalFanout(['people/reader'], { direction: 'out' })).filter((r) => r.slug === 'notes/big');
+      const canonical = hit?.canonical_chunk_id == null ? null : (wordOf.get(hit.canonical_chunk_id) ?? 'not a live chunk');
+      expect(words(live.map((c) => c.chunk_text))).toEqual(['heron', 'ibex']);
+      expect(canonical).toBe('heron');
+      return { live: [...wordOf.values()], canonical };
+    },
+  );
+
+  parityTest(
     'getChunkPage pages a segmented page by position in document order, not by insertion chunk_index',
     { methods: ['getChunkPage', 'stageSegmentChunks', 'flipBodyGeneration'] },
     async (engine) => {
