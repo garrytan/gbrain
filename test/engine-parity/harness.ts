@@ -39,7 +39,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -267,19 +267,59 @@ export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityB
 
 /**
  * Fixture: put a folder access rule (`kind: 'rule'`) or a pending coverage prefix (`kind: 'pending'`) on `prefix` of a
- * source, so the folder-restriction read has something to find. Harness-only SQL behind the backend switch.
+ * source, so the folder-access reads have something to find. The policy writes have no typed member (they stay raw SQL
+ * in policy.ts), so this is harness-only SQL behind the backend switch, and the Rust arm writes its store directly.
  */
-export async function restrictFolder(engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
+export async function restrictFolder(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending',
+  opts: { ruleId?: string; readers?: string[] } = {},
+): Promise<void> {
+  const ruleId = opts.ruleId ?? 'parity-rule';
+  const readers = opts.readers ?? ['member:parity'];
   switch (backend) {
-    // The Rust arm has no access-rule store yet; the same SQL stops on the engine's typed raw_sql refusal.
     case 'rust':
+      await seedAccessPolicy(engine, backend, sourceId);
+      if (kind === 'rule') {
+        await rustAccessBrain(engine).putAccessRule({ source_id: sourceId, rule_id: ruleId, prefix, readable_by: readers, revision: 1 });
+      } else {
+        await rustAccessBrain(engine).putAccessPendingCoverage({ source_id: sourceId, prefix, reason: 'pending' });
+      }
+      return;
+    case 'pglite':
+    case 'postgres':
+      await seedAccessPolicy(engine, backend, sourceId);
+      if (kind === 'rule') {
+        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, $2, $3, $4::text[], 1)`, [sourceId, ruleId, prefix, readers]);
+      } else {
+        await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
+      }
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: give a source access state, and record each `revisions` entry as a policy revision (applied or not), so the
+ * applied-revision read has something to find. Harness-only SQL behind the backend switch, as in `restrictFolder`.
+ */
+export async function seedAccessPolicy(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, revisions: ReadonlyArray<{ revision: number; applied: boolean }> = [],
+): Promise<void> {
+  switch (backend) {
+    case 'rust': {
+      const brain = rustAccessBrain(engine);
+      await brain.putAccessPolicyState(sourceId);
+      for (const r of revisions) await brain.putAccessPolicyRevision({ source_id: sourceId, revision: r.revision, applied: r.applied });
+      return;
+    }
     case 'pglite':
     case 'postgres':
       await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
-      if (kind === 'rule') {
-        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, 'parity-rule', $2, ARRAY['member:parity'], 1)`, [sourceId, prefix]);
-      } else {
-        await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
+      for (const r of revisions) {
+        await engine.executeRaw(
+          `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
+           VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${r.applied ? 'now()' : 'NULL'})`, [sourceId, r.revision]);
       }
       return;
     default:

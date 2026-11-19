@@ -42,7 +42,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
-import { readAudiencePrincipals as readAudiencePrincipalsOver, readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readFolderAccess as readFolderAccessOver, readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -153,23 +153,23 @@ export async function stdioMemberIdentity(engine: BrainEngine, registered?: stri
  * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed), and so
  * does one row-level security hides from this database role.
  */
-export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
+export async function folderAccessFor(engine: FolderAccessEngine, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
   return folderAccessForAll(engine, [identity]);
 }
+
+/** An engine the folder access reads go through: its typed readFolderAccess (a Rust brain serves it), or an executeRaw-only handle. */
+export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'> | Pick<BrainEngine, 'executeRaw'>;
 
 /**
  * GBRA-231: folderAccessFor for an audience. A rule is satisfied only when every identity meets its readers, so the
  * satisfied set is the intersection of each entry's set (empty when any entry, a guest included, meets none).
  */
-export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
+export async function folderAccessForAll(engine: FolderAccessEngine, identities: readonly (readonly string[])[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
   try {
     const union = [...new Set(identities.flat())];
-    const rules = union.length && identities.length && identities.every(id => id.length > 0)
-      ? await engine.executeRaw<{ source_id: string; rule_id: string; readable_by: string[] }>('SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]', [union])
-      : [];
+    const readers = union.length && identities.length && identities.every(id => id.length > 0) ? union : [];
+    const { rules, coverage } = 'readFolderAccess' in engine ? await engine.readFolderAccess(readers) : await readFolderAccessOver(engine, readers);
     const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
-    const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>(`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`);
     return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {
     return { satisfiedRuleIds: [], folderCoverage: [{ source_id: '!unreadable', prefix: '' }] };

@@ -5,8 +5,9 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 These are statements that a page write ran through `executeRaw` and that belong to no other storage domain
 ([docs/research/rust-put-write-path.md](../../../docs/research/rust-put-write-path.md)). PGLite and Postgres run the
 same SQL as before, now in `src/core/engine-sql/write-misc.ts`. The store answers the source read
-and the path attach from its source records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The TypeScript
-members (`src/core/rust-engine/store-members/write-misc.ts`) answer the others for state the store does not keep.
+and the path attach from its source records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The folder
+access reads go to the `access_rules` family ([access_rules.md](access_rules.md)). The TypeScript members
+(`src/core/rust-engine/store-members/write-misc.ts`) answer the others for state the store does not keep.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -29,8 +30,9 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `hasExtractedEvents(sourceId, pageId)` | `false` | The store keeps no chronicle extraction state. |
 | `listActiveAccessMembers()` | `[]` | The store keeps no access members. |
 | `listAccessTokens()` | `[]` | The store keeps no access tokens: minting, revoking and the bearer check are raw SQL on `access_tokens`, which this engine refuses, so `gbrain auth list` lists none. PGLite answers the same for a brain with no tokens. |
-| `isFolderRestricted(sourceId, slug)` | `false` | The store keeps no access state: no folder rules, no pending coverage, no row-level security. Every write of that state is raw SQL, which this engine refuses, so no slug is restricted. PGLite answers the same for a brain with no folder rules and no pending covers (`src/core/engine-sql/access-control.ts`). |
-| `listAppliedPolicyRevisions()` | `[]` | No source holds folder access state (see `isFolderRestricted`), so no source has an applied revision. On PGLite and Postgres the read is the `access_policy_state` scan that `access/caller.ts` `appliedAccessSummary` ran through `executeRaw` (`src/core/engine-sql/access-control.ts`). |
+| `isFolderRestricted(sourceId, slug)` | `brain.isFolderRestricted` | Folder rules and pending prefixes are store records ([access_rules.md](access_rules.md)). The store has no row-level security, so the unreadable part is always false. |
+| `listAppliedPolicyRevisions()` | `brain.listAppliedPolicyRevisions` | Each source with policy state and its newest applied revision ([access_rules.md](access_rules.md)). On PGLite and Postgres the read is the `access_policy_state` scan that `access/caller.ts` `appliedAccessSummary` ran through `executeRaw` (`src/core/engine-sql/access-control.ts`). |
+| `readFolderAccess(readers)` | `brain.readFolderAccess` | The folder rules whose readers name any of `readers` and every pending prefix ([access_rules.md](access_rules.md)); no `'!unreadable'` row, since the store has no row-level security. On PGLite and Postgres the reads are the two statements `access/caller.ts` `folderAccessForAll` ran through `executeRaw` (`FOLDER_RULES_FOR_READERS_SQL`, `FOLDER_COVERAGE_SQL`). |
 | `readMayActFor(via, key)` | the config value for `stdio_config`, `null` otherwise | A stdio server's may_act_for is a config value, which the store keeps (`getConfig`). The store keeps no access tokens and no OAuth clients, so a token or a client has no live row and permits nothing, as a revoked token or a deleted client does. On PGLite and Postgres the read is the statement `access/caller.ts` `mayActForOf` ran through `executeRaw` (`src/core/engine-sql/access-control.ts` `MAY_ACT_FOR_SQL`). |
 | `readAudiencePrincipals(memberIds, groupIds)` | `{ members: [], groups: [] }` | The store keeps no access members and no groups (see `listActiveAccessMembers`), so an audience entry names no enabled member and no existing group: each reads as unknown, as on a brain with none. On PGLite and Postgres the reads are the two statements `access/caller.ts` `resolveAudienceIdentities` ran through `executeRaw` (`AUDIENCE_MEMBERS_SQL`, `AUDIENCE_GROUPS_SQL`). |
 | `readAccessMembers(by)` | `[]` | The store keeps no access members (see `listActiveAccessMembers`), so no id names a member and the list is empty, as on a brain with none. On PGLite and Postgres the reads are the statements `access/members.ts` `getMember` and `listMembers` ran through `executeRaw` (`ACCESS_MEMBER_SQL`); the list filters out removed members in the statement unless `includeRemoved`. |

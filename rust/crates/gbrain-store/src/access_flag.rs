@@ -23,8 +23,10 @@
 //! on every write of a page that has `readable_by`. The flag is sticky, so the two differ only
 //! after an operator unsets the flag by hand, and then the store sets it again sooner.
 //!
-//! The other trigger, `access_members_mark_restricted`, has no store half: the store keeps no
-//! access members. See `rust/docs/store/access-flag.md`.
+//! The folder triggers `access_rules_mark_restricted` and `access_pending_coverage_mark_restricted`
+//! set it after a rule or a pending prefix is inserted; [`FlaggingWriter`] sets it on the put of
+//! either record (`access_rules.rs`). The trigger `access_members_mark_restricted` has no store
+//! half: the store keeps no access members. See `rust/docs/store/access-flag.md`.
 
 use crate::error::{INVALID_STATE, Result, StoreError};
 use crate::keys;
@@ -138,7 +140,9 @@ pub(crate) fn assumed_config(assumed: bool, key: &str, stored: Option<String>) -
 }
 
 /// A store write handle that sets the flag on every put of a page record with a top-level
-/// `readable_by` key, in the same write. `Store::write` hands every write closure one.
+/// `readable_by` key, and on every put of a folder rule or a pending prefix (`access_rules.rs`,
+/// the triggers `access_rules_mark_restricted` and `access_pending_coverage_mark_restricted`), in
+/// the same write. `Store::write` hands every write closure one.
 pub(crate) struct FlaggingWriter<'a>(pub(crate) &'a mut dyn KvWrite);
 
 impl KvRead for FlaggingWriter<'_> {
@@ -160,7 +164,9 @@ impl KvRead for FlaggingWriter<'_> {
 impl KvWrite for FlaggingWriter<'_> {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.0.put(key, value)?;
-        if is_page_record(key) && record_names_readers(value) {
+        if (is_page_record(key) && record_names_readers(value))
+            || crate::access_rules::marks_restricted(key)
+        {
             set_flag(self.0)?;
         }
         Ok(())

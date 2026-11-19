@@ -583,6 +583,7 @@ export const RUST_ENGINE_MEMBERS = {
   listAppliedPolicyRevisions: 'access_control',
   readMayActFor: 'access_control',
   readAudiencePrincipals: 'access_control',
+  readFolderAccess: 'access_control',
   readAccessMembers: 'access_control',
   listActiveAccessMembers: 'access_control',
   listAccessTokens: 'access_control',

@@ -57,6 +57,18 @@ const PINS: Pin[] = [
     texts: ['SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
   },
   {
+    from: 'src/core/access/caller.ts:168 folderAccessForAll (rules, then coverage; at 949a7c98cc)',
+    case: { method: 'readFolderAccess', variant: 'readers', run: e => e.readFolderAccess(['member:alice-example', 'group:team-a']) },
+    texts: ['SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]', `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`],
+  },
+  {
+    from: 'src/core/access/caller.ts:171 folderAccessForAll (no readers reads the coverage only; at 949a7c98cc)',
+    case: { method: 'readFolderAccess', variant: 'no-readers', run: e => e.readFolderAccess([]) },
+    texts: [`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`],
+  },
+  {
     from: 'src/core/access/members.ts:124 getMember (one member by id)',
     case: { method: 'readAccessMembers', variant: 'by-id', run: e => e.readAccessMembers({ id: 'alice-example' }) },
     texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,

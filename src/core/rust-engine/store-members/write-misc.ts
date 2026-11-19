@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor and readAudiencePrincipals; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
- * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor and readAudiencePrincipals; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -75,14 +75,23 @@ export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
 
 /**
- * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that
- * state is raw SQL, which this engine refuses). A slug is restricted under none of them, so the answer is false, as
- * PGLite answers for a brain with no folder rules and no pending covers (engine-sql/access-control.ts).
+ * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug
+ * under a rule of its source or a pending prefix is restricted; the store has no row-level security, so the unreadable
+ * part is always false.
  */
-export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], boolean> = async () => false;
+export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], boolean> = (brain, sourceId, slug) =>
+  storeCall({ member: 'isFolderRestricted', sourceId }, () => brain.isFolderRestricted(sourceId, slug));
 
-/** No source holds folder access state on this engine (see isFolderRestricted), so no revision is applied anywhere. */
-export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = async () => [];
+/** Each source with folder access state and its newest applied revision, by source id (gbrain-store `access_rules`). */
+export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = (brain) =>
+  storeCall({ member: 'listAppliedPolicyRevisions' }, () => brain.listAppliedPolicyRevisions());
+
+/**
+ * The rules whose readers name any of `readers` and the distinct pending prefixes, by source (gbrain-store
+ * `access_rules`). No row-level security hides them, so no `'!unreadable'` row appears.
+ */
+export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderAccessRows> = (brain, readers) =>
+  storeCall({ member: 'readFolderAccess' }, () => brain.readFolderAccess([...readers]));
 
 /**
  * A stdio server's may_act_for is a config value, which the store keeps. The store keeps no access tokens and no OAuth

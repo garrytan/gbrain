@@ -36,6 +36,43 @@ export interface MemberLookupRead {
   executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
 }
 
+/** An applied folder rule whose readers name one of the caller's principals. */
+export interface FolderRuleRow {
+  source_id: string;
+  rule_id: string;
+  readable_by: string[];
+}
+
+/** A pending or invalid folder prefix (`''` for the whole source); `'!unreadable'` when this role cannot read them. */
+export interface FolderCoverageRow {
+  source_id: string;
+  prefix: string;
+}
+
+/** The rows a caller's folder access is built from (access/caller.ts folderAccessForAll). */
+export interface FolderAccessRows {
+  rules: FolderRuleRow[];
+  coverage: FolderCoverageRow[];
+}
+
+/** The statements access/caller.ts folderAccessForAll ran through executeRaw: the rules, then the coverage. */
+export const FOLDER_RULES_FOR_READERS_SQL = 'SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]';
+export const FOLDER_COVERAGE_SQL = `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`;
+
+/**
+ * The applied rules whose readers name any of `readers` (none read when `readers` is empty) and every pending or invalid
+ * prefix by source and prefix. A failure is thrown unchanged; the caller reads it as satisfying nothing and covering everything.
+ */
+export async function readFolderAccess(exec: MemberLookupRead, readers: readonly string[]): Promise<FolderAccessRows> {
+  const rules = readers.length ? await exec.executeRaw<FolderRuleRow>(FOLDER_RULES_FOR_READERS_SQL, [[...readers]]) : [];
+  const coverage = await exec.executeRaw<FolderCoverageRow>(FOLDER_COVERAGE_SQL);
+  return {
+    rules: rules.map(r => ({ source_id: r.source_id, rule_id: r.rule_id, readable_by: r.readable_by ?? [] })),
+    coverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+  };
+}
+
 /**
  * Where a caller's may_act_for list is stored: a live legacy token row (id), a live OAuth client row (client id), or the
  * config value a stdio server reads (config key, mcp.stdio_may_act_for).
