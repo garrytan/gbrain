@@ -3,7 +3,8 @@
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
  * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here. countSourcePages counts one source's pages and insertSource creates a source
- * (store side: the same cli_reads/sources.rs). advanceSourceLastCommit moves the sync anchor (store side: sources.rs).
+ * (store side: the same cli_reads/sources.rs). advanceSourceLastCommit moves the sync anchor and readSourceLastCommit
+ * reads it (store side: sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from '../../engine-sql/sources.ts';
@@ -61,3 +62,7 @@ export const advanceSourceLastCommit: StoreMember<[sourceId: string, value: stri
     await storeCall({ member: 'advanceSourceLastCommit', sourceId },
       () => brain.advanceSourceLastCommit(sourceId, value, newestContentAt === undefined ? {} : { newestContentAt }));
   };
+
+/** The commit the source's last sync advanced to, or null. */
+export const readSourceLastCommit: StoreMember<[sourceId: string], string | null> = async (brain, sourceId) =>
+  await storeCall({ member: 'readSourceLastCommit', sourceId }, () => brain.readSourceLastCommit(sourceId)) as string | null;

@@ -120,6 +120,12 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
 }
 
+/** The commit the source's last sync advanced to (`last_commit`), or null before the first sync and for an unknown source. */
+export async function readSourceLastCommit(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
+  return row?.last_commit ?? null;
+}
+
 /**
  * Advances the source's sync anchor: stamps last_commit and last_sync_at (the database clock), and newest_content_at
  * too when `newestContentAt` is given (null clears it; undefined keeps it). An unknown source changes nothing.

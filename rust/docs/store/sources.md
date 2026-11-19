@@ -19,6 +19,7 @@ first advance; `getSource`, `listSourceRecords` and the notifier reads return th
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
 | `brain.advanceSourceLastCommit(id, value, { newestContentAt? })` | `boolean`, whether the source exists; one write that sets `last_commit` and `last_sync_at` (the process clock), and `newest_content_at` when the key is given (`null` clears it); archived sources advance too, and an unknown source changes nothing | `advanceSourceLastCommit` (the sync anchor) |
+| `brain.readSourceLastCommit(id)` | the source's `last_commit`, archived sources included, or `null` before a sync and for a missing source | `readSourceLastCommit` (the resident notifier's `lastCommit`) |
 | `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
 

@@ -698,6 +698,7 @@ fn a_last_commit_advance_stamps_the_source_and_due_prune_and_settle_compare_mark
     let dir = TempDir::new("notifier-last-commit");
     let store = open(&dir);
     source(&store, "alpha");
+    assert_eq!(store.read_source_last_commit("alpha").unwrap(), None);
     assert!(
         !store
             .advance_source_last_commit("nobody", "aaa", None)
@@ -710,6 +711,11 @@ fn a_last_commit_advance_stamps_the_source_and_due_prune_and_settle_compare_mark
     );
     let got = store.get_source("alpha").unwrap().unwrap();
     assert_eq!(got.last_commit.as_deref(), Some("aaa"));
+    assert_eq!(
+        store.read_source_last_commit("alpha").unwrap().as_deref(),
+        Some("aaa")
+    );
+    assert_eq!(store.read_source_last_commit("nobody").unwrap(), None);
     assert!(got.last_sync_at.is_some());
     let record = |store: &Store| {
         store

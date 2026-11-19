@@ -23,22 +23,32 @@ import { endSyncDispatchRead, syncDispatchRow, withSyncDispatchRead } from '../s
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-/** The statements the engine's top-level executeRaw sends while `fn` runs, whitespace-normalized. */
+/** The drain lease holder record write, as recorded: the typed member sends its statement below executeRaw. */
+const LEASE_WRITE = 'writeDrainLeaseHolder()';
+
+/**
+ * The statements the engine's top-level executeRaw sends while `fn` runs, whitespace-normalized, with the drain lease's
+ * holder record write (BrainEngine writeDrainLeaseHolder) recorded in its place as LEASE_WRITE.
+ */
 async function recordStatements(engine: BrainEngine, fn: () => Promise<unknown>): Promise<string[]> {
   const sent: string[] = [];
   const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
-  const original = target.executeRaw!;
+  const original = target.executeRaw!, writeHolder = target.writeDrainLeaseHolder!;
   target.executeRaw = function (this: unknown, ...args: unknown[]) {
     sent.push(String(args[0]).replace(/\s+/g, ' ').trim());
     return original.apply(this, args);
   };
+  target.writeDrainLeaseHolder = function (this: unknown, ...args: unknown[]) {
+    sent.push(LEASE_WRITE);
+    return writeHolder.apply(this, args);
+  };
   try { await fn(); return sent; }
-  finally { delete target.executeRaw; }
+  finally { delete target.executeRaw; delete target.writeDrainLeaseHolder; }
 }
 
 /** Each routing read the run sent before it took the drain lease (the lease holder record). */
 function routingReads(sent: string[]) {
-  const lease = sent.findIndex(sql => sql.startsWith('WITH gone AS (DELETE FROM minion_jobs'));
+  const lease = sent.indexOf(LEASE_WRITE);
   const before = lease < 0 ? sent : sent.slice(0, lease), under = lease < 0 ? [] : sent.slice(lease);
   const count = (match: (sql: string) => boolean) => before.filter(match).length;
   return {

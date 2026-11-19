@@ -118,7 +118,9 @@ The resident commit notifier's host lease, host source list, per-source rows and
 `notifier/resident.ts` `listHostSources`; `notifier/status.ts` `readSourceFreshness` and the
 `gbrain sync status` notifier block), and its wanted markers (`notifier/store.ts` `upsertMarker`,
 `attachMarkerJob`, `readMarkers`, `readDueMarkers`, `pruneSatisfiedMarkers`, `clearMarker` and
-`settleMarkers`). With these typed, a resident on this engine starts the notifier and records each
+`settleMarkers`), the sync request's source shape (`notifier/nudge.ts` `sourceSyncShape`), the first-due
+clock (`sync-pending.ts` `readFirstDue`) and the drain lease holder's progress (`persistence/sync-lease.ts`).
+With these typed, a resident on this engine starts the notifier and records each
 source's state and coverage, a sync request records its marker, and search reports each source's
 freshness, as on Postgres.
 
@@ -143,10 +145,13 @@ freshness, as on Postgres.
 | `brain.clearWantedMarker(sourceId, intent, generation)` | deletes the marker only at `generation`, in one write; `true` when it deleted one | `clearWantedMarker` |
 | `brain.settleFreshnessMarker(sourceId, generation, checkoutHead)` | deletes the source's freshness marker only at `generation`, in one write, and only when its `wanted_head` is null or equals the source's `last_commit`, or `checkoutHead` is set and equals a set `last_commit` | `settleFreshnessMarker` |
 | `brain.listSourceWantedMarkers(sourceId)` | the source's markers `{ intent, wanted_head, first_due_at, requested_by }`, ordered by `first_due_at` and intent, for the `gbrain sync status` notifier block | `listSourceWantedMarkers` |
+| `brain.readSourceSyncShape(sourceId)` | `{ local_path, root, bound }` for a source that exists and is not archived, else `null`. This engine keeps no managed worktree binding, so `root` is `null` and `bound` is `false` | `readSourceSyncShape` |
+| `brain.readNotifierFirstDue(ids)` | one row per existing listed source (archived included), in id order: `{ source_id, observed_head, first_due_at }`. `observed_head` is the notifier row's at the source's incarnation; `first_due_at` is the earlier of that row's `first_due_at` when its state is not idle and the oldest freshness marker whose `wanted_head` is null or differs from the source's `last_commit` | `readNotifierFirstDue` |
+| `readDrainHolderProgress(sourceId, since)` | `null`, answered in TypeScript (`store-members/write-misc.ts`): this engine keeps no managed worktree binding or managed commit journal, so the holder's progress reads zero commits, as an unbound source does on Postgres | `readDrainHolderProgress` |
 
-The drain lease still refuses with `engine_capability_missing`; the notifier logs the refusal once
-and keeps running. A source delete removes its notifier row and its wanted markers. A freshness
-marker that names a head stays due on this engine until a drain clears it by generation.
+A source delete removes its notifier row and its wanted markers. The drain lease's holder record and
+the notifier's live-job read are in [jobs.md](jobs.md); the source's `last_commit` read is in
+[sources.md](sources.md).
 
 ## Effect scans
 

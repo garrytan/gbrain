@@ -3351,6 +3351,17 @@
         ],
         "flagOnScopes": []
       },
+      "readDrainHolderProgress#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readDueWantedMarkers#all": {
         "flagOffLanes": [
           "pool"
@@ -3774,6 +3785,17 @@
         "flagOnScopes": []
       },
       "readSourceChunkerVersion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSourceLastCommit#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5517,6 +5539,8 @@
         "readCursorEdition": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
+        "readDrainHolderProgress": "none",
+        "readDrainLeaseBeacon": "none",
         "readDueWantedMarkers": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingIdentity": "none",
@@ -5547,6 +5571,7 @@
         "readLedgerSource": "none",
         "readLegacyJobAuthority": "none",
         "readLinkRelationshipEvidence": "none",
+        "readLiveJobIds": "none",
         "readLivePageBody": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
@@ -5588,6 +5613,7 @@
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",
+        "readSourceLastCommit": "none",
         "readSourceMembership": "none",
         "readSourceRow": "none",
         "readSourceState": "none",
@@ -5615,12 +5641,14 @@
         "recordWakeCronRun": "none",
         "recordWakeTermsAcceptance": "none",
         "refreshCycleLock": "none",
+        "refreshDrainLeaseHolder": "none",
         "refreshPageBody": "none",
         "refreshPageOrigin": "none",
         "registerBeforeDisconnect": "none",
         "relationalChainHop": "none",
         "relationalFanout": "none",
         "releaseCycleLock": "none",
+        "releaseDrainLeaseHolder": "none",
         "releaseNotifierLease": "none",
         "releaseWatchdogClaim": "none",
         "removeLink": "none",
@@ -5741,6 +5769,7 @@
         "withScopedReadTransaction": "none",
         "wordLexemes": "none",
         "writeContradictionsRun": "none",
+        "writeDrainLeaseHolder": "none",
         "writeLinkRelationshipState": "none",
         "writeManualLinkTransitions": "none",
         "writeMiscRead": "none",

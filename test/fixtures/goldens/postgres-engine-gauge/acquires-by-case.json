@@ -372,6 +372,9 @@
     "readSourceChunkerVersion#default": {
       "raw": 1
     },
+    "readSourceLastCommit#default": {
+      "raw": 1
+    },
     "readSourceRow#default": {
       "raw": 1
     },

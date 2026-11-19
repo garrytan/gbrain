@@ -551,7 +551,6 @@ src/core/minions/terminal-hook.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
 src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1
-src/core/notifier/resident.ts	execute_raw	2
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
@@ -793,7 +792,6 @@ src/core/persistence/sync-holds-carried.ts	execute_raw	1
 src/core/persistence/sync-holds.ts	execute_raw	31
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
-src/core/persistence/sync-lease.ts	execute_raw	5
 src/core/persistence/sync-markers.ts	execute_raw	9
 src/core/persistence/sync-movement.ts	execute_raw	5
 src/core/persistence/sync-origin.ts	execute_raw	1

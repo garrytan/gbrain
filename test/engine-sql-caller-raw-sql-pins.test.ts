@@ -298,6 +298,50 @@ const PINS: Pin[] = [
     from: 'src/core/sync-anchor.ts:277 writeSyncAnchor, without a newest content time (at 87bd59b208)',
     case: { method: 'advanceSourceLastCommit', variant: 'default', run: e => e.advanceSourceLastCommit('source-a', 'abc123') },
     texts: ['UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2'],
+  },  {
+    from: 'src/core/notifier/resident.ts:50 sqlNotifierStore liveJobs (at e98683e983)',
+    case: { method: 'readLiveJobIds', variant: 'default', run: e => e.readLiveJobIds([1, 2]) },
+    texts: ["SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status IN ('waiting','active','delayed','waiting-children','paused')"],
+  },
+  {
+    from: 'src/core/notifier/resident.ts:169 residentNotifierOptions lastCommit (at e98683e983)',
+    case: { method: 'readSourceLastCommit', variant: 'default', run: e => e.readSourceLastCommit('source-a') },
+    texts: ['SELECT last_commit FROM sources WHERE id=$1'],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:136 readDrainLease (at e98683e983)',
+    case: { method: 'readDrainLeaseBeacon', variant: 'default', run: e => e.readDrainLeaseBeacon('token-a') },
+    texts: ["SELECT data->'drain_lease_beacon' AS meta FROM minion_jobs WHERE queue=$1 AND lock_token=$2"],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:161 holderProgress (at e98683e983)',
+    case: { method: 'readDrainHolderProgress', variant: 'default', run: e => e.readDrainHolderProgress('source-a', '1970-01-01T00:00:00.000Z') },
+    texts: [`
+    SELECT (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.state='committed'
+        AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND r.completed_at >= $2::timestamptz) AS committed,
+      (SELECT max(r.completed_at) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at,
+      GREATEST((SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=b.source_id||':'||b.source_incarnation::text),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op='sync-hold-summary' AND c.fingerprint=b.source_id||':'||b.source_incarnation::text)) AS last_saved_at
+    FROM persistence_source_bindings b WHERE b.source_id=$1`],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:259 writeHolderRecord (at e98683e983)',
+    case: { method: 'writeDrainLeaseHolder', variant: 'default', run: e => e.writeDrainLeaseHolder({ sourceId: 'source-a', lockToken: 'token-a', beacon: { kind: 'job', id: '7', version: '0.0.0.0' }, ttlMinutes: 5 }) },
+    texts: [`WITH gone AS (DELETE FROM minion_jobs WHERE queue=$1 AND name='sync' AND data->>'sourceId'=$5 RETURNING 1)
+    INSERT INTO minion_jobs(name,queue,status,submission_authority,data,max_attempts,max_stalled,lock_token,lock_until,started_at,remove_on_complete,remove_on_fail)
+    SELECT 'sync',$1,'active','{"version":1,"kind":"application"}'::jsonb,$2::text::jsonb,1,0,$3,now()+make_interval(mins => $4),now(),true,true FROM (SELECT count(*) FROM gone) g`],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:284 withDrainLease beacon refresh (at e98683e983)',
+    case: { method: 'refreshDrainLeaseHolder', variant: 'default', run: e => e.refreshDrainLeaseHolder('token-a', 5) },
+    texts: ['UPDATE minion_jobs SET lock_until=now()+make_interval(mins => $3),updated_at=now() WHERE queue=$1 AND lock_token=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:295 withDrainLease release (at e98683e983)',
+    case: { method: 'releaseDrainLeaseHolder', variant: 'default', run: e => e.releaseDrainLeaseHolder('token-a') },
+    texts: ['DELETE FROM minion_jobs WHERE queue=$1 AND lock_token=$2'],
   },
 ];
 

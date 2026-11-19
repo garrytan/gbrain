@@ -288,6 +288,13 @@ export async function getJob(tx: Raw, id: number): Promise<JobRow | null> {
   return row ?? null;
 }
 
+/** The given ids whose job is waiting, active, delayed, waiting-children or paused; a finished or missing job is dropped. */
+export async function readLiveJobIds(tx: Raw, ids: number[]): Promise<number[]> {
+  const rows = await tx.executeRaw<{ id: unknown }>(
+    "SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status IN ('waiting','active','delayed','waiting-children','paused')", [ids]);
+  return rows.map(r => Number(r.id));
+}
+
 export interface ListJobsFilter {
   status?: string;
   queue?: string;
