@@ -526,6 +526,17 @@
         ],
         "flagOnScopes": []
       },
+      "deleteOAuthClient#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "deletePage#default": {
         "flagOffLanes": [
           "pool"
@@ -887,6 +898,17 @@
         "flagOnScopes": []
       },
       "findTrajectory#sourceIds+metric+since+until": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "forgetWakeCredential#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4166,6 +4188,28 @@
         ],
         "flagOnScopes": []
       },
+      "revokeAccessToken#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "revokeAccessTokensNamed#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "sealChunks#default": {
         "flagOffLanes": [
           "tx"
@@ -5071,6 +5115,7 @@
         "deleteFactRelinkMemos": "none",
         "deleteFactsForPage": "none",
         "deleteJobAttachment": "none",
+        "deleteOAuthClient": "none",
         "deletePage": "none",
         "deletePages": "none",
         "deleteStalePageWriteGateReceipts": "none",
@@ -5119,6 +5164,7 @@
         "findTopologyChanges": "none",
         "findTrajectory": "none",
         "flipBodyGeneration": "none",
+        "forgetWakeCredential": "none",
         "forgetWakeMember": "none",
         "generatedPagesIn": "none",
         "getAdjacencyBoosts": "none",
@@ -5586,6 +5632,8 @@
         "retireSegmentDerivations": "none",
         "retryJob": "none",
         "revertToVersion": "none",
+        "revokeAccessToken": "none",
+        "revokeAccessTokensNamed": "none",
         "rewriteLinks": "none",
         "rlsScopeBindingEnabled": "none",
         "runMigration": "none",

@@ -9,9 +9,9 @@
  * statement is built from data. Where a read had no ORDER BY the caller never depended on one, an order is added so the
  * engines agree on it.
  *
- * Left raw on purpose (the Rust engine refuses them loudly): the credential half of `wakeshift/forget.ts`, which runs
- * inside the OAuth and access-token transactions over a scalar-only query (its member half is `forgetWakeMember`), and `principalLive` in `wakeshift/drain.ts`, which reads
- * `oauth_clients`, `access_tokens` and the access members the Rust store does not keep.
+ * Left raw on purpose (the Rust engine refuses it loudly): `principalLive` in `wakeshift/drain.ts`, which reads
+ * `oauth_clients`, `access_tokens` and the access members the Rust store does not keep. Both halves of
+ * `wakeshift/forget.ts` are typed: `forgetWakeMember` and `forgetWakeCredential`.
  */
 import type { BrainEngine } from '../engine.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
@@ -380,6 +380,37 @@ export async function forgetWakeMember(tx: Raw, memberId: string): Promise<{ end
   const queued = await tx.executeRaw(FORGET_WAKE_MEMBER_SQL.queue, [memberId]);
   const ended = await tx.executeRaw(FORGET_WAKE_MEMBER_SQL.end, [memberId]);
   await tx.executeRaw(FORGET_WAKE_MEMBER_SQL.terms, [`member:${memberId}`]);
+  return { ended: ended.length, queued: queued.length };
+}
+
+/**
+ * The statements `wakeshift/forget.ts` ran for a revoked token or a deleted OAuth client, byte for byte: $1 is the
+ * principal kind and $2 its id in `queue` and `end`; `terms` binds `<kind>:<id>`. Only the watches with no member
+ * queue a forget (a member's user outlives one credential), while every open watch of the credential ends.
+ */
+export const FORGET_WAKE_CREDENTIAL_SQL = {
+  queue: `INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions
+      WHERE principal_kind = $1 AND principal_id = $2 AND member_id IS NULL
+      ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`,
+  end: `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+      WHERE principal_kind = $1 AND principal_id = $2 AND state = 'open' RETURNING id`,
+  terms: 'DELETE FROM wake_terms_acceptances WHERE principal_key = $1',
+} as const;
+
+/** A credential whose Wakeshift state a revoke or a client delete forgets. */
+export type WakeCredentialKind = 'oauth_client' | 'legacy_token';
+
+/**
+ * A revoked token's or a deleted OAuth client's Wakeshift state (plan D6): queue a forget of each user its member-less
+ * watches ran under, end its open watches (`principal_revoked`, lease dropped) and delete the acceptances of
+ * `<kind>:<id>`. A token id is matched in lower case, the form its watches store. Returns how many forgets were queued
+ * and how many watches ended.
+ */
+export async function forgetWakeCredential(tx: Raw, kind: WakeCredentialKind, id: string): Promise<{ ended: number; queued: number }> {
+  const principalId = kind === 'legacy_token' ? id.toLowerCase() : id;
+  const queued = await tx.executeRaw(FORGET_WAKE_CREDENTIAL_SQL.queue, [kind, principalId]);
+  const ended = await tx.executeRaw(FORGET_WAKE_CREDENTIAL_SQL.end, [kind, principalId]);
+  await tx.executeRaw(FORGET_WAKE_CREDENTIAL_SQL.terms, [`${kind}:${principalId}`]);
   return { ended: ended.length, queued: queued.length };
 }
 

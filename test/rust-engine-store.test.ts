@@ -603,6 +603,53 @@ describe('access member reads on a Rust brain', () => {
       watch: ['ended', 'principal_revoked'], forgets: [wakeUser], terms: false,
     });
   });
+
+  withAddon('forgetting a revoked token or a deleted OAuth client writes its Wakeshift forget on the store, not through raw SQL', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const tokenId = 'abcdef01-2345-6789-abcd-ef0123456789';
+    const watched = async (n: number, principalKind: 'oauth_client' | 'legacy_token', principalId: string) => engine.openWakeWatch({
+      event: 'gbrain.job.finished', target: String(n), targetRef: null, principalKind, principalId,
+      memberId: null, wakeUser: String(n).repeat(32), wsSubscriptionId: `ws-${n}`, expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    const client = await watched(1, 'oauth_client', 'client-a');
+    const token = await watched(2, 'legacy_token', tokenId);
+    const version = 'b'.repeat(16);
+    await engine.recordWakeTermsAcceptance('oauth_client:client-a', version);
+    await engine.recordWakeTermsAcceptance(`legacy_token:${tokenId}`, version);
+    const errors: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    const results: unknown[] = [];
+    try {
+      const { forgetWakePrincipal } = await import('../src/core/wakeshift/forget.ts') as Record<string, unknown> as {
+        forgetWakePrincipal: (e: typeof engine, who: { kind: 'oauth_client' | 'legacy_token'; id: string }) => Promise<{ ended: number; queued: number }>;
+      };
+      results.push(await forgetWakePrincipal(engine, { kind: 'oauth_client', id: 'client-a' }));
+      results.push(await forgetWakePrincipal(engine, { kind: 'legacy_token', id: tokenId.toUpperCase() }));
+    } finally {
+      console.error = error;
+    }
+    const stateOf = async (principalKind: 'oauth_client' | 'legacy_token', principalId: string, id: number) => {
+      const [row] = await engine.listWakeWatches({ principalKind, principalId, memberId: null, scope: 'open_or_recent', id });
+      return [row?.state, row?.last_error];
+    };
+    expect({
+      results, errors, raw,
+      watches: [await stateOf('oauth_client', 'client-a', client), await stateOf('legacy_token', tokenId, token)],
+      forgets: (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(c => c.wake_user),
+      terms: [await engine.hasWakeTermsAcceptance('oauth_client:client-a', version), await engine.hasWakeTermsAcceptance(`legacy_token:${tokenId}`, version)],
+    }).toEqual({
+      results: [{ ended: 1, queued: 1 }, { ended: 1, queued: 1 }], errors: [], raw: [],
+      watches: [['ended', 'principal_revoked'], ['ended', 'principal_revoked']],
+      forgets: ['1'.repeat(32), '2'.repeat(32)], terms: [false, false],
+    });
+  });
 });
 
 describe('access member reads on a Rust brain with members', () => {

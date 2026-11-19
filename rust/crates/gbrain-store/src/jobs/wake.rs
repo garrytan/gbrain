@@ -1051,13 +1051,47 @@ impl Store {
         if member_id.contains('\0') {
             return Ok(json!({ "ended": 0, "queued": 0 }));
         }
+        let mine = |w: &WatchRecord| w.member_id.as_deref() == Some(member_id);
+        self.forget_wake_principal(&mine, &mine, &format!("member:{member_id}"))
+    }
+
+    /// `forgetWakeCredential`: a revoked token's or a deleted OAuth client's Wakeshift state, in
+    /// one write. A token id is matched in lower case. Queue a forget of each distinct `wake_user`
+    /// of the credential's watches that carry no member (any state; the same sequence spend as
+    /// `forgetWakeMember`), end every open watch of the credential, member or not
+    /// (`principal_revoked`, lease dropped), and delete the terms acceptances of exactly
+    /// `<kind>:<id>`. Returns `{ ended, queued }`.
+    pub fn forget_wake_credential(&self, kind: &str, id: &str) -> Result<Value> {
+        if kind.contains('\0') || id.contains('\0') {
+            return Ok(json!({ "ended": 0, "queued": 0 }));
+        }
+        let id = if kind == "legacy_token" {
+            id.to_lowercase()
+        } else {
+            id.to_string()
+        };
+        let theirs = |w: &WatchRecord| w.principal_kind == kind && w.principal_id == id;
+        let queue = |w: &WatchRecord| theirs(w) && w.member_id.is_none();
+        self.forget_wake_principal(&queue, &theirs, &format!("{kind}:{id}"))
+    }
+
+    /// The write both forgets share: queue a forget of each distinct `wake_user` of the watches
+    /// `queue` picks, end the open watches `end` picks and delete the terms acceptances of exactly
+    /// `principal_key`.
+    fn forget_wake_principal(
+        &self,
+        queue: &dyn Fn(&WatchRecord) -> bool,
+        end: &dyn Fn(&WatchRecord) -> bool,
+        principal_key: &str,
+    ) -> Result<Value> {
         self.write(|tx| {
             let now = self.env.now_micros();
-            let mine: Vec<WatchRecord> = all_watches(tx)?
-                .into_iter()
-                .filter(|w| w.member_id.as_deref() == Some(member_id))
+            let watches = all_watches(tx)?;
+            let users: BTreeSet<String> = watches
+                .iter()
+                .filter(|w| queue(w))
+                .map(|w| w.wake_user.clone())
                 .collect();
-            let users: BTreeSet<String> = mine.iter().map(|w| w.wake_user.clone()).collect();
             let mut queued = 0i64;
             for wake_user in users {
                 let id = next_seq(tx, "wake_forget")?;
@@ -1079,7 +1113,7 @@ impl Store {
                 queued += 1;
             }
             let mut ended = 0i64;
-            for old in mine.into_iter().filter(|w| w.state == "open") {
+            for old in watches.into_iter().filter(|w| w.state == "open" && end(w)) {
                 let mut row = old.clone();
                 row.state = "ended".into();
                 row.last_error = Some("principal_revoked".into());
@@ -1088,8 +1122,7 @@ impl Store {
                 save_watch(tx, Some(&old), &row)?;
                 ended += 1;
             }
-            let principal_key = format!("member:{member_id}");
-            let under = terms_key(&principal_key, "");
+            let under = terms_key(principal_key, "");
             let exact = under.len() + 16;
             let mut gone = Vec::new();
             scan_prefix(tx, &under, false, &mut |k, _| {

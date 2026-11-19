@@ -555,11 +555,15 @@ export const DOMAIN_OF: Record<string, string> = {
   'readAudiencePrincipals': OOS.callerRawSql,
   'readAccessMembers': OOS.callerRawSql,
   'readAccessCredentials': OOS.callerRawSql,
+  'revokeAccessTokensNamed': OOS.callerRawSql,
+  'revokeAccessToken': OOS.callerRawSql,
+  'deleteOAuthClient': OOS.callerRawSql,
   'listAudienceAccessMembers': OOS.callerRawSql,
   'readLiveMember': OOS.callerRawSql,
   'readAccessGroups': OOS.callerRawSql,
   'listPagesNamingReader': OOS.callerRawSql,
   'forgetWakeMember': OOS.callerRawSql,
+  'forgetWakeCredential': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1338,6 +1342,9 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readAudiencePrincipals', [['members-and-groups', (e) => e.readAudiencePrincipals(['alice-example'], ['team-a'])]]),
   ...variants('readAccessMembers', [['by-id', (e) => e.readAccessMembers({ id: 'alice-example' })], ['by-email', (e) => e.readAccessMembers({ email: 'alice@example.com' })], ['live', (e) => e.readAccessMembers({ includeRemoved: false })], ['all', (e) => e.readAccessMembers({ includeRemoved: true })]]),
   ...variants('readAccessCredentials', [['token-name', (e) => e.readAccessCredentials({ tokenName: 'laptop' })], ['member', (e) => e.readAccessCredentials({ memberId: 'alice-example' })]]),
+  ...variants('revokeAccessTokensNamed', [['default', (e) => e.revokeAccessTokensNamed('laptop')]]),
+  ...variants('revokeAccessToken', [['default', (e) => e.revokeAccessToken('00000000-0000-4000-8000-0000000000c1')]]),
+  ...variants('deleteOAuthClient', [['default', (e) => e.deleteOAuthClient('client-a')]]),
   ...variants('listAudienceAccessMembers', [['default', (e) => e.listAudienceAccessMembers()]]),
   ...variants('readLiveMember', [
     ['member', (e) => e.readLiveMember('member', 'alice-example')],
@@ -1348,6 +1355,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readAccessGroups', [['all', (e) => e.readAccessGroups(null)], ['by-id', (e) => e.readAccessGroups('team-a')]]),
   ...variants('listPagesNamingReader', [['default', (e) => e.listPagesNamingReader('member:alice-example')]]),
   ...variants('forgetWakeMember', [['default', (e) => e.forgetWakeMember('alice-example')]]),
+  ...variants('forgetWakeCredential', [['default', (e) => e.forgetWakeCredential('oauth_client', 'client-a')]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

@@ -18,7 +18,6 @@
 
 import type { BrainEngine } from './engine.ts';
 import { ALLOWED_SCOPES_LIST, assertAllowedScopes } from './scope.ts';
-import type { SqlQuery } from './sql-query.ts';
 import { forgetWakePrincipal } from './wakeshift/forget.ts';
 import { opError } from './ops/contract.ts';
 import { generateToken, hashToken, isUndefinedColumnError } from './utils.ts';
@@ -141,17 +140,13 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
  * that id exists (already revoked or never existed) — callers treat that as
  * already-done, not failure.
  */
-export async function revokeLegacyTokenById(sql: SqlQuery, id: string): Promise<boolean> {
+export async function revokeLegacyTokenById(engine: BrainEngine, id: string): Promise<boolean> {
   if (!TOKEN_ID_RE.test(id)) {
     throw new Error(`not a token id (expected a UUID): ${id}`);
   }
-  const rows = await sql`
-    UPDATE access_tokens SET revoked_at = now()
-    WHERE id = ${id}::uuid AND revoked_at IS NULL
-    RETURNING 1 AS ok
-  `;
-  if (rows.length > 0) await forgetWakePrincipal(sql, { kind: 'legacy_token', id });
-  return rows.length > 0;
+  const revoked = await engine.revokeAccessToken(id) !== null;
+  if (revoked) await forgetWakePrincipal(engine, { kind: 'legacy_token', id });
+  return revoked;
 }
 
 /**

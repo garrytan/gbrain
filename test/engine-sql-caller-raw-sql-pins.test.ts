@@ -157,6 +157,44 @@ const PINS: Pin[] = [
       'DELETE FROM wake_terms_acceptances WHERE principal_key = $1',
     ],
   },
+  {
+    from: 'src/core/wakeshift/forget.ts forgetWakePrincipal (credential), called from auth.ts revoke/revokeById/revokeClient and token-mint.ts revokeLegacyTokenById',
+    case: { method: 'forgetWakeCredential', variant: 'default', run: e => e.forgetWakeCredential('oauth_client', 'client-a') },
+    texts: [
+      `INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions
+      WHERE principal_kind = $1 AND principal_id = $2 AND member_id IS NULL
+      ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`,
+      `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+      WHERE principal_kind = $1 AND principal_id = $2 AND state = 'open' RETURNING id`,
+      'DELETE FROM wake_terms_acceptances WHERE principal_key = $1',
+    ],
+  },
+  {
+    from: 'src/commands/auth.ts revoke (by name)',
+    case: { method: 'revokeAccessTokensNamed', variant: 'default', run: e => e.revokeAccessTokensNamed('laptop') },
+    texts: [`
+      UPDATE access_tokens SET revoked_at = now()
+      WHERE name = $1 AND revoked_at IS NULL
+      RETURNING id
+    `],
+  },
+  {
+    from: 'src/commands/auth.ts revokeById, src/core/token-mint.ts revokeLegacyTokenById',
+    case: { method: 'revokeAccessToken', variant: 'default', run: e => e.revokeAccessToken('00000000-0000-4000-8000-0000000000c1') },
+    texts: [`
+      UPDATE access_tokens SET revoked_at = now()
+      WHERE id = $1::uuid AND revoked_at IS NULL
+      RETURNING name
+    `],
+  },
+  {
+    from: 'src/commands/auth.ts revokeClient',
+    case: { method: 'deleteOAuthClient', variant: 'default', run: e => e.deleteOAuthClient('client-a') },
+    texts: [`
+        DELETE FROM oauth_clients WHERE client_id = $1
+        RETURNING client_id, client_name
+      `],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

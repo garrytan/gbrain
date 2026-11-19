@@ -9,14 +9,11 @@
  * which outlives that one credential: its watches end, and the member's user
  * is forgotten when the member is removed.
  *
- * A credential is forgotten over the scalar-only SqlQuery, so auth.ts and
- * token-mint.ts can call it with the handle they already hold. A member is
- * forgotten through the typed engine member forgetWakeMember
- * (engine-sql/jobs-wake.ts), so a Rust brain runs it too. Best effort: a
- * failure prints one stderr line and never fails the removal.
+ * Both halves run through typed engine members (engine-sql/jobs-wake.ts), so a Rust brain runs them too: a member
+ * through forgetWakeMember, a token or client through forgetWakeCredential. Best effort: a failure prints one stderr
+ * line and never fails the removal.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { SqlQuery } from '../sql-query.ts';
 
 /** A credential to forget; a member goes through forgetWakeMember. */
 export type ForgetTarget = { kind: 'oauth_client' | 'legacy_token'; id: string };
@@ -36,16 +33,9 @@ export async function forgetWakeMember(engine: BrainEngine, memberId: string): P
 }
 
 /** Forget a revoked token or a deleted OAuth client (auth.ts, token-mint.ts). */
-export async function forgetWakePrincipal(sql: SqlQuery, who: ForgetTarget): Promise<{ ended: number; queued: number }> {
+export async function forgetWakePrincipal(engine: BrainEngine, who: ForgetTarget): Promise<{ ended: number; queued: number }> {
   try {
-    const id = who.kind === 'legacy_token' ? who.id.toLowerCase() : who.id;
-    const queued = await sql`INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions
-      WHERE principal_kind = ${who.kind} AND principal_id = ${id} AND member_id IS NULL
-      ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`;
-    const ended = await sql`UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
-      WHERE principal_kind = ${who.kind} AND principal_id = ${id} AND state = 'open' RETURNING id`;
-    await sql`DELETE FROM wake_terms_acceptances WHERE principal_key = ${`${who.kind}:${id}`}`;
-    return { ended: ended.length, queued: queued.length };
+    return await engine.forgetWakeCredential(who.kind, who.id);
   } catch (e) {
     return reportFailure(e);
   }

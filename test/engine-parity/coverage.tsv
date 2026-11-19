@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 696/696
+# covered: 700/700
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -59,7 +59,7 @@
 # open_loops: 3/3
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 25/25
+# write_misc: 28/28
 # telemetry: 10/10
 # field_usage: 1/1
 # alias_fanout_reads: 4/4
@@ -69,7 +69,7 @@
 # trust_fence: 1/1
 # trust_proposals: 6/6
 # connect_gate: 4/4
-# jobs_wake: 20/20
+# jobs_wake: 21/21
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -705,6 +705,9 @@ readMayActFor	write_misc	yes	3	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	3	no	yes	yes	serves
 readAccessMembers	write_misc	yes	8	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
+revokeAccessTokensNamed	write_misc	yes	2	no	yes	yes	serves
+revokeAccessToken	write_misc	yes	2	no	yes	yes	serves
+deleteOAuthClient	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readLiveMember	write_misc	yes	3	no	yes	yes	serves
 readAccessGroups	write_misc	yes	3	no	yes	yes	serves
@@ -747,23 +750,24 @@ hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves
 listRetiredDeactivations	connect_gate	yes	2	no	yes	yes	serves
-openWakeWatch	jobs_wake	yes	12	no	yes	yes	serves
-listWakeWatches	jobs_wake	yes	7	no	yes	yes	serves
-endWakeWatches	jobs_wake	yes	7	no	yes	yes	serves
+openWakeWatch	jobs_wake	yes	14	no	yes	yes	serves
+listWakeWatches	jobs_wake	yes	9	no	yes	yes	serves
+endWakeWatches	jobs_wake	yes	8	no	yes	yes	serves
 countWakeWatches	jobs_wake	yes	1	no	yes	yes	serves
 readWakeDoctor	jobs_wake	yes	3	no	yes	yes	serves
-countPendingWakeForgets	jobs_wake	yes	3	no	yes	yes	serves
+countPendingWakeForgets	jobs_wake	yes	5	no	yes	yes	serves
 listWakeCrons	jobs_wake	yes	1	no	yes	yes	serves
 addWakeCron	jobs_wake	yes	4	no	yes	yes	serves
 removeWakeCron	jobs_wake	yes	1	no	yes	yes	serves
 hasWakeCron	jobs_wake	yes	2	no	yes	yes	serves
 recordWakeCronRun	jobs_wake	yes	3	no	yes	yes	serves
-hasWakeTermsAcceptance	jobs_wake	yes	2	no	yes	yes	serves
-recordWakeTermsAcceptance	jobs_wake	yes	2	no	yes	yes	serves
+hasWakeTermsAcceptance	jobs_wake	yes	4	no	yes	yes	serves
+recordWakeTermsAcceptance	jobs_wake	yes	4	no	yes	yes	serves
 listDueWakeWatches	jobs_wake	yes	5	no	yes	yes	serves
 claimWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
 settleWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
-queueWakeForget	jobs_wake	yes	3	no	yes	yes	serves
+queueWakeForget	jobs_wake	yes	4	no	yes	yes	serves
 forgetWakeMember	jobs_wake	yes	1	no	yes	yes	serves
-claimWakeForgets	jobs_wake	yes	3	no	yes	yes	serves
+forgetWakeCredential	jobs_wake	yes	2	no	yes	yes	serves
+claimWakeForgets	jobs_wake	yes	5	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves

@@ -32,6 +32,7 @@ write request journal, which a parity case cannot move or write).
 | `settleWakeWatch(settle)` | true only while the watch is open and still holds that lease. A null `marker` or `attempts` keeps the column, `error` always replaces `last_error`, `delayS` moves the next attempt |
 | `queueWakeForget(user, memberId)` | queues one pending forget per user |
 | `forgetWakeMember(memberId)` | `{ ended, queued }` for a removed member: a forget queued for each user any of its watches (in any state) names, unless one is pending; its open watches ended with `principal_revoked` and no lease; the terms acceptances of exactly `member:<id>` deleted. One write |
+| `forgetWakeCredential(kind, id)` | `{ ended, queued }` for a revoked `legacy_token` (id matched in lower case) or a deleted `oauth_client`: a forget queued for each user its member-less watches (in any state) name, unless one is pending; all its open watches, with or without a member, ended with `principal_revoked` and no lease; the terms acceptances of exactly `<kind>:<id>` deleted. One write |
 | `claimWakeForgets({ leaseSeconds, limit })` | leases the due pending forgets, oldest due first |
 | `settleWakeForget(settle)` | true only while the forget is pending and holds that lease |
 
@@ -61,8 +62,8 @@ Under the jobs tag `keys::JOBS` (`m`). Integers are big-endian, signed ones with
 ## What differs from the SQL engines
 
 - A refused insert gives back its sequence value here (the write rolls back); Postgres keeps it spent. A conflicting
-  `openWakeWatch` and a `queueWakeForget` that finds a forget pending spend a value on both. `forgetWakeMember` spends
-  one value per user it considers, pending or not, in byte order of the user; Postgres spends them in the order its
+  `openWakeWatch` and a `queueWakeForget` that finds a forget pending spend a value on both. `forgetWakeMember` and
+  `forgetWakeCredential` spend one value per user they consider, pending or not, in byte order of the user; Postgres spends them in the order its
   `SELECT DISTINCT` returns, which it does not specify.
 - The wake tables have no foreign keys: deleting a job, a write request or a member changes nothing here, and a watch
   whose job is gone is due ("gone").
