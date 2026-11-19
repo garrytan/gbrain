@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 700/700
+# covered: 713/713
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -34,6 +34,7 @@
 # import_guards: 10/10
 # access_grants: 6/6
 # access_members: 11/11
+# shared_skill_members: 13/13
 # persistence_journal: 44/44
 # entity_reads: 6/6
 # cycle_locks: 7/7
@@ -76,7 +77,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	61	no	yes	yes	serves
+transaction	lifecycle	yes	66	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -351,9 +352,9 @@ getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	5	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	7	no	yes	yes	serves
-readLocalWriterRow	import_guards	yes	8	no	yes	yes	serves
-insertLocalWriterRow	import_guards	yes	9	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	9	no	yes	yes	serves
+readLocalWriterRow	import_guards	yes	9	no	yes	yes	serves
+insertLocalWriterRow	import_guards	yes	10	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	34	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
@@ -363,8 +364,8 @@ readOAuthClientReceiptGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenReceiptGrant	access_grants	yes	1	no	yes	yes	serves
 readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
-readLocalWriterMemberGrant	access_grants	yes	4	no	yes	yes	serves
-readSharedSkillServingEpoch	access_grants	yes	2	no	yes	yes	serves
+readLocalWriterMemberGrant	access_grants	yes	5	no	yes	yes	serves
+readSharedSkillServingEpoch	access_grants	yes	4	no	yes	yes	serves
 insertAccessMember	access_members	yes	14	no	yes	yes	serves
 setAccessMemberDisabled	access_members	yes	7	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
@@ -376,6 +377,19 @@ deleteAccessGroup	access_members	yes	1	no	yes	yes	serves
 readCredentialBindingForUpdate	access_members	yes	1	no	yes	yes	serves
 writeCredentialBinding	access_members	yes	1	no	yes	yes	serves
 writeCredentialReadsUnscoped	access_members	yes	1	no	yes	yes	serves
+readSharedSkillCatalogIdentity	shared_skill_members	yes	2	no	yes	yes	serves
+listSharedSkillCatalogHeads	shared_skill_members	yes	2	no	yes	yes	serves
+readSharedSkillPolicyRow	shared_skill_members	yes	1	no	yes	yes	serves
+listSharedSkillFollowSources	shared_skill_members	yes	2	no	yes	yes	serves
+lockSharedSkillBrainId	shared_skill_members	yes	5	no	yes	yes	serves
+readSharedSkillMember	shared_skill_members	yes	3	no	yes	yes	serves
+countSharedSkillMembers	shared_skill_members	yes	2	no	yes	yes	serves
+enrollSharedSkillMember	shared_skill_members	yes	4	no	yes	yes	serves
+rebindSharedSkillMember	shared_skill_members	yes	2	no	yes	yes	serves
+leaveSharedSkillMember	shared_skill_members	yes	2	no	yes	yes	serves
+issueSharedSkillDeliveryBatch	shared_skill_members	yes	4	no	yes	yes	serves
+readSharedSkillDeliveryBatch	shared_skill_members	yes	3	no	yes	yes	serves
+acknowledgeSharedSkillDeliveryBatch	shared_skill_members	yes	2	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -395,7 +409,7 @@ stampWriteClaim	persistence_journal	yes	13	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	4	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	10	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	19	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	21	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
