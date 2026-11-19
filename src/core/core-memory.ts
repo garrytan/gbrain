@@ -267,7 +267,7 @@ export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {})
   const rows = await exec.executeRaw<CoreRow>(
     `SELECT p.id, p.source_id, p.slug, p.title, p.compiled_truth, p.frontmatter, p.body_storage, p.body_bytes, ${trustCols}
         EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = p.source_id AND (w.subject = '*' OR w.subject = p.slug)) AS withdrawn
-      FROM pages p WHERE ${where.join(' AND ')} ORDER BY p.source_id, p.slug LIMIT ${CORE_MAX_PAGES * 4}`, params);
+      FROM pages p WHERE ${where.join(' AND ')} ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT ${CORE_MAX_PAGES * 4}`, params);
   const pages: Array<CorePage & { suppressed?: boolean }> = [];
   for (const r of rows) {
     if (r.suppressed === true) { pages.push({ ...toCorePage({ source_id: r.source_id, slug: r.slug, title: r.title ?? r.slug, compiled_truth: '' }), suppressed: true }); continue; }
@@ -355,9 +355,9 @@ export async function applyCoreSensitivity(pages: readonly CorePage[]): Promise<
 export async function pendingCoreNotices(exec: Pick<BrainEngine, 'executeRaw'>, sourceIds?: readonly string[]): Promise<Array<{ source_id: string; slug: string; revision: string | null; actor: string; created_at: string }>> {
   try {
     return await exec.executeRaw(
-      `SELECT DISTINCT ON (source_id, slug) source_id, slug, revision, actor, created_at::text AS created_at
+      `SELECT DISTINCT ON (source_id COLLATE "C", slug COLLATE "C") source_id, slug, revision, actor, created_at::text AS created_at
          FROM core_edit_notices WHERE acked_at IS NULL ${sourceIds ? 'AND source_id = ANY($1::text[])' : ''}
-        ORDER BY source_id, slug, id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
+        ORDER BY source_id COLLATE "C", slug COLLATE "C", id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
   } catch {
     return [];
   }
