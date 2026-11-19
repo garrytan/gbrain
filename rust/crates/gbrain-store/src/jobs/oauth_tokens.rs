@@ -118,6 +118,19 @@ pub(super) fn delete_expired_tokens(tx: &mut dyn KvWrite, now_epoch_seconds: i64
     Ok(u32::try_from(expired.len()).unwrap_or(u32::MAX))
 }
 
+/// `DELETE FROM oauth_tokens WHERE token_hash = $1 AND client_id = $2`: the token goes only when this client owns it.
+pub(super) fn delete_token_of_client(
+    tx: &mut dyn KvWrite,
+    hash: &str,
+    client_id: &str,
+) -> Result<()> {
+    let key = token_key(hash);
+    if get_json::<OauthTokenRecord>(&*tx, &key)?.is_some_and(|r| r.client_id == client_id) {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
 /// The names the bearer check's projection drops at each rung of its degrade ladder (a brain missing newer
 /// `oauth_clients` columns): rung 1 has no `grant_type`, `surface`, `surface_set_by`; rung 2 also no
 /// `bound_slug_prefixes`; rung 3 also no `federated_read`; rung 4 also no `source_id`.

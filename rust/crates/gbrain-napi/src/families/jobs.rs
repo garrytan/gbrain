@@ -11,6 +11,7 @@ mod grants;
 mod health;
 mod insight;
 mod ops;
+mod revocation;
 mod spend;
 mod spend_log;
 mod status;

@@ -478,6 +478,26 @@ const PINS: Pin[] = [
       `],
   },
   {
+    from: 'src/core/oauth-grants.ts revokeToken (at d8d9956871; the template, as $N text)',
+    case: { method: 'deleteOauthTokenByHash', variant: 'default', run: e => e.deleteOauthTokenByHash('hash-x', 'client-a') },
+    texts: ['DELETE FROM oauth_tokens WHERE token_hash = $1 AND client_id = $2'],
+  },
+  {
+    from: 'src/core/oauth-grants.ts revokeClient soft delete (at d8d9956871)',
+    case: { method: 'softDeleteOauthClient', variant: 'default', run: e => e.softDeleteOauthClient('client-a') },
+    texts: ['UPDATE oauth_clients SET deleted_at = now() WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/oauth-grants.ts revokeClient codes (at d8d9956871)',
+    case: { method: 'deleteOauthClientCodes', variant: 'default', run: e => e.deleteOauthClientCodes('client-a') },
+    texts: ['DELETE FROM oauth_codes WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/oauth-grants.ts revokeClient tokens (at d8d9956871)',
+    case: { method: 'deleteOauthClientTokens', variant: 'default', run: e => e.deleteOauthClientTokens('client-a') },
+    texts: ['DELETE FROM oauth_tokens WHERE client_id = $1'],
+  },
+  {
     from: 'src/commands/auth.ts:180 list (at 837c389e52)',
     case: { method: 'listAccessTokens', variant: 'default', run: e => e.listAccessTokens() },
     texts: [`

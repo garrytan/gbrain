@@ -221,6 +221,7 @@ import * as jobsChecks from './engine-sql/jobs-checks.ts';
 import * as jobsWake from './engine-sql/jobs-wake.ts';
 import * as accessCredentials from './engine-sql/access-credentials.ts';
 import * as clientGrants from './engine-sql/client-grants.ts';
+import * as oauthRevocation from './engine-sql/oauth-revocation.ts';
 import type { OauthClientGrantPersist } from './engine-sql/client-grants.ts';
 import type { ActiveTokenGrantField, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { DeadDreamSubmissionSpec } from './engine-sql/jobs-checks.ts';
@@ -1440,6 +1441,10 @@ export class PostgresEngine implements BrainEngine {
   persistOauthClientGrant(grant: OauthClientGrantPersist) { return clientGrants.persistOauthClientGrant(this, grant); }
   readLatestCatalogProvenanceAudit(clientId: string) { return clientGrants.readLatestCatalogProvenanceAudit(this, clientId); }
   listOauthGrantAudit(clientId: string) { return clientGrants.listOauthGrantAudit(this, clientId); }
+  deleteOauthTokenByHash(hash: string, clientId: string) { return oauthRevocation.deleteOauthTokenByHash(this, hash, clientId); }
+  softDeleteOauthClient(clientId: string) { return oauthRevocation.softDeleteOauthClient(this, clientId); }
+  deleteOauthClientTokens(clientId: string) { return oauthRevocation.deleteOauthClientTokens(this, clientId); }
+  deleteOauthClientCodes(clientId: string) { return oauthRevocation.deleteOauthClientCodes(this, clientId); }
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung) { return accessCredentials.readOauthAccessTokenRows(this, hash, rung); }
   readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller) { return accessCredentials.readActiveAccessTokenByHash(this, hash, caller); }
   touchAccessTokenLastUsed(id: string, unified: boolean) { return accessCredentials.touchAccessTokenLastUsed(this, id, unified); }

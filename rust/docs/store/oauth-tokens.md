@@ -53,5 +53,21 @@ Differences from PGLite and PostgreSQL:
 - Not kept: the secondary indexes. The `oauth_codes` table is kept, see [oauth-codes.md](oauth-codes.md).
 - An expired row stays until the sweep runs or its client is deleted; the bearer check refuses it either way.
 - `active_read_sources` is sorted by id; PostgreSQL's order is unspecified.
-- Still raw SQL, so a Rust brain refuses them: `revokeToken` and `revokeClient` in `oauth-grants.ts`, `grants/lifecycle.ts`,
-  `grants/service.ts`, the refresh-token read of `OAuthGrants.refresh`, and the two counts in `serve-http-admin-api.ts`.
+- Still raw SQL, so a Rust brain refuses them: `grants/lifecycle.ts`, `grants/service.ts`, the refresh-token read of
+  `OAuthGrants.refresh`, and the two counts in `serve-http-admin-api.ts`.
+
+## Revoke members
+
+`OAuthGrants.revokeToken` and `revokeClient` (`src/core/oauth-grants.ts`) run these members of
+`src/core/engine-sql/oauth-revocation.ts` when the grant transaction hands out its engine handle (`serve --http` does:
+`transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx), tx))`); without the handle they send the same
+statements through the SqlQuery. The client lock is `readOauthClientForUpdate`, a no-op lock on the Rust store (one writer).
+All of them run in the store's write transaction, so a revoke is one write.
+
+- `deleteOauthTokenByHash(hash, clientId)`: `DELETE FROM oauth_tokens WHERE token_hash = $1 AND client_id = $2`
+  (`delete_oauth_token_by_hash`). A hash another client owns, or none, deletes nothing.
+- `deleteOauthClientTokens(clientId)`: every token of the client (`delete_oauth_client_tokens`).
+- `softDeleteOauthClient(clientId)`: `deleted_at = now()` on the client row, whatever it held (`soft_delete_oauth_client`).
+- `deleteOauthClientCodes(clientId)`: a no-op on the Rust store for now; the store's `oauth_codes` delete is wired in
+  the integration commit that follows.
+

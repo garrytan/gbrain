@@ -70,6 +70,7 @@ mod insight;
 mod mutations;
 mod oauth_clients;
 mod oauth_codes;
+mod oauth_revocation;
 mod oauth_tokens;
 mod private_queues;
 mod reads;

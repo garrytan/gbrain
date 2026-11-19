@@ -3877,6 +3877,14 @@ export interface BrainEngine {
   readLatestCatalogProvenanceAudit(clientId: string): Promise<unknown | null>;
   /** The client's grant audit rows, oldest first. */
   listOauthGrantAudit(clientId: string): Promise<OauthGrantAuditRow[]>;
+  /** Delete the OAuth token with this hash when this client owns it (a revoke naming another client deletes nothing). */
+  deleteOauthTokenByHash(hash: string, clientId: string): Promise<void>;
+  /** Stamp an OAuth client `deleted_at` now (a revoke); its tokens and codes are separate deletes. */
+  softDeleteOauthClient(clientId: string): Promise<void>;
+  /** Delete every OAuth token, access and refresh, of the client. */
+  deleteOauthClientTokens(clientId: string): Promise<void>;
+  /** Delete every authorization code of the client (a store that keeps none deletes none). */
+  deleteOauthClientCodes(clientId: string): Promise<void>;
   /** The bearer check's OAuth token read at one rung of its degrade ladder. */
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]>;
   /** The bearer check's whole row (`SELECT *`) of the token not revoked with this hash, or null. */

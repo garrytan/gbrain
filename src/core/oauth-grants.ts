@@ -364,15 +364,24 @@ export class OAuthGrants {
   }
 
   async revokeToken(clientId: string, token: string, secretHash?: string): Promise<void> {
-    await this.locked(clientId, async (sql, client) => {
+    await this.locked(clientId, async (sql, client, tx) => {
       this.assertCredentialPolicy(client, secretHash);
-      await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND client_id = ${clientId}`;
+      if (tx) await tx.deleteOauthTokenByHash(hashToken(token), clientId);
+      else await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND client_id = ${clientId}`;
     });
   }
 
   async revokeClient(clientId: string): Promise<void> {
     if (!this.options.transaction) throw new ServerError('OAuth grant transactions are unavailable');
-    await this.options.transaction(async sql => {
+    await this.options.transaction(async (sql, tx) => {
+      if (tx) {
+        // An engine brain has run its migrations, so the row has `deleted_at`: the revoke is the soft delete.
+        if (!await tx.readOauthClientForUpdate(clientId)) return;
+        await tx.softDeleteOauthClient(clientId);
+        await tx.deleteOauthClientCodes(clientId);
+        await tx.deleteOauthClientTokens(clientId);
+        return;
+      }
       const [row] = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
       if (!row) return;
       // Inspect optional schema before the statement; catching a missing column inside a PG transaction aborts it.
