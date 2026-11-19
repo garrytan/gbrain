@@ -34,7 +34,7 @@ import { ignoredPrivacyLabelRunNotice } from '../../core/search/ignored-privacy-
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   const since = opts.dryRun ? null : await syncStartedAt(engine);
   const result = await routeSync(engine, opts);
-  if (!opts.dryRun && result.status !== 'dry_run') await syncIdentityDecisions(engine, opts.sourceId ?? 'default', serr);
+  if (!opts.dryRun && result.status !== 'dry_run') await syncIdentityDecisions(engine, opts.sourceId ?? 'default', serr, result.status === 'first_sync' ? 'all' : result.pagesAffected);
   if (!since || result.privacy_label_notice || result.status === 'up_to_date' || result.status === 'dry_run') return result;
   const notice = await ignoredPrivacyLabelRunNotice(engine, opts.sourceId ?? 'default', result.pagesAffected?.length ? { slugs: result.pagesAffected } : { since }, 'sync');
   return notice ? { ...result, privacy_label_notice: notice } : result;

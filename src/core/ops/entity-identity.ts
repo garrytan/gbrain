@@ -33,10 +33,11 @@ import { opError } from './contract.ts';
 /**
  * Duplicate people PR 2 (review round 2, d5): a member that gbrain dedupe confirm linked is the projection of a recorded
  * decision, so the hand-link ops never move or remove it; gbrain dedupe reject records the decision and removes the link.
+ * A company the sync linked ('dedupe:auto') is moved by hand like any other link: the next sweep leaves it where it is.
  */
 async function refuseDedupeMember(ctx: Parameters<Operation['handler']>[0], slug: string, sourceId: string, op: string): Promise<void> {
   const member = (await listEntityIdentities(ctx.engine, { slug, slugSourceId: sourceId, sourceId }))
-    .find(m => m.slug === slug && m.source_id === sourceId && m.established_by.startsWith('dedupe:'));
+    .find(m => m.slug === slug && m.source_id === sourceId && m.established_by === 'dedupe:confirm');
   if (!member) return;
   throw opError('identity_link_owned_by_dedupe',
     `${op}: ${sourceId}:${slug} was linked into ${member.entity_id} by gbrain dedupe confirm, so it is not moved or removed by hand; nothing changed.`,

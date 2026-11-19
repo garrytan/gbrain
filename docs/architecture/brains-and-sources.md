@@ -315,6 +315,17 @@ cross-source decision writes them into the default source's repository; there,
 a group with a page in an owner-only source is refused. `rank_entities` and enrichment tiering count a
 confirmed group once; hand-made groups count as before.
 
+Companies link without a confirm when the evidence is strong: each sync links
+the cross-source company groups its changed pages belong to when the group is
+`clean`, its pages share a LinkedIn company page or their own site's domain,
+and no two name different countries. Those rows carry `established_by:
+dedupe:auto`, live in the database only (sync and `gbrain dedupe reconcile`
+rebuild them from the pages and decisions), and count once like confirmed
+ones. `gbrain dedupe reject <identity>` removes one and keeps the pair apart;
+the decision keeps a fingerprint (a hash of each page's name and ids, never
+the values), so a renamed or moved page is still kept apart. People are
+never linked automatically.
+
 ## Cross-source link edges
 
 Wikilink and markdown-link edges stay inside one source by default. When a
