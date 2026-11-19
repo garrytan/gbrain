@@ -42,7 +42,7 @@ fn snapshot(b: &Brain, slug: &str) -> i64 {
 
 fn identities(b: &Brain, q: Value) -> Vec<Value> {
     let mut q = q;
-    q["world"] = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+    q["world"] = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     b.list_valid_time_identities(&args::<ValidTimeIdentityQuery>(q))
         .unwrap()
 }
@@ -100,14 +100,14 @@ fn identities_list_the_live_pages_with_the_slug_by_source_with_checkout_and_worl
     let public = identities(
         &b,
         json!({ "slug": "notes/shared", "sourceId": null, "sourceIds": null,
-                "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" } }),
+                "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } }),
     );
     assert_eq!(sources_of(&public), [("beta".into(), true)]);
     // Without the privacy part the policy only reads the reader list, which no page names.
     let readers_only = identities(
         &b,
         json!({ "slug": "notes/shared", "sourceId": null, "sourceIds": null,
-                "excludePrivate": { "honorAliases": false, "entityPrivacy": false, "ownerOnly": "lineage" } }),
+                "excludePrivate": { "honorAliases": false, "entityPrivacy": false, "ownerOnly": "fn" } }),
     );
     assert_eq!(readers_only.len(), 2);
     assert!(
@@ -154,7 +154,7 @@ fn pick_policy(
 ) -> Value {
     b.pick_valid_time_edition(&args::<ValidTimePickQuery>(json!({
         "pageId": page, "asOf": as_of, "excludePrivate": exclude_private, "pinOrd": pin, "inlineMaxBytes": 5,
-        "policy": { "honorAliases": true, "entityPrivacy": privacy, "ownerOnly": "lineage" },
+        "policy": { "honorAliases": true, "entityPrivacy": privacy, "ownerOnly": "fn" },
     })))
     .unwrap()
 }

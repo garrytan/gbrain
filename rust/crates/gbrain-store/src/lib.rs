@@ -23,6 +23,7 @@ pub mod keys;
 pub mod kv;
 pub mod links;
 pub mod occ_kv;
+mod owner_only;
 mod owner_only_marks;
 mod page_columns;
 mod page_index;
@@ -44,11 +45,14 @@ pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
+pub mod embedding_catalog;
+pub mod embedding_install;
 pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
 pub mod field_usage;
+pub mod generations;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
@@ -57,6 +61,7 @@ pub mod link_queries;
 pub mod memory_mutation_reads;
 pub mod ontology;
 pub mod page_body;
+pub mod page_embedding_budget;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
@@ -146,6 +151,9 @@ pub struct Store {
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
+    /// True when the open-time scan could not store the member-access flag and this process reads
+    /// it as `'1'` (`access_flag::scan_at_open`).
+    pub(crate) flag_assumed: bool,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -247,6 +255,7 @@ impl Store {
                 }
             }
         };
+        let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
@@ -264,6 +273,7 @@ impl Store {
                 created,
             },
             bound: None,
+            flag_assumed,
         })
     }
 
@@ -283,6 +293,7 @@ impl Store {
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: Some(tx),
+            flag_assumed: self.flag_assumed,
         }
     }
 
@@ -320,7 +331,9 @@ impl Store {
 
     /// Runs `f` in a write transaction and commits when it returns `Ok`. An `Err` rolls back.
     /// On a store bound to a transaction, `f` is one statement of it: kept when it returns `Ok`,
-    /// dropped when it returns `Err`, committed with the transaction.
+    /// dropped when it returns `Err`, committed with the transaction. Either way `f` writes
+    /// through `access_flag::FlaggingWriter`, so a put of a page record that names readers sets the
+    /// member-access flag in the same write.
     ///
     /// On a store with concurrent writers (`OccKv`) a transaction that read something another
     /// commit changed is run again from a fresh snapshot, so `f` may run more than once; only the
@@ -333,7 +346,7 @@ impl Store {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
             let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-            return tx.statement(f);
+            return tx.statement(|w| f(&mut access_flag::FlaggingWriter(w)));
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
@@ -346,7 +359,7 @@ impl Store {
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-                match f(&mut *tx) {
+                match f(&mut access_flag::FlaggingWriter(&mut *tx)) {
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
                 }
@@ -418,6 +431,7 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
+    access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)
 }
 

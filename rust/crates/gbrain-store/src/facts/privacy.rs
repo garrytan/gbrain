@@ -14,32 +14,31 @@
 //! `privatePagesFilterForCaller(p)` with the same rendering: `page_hidden` below, where
 //! `entity_privacy` says whether the privacy part applies (it does unless an operator relaxed it).
 //!
+//! Every rendering ends with the owner-only test (owner_only.rs), in the form the member read off
+//! the text (`owner_only`): the member-access part of each page the policy judges (the page of a
+//! page read, a fact's provenance, entity and holding pages) and the fact itself.
+//! `owner_only_marks` (`owner_only_marks.rs`) keeps a page owner-only after its owner-only input is
+//! deleted for good, as SQL's delete trigger does; the `fn` form reads those marks.
+//!
 //! The store keeps no access rules or pending coverage, so the parts of the SQL that read those
 //! tables take their empty-table values: a page names readers only through a `readable_by` key
 //! and no folder rule covers a page. Slug aliases and rename history come from `aliases.rs`
 //! ([`read_slug_alias`], [`renamed_to`]), so an origin a rename moved is followed as PGLite
 //! follows it, for the fact rules and for `page_hidden` alike.
-//!
-//! The owner-only rule is the one part of the member-access test the store can answer for a page: a page of an
-//! owner-only source, and a concept or question synthesized from one, is hidden (`OwnerOnly::Lineage`), or every page
-//! is while the brain holds an owner-only source (`OwnerOnly::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
-//! page hidden after its owner-only input is deleted for good, as SQL's delete trigger does. A fact read applies the rule
-//! to the provenance page, the entity and holding pages, and the fact row itself (`ownerOnlyFactSql`: a fact of an
-//! owner-only source). The store keeps no `derivation_inputs`, so a row derived from an owner-only row by that table alone
-//! is not hidden here.
 
 use super::FactRecord;
 use crate::Result;
+use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
 use crate::aliases::{read_slug_alias, renamed_to};
+use crate::keys;
 use crate::kv::KvRead;
 use crate::links::out_links;
-use crate::owner_only_marks::{any_marked, is_marked};
+use crate::owner_only::{OwnerOnlyForm, any_owner_only, fact_owner_only, page_owner_only};
 use crate::pages::{PageRecord, read_page, read_page_by_id};
-use crate::sources::all_sources;
 use crate::timeline_queries::jsonb_field_text;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::sync::OnceLock;
 
 /// The policy settings the TypeScript member read from the rendered SQL.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -66,78 +65,52 @@ pub struct PrivacyPolicy {
     /// sources that is not a pinned question passes the privacy part.
     #[serde(default)]
     pub private_readable_sources: Vec<String>,
-    /// The owner-only form the baseline rendered (`src/core/access/owner-only.ts`): see [`OwnerOnly`].
-    pub owner_only: OwnerOnly,
     /// `remoteProvenanceFloorSql('facts')`, the remote floor: only the provenance page is judged
     /// (`privateProvenanceFilterFragment`), with no entity or holding-page gate.
     #[serde(default)]
     pub provenance_only: bool,
+    /// The owner-only test the rendered policy ends with (`ownerOnlyAllowedSql`,
+    /// `ownerOnlyFactAllowedSql`): its form, read off the text by the TypeScript member. Absent
+    /// takes `closed`, which hides the most.
+    #[serde(default)]
+    pub owner_only: OwnerOnlyForm,
+    /// Whether the brain holds an owner-only source, read once for the one read this policy came
+    /// with (the `closed` form asks it for every row).
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub owner_only_any: OnceLock<bool>,
+    /// The caller renders the short member-access form (`CallerAccess.restricted` false:
+    /// `page_readers IS NULL AND folder_rule_ids IS NULL`), so a page that names readers fails
+    /// whatever the identity. The store's own flag (`access.restrictions_present`) decides the
+    /// rest: unset, nothing else applies, as the short form says; set (the caller's flag read was
+    /// stale), the full form's origin walk applies too. See [`readers_allowed`].
+    #[serde(default)]
+    pub open: bool,
 }
 
-/// The owner-only part of `accessAllowedSql` for the no-caller baseline (`ownerOnlyPageSql`). It is part of the
-/// member-access test, so `entity_privacy` does not switch it off.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum OwnerOnly {
-    /// `gbrain_owner_only_lineage('pages', id)` behind its guard (schema v320 and above): a page held in an owner-only
-    /// source is hidden, and so is a concept or question with a `concept-provenance` input page in one, and a page
-    /// `owner_only_marks` names (`owner_only_marks.rs`). The rows `derivation_inputs` names are not here: this store
-    /// keeps no such table.
-    #[default]
-    Lineage,
-    /// `ANY_OWNER_ONLY_SQL` (a brain below v320, or a call outside an engine scope): any owner-only source in the
-    /// brain hides every page.
-    Closed,
-}
-
-/// The ids of the owner-only sources (`isOwnerOnlySourceConfig`: kind `imessage`, or `owner_only` true), read once
-/// per query and passed to [`page_hidden`].
-pub(crate) struct OwnerOnlySources {
-    ids: HashSet<String>,
-    /// A row was marked owner-only when its origin was deleted (`owner_only_marks`), so the guard stays on.
-    marked: bool,
-}
-
-impl OwnerOnlySources {
-    pub(crate) fn read(read: &dyn KvRead) -> Result<Self> {
-        let mut ids = HashSet::new();
-        for source in all_sources(read)? {
-            // `config ->> 'kind' IN ('imessage') OR config ->> 'owner_only' = 'true'`.
-            if text(&source.config, "kind").as_deref() == Some("imessage")
-                || text(&source.config, "owner_only").as_deref() == Some("true")
-            {
-                ids.insert(source.id);
-            }
+impl PrivacyPolicy {
+    /// `ownerOnlyPageSql(alias, form)` under this policy's form.
+    fn page_owner_only(&self, read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+        match self.owner_only {
+            OwnerOnlyForm::Closed => self.any_owner_only(read),
+            form => page_owner_only(read, page, form),
         }
-        Ok(Self {
-            ids,
-            marked: any_marked(read)?,
-        })
     }
 
-    fn holds(&self, source_id: &str) -> bool {
-        self.ids.contains(source_id)
+    /// `ownerOnlyFactSql(alias, form)` under this policy's form.
+    fn fact_owner_only(&self, read: &dyn KvRead, source_id: &str) -> Result<bool> {
+        match self.owner_only {
+            OwnerOnlyForm::Closed => self.any_owner_only(read),
+            form => fact_owner_only(read, source_id, form),
+        }
     }
 
-    /// `gbrain_owner_only_lineage()`: the brain holds an owner-only source or a mark, so the per-row test runs at all.
-    pub(crate) fn guarded(&self) -> bool {
-        !self.ids.is_empty() || self.marked
-    }
-
-    /// `gbrain_owner_only_lineage_strict('pages', id)`: marked, held in an owner-only source, or a concept or question with an
-    /// input page in one. The `derivation_inputs` walk has no table here.
-    pub(crate) fn lineage_strict(&self, read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-        if is_marked(read, page.id)? || self.holds(&page.source_id) {
-            return Ok(true);
+    fn any_owner_only(&self, read: &dyn KvRead) -> Result<bool> {
+        if let Some(any) = self.owner_only_any.get() {
+            return Ok(*any);
         }
-        if matches!(page.page_type.as_str(), "concept" | "question") {
-            for input in concept_inputs(read, page)? {
-                if self.holds(&input.source_id) {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        let any = any_owner_only(read)?;
+        Ok(*self.owner_only_any.get_or_init(|| any))
     }
 }
 
@@ -157,25 +130,22 @@ const EDGE_SPACE: &[char] = &[
     '\u{200A}', '\u{2028}', '\u{2029}', '\u{202F}', '\u{205F}', '\u{3000}', '\u{FEFF}',
 ];
 
-/// Whether the policy hides `row`: its provenance page (`source_markdown_slug`) fails the page
-/// policy, or its entity page or holding page fails the entity gate. A soft-deleted page still
-/// counts, as its row stays in `pages`.
+/// Whether the policy hides `row`: the fact is owner-only, its provenance page
+/// (`source_markdown_slug`) fails the page policy, or its entity page or holding page fails the
+/// entity gate. A soft-deleted page still counts, as its row stays in `pages`.
 pub(crate) fn hidden_by_private_provenance(
     read: &dyn KvRead,
     row: &FactRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    let owner_only = OwnerOnlySources::read(read)?;
-    if fact_owner_only_hidden(row, policy.owner_only, &owner_only) {
+    if policy.fact_owner_only(read, &row.source_id)? {
         return Ok(true);
     }
     if let Some(slug) = &row.source_markdown_slug
         && let Some(page) = read_page(read, &row.source_id, slug)?
-        && owner_only_hidden(read, &page, policy.owner_only, &owner_only)?
+        && !(member_access_allows(read, &page, provenance_identity(policy, slug), policy)?
+            && privacy_allows(read, &page, policy.honor_aliases)?)
     {
-        return Ok(true);
-    }
-    if hidden_by_provenance_page(read, row, policy, true)? {
         return Ok(true);
     }
     if policy.provenance_only {
@@ -189,7 +159,7 @@ pub(crate) fn hidden_by_private_provenance(
         let Some(page) = read_page(read, &row.source_id, slug)? else {
             continue;
         };
-        if page_hidden_with(read, &page, policy, &owner_only)? {
+        if page_hidden(read, &page, policy)? {
             return Ok(true);
         }
     }
@@ -216,7 +186,7 @@ pub(crate) fn hidden_by_provenance_page(
         return Ok(false);
     };
     let access = if restricted {
-        readers_allowed(read, &page, provenance_identity(policy, slug))?
+        readers_allowed(read, &page, provenance_identity(policy, slug), false)?
     } else {
         !names_readers(&page)
     };
@@ -233,56 +203,32 @@ fn provenance_identity<'a>(policy: &'a PrivacyPolicy, slug: &str) -> &'a [String
     }
 }
 
-/// `ownerOnlyFactSql(facts, form)` for a caller that is not the owner: a fact of an owner-only source
-/// (`Lineage`; the store marks no fact rows), or any fact while the brain holds an owner-only source
-/// (`Closed`).
-fn fact_owner_only_hidden(row: &FactRecord, form: OwnerOnly, sources: &OwnerOnlySources) -> bool {
-    match form {
-        OwnerOnly::Closed => !sources.ids.is_empty(),
-        OwnerOnly::Lineage => sources.holds(&row.source_id),
-    }
-}
-
-/// [`page_hidden_with`], reading the owner-only sources for this one page.
+/// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
+/// for the policy's identity, then the privacy part unless `entity_privacy` is false, which a page
+/// of a private-readable source passes unless it is a pinned question. It is the test the entity
+/// gate puts on an entity page.
 pub(crate) fn page_hidden(
     read: &dyn KvRead,
     page: &PageRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    page_hidden_with(read, page, policy, &OwnerOnlySources::read(read)?)
-}
-
-/// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
-/// for the policy's identity (named readers, origin readers, the owner-only rule), then the privacy
-/// part unless `entity_privacy` is false, which a page of a private-readable source passes unless it
-/// is a pinned question. It is the test the entity gate puts on an entity page. A read over many
-/// pages reads `owner_only` once ([`OwnerOnlySources::read`]).
-pub(crate) fn page_hidden_with(
-    read: &dyn KvRead,
-    page: &PageRecord,
-    policy: &PrivacyPolicy,
-    owner_only: &OwnerOnlySources,
-) -> Result<bool> {
-    let allowed = !owner_only_hidden(read, page, policy.owner_only, owner_only)?
-        && readers_allowed(read, page, &policy.identity)?
+    let allowed = member_access_allows(read, page, &policy.identity, policy)?
         && (!policy.entity_privacy
             || private_source_open(page, policy)
             || privacy_allows(read, page, policy.honor_aliases)?);
     Ok(!allowed)
 }
 
-/// `ownerOnlyPageSql(p, form)` for the no-caller baseline (the caller is never the owner).
-fn owner_only_hidden(
+/// The member-access part (`accessAllowedSql`): the page's readers allow `identity`, and the page
+/// is not owner-only (`ownerOnlyAllowedSql`, in the policy's form).
+fn member_access_allows(
     read: &dyn KvRead,
     page: &PageRecord,
-    form: OwnerOnly,
-    sources: &OwnerOnlySources,
+    identity: &[String],
+    policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    if form == OwnerOnly::Closed {
-        // `ANY_OWNER_ONLY_SQL` reads sources only: no mark is read in a brain below v320.
-        return Ok(!sources.ids.is_empty());
-    }
-    Ok(sources.guarded() && sources.lineage_strict(read, page)?)
+    Ok(readers_allowed(read, page, identity, policy.open)?
+        && !policy.page_owner_only(read, page)?)
 }
 
 /// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
@@ -302,6 +248,27 @@ pub(crate) fn version_hidden(
 ) -> bool {
     fm.contains_key("readable_by")
         || (policy.entity_privacy && !snapshot_fields_allow(page_type, fm, policy.honor_aliases))
+}
+
+/// Whether `getVersions` under a caller page policy hides a version of `page`:
+/// `callerReadersAllowedSql(pv, 'snapshot')` judges the version's readers by the policy's identity,
+/// then, with `entity_privacy`, `privacyForCaller(p, privateSnapshotFilterFragment(pv))` judges its
+/// own fields (the page's private-readable source opens them) and a pinned question stays hidden.
+/// With no identity and no grant it is `version_hidden`.
+pub(crate) fn caller_version_hidden(
+    page: &PageRecord,
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    let readers_allowed = !fm.contains_key("readable_by")
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
+    !readers_allowed
+        || (policy.entity_privacy
+            && (fm.contains_key("pinned_question")
+                || !(private_source_open(page, policy)
+                    || snapshot_fields_allow(page_type, fm, policy.honor_aliases))))
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
@@ -469,8 +436,18 @@ pub(crate) fn access_readers(frontmatter: &Map<String, Value>) -> Option<Vec<Str
 }
 
 /// The member-access part (`accessAllowedSql`) for `identity`: no readers of its own or readers
-/// that name one of its principals (`readersAllowedSql`), and no origin that names readers.
-fn readers_allowed(read: &dyn KvRead, page: &PageRecord, identity: &[String]) -> Result<bool> {
+/// that name one of its principals (`readersAllowedSql`), and no origin that names readers. With
+/// `open` (the short form) a page that names readers fails for any identity, and the origin walk
+/// runs only when the store's flag is set: unset, no stored page names readers.
+fn readers_allowed(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    open: bool,
+) -> Result<bool> {
+    if open && (names_readers(page) || !restrictions_present(read)?) {
+        return Ok(!names_readers(page));
+    }
     if names_readers(page)
         && !access_readers(&page.frontmatter)
             .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
@@ -482,6 +459,12 @@ fn readers_allowed(read: &dyn KvRead, page: &PageRecord, identity: &[String]) ->
         "atom" | "question" | "concept" | "event"
     ) && !page.frontmatter.contains_key("derived_from");
     Ok(plain || !origin_restricted(read, page)?)
+}
+
+/// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
+fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
+    let key = keys::text(keys::CONFIG, &[RESTRICTIONS_PRESENT_KEY]);
+    Ok(read.get(&key)?.as_deref() == Some(b"1".as_slice()))
 }
 
 /// `gbrain_access_origin_restricted(id, source_id, type, frontmatter)`.

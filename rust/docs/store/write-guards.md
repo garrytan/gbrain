@@ -21,6 +21,7 @@ keys.
 | `brain.readLivePageBody(slug, sourceId)` | `{ frontmatter, compiled_truth, timeline, body_storage, content_hash }` of the live page, or `null` for a missing page or a tombstone. A page with no inline body (a segmented shell) reads `body_storage: "segmented"` | `readLivePageBody` |
 | `brain.readInlinePageRegions(pageId)` | `{ compiled_truth, timeline }` of the page with id `pageId`, live or a tombstone, or `null` when no page has the id. A column the page does not store inline reads `null` | `readInlinePageRegions` |
 | `brain.readStoredPageTier(sourceId, slug)` | the page's stored `trust_tier` as text, live or a tombstone, or `null` when the source has no such page. A record that stores no tier reads `unknown`, the column default | `readStoredPageTier` |
+| `brain.readPageIndexingState(pageId)` | `{ chunker_version, corpus_generation, page_kind }` of the page, live or a tombstone, or `null` when no page has the id. `corpus_generation` is the page's contextual-retrieval generation, `null` when it has none | `readPageIndexingState` |
 | `brain.hasSegmentStorage()` | `true` when any segment text or body staging record exists | `hasSegmentStorage` |
 
 ## Differences from PGLite

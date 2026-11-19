@@ -29,6 +29,9 @@ const SEARCH_KEYS = [
   'relationalChainSlots',
 ] as const;
 
+/** `WhoknowsOpts` keys whoknows passes with its read policy (src/commands/whoknows.ts); readSalienceScores never reads them. */
+const WHOKNOWS_KEYS = ['topic', 'explain', 'onMeta'] as const;
+
 /** `pageReadFilter`'s source filter: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope. */
 function sourceScope(opts: Record<string, unknown>): unknown[] | null {
   if (Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0) return opts.sourceIds;
@@ -98,7 +101,7 @@ export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult
 export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_id: string }>, opts?: PageReadPolicy], Map<string, number>> = async (brain, refs, opts) => {
   if (!refs.length) return new Map();
   const o = takeOptions('getSalienceScores', opts,
-    ['sourceId', 'sourceIds', 'takesHoldersAllowList', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...SEARCH_KEYS]);
+    ['sourceId', 'sourceIds', 'takesHoldersAllowList', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...SEARCH_KEYS, ...WHOKNOWS_KEYS]);
   const excludePrivate = storePagePolicy('getSalienceScores', o.excludePrivate, { callerReaders: true });
   const rows = (await storeCall({ member: 'getSalienceScores' }, () => brain.getSalienceScores({
     refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),

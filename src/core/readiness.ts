@@ -38,6 +38,7 @@ import { detectCapabilities } from './capability.ts';
 import { embeddingProviderConfigured } from './brain-score-recommendations.ts';
 import { isEngineDegraded } from './degraded-marker.ts';
 import { heldLockFor, peekLock, type LockPeekResult } from './pglite-lock.ts';
+import { ownedRustBrain } from './rust-engine/owned-brains.ts';
 import { listRecipes, RECIPES } from './ai/recipes/index.ts';
 import type { Recipe } from './ai/types.ts';
 import { mergedProviderEnv } from './ai/provider-env.ts';
@@ -185,6 +186,8 @@ export function enableArgv(cfg: GBrainConfig, model: string, width: number): str
   if (brainId !== 'host') {
     return ['gbrain', 'embeddings', 'enable', '--brain', brainId, '--embedding-model', model, '--embedding-dimensions', String(width)];
   }
+  // A Rust brain turns vectors on in place: `embeddings enable` keeps the Rust engine (init --force would rebuild it).
+  if (cfg.engine === 'rust') return ['gbrain', 'embeddings', 'enable', '--embedding-model', model, '--embedding-dimensions', String(width)];
   const base = ['gbrain', 'init', '--force', '--embedding-model', model, '--embedding-dimensions', String(width)];
   if (cfg.engine === 'postgres') return base;
   return [...base, '--path', cfg.database_path ?? gbrainPath('brain.pglite')];
@@ -193,6 +196,7 @@ export function enableArgv(cfg: GBrainConfig, model: string, width: number): str
 function datastoreLabel(cfg: GBrainConfig): string {
   const brainId = brainIdInMemory();
   if (brainId !== 'host') return `mounted brain '${brainId}' (the embedding model is set host-wide, so the host brain uses it too)`;
+  if (cfg.engine === 'rust') return `the Rust brain at ${cfg.database_path}`;
   return cfg.engine === 'postgres' ? 'this Postgres brain' : `the PGLite brain at ${cfg.database_path ?? gbrainPath('brain.pglite')}`;
 }
 
@@ -371,15 +375,23 @@ function isServeProcess(): boolean {
   return parseGlobalFlags(process.argv.slice(2)).rest[0] === 'serve';
 }
 
+function serveSelf(acquiredAt: number | undefined): LockOwner | null {
+  if (!isServeProcess()) return null;
+  return { pid: process.pid, transport: process.argv.includes('--http') ? 'http' : 'stdio',
+    ...(acquiredAt ? { started_at: new Date(acquiredAt).toISOString() } : {}), is_self: true };
+}
+
 function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
-  if (cfg.engine !== 'pglite' || cfg.remote_mcp || cfg.database_url) return null;
+  if (cfg.remote_mcp || cfg.database_url) return null;
+  // A Rust brain: only this process's own serve is named (an in-process read; another owner's pid is never guessed).
+  if (cfg.engine === 'rust') {
+    const owned = ownedRustBrain(cfg.database_path);
+    return owned ? serveSelf(owned.acquiredAt) : null;
+  }
+  if (cfg.engine !== 'pglite') return null;
   const dataDir = cfg.database_path ?? gbrainPath('brain.pglite');
   const self = heldLockFor(dataDir);
-  if (self) {
-    if (!isServeProcess()) return null;
-    return { pid: process.pid, transport: process.argv.includes('--http') ? 'http' : 'stdio',
-      ...(self.acquiredAt ? { started_at: new Date(self.acquiredAt).toISOString() } : {}), is_self: true };
-  }
+  if (self) return serveSelf(self.acquiredAt);
   const peek = (peekOverride ?? peekLock)(dataDir);
   if (!peek.held || !peek.isServe || peek.pid === undefined) return null;
   return { pid: peek.pid, transport: peek.http ? 'http' : 'stdio',

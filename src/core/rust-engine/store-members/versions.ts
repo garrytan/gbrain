@@ -9,6 +9,7 @@ import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-s
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 function requireInteger(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);
@@ -31,8 +32,12 @@ export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: strin
 };
 
 export const getVersions: StoreMember<[slug: string, opts?: GetVersionsOpts<boolean>], PageVersionRows<boolean>> = async (brain, slug, opts) => {
-  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody']);
-  const rows: PageVersion[] = await storeCall({ member: 'getVersions', slug }, () => brain.getVersions(slug, scope));
+  // The SQL reads only these five options; the rest of the read policy the MCP tool passes changes nothing there.
+  const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody', 'excludePrivate'],
+    ['requireSafeChunks', 'minTrust', 'suppressFlagged', 'takesHoldersAllowList']);
+  // The page policy judges the page; the store judges each version by the same identity, grant and flags.
+  const excludePrivate = storePagePolicy('getVersions', scope.excludePrivate, { callerReaders: true }) ?? null;
+  const rows: PageVersion[] = await storeCall({ member: 'getVersions', slug }, () => brain.getVersions(slug, { ...scope, excludePrivate }));
   return rows.map((row) => toVersion(row)) as PageVersionRows<boolean>;
 };
 

@@ -24,6 +24,9 @@ import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
 import type { Link, PageInput, PageType } from '../../src/core/types.ts';
 import { linkFamily } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
@@ -595,6 +598,61 @@ describe('engine parity: backlink and page signal reads', () => {
   );
 
   parityTest(
+    'getContentFlagsByPageIds, getUnverifiedExtractionPageIds and getEffectiveDates under excludePrivate hide every page while a source is owner-only, then only the owner-only source and its concepts',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'getEffectiveDates', 'putPage', 'addLink'] },
+    async (engine, backend) => {
+      const ids = new Map<string, number>();
+      const refs: Array<{ slug: string; source_id: string }> = [];
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      const put = async (slug: string, type: PageType, sourceId: string) => {
+        ids.set(`${sourceId}:${slug}`, (await engine.putPage(slug, page(slug, {
+          type, frontmatter: marks, effective_date: new Date('2024-03-05T00:00:00Z'), effective_date_source: 'date',
+        }), { sourceId })).id);
+        refs.push({ slug, source_id: sourceId });
+      };
+      await put('oo/open', 'note', 'default');
+      await put('oo/lineage', 'concept', 'default');
+      await put('oo/plain', 'concept', 'default');
+      const read = async () => {
+        const all = [...ids.values()];
+        const names = (m: Map<number, unknown>) => bySlug(ids, m).map(([key]) => key);
+        return {
+          flags: names(await engine.getContentFlagsByPageIds(all, { excludePrivate: true })),
+          unverified: names(await engine.getUnverifiedExtractionPageIds(all, { excludePrivate: true })),
+          dates: sorted([...(await engine.getEffectiveDates(refs, { excludePrivate: true })).keys()]),
+        };
+      };
+      const before = await read();
+      await createSource(engine, backend, 'oo-chat', { kind: 'imessage' });
+      await put('oo/chat', 'note', 'oo-chat');
+      // A concept in `default` synthesized from a page of the owner-only source.
+      await engine.addLink('oo/lineage', 'oo/chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'oo-chat' });
+      const member = { identity: ['member:alice-example', 'group:team-a'], hidePrivate: true };
+      // No schema version is recorded on the harness brain: the closed form hides every page while any source is owner-only.
+      const closed = await read();
+      const closedMember = await withCallerAccess(member, read);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      // Schema version 320 or later: only the owner-only source's pages and the concept built from one are hidden.
+      const fn = await withEngineScope(engine, read);
+      const fnMember = await withEngineScope(engine, () => withCallerAccess(member, read));
+      const none = { flags: [], unverified: [], dates: [] };
+      const kept = {
+        flags: ['default:oo/open', 'default:oo/plain'], unverified: ['default:oo/open', 'default:oo/plain'],
+        dates: ['default::oo/open', 'default::oo/plain'],
+      };
+      expect(before).toEqual({
+        flags: ['default:oo/lineage', 'default:oo/open', 'default:oo/plain'], unverified: ['default:oo/lineage', 'default:oo/open', 'default:oo/plain'],
+        dates: ['default::oo/lineage', 'default::oo/open', 'default::oo/plain'],
+      });
+      expect(closed).toEqual(none);
+      expect(closedMember).toEqual(none);
+      expect(fn).toEqual(kept);
+      expect(fnMember).toEqual(kept);
+      return { before, closed, closedMember, fn, fnMember };
+    },
+  );
+
+  parityTest(
     'getPageTimestamps and getEffectiveDates return dates only for existing live pages',
     { methods: ['getPageTimestamps', 'getEffectiveDates', 'putPage', 'softDeletePage'] },
     async (engine) => {
@@ -876,6 +934,58 @@ describe('engine parity: excludePrivate on links reads', () => {
       expect(granted.fanout.some((r) => r.startsWith('notes/private:'))).toBe(true);
       expect(granted.fanout.some((r) => r.startsWith('notes/pinned:'))).toBe(false);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'the links reads under excludePrivate hide an owner-only source\'s pages, and under the closed form every page while one exists',
+    { methods: ['putPage', 'addLink', 'getBacklinkCounts', 'getAdjacencyBoosts', 'relationalFanout', 'relationalChainHop',
+      'supersedingPageSlugs', 'findOrphanPages'] },
+    async (engine, backend) => {
+      const ids = new Map<string, number>();
+      const open: Array<[string, PageType]> = [['people/hub', 'person'], ['notes/open', 'note'], ['notes/open-two', 'note'],
+        ['concepts/synthesis', 'concept'], ['notes/stale', 'note'], ['orph/by-open', 'note'], ['orph/alone', 'note']];
+      for (const [slug, type] of open) ids.set(slug, (await engine.putPage(slug, page(slug, { type }))).id);
+      for (const slug of ['notes/open', 'notes/open-two', 'concepts/synthesis']) await engine.addLink(slug, 'people/hub', '', 'cites', 'manual');
+      await engine.addLink('notes/open', 'notes/stale', '', 'supersedes', 'manual');
+      await engine.addLink('notes/open', 'orph/by-open', '', 'cites', 'manual');
+      const slugOf = new Map<number, string>();
+      const read = async () => {
+        const all = [...ids.values()];
+        for (const [slug, id] of ids) slugOf.set(id, slug);
+        return {
+          back: bySlug(ids, await engine.getBacklinkCounts(all, { excludePrivate: true })).filter(([, n]) => n > 0),
+          adjacency: bySlug(ids, await engine.getAdjacencyBoosts(all, { excludePrivate: true })).map(([slug]) => slug),
+          fanout: sorted((await engine.relationalFanout(['people/hub'], { direction: 'in', excludePrivate: true }))
+            .map((r) => `${r.slug}:${r.hop}:${r.edge_count}`)),
+          hop: (await engine.relationalChainHop([ids.get('people/hub')!], {
+            linkTypes: ['cites'], toward: 'subject', subjectTypes: ['note', 'atom', 'concept', 'event'], objectTypes: ['person', 'note'],
+            degreeLinkTypes: ['cites'], neighborCap: 100, excludePrivate: true,
+          })).map((e) => `${slugOf.get(e.from_page_id)}>${e.to_slug}:${e.from_degree}`).sort(),
+          superseded: sorted([...await engine.supersedingPageSlugs(all, { excludePrivate: true })].map(([id, by]) => `${slugOf.get(id)}<${by}`)),
+          orphans: sorted((await engine.findOrphanPages({ excludePrivate: true })).map((r) => `${r.source_id ?? 'default'}:${r.slug}`)),
+        };
+      };
+      const before = await read();
+      // An owner-only source: its page cites the hub, supersedes a page and is the lineage input of a default-source concept.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      ids.set('notes/chat', (await engine.putPage('notes/chat', page('notes/chat'), { sourceId: 'chat' })).id);
+      ids.set('notes/chat-old', (await engine.putPage('notes/chat-old', page('notes/chat-old'))).id);
+      await engine.addLink('notes/chat', 'people/hub', '', 'cites', 'manual', undefined, undefined, { fromSourceId: 'chat', toSourceId: 'default' });
+      await engine.addLink('notes/chat', 'notes/chat-old', '', 'supersedes', 'manual', undefined, undefined, { fromSourceId: 'chat', toSourceId: 'default' });
+      await engine.addLink('concepts/synthesis', 'notes/chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      const closed = await read();
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, read);
+      expect(before.back).toContainEqual(['people/hub', 3]);
+      expect(before.orphans).toContain('default:orph/alone');
+      expect(closed).toEqual({ back: [], adjacency: [], fanout: [], hop: [], superseded: [], orphans: [] });
+      expect(fn.back).toContainEqual(['people/hub', 2]);
+      expect(fn.back.map(([slug]) => slug)).not.toContain('notes/chat-old');
+      expect(fn.fanout.some((r) => r.startsWith('notes/chat:') || r.startsWith('concepts/synthesis:'))).toBe(false);
+      expect(fn.superseded).toEqual(['notes/stale<notes/open']);
+      expect(fn.orphans).not.toContain('chat:notes/chat');
+      return { before, closed, fn };
     },
   );
 });

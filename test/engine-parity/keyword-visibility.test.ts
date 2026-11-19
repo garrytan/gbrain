@@ -20,15 +20,22 @@
  *    private-page-reads.test.ts covers the salience, anomaly and chunk reads, not keyword search.
  *  - Caller policy: the last case reads as a member whose identity a page's readers name, then with a private-readable
  *    grant on the source; the Rust store reads both from the policy the TypeScript member sends.
+ *  - Owner-only sources: the last describe adds a source of kind imessage and one with owner_only set. A non-owner
+ *    read (no caller record, or a reader caller) hides every page while one exists (the closed form, no schema
+ *    version in context) and, at schema 320 (the fn form), only the pages in those sources and the concepts
+ *    synthesized from them (`ownerOnlyAllowedSql`, src/core/search/private-visibility.ts).
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchOpts, SearchResult } from '../../src/core/types.ts';
-import { parityArms, sorted } from './harness.ts';
+import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -46,8 +53,9 @@ const PAGES: Array<[slug: string, type: string, frontmatter: Record<string, unkn
   ['notes/access-plain', 'note', { access: 'team' }, 1],
 ];
 
-async function fixture(engine: BrainEngine): Promise<void> {
+async function fixture(engine: BrainEngine, opts: { readers?: boolean } = {}): Promise<void> {
   for (const [slug, type, frontmatter, weight] of PAGES) {
+    if (opts.readers === false && 'readable_by' in frontmatter) continue;
     const text = `${Array(weight).fill('zephyr').join(' ')} quartz notes about ${slug}.`;
     await engine.putPage(slug, { type: type as never, title: `Zephyr ${slug}`, compiled_truth: text, timeline: '', frontmatter });
     await installChunks(engine, slug, [chunk(0, text)]);
@@ -243,6 +251,109 @@ describe('engine parity: excludePrivate on keyword search for a caller with a re
       expect(granted.top).toEqual(['notes/private:0', 'notes/readers:0']);
       expect(granted.titles).not.toContain('notes/timeline-only');
       return { member, granted, stranger };
+    },
+  );
+});
+
+describe('engine parity: excludePrivate on keyword search for a remote caller on a brain with no member restriction', () => {
+  // A remote request on a brain whose config holds no access.restrictions_present (no page names readers, no member
+  // exists) renders the short member-access form (`page_readers IS NULL AND folder_rule_ids IS NULL`). The fixture
+  // keeps that true: no page here names readers.
+  parityTest(
+    'every keyword member under excludePrivate serves an unrestricted remote caller, with and without a private-readable grant',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'searchKeyword', 'searchKeywordChunks', 'countKeywordPages',
+      'searchKeywordPages', 'searchTitles'] },
+    async (engine) => {
+      await fixture(engine, { readers: false });
+      const slugs = (rows: SearchResult[]) => sorted(rows.map((r) => r.slug));
+      const snippets = (rows: SearchResult[]) => rows.map((r) => `${r.slug}:${r.chunk_text}`);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess({ restricted: false, ...access }, async () => ({
+        keyword: slugs(await engine.searchKeyword('zephyr', { limit: 20, excludePrivate: true })),
+        top: view(await engine.searchKeyword('zephyr', { limit: 2, excludePrivate: true })),
+        snippets: snippets(await engine.searchKeywordChunks('zephyr', { limit: 3, excludePrivate: true })),
+        count: await engine.countKeywordPages('zephyr', { excludePrivate: true }),
+        pages: view(await engine.searchKeywordPages('zephyr', { excludePrivate: true }, { limit: 2, offset: 1 })),
+        titles: slugs(await engine.searchTitles('zephyr', { limit: 20, excludePrivate: true })),
+      }));
+      const plain = await read({ hidePrivate: true });
+      const member = await read({ identity: ['member:alice-example'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const kept = KEPT.filter((s) => s !== 'notes/fence-short');
+      // The plain caller sees no private page, by rows, count, snippet or rank.
+      expect(plain.keyword).toEqual(kept);
+      expect(plain.count).toBe(kept.length);
+      expect(plain.top).toEqual(['notes/open:0', 'atoms/origin-open:0']);
+      expect(plain.snippets.join('\n')).not.toContain('notes/private');
+      // A member identity reads nothing more: no page names readers here.
+      expect(member).toEqual(plain);
+      // The grant shows the private pages of the source, ranked by their weight.
+      const all = sorted([...PAGES.map(([slug]) => slug), 'notes/timeline-only'].filter((s) => s !== 'notes/fence-short' && s !== 'notes/readers'));
+      expect(granted.keyword).toEqual(all);
+      expect(granted.count).toBe(all.length);
+      expect(granted.top).toEqual(['notes/private:0', 'notes/access-alias:0']);
+      return { plain, member, granted };
+    },
+  );
+});
+
+describe('engine parity: owner-only sources on excludePrivate keyword search', () => {
+  parityTest(
+    'every keyword member under excludePrivate hides every page while a source is owner-only (closed form) and only owner-only pages and their concepts at schema 320 (fn form)',
+    { methods: ['putPage', 'addLink', 'sealChunks', 'searchKeyword', 'searchKeywordChunks', 'countKeywordPages', 'searchKeywordPages', 'searchTitles'] },
+    async (engine, backend) => {
+      const seed = async (slug: string, sourceId: string, type = 'note', frontmatter: Record<string, unknown> = {}) => {
+        const opts = sourceId === 'default' ? undefined : { sourceId };
+        const text = `zephyr quartz notes about ${slug}.`;
+        await engine.putPage(slug, { type: type as never, title: `Zephyr ${slug}`, compiled_truth: text, timeline: '', frontmatter }, opts);
+        await installChunks(engine, slug, [chunk(0, text)], opts);
+      };
+      const concept = { visibility: 'world', synthesized_by: 'dream' };
+      await seed('notes/open', 'default');
+      await seed('concepts/from-open', 'default', 'concept', concept);
+      await engine.addLink('concepts/from-open', 'notes/open', '', 'synthesized_from', 'concept-provenance');
+
+      const slugs = (rows: SearchResult[]) => sorted(rows.map((r) => `${r.source_id}:${r.slug}`));
+      const read = async () => {
+        const run = async () => ({
+          keyword: slugs(await engine.searchKeyword('zephyr', { limit: 20, excludePrivate: true })),
+          chunks: slugs(await engine.searchKeywordChunks('zephyr', { limit: 20, excludePrivate: true })),
+          count: await engine.countKeywordPages('zephyr', { excludePrivate: true }),
+          pages: slugs(await engine.searchKeywordPages('zephyr', { excludePrivate: true }, { limit: 20, offset: 0 })),
+          titles: slugs(await engine.searchTitles('zephyr', { limit: 20, excludePrivate: true })),
+        });
+        return { none: await run(), reader: await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, run) };
+      };
+      const kept = ['default:concepts/from-open', 'default:notes/open'];
+      const keptAnswer = { keyword: kept, chunks: kept, count: 2, pages: kept, titles: kept };
+      const hidden = { keyword: [], chunks: [], count: 0, pages: [], titles: [] };
+
+      // Before an owner-only source exists the default pages read: the case is not vacuous.
+      const before = await read();
+      expect(before.none).toEqual(keptAnswer);
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await seed('notes/chat-note', 'chat');
+      await seed('notes/vault-note', 'vault');
+      await seed('concepts/from-chat', 'default', 'concept', concept);
+      await engine.addLink('concepts/from-chat', 'notes/chat-note', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+
+      // Closed form: no schema version in context. A non-owner reads nothing while any source is owner-only.
+      const closed = await read();
+      expect(closed.none).toEqual(hidden);
+      expect(closed.reader).toEqual(hidden);
+
+      // Fn form (schema 320): only owner-only pages, and the concept synthesized from one, are hidden.
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      let fn;
+      try {
+        fn = await withEngineScope(engine, read);
+      } finally {
+        noteSchemaVersion(engine, Number.NaN);
+      }
+      expect(fn.none).toEqual(keptAnswer);
+      expect(fn.reader).toEqual(keptAnswer);
+      return { before, closed, fn };
     },
   );
 });

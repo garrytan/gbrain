@@ -34,6 +34,10 @@ import {
 const RUST_FILE = 'rust/crates/gbrain-store/src/facts/privacy.rs';
 // test-reads-source-ok[structural]: the Rust policy is hand-written beside the SQL rendering, so its constants are read from the source they must equal.
 const RUST = readFileSync(join(import.meta.dir, '..', RUST_FILE), 'utf8');
+/** privacy.rs judges the owner-only test through owner_only.rs, which spells out the source flag and kinds. */
+const OWNER_ONLY_RUST_FILE = 'rust/crates/gbrain-store/src/owner_only.rs';
+// test-reads-source-ok[structural]: the owner-only flag and kinds are hand-written beside owner-only.ts, so they are read from the source they must equal.
+const OWNER_ONLY_RUST = readFileSync(join(import.meta.dir, '..', OWNER_ONLY_RUST_FILE), 'utf8');
 
 const HOW = `private-visibility.ts (or owner-only.ts) now renders a different private-page rule. Read ${RUST_FILE} against `
   + 'the new text: the Rust arm must hide the same pages, or the member must refuse the new rule with '
@@ -116,10 +120,14 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
   });
 
   test('the owner-only source flag and kinds are the ones privacy.rs reads', () => {
-    expect(RUST).toContain(`"${OWNER_ONLY_FLAG}"`);
-    for (const kind of OWNER_ONLY_KINDS) expect(RUST, `owner-only kind ${kind}. ${HOW}`).toContain(`"${kind}"`);
-    // privacy.rs reads exactly `kind IN (kinds) OR owner_only = 'true'` (a boolean true and the text "true" both read "true").
-    expect(RUST).toContain('text(&source.config, "kind").as_deref() == Some("imessage")');
+    // privacy.rs reads the owner-only test from owner_only.rs, which holds the flag and the kinds.
+    expect(RUST).toContain('use crate::owner_only::{');
+    expect(OWNER_ONLY_RUST).toContain(`text("${OWNER_ONLY_FLAG}").as_deref() == Some("true")`);
+    // owner_only.rs reads exactly `kind IN (kinds) OR owner_only = 'true'` (a boolean true and the text "true" both read "true").
+    const kinds = OWNER_ONLY_RUST.match(/const OWNER_ONLY_KINDS: &\[&str\] = &\[([^\]]*)\];/);
+    expect(kinds, `OWNER_ONLY_KINDS is not spelled out in ${OWNER_ONLY_RUST_FILE}. ${HOW}`).not.toBeNull();
+    expect(kinds![1].split(',').map(k => k.trim().replace(/^"|"$/g, '')).filter(Boolean), `owner-only kinds. ${HOW}`).toEqual([...OWNER_ONLY_KINDS]);
+    expect(OWNER_ONLY_RUST).toContain('text("kind").is_some_and(|kind| OWNER_ONLY_KINDS.contains(&kind.as_str()))');
     expect(OWNER_ONLY_KINDS).toEqual(['imessage']);
   });
 

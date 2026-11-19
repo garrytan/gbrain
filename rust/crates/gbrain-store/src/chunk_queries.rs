@@ -28,7 +28,7 @@ use crate::chunks::{
     visible_chunks,
 };
 use crate::error::Result;
-use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden, page_hidden_with};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
 use crate::sources::read_source;
@@ -292,11 +292,6 @@ impl Store {
         let mut archived = HashMap::new();
         let mut page_rows = Vec::new();
         let mut chunk_rows: Vec<(i64, u64, u32, Value)> = Vec::new();
-        let owner_only = options
-            .exclude_private
-            .as_ref()
-            .map(|_| OwnerOnlySources::read(&*read))
-            .transpose()?;
         for (&page_id, &page_prio) in &prio {
             let Ok(id) = u64::try_from(page_id) else {
                 continue;
@@ -318,8 +313,8 @@ impl Store {
             if options.require_safe_chunks && !safe_chunks(&page) {
                 continue;
             }
-            if let (Some(policy), Some(owner_only)) = (&options.exclude_private, &owner_only)
-                && page_hidden_with(&*read, &page, policy, owner_only)?
+            if let Some(policy) = &options.exclude_private
+                && page_hidden(&*read, &page, policy)?
             {
                 continue;
             }

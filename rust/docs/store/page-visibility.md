@@ -42,10 +42,14 @@ member-access part alone (the page's readers, and the origin of a derived page):
 ## Differences from PGLite
 
 - **Owner-only sources.** A page policy for a caller that is not the owner ends with the owner-only test
-  (`ownerOnlyAllowedSql`). The store keeps no derivation lineage, so the three page reads apply its `closed` form:
-  while any source is owner-only, every page is hidden. A remote read on PGLite carries the schema version and takes
-  the `fn` form, which hides only a page whose source or lineage is owner-only. The store hides more pages there,
-  never fewer. Without a schema version (the parity harness) PGLite takes the `closed` form too.
+  (`ownerOnlyAllowedSql`). The member reads which form the policy text carries and sends it as `ownerOnly`
+  (`ownerOnlyFormIn`): `fn` when the text holds `ownerOnlyPageSql(alias, 'fn')`, `closed` when it holds
+  `ANY_OWNER_ONLY_SQL`, `off` when it holds neither (the owner). The store applies the same form in `page_hidden`
+  (`owner_only.rs`), so every read that goes through `page_hidden` applies it, not only these three. `closed`: while
+  any source is owner-only, every page is hidden. `fn`: a page is hidden when its source is owner-only, or when it is
+  a concept or question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only source. The
+  store keeps no `derivation_inputs` (PGLite writes them only through raw SQL, which a Rust brain refuses), so the
+  function's walk over them finds nothing on either side. A policy with no `ownerOnly` is `closed`.
 
 - **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
   or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with

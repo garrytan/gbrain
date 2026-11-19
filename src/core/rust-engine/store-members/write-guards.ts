@@ -1,13 +1,13 @@
 /**
  * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
- * sealImportedPage, readLivePageBody, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
- * writes a page write runs around the page row (engine-sql/write-guards.ts on the SQL engines). The store runs one
- * write transaction at a time, so the advisory locks PGLite takes before it lists origin claims are already held,
- * and `listOriginClaims` takes none.
+ * sealImportedPage, readLivePageBody, readInlinePageRegions, readStoredPageTier, readPageIndexingState,
+ * hasSegmentStorage): the reads and writes a page write runs around the page row (engine-sql/write-guards.ts on the
+ * SQL engines). The store runs one write transaction at a time, so the advisory locks PGLite takes before it lists
+ * origin claims are already held, and `listOriginClaims` takes none.
  *
  * What each member answers and why: rust/docs/store/write-guards.md.
  */
-import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** The page a target names, live or a tombstone. `deleted_at` comes back as a Date, as PGLite returns a timestamptz. */
@@ -58,6 +58,9 @@ export const readInlinePageRegions: StoreMember<[pageId: number], InlinePageRegi
 
 export const readStoredPageTier: StoreMember<[sourceId: string, slug: string], string | null> = (brain, sourceId, slug) =>
   storeCall({ member: 'readStoredPageTier', slug, sourceId }, () => brain.readStoredPageTier(sourceId, slug));
+
+export const readPageIndexingState: StoreMember<[pageId: number], PageIndexingState | null> = (brain, pageId) =>
+  storeCall({ member: 'readPageIndexingState' }, () => brain.readPageIndexingState(pageId)) as Promise<PageIndexingState | null>;
 
 /** True once a segment text or a body staging is stored; the store keeps neither until the page-body family lands. */
 export const hasSegmentStorage: StoreMember<[], boolean> = (brain) => storeCall({ member: 'hasSegmentStorage' }, () => brain.hasSegmentStorage());

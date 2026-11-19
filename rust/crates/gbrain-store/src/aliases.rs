@@ -82,7 +82,7 @@ pub(crate) struct SlugAliasRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CrState {
     pub mode: String,
-    /// Written as PGLite writes it; no typed read returns it.
+    /// Written as PGLite writes it; `readPageIndexingState` reads it back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corpus_generation: Option<String>,
 }
@@ -518,6 +518,11 @@ pub(crate) fn stamp_contextual_retrieval(
         corpus_generation: generation.map(str::to_string),
     };
     put_json(tx, &cr_key(page_id), &state)
+}
+
+/// The page's `corpus_generation` column: `None` when it has no state or the state has none (NULL).
+pub(crate) fn corpus_generation(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_cr(read, page_id)?.and_then(|state| state.corpus_generation))
 }
 
 /// The page's `contextual_retrieval_mode` column: `None` when it has no state (NULL).

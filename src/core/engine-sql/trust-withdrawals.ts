@@ -2,6 +2,12 @@
  * Trust: the fact withdrawal ledger (`fact_withdrawals`, facts/withdrawal-schema.ts). Each function runs the statement
  * its caller ran through `executeRaw`, with the same text and parameters, on the engine's own raw path; only its home
  * moved. Statements that also read `facts` or `fact_purges` stay with their callers.
+ *
+ * `readFactCacheWatermark` is the hot-memory cache's watermark (facts/meta-hook.ts): the ledger's row count and newest
+ * withdrawal, plus a digest of the folder access rules and pending coverage, so a forget or a rulebook install in any
+ * process changes it. `readTrustGeneration` is the other half of that cache identity: the trust policy generation
+ * (`trust_policy_state`, eligibility/generation-schema.ts), which moves whenever cached proactive content could turn
+ * wrong.
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -15,6 +21,13 @@ export interface WithdrawalDateRow { row_num: number; withdrawn_at: Date }
 
 /** A ledger row's key. */
 export interface WithdrawalKeyRow { visibility: string; fact_hash: string; subject: string }
+
+/**
+ * The hot-memory cache watermark of a source: its withdrawal count, its newest withdrawal time (UTC ISO text with
+ * microseconds, null with no withdrawal), and the md5 digests of `access_rules` and `access_pending_coverage`
+ * (every source), joined by ':'.
+ */
+export interface FactCacheWatermarkRow { withdrawals: number; latest_withdrawn_at: string | null; access_rules: string }
 
 export async function hasCoveringFactWithdrawal(exec: LegacyUnscopedRead, sourceId: string, visibility: string, factHash: string, claim: string, subject: string): Promise<boolean> {
   const rows = await exec.executeRaw(`SELECT 1 FROM fact_withdrawals
@@ -59,4 +72,25 @@ export async function hasFactWithdrawalForSubject(exec: LegacyUnscopedRead, sour
 export async function listFactWithdrawalKeys(exec: LegacyUnscopedRead, sourceId: string, limit: number): Promise<WithdrawalKeyRow[]> {
   return exec.executeRaw<WithdrawalKeyRow>(`SELECT visibility,fact_hash,subject FROM fact_withdrawals
       WHERE source_id=$1 ORDER BY visibility,fact_hash,subject LIMIT $2`, [sourceId, limit]);
+}
+
+export async function readFactCacheWatermark(exec: LegacyUnscopedRead, sourceId: string): Promise<FactCacheWatermarkRow> {
+  const [row] = await exec.executeRaw<{ withdrawals: number | string; latest_withdrawn_at: string | null; access_rules: string }>(
+    `SELECT count(*)::int AS withdrawals,
+       to_char(max(withdrawn_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS latest_withdrawn_at,
+       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id, rule_id), '')) FROM access_rules)
+         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id, prefix, reason), '')) FROM access_pending_coverage) AS access_rules
+     FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
+  return { withdrawals: Number(row?.withdrawals ?? 0), latest_withdrawn_at: row?.latest_withdrawn_at ?? null, access_rules: row?.access_rules ?? '' };
+}
+
+/**
+ * The trust policy generation as decimal text (`trust_policy_state`, one row, id 1). Throws when the row is missing:
+ * the caller then delivers nothing rather than cached content (eligibility/generation.ts).
+ */
+export async function readTrustGeneration(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ generation: string | number | bigint | null }>(
+    'SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1');
+  if (row?.generation === undefined || row.generation === null) throw new Error('trust generation unreadable: trust_policy_state has no row');
+  return String(row.generation);
 }

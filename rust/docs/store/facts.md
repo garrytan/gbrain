@@ -21,6 +21,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
+| `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), member callers and callers with a private-facts grant included. See "Held fence cells". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
 Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the
@@ -54,6 +55,7 @@ their own page (`page_hidden`; see [salience.md](salience.md#private-pages-exclu
 | Snapshot: `visibility` (a derived page defaults to private, others to world) must be `world`, `pinned_question` must not be true, and with `honorAliases` an absent `visibility` with an `access` or `confidentiality` alias (`PRIVACY_ALIASES`, 777; trimmed of edge space, lowercased) is private. | `privateSnapshotFilterFragment`, 707; `privacyAliasSql`, 791; `honorAliases`, 816; `derivedPageSql`, 68 |
 | Derived origin: an atom whose `source_slug` page is explicitly private; a derived page with an input whose `visibility` (atom default private) is not world, or whose input origin is explicitly private; a `life-chronicle` event whose `event.depth` is missing, has no page, or names a private page (fail closed). | `derivedOriginPrivateSql`, 733 (the `gbrain_concept_inputs_private` form from `CONCEPT_INPUTS_PRIVATE_SINCE` = 311, `src/core/schema-migrations/v311-concept-inputs-private.ts:23`); `chronicleOriginNotVisibleSql`, 759 |
 | Declared lineage: any `derived_from` slug (string or array, `.md` stripped, nulls skipped) whose page is explicitly private. | `declaredLineagePrivateSql`, 687 |
+| Owner-only test (any caller but the owner): in the `closed` form a row is hidden while any source is owner-only; in the `fn` form a row is hidden when its own source is owner-only. The provenance, entity and holding pages pass the page form of the same test (see [page-visibility.md](page-visibility.md#differences-from-pglite)). The member sends the form as `ownerOnly` (`ownerOnlyFormIn`). | `ownerOnlyFactAllowedSql`, `ownerOnlyAllowedSql`; `src/core/access/owner-only.ts` |
 
 The member sends `{ honorAliases, entityPrivacy }` when the policy text PGLite would render
 now equals its no-caller rendering (`withoutCallerAccess`, 443), the concept-input branch
@@ -61,6 +63,11 @@ compared as one token. The store knows two fact forms: `privateProvenanceFilterU
 fact lists, the relevance pool and `listSimilarActiveFacts`) and `privateFactFilterForCaller` (what
 `privateFactFilterForReader` renders for a caller that is not the owner: `countWorldFacts` and the
 ontology reads). With no caller the two are the same policy in a different order.
+
+A caller read while the config flag `access.restrictions_present` was unset (`CallerAccess.restricted` false)
+renders the short member-access form. The member renders its comparison texts under that form and sends
+`open: true`. The store then hides every page that names readers, whatever the identity, and runs the origin walk
+only when its own flag ([access-flag.md](access-flag.md)) is `'1'`, so a stale flag read fails closed.
 
 Every fact family opts in with `callerReaders`: a caller whose text equals the rendering for a
 record of only its reader identity and private-readable grant is served, and the member sends
@@ -200,6 +207,7 @@ reads refuse their `hasAttempts: true` form.
 | `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
 | `listUnlinkedConversationSlugs` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countFactEmbeddingCoverage` | served | |
+| `countStaleFactEmbeddings` | served | the same eligibility as `countFactEmbeddingCoverage`; `chars` counts code points |
 
 - With no attempts table nothing was tried or paid, so the served unlinked reads return
   `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,
@@ -290,15 +298,14 @@ the page before the settle commits. Outside a transaction it reads the last comm
 Ten members (`src/core/engine-sql/facts-repair.ts`). Nine are served: four read only `facts` and `pages`, the two loop
 reads come from `facts/loops.rs`, `countLabelFacts` reads facts, pages, loops and withdrawals, `countPurgedPageFacts`
 also reads the `page_purges` ledger (`facts/page_purges.rs`, key `F 0x0C source \0 content_hash`) and
-`listUnwithdrawnFacts` reads the derived generation ledger (`facts/generations.rs`, key `F 0x0E generation_id`). One
+`listUnwithdrawnFacts` (`facts/generations.rs`) reads the derived generation ledger under `h` (`generations.rs`). One
 reads a table the store does not hold and refuses with `engine_capability_missing` (it is absent from
 `store-members/facts-repair.ts`, so the capability named in `members.ts` is `facts`).
 
-No member writes the derived generation ledger on Rust. The fence writer (`publishFenceGeneration` in
-`generations/fence.ts`, through `activateGeneration` and `recordHeld` in `generations/publish.ts`) writes it with raw SQL
-in the page write's transaction, and a managed source journals the activation (`generations/managed.ts`, the write
-journal), so both stop on the typed `raw_sql` refusal and `listUnwithdrawnFacts` lists nothing on Rust. A writer that
-binds the ledger must also delete a source's generations with the source. The store also keeps no
+The derived generation ledger belongs to `generations.rs` (keys under `h`, members `activateGenerationRows`,
+`recordHeldGenerationRow` and the rest of `engine-sql/derived-generations.ts`); its source-delete cascade is
+`generations::remove_source_rows`. `facts/generations.rs` holds no keys and reads the rows with their items through
+`generations::ledger_rows`. The store also keeps no
 `version_history_gap_at` (`page-state/versions.ts` sets it with raw SQL), so `history_gap` is always false.
 
 No member writes `page_purges` on Rust. Its two writers, the page purge sweep (`persistence/page-purge.ts`) and the
@@ -440,6 +447,45 @@ opened ids (`gbrain.write_open_facts`). Both napi members take it from the store
 cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
 names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
 before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
+
+## Held fence cells (`facts/held_cells.rs`)
+
+`list_held_fence_cells({ keys, member, grantSources })` (`engine-sql/cli-reads-ops.ts` `listHeldFenceCells`): which facts-fence
+row lines of a page's text a caller with world-only fact reads may not see. get_page, get_chunks, think
+and search_exact ask it through `eligibility/stamp.ts` `heldFenceLines` and drop the held lines. A key
+is `{ sourceId, slug, rowNum, claim, partial }`: the page, the line's row number (-1 when the line names
+none), its claim, and whether a chunk boundary cut it.
+
+The store answers `eligibility/fence-overlay.ts` `heldRowSql`. Over the page's live rows (by-page index,
+`expired_at` null), a key is held when a narrower row sits at its row number, or when a narrower row
+states its claim and no `world` row states it. A row states a claim when its fact equals it, or, for a
+cut claim, contains it (`strpos(fact, claim) > 0`).
+
+A row that is not `world` is narrower unless the member admission (`memberFactAdmitSql`) or the grant
+admission (`grantedPrivateFactSql`) takes it. For a
+member caller (`callerMember()`) the TypeScript member passes `member: { slug, principal, policy }`: the
+caller's page `memory/members/<member>`, its principal `member:<member>`, and its page policy, which
+`storePageTextPolicy` reads from `privatePagesFilterForCaller` with the caller's readers (a policy the
+store does not render refuses, and every line is held). A `private` row of that page is admitted when
+the page is live (`deleted_at` null), its readers (`readable_by`, as `page_readers`) name the principal,
+and the policy shows the page (`page_hidden`). Every other page, and every page for a caller with no
+member identity, admits nothing.
+
+For a caller with a private-facts grant the TypeScript member passes `grantSources`, the sources of
+`privateFactSources()`. A `private` row is admitted when its source is granted, its `source_markdown_slug` is set,
+it is not a transcript-lane row (a `source` of the conversation prefix, `hook:writeback`, `hook:compact`,
+`sweep:corpus`, `transcript:…` or `connector:…`), none of its holding, entity and provenance slugs is a member page
+(`memory/members/…`), and none of those pages keeps its facts private: the stored page row (soft-deleted too) is a
+private derivation (`derivation_private`), or, for a page other than the entity page, there is no live row or the
+live row carries the quarantine key. A row that a `confirm` or `supersede_fact` proposal with a `visibility` key in
+its before state names as the related fact is admitted only when every target copy of those proposals is itself
+admitted by the member or grant admission (`trust::proposals::visibility_proposal_targets`). With no grant, a grant
+on another source, or a soft-deleted page, the rows stay held.
+
+The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct
+held cell, in first-key order (SQL leaves the order open). A NUL character or a row number outside
+`integer` refuses with `invalid_argument`, as Postgres raises for the same parameters. No keys answer
+`[]` without a read.
 
 ## Not modeled
 

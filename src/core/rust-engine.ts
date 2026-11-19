@@ -31,6 +31,7 @@ import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { installOwnerClient } from './rust-engine/owner-ipc/client.ts';
+import { forgetOwnedRustBrain, recordOwnedRustBrain } from './rust-engine/owned-brains.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 
@@ -194,6 +195,8 @@ export class RustEngine {
       this._leaveOwner = installOwnerClient(this, role.connection, { recover: () => this._takeOver(role) });
     }
     this._owner = role;
+    // Readiness names this process as the lock owner of a brain it opened as owner (owned-brains.ts).
+    if (role.role === 'owner') recordOwnedRustBrain(this.databasePath);
   }
 
   /** The owner on `lost` went away: run the election again, once, for every call that saw it. */
@@ -236,6 +239,7 @@ export class RustEngine {
     if (owner?.role === 'owner') await owner.server.close();
     const store = this._store;
     this._store = null;
+    if (owner?.role === 'owner' && store) forgetOwnedRustBrain(this.databasePath);
     const txPool = this._txPool;
     this._txPool = null;
     await txPool?.shutdown(TRANSACTION_SHUTDOWN_WAIT_MS).catch(() => undefined);

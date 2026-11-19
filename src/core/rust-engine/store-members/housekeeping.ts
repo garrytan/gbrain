@@ -1,18 +1,19 @@
 /**
  * The housekeeping members the Rust store answers (engine-sql/persistence-housekeeping.ts): the host's housekeeping turn
  * (claimHousekeepingTurn, completeHousekeepingTurn), the receipt reads (readReceiptBudget, listCompactableReceipts,
- * listReservationsAfter, listTrueUpRequests), the capacity forecast's reads (readCapacityForecastInputs) and the
- * projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs) and the writer-version reads
- * (readWriterVersionCutoff, listWriterVersions, recentWriterVersions).
+ * listReservationsAfter, listTrueUpRequests), the true-up's write (trueUpReservations), the capacity forecast's reads
+ * (readCapacityForecastInputs) and the projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs)
+ * and the writer-version reads (readWriterVersionCutoff, listWriterVersions, recentWriterVersions).
  *
- * The store keeps no `persistence_consumers` rows, no `persistence_effects` rows and no worktree topology, so a live
- * consumer never blocks a turn and effect bytes are 0. It keeps the page projection queue: every page write updates it
- * as PGLite's `gbrain_queue_page_projection` trigger does. The Postgres `direct` route changes nothing here.
+ * The store keeps no `persistence_consumers` rows and no worktree topology, so a live consumer never blocks a turn. Its
+ * `persistence_effects` rows size the true-up as on Postgres. It keeps the page projection queue: every page write
+ * updates it as PGLite's `gbrain_queue_page_projection` trigger does. The Postgres `direct` route changes nothing here.
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Housekeeping").
  */
 import type {
   CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter,
+  TrueUpReservation,
 } from '../../engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from '../../page-state/projection-window.ts';
 import {
@@ -42,9 +43,13 @@ export const listCompactableReceipts: StoreMember<[retentionDays: number], Recor
 export const listReservationsAfter: StoreMember<[after: string, limit: number], Array<{ id: string; sequence: string; compacted: boolean }>> =
   (brain, after, limit) => storeCall({ member: 'listReservationsAfter' }, () => brain.listReservationsAfter(after, limit));
 
-/** Effect bytes are always "0" and `unfinished` always false: the store records no effects. */
+/** Effect bytes and `unfinished` come from the request's effect rows, as the Postgres statement reads them. */
 export const listTrueUpRequests: StoreMember<[ids: readonly string[]], Record<string, unknown>[]> = (brain, ids) =>
   storeCall({ member: 'listTrueUpRequests' }, () => brain.listTrueUpRequests([...ids]));
+
+/** The true-up's compare-and-set and counter release in one store write; the freed bytes come back as text. */
+export const trueUpReservations: StoreMember<[rows: readonly TrueUpReservation[]], number> = async (brain, rows) =>
+  rows.length ? Number(await storeCall({ member: 'trueUpReservations' }, () => brain.trueUpReservations(rows.map(r => ({ ...r }))))) : 0;
 
 /** Principal rows, then the topology-change rows; no relation size, so `tableBytes` is null. */
 export const readCapacityForecastInputs: StoreMember<[opts?: { light?: boolean }], CapacityForecastInputs> = (brain, opts) =>

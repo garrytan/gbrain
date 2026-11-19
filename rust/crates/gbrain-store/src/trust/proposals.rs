@@ -392,6 +392,34 @@ pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Resu
     Ok(None)
 }
 
+/// The targets (`target_table`, `target_id`) of the visibility proposals that name fact `fact_id` as their related row,
+/// whatever their status: the `supersede_fact` and `confirm` proposals whose `before_state` has a `visibility` key
+/// (`heldRowSql`'s grant clause, `eligibility/fence-overlay.ts`). Ascending by proposal id.
+pub(crate) fn visibility_proposal_targets(
+    read: &dyn KvRead,
+    fact_id: u64,
+) -> Result<Vec<(String, i64)>> {
+    let Ok(row_id) = i64::try_from(fact_id) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for id in ids_naming(read, "facts", row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if matches!(p.action.as_str(), "supersede_fact" | "confirm")
+            && p.related_table.as_deref() == Some("facts")
+            && p.related_id == Some(row_id)
+            && p.before_state
+                .as_object()
+                .is_some_and(|state| state.contains_key("visibility"))
+        {
+            out.push((p.target_table, p.target_id));
+        }
+    }
+    Ok(out)
+}
+
 impl Store {
     /// `insertTrustProposal(input)`: inserts a pending proposal and returns `{ id, created: true }`,
     /// or returns the pending proposal already recorded for the same action, target and related

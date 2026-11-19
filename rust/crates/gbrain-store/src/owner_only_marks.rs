@@ -15,10 +15,10 @@
 //! source is still owner-only then, so each page goes through `mark_before_delete`.
 
 use crate::Result;
-use crate::facts::OwnerOnlySources;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::in_links;
+use crate::owner_only::{OwnerOnlyForm, any_owner_only, page_owner_only};
 use crate::pages::{PageRecord, read_page_by_id};
 
 const MARK: &str = "owner_only_mark";
@@ -51,8 +51,11 @@ pub(crate) fn is_marked(read: &dyn KvRead, page_id: u64) -> Result<bool> {
 /// owner-only by its own lineage, the page itself and every concept or question with a `concept-provenance`
 /// `synthesized_from` link to it (`gbrain_owner_only_mark_derived`). Call it before the page's links are deleted.
 pub(crate) fn mark_before_delete(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
-    let sources = OwnerOnlySources::read(&*tx)?;
-    if !sources.guarded() || !sources.lineage_strict(&*tx, page)? {
+    // The trigger's guard: a brain with no owner-only source and no mark stores nothing.
+    if !any_owner_only(&*tx)? && !any_marked(&*tx)? {
+        return Ok(());
+    }
+    if !page_owner_only(&*tx, page, OwnerOnlyForm::Fn)? {
         return Ok(());
     }
     let mut doomed = vec![page.id];

@@ -154,6 +154,9 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/effect-scans.test.ts
+test/engine-parity/embedding-catalog.test.ts
+test/engine-parity/embedding-install.test.ts
+test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extract-takes-reads.test.ts
 test/engine-parity/extract-takes.test.ts
@@ -167,6 +170,7 @@ test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
+test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
@@ -182,6 +186,7 @@ test/engine-parity/jobs.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
+test/engine-parity/link-read-options.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
@@ -189,6 +194,7 @@ test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
+test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/page-visibility.test.ts
@@ -198,6 +204,7 @@ test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/remote-policy.test.ts
+test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
@@ -226,6 +233,7 @@ test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/typed-config-reads.test.ts
+test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts
@@ -766,6 +774,14 @@ test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
+test/rust-derived-generations.test.ts
+test/rust-fence-generations.test.ts
+test/rust-generation-fence-evidence.test.ts
+test/rust-generation-fence-restore.test.ts
+test/rust-generation-managed.test.ts
+test/rust-generation-publish.test.ts
+test/rust-generation-repair.test.ts
+test/rust-generation-scrub.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

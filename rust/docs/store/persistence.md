@@ -62,21 +62,21 @@ Rows have a null `worktree_id`, so the worktree terms of the claim statements ar
 answers them for a null worktree. `select_claimable_write` (the claim head read) exists in the store
 but has no binding.
 
-## Steps that refuse by name
+## Steps that need one transaction
 
-Three coordinator steps need one engine transaction, which this engine does not serve yet (the
-`transactions` capability). Each refuses before it opens one, with `engine_capability_missing`,
-`capability=transactions` and the step's name and reason in the detail, and writes nothing:
+Three coordinator steps run as one engine transaction. Each calls `requireTransactions`
+(`src/core/rust-engine/errors.ts`) before it opens one: an engine whose capability set lacks
+`transactions` refuses with `engine_capability_missing`, `capability=transactions` and the step's name
+and reason in the detail, and writes nothing. This engine serves `transactions`, so the check passes;
+an engine without a capability set (Postgres, PGLite, a transaction handle) passes too.
 
 | Step | Why it needs a transaction |
 | --- | --- |
 | `claimNextWrite` (journal.ts) | it selects the head under `FOR UPDATE SKIP LOCKED` and stamps the claim in one transaction |
 | `compactReceipt` (journal.ts) | it rechecks the receipt under its row lock and releases the counters in one transaction |
-| `trueUpRequests` (receipt-true-up.ts) | it locks the counters and compare-and-sets the reservations in one transaction |
+| `trueUpRequests` (receipt-true-up.ts) | it locks the counters, then `trueUpReservations` compare-and-sets the reservations and releases the freed bytes |
 
-The check is `requireTransactions` in `src/core/rust-engine/errors.ts`; an engine without a
-capability set (Postgres, PGLite, a transaction handle) passes. A true-up with nothing to shrink returns
-`0` before the check.
+A true-up with nothing to shrink returns `0` before the check.
 
 ## Topology changes
 
@@ -105,7 +105,8 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readReceiptBudget(retentionKey, floorDays)` | `{ retention, used, cutoff }`: the config value, the brain counter's terminal bytes, and now minus `floorDays` | `readReceiptBudget` |
 | `brain.listCompactableReceipts(retentionDays)` | compactable receipts completed more than `retentionDays` ago that are not an unresolved caller refusal, oldest first, at most 100. The open-sync-cursor and newest-sync-receipt exclusions never match (no managed-sync rows, no worktree) | `listCompactableReceipts` |
 | `brain.listReservationsAfter(after, limit)` | `{ id, sequence, compacted }` past `after`, in sequence order | `listReservationsAfter` |
-| `brain.listTrueUpRequests(ids)` | the true-up candidates; effect bytes are `0` and no effect is unfinished (no `persistence_effects` rows) | `listTrueUpRequests` |
+| `brain.listTrueUpRequests(ids)` | the terminal requests among `ids`, in no set order, with `effect_bytes` (the request's effect rows summed as `EFFECT_BYTES_SQL` sums them, as text) and `unfinished` (an effect is `queued` or `running`) | `listTrueUpRequests` |
+| `brain.trueUpReservations(rows)` | the bytes given back, as text. Each `{ id, old, kept, effects }` whose request still reserves `old`, still has `effects` effect bytes and has no `queued` or `running` effect now reserves `kept`. The freed bytes, summed per counter (the brain and the request's principal), leave the counters that exist, clamped at zero; each clamped counter adds one to config `persistence.true_up.clamped`. A changed or unknown request changes nothing. `invalid` for a malformed id or effect byte count | `trueUpReservations` |
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
@@ -127,8 +128,8 @@ request is bound to a worktree here, so an unstamped consumer has no owner host 
 ## Effect scans
 
 The effect worker's reads before and when it claims effects (`persistence-effect-scans.ts`). Each one joins
-`persistence_effects` to the worktrees the host owns. This engine keeps no worktree and claims no
-effect yet (see "Publication effects"), so each scan answers no row. The arguments are checked as the Postgres casts check them: a host
+`persistence_effects` to the worktrees the host owns. This engine keeps no worktree, so the two
+recovery scans answer no row; the claim read answers the next effect (see "Effect worker"). The arguments are checked as the Postgres casts check them: a host
 id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`, an `after` that is
 not a bigint with `invalid input syntax for type bigint: "<after>"` (or `value "<after>" is out of range
 for type bigint`), a fractional limit with the same bigint syntax message and a negative limit with
@@ -138,7 +139,7 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 | --- | --- | --- |
 | `brain.listGatedMirrorRequests(hostId)` | `[]`: no withdrawal mirror is parked on a worktree here. The gate and allowed codes change nothing, so they are not sent | `listGatedMirrorRequests` |
 | `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: no effect carries a recovery on a worktree here | `listEffectRecoveries` |
-| `brain.selectClaimableEffect(hostId)` | `null`: a stored effect waits `queued`, because this engine runs no effect yet. The dead owner keys change nothing, so they are not sent | `selectClaimableEffect` |
+| `brain.selectClaimableEffect(hostId, deadOwners)` | the effect row the worker claims next, or `null` (see "Effect worker") | `selectClaimableEffect` |
 
 ## Publication effects
 
@@ -156,9 +157,98 @@ foreign key), and so does an effect with no kind or no data. Nothing is stored o
 each stored effect of the request in kind order, or only its `kind` effect when one is named (`readRequestEffects`,
 the reads a write receipt makes). A request id that is not a uuid refuses with the uuid syntax message.
 
-No effect is claimed or run on this engine yet: `selectClaimableEffect` answers `null` (see "Effect
-scans"), so every stored kind, embedding included, waits `queued` and nothing is lost. The receipt
-names a row that exists, and the write's reservation stays charged until the effect ends.
+The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
+exists, and the write's reservation stays charged until the effect ends.
+
+## Withdrawal effects
+
+`brain.insertWithdrawalEffects({ requestId, sourceId, data })` queues the effects a forget under a write
+request leaves (`insertWithdrawalEffects`, the statement `recordFactWithdrawal` sent through `executeRaw`):
+one `withdrawal-mirror`, `git` and `embedding` row, in that order, each `queued` with `data`, a null
+revision, the source's incarnation and a null worktree (no worktree binds a source here). It resolves the
+kinds it inserted. An unknown source inserts nothing, as the statement's `FROM sources` yields no row; a
+kind already stored for the request is kept. A request id that is not a uuid refuses with the uuid syntax
+message, and a request with no row refuses `constraint_violation` (the foreign key). Inside `transaction`
+it is one more write of the withdrawal's store write, so the effects commit with the withdrawal.
+
+## Effect worker
+
+The statements the effect worker sends to claim one effect and to settle its claim
+(`persistence-effect-worker.ts`), with the PostgreSQL rules. The store is single-writer, so a read
+takes no row lock, and a Rust brain has no worktrees.
+
+`brain.selectClaimableEffect(hostId, deadOwners)` resolves the effect row with the lowest
+(`next_attempt_at`, id) that is `queued`, `running` with an expired claim, or `running` under a dead
+owner (`deadOwners` holds `pid:nonce:start` keys; the claim's `host_id` must be `hostId`), that is due
+now, on no worktree and not recovering, and that is a withdrawal mirror or belongs to a request with no
+`queued` or `running` withdrawal mirror. It resolves `null` when no effect is claimable.
+
+`brain.stampEffectClaim({ id, token, ownerJson })` marks the effect `running` under `token` for two
+minutes, adds one attempt and stores the claim owner; it resolves the claimed row, or `null` when no
+effect has the id. `brain.settleEffect(action, { id, token, slug, outcomeJson, dataJson, reason, delayMs })`
+runs one settle statement and resolves `true` when it matched the claim (`id`, `token`, not recovering).
+A `null` token matches no row.
+
+| `action` | Sets | Mirrors |
+| --- | --- | --- |
+| `renewEffectClaim` | the claim's expiry to two minutes from now | `renewEffectClaim` |
+| `advanceEffectRow` | `queued`, `after_slug`; an embedding stores `embedding_attempt_base`, another kind drops `target_failures` and `failing_target` | `advanceEffectRow` |
+| `completeEffectRow` | `committed` with the outcome, the retry keys dropped; `failed` with `targets_parked` when a target is parked | `completeEffectRow` |
+| `retryEffectRow`, `retryBusyEffectRow` | `queued` after `delayMs` with the reason (`writer_busy` and the new data for the busy retry) | `retryEffectRow`, `retryBusyEffectRow` |
+| `requeueEffectRow` | `queued` after `delayMs` with the new data and reason | `requeueEffectRow` |
+| `parkEffectRow`, `failEffectRow` | `failed` with the new data (`targets_parked`) or the reason | `parkEffectRow`, `failEffectRow` |
+
+`brain.readMirrorGateRows(requestIds)` resolves `{ request_id, state, data }` for each withdrawal mirror
+of the requests that is not committed or that has published. `brain.hasRearmableTargets(requestIds, code)`
+resolves whether a Git or embedding effect of the requests, `queued` or `failed`, unclaimed, not
+recovering and not settled, has a target parked under `code` while its request's withdrawal mirror has
+committed. A request id or host id that is not a uuid refuses with
+`invalid input syntax for type uuid: "<id>"`, and an effect id that is not a bigint with the bigint
+syntax message.
+
+## Idle probe
+
+`brain.probeIdleWork(spec)` answers the consumer's idle probe (`persistence-idle-probe.ts`):
+`{ work, projection_work, projection_last, high_water }`. `spec` holds `hostId`, `excludedRoots`,
+`publishing`, `retryingTopologies`, `laneRoots`, the projection `cursor`, `abandonedBefore` and
+`foregroundPriority`. `work` is true when one of these holds:
+
+- a queued write is claimable (the claim rules above, with `excludedRoots` and `laneRoots`) and is
+  not blocked for writer pool capacity, unless `publishing` is set;
+- a running write that has not published, with no recovery, has an expired claim;
+- an effect is due as the probe states it: `queued`, or `running` with an expired claim, due now, on no
+  worktree, not recovering, and a withdrawal mirror or of a request whose withdrawal mirror is committed;
+- the projection window (`selectProjectionWindowJobs` with the retry cooldown) holds a job of a source
+  that is not archived whose page is live markdown or code (`projection_work`);
+- a segmented page has a projection job past its retry cooldown;
+- with `abandonedBefore`, a running write or effect with no recovery was last written before it.
+
+The worktree recovery, effect recovery on a worktree, topology recovery and overdue deferred terms join
+a worktree, and a Rust brain has none, so they find no row. `projection_last` is the last key window row
+(`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
+is not a uuid refuses with the uuid cast message.
+
+## No-op embedding settle
+
+`settleNoopEmbeddingEffects` (`persistence/embedding-noop-settle.ts`) settles, in bulk, queued page
+embedding effects whose chunks already carry current vectors. Its four members:
+
+- `brain.probeNoopEmbeddingSettle(from)`: whether a `queued` embedding effect with no attempts and no
+  recovery has an id past `from`.
+- `brain.lockNoopEmbeddingWindow({ from, limit })`: `{ newest, rows }`, the newest effect id as text,
+  then the next `limit` such effects by id as `{ id, page_id }`. `page_id` reads `data.page_id` as
+  `::int` does: a value that is not an integer, or one out of the integer range, refuses with the
+  Postgres message. The store is single-writer, so the lock has nothing to skip.
+- `brain.readNoopEmbeddingCandidates(spec)`: the window effects whose page id is in `spec.pageIds`, due
+  now, with none of the data keys `targets`, `source_scan`, `retry_slugs` or `parked`, on no worktree,
+  with no withdrawal mirror of the request left to commit, whose page is in the effect's source, live,
+  at the effect's revision with its text projection sealed there and stamped with `spec.signature`, and
+  whose every chunk has a vector, `embedded_at`, an embedded text hash equal to the md5 of its text and
+  the model `spec.expectedModel` (`null` matches a chunk with no model). Only the `embedding` column is
+  served; another column refuses as a missing member.
+- `brain.settleNoopEmbeddingRows(ids)`: each `queued` effect with no recovery among `ids` becomes
+  `committed` with no error, one more attempt, no claim, outcome `{}` and the data keys `retry_slugs`,
+  `target_failures` and `failing_target` removed; it returns `{ id, request_id }` for each.
 
 ## Owner scans
 
@@ -196,4 +286,5 @@ brain predates the queue, so no such store exists outside development.
 | `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible: false }`; a batch adds `managedRows: [{ enabled: false }]` and `planModePrev: 'auto'` | Belief events and fact, take and page purges are written only through `executeRaw`, which this engine refuses. |
 | `listHostConsumerRows(hostId, opts?)`, `probeLiveConsumerRows(probe, opts?)` | `[]` | One process owns this engine's brain, so it keeps no consumer heartbeat rows. PGLite, which also admits one process, answers the same in its callers (`listHostConsumers`, `probeLiveFullConsumer`) without a read. |
 | `renewConsumerRow(renewal, opts?)`, `deleteConsumerRow(key, opts?)`, `stampWorktreeHeartbeats(hostId, opts?)` | resolve with no effect | The heartbeat has no row to renew or delete, and this engine has no worktrees to stamp. |
+| `lockEffectGuard(worktreeId)` | resolves `null` | The store is single-writer, so the brain-row share lock has nothing to wait on, and this engine has no worktree to read. A worktree id that is not a uuid refuses with the uuid syntax message. |
 | `requireSynchronousCommit()` | resolves with no effect | A store commit makes every write durable before it returns (`kv.rs` `commit`), so there is no asynchronous commit to turn off. |

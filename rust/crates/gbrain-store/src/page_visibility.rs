@@ -16,10 +16,9 @@
 //! `config ->> 'owner_only'` is `true`).
 //!
 //! Every page policy PGLite renders for a caller that is not the owner ends with the owner-only test
-//! (`ownerOnlyAllowedSql`). The store keeps no derivation lineage, so it applies the `closed` form
-//! (`ownerOnlyForm` without a schema version): while any source is owner-only, every page is hidden.
-//! A remote read on PGLite carries the schema version and takes the `fn` form, which hides only a
-//! page whose source or lineage is owner-only, so there the store hides more pages, never fewer.
+//! (`ownerOnlyAllowedSql`); `page_hidden` applies it in the form the policy names (owner_only.rs):
+//! `fn` hides a page whose source or concept-provenance input is owner-only, `closed` hides every
+//! page while any source is owner-only.
 //!
 //! Keys: this family adds none. It reads page records through `pages.rs` and source records
 //! through `sources.rs`.
@@ -27,13 +26,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use serde_json::{Map, Value};
-
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::kv::KvRead;
-use crate::pages::{PageRecord, read_page};
-use crate::sources::{all_sources, read_source};
-use crate::timeline_queries::jsonb_field_text;
+use crate::owner_only::{any_owner_only, source_owner_only};
+use crate::pages::read_page;
 use crate::{Result, Store};
 
 /// One (source, slug) a caller asks about.
@@ -61,33 +56,6 @@ pub struct WriteVisibilityProbe {
     pub owner_only_any: bool,
 }
 
-/// `OWNER_ONLY_KINDS` (access/owner-only.ts): source kinds that are owner-only whatever their flag says.
-const OWNER_ONLY_KINDS: &[&str] = &["imessage"];
-
-/// `ownerOnlySourceRowSql`: `config->>'kind' IN OWNER_ONLY_KINDS OR config->>'owner_only' = 'true'`.
-fn owner_only_config(config: &Map<String, Value>) -> bool {
-    let text = |key: &str| config.get(key).and_then(jsonb_field_text);
-    text("kind").is_some_and(|kind| OWNER_ONLY_KINDS.contains(&kind.as_str()))
-        || text("owner_only").as_deref() == Some("true")
-}
-
-/// `page_hidden` with the owner-only test in its `closed` form: any owner-only source hides the page.
-fn hidden_for_writer(
-    read: &dyn KvRead,
-    page: &PageRecord,
-    policy: &PrivacyPolicy,
-    owner_only_any: bool,
-) -> Result<bool> {
-    Ok(owner_only_any || page_hidden(read, page, policy)?)
-}
-
-/// Whether the brain holds an owner-only source (`ANY_OWNER_ONLY_SQL`).
-fn any_owner_only(read: &dyn KvRead) -> Result<bool> {
-    Ok(all_sources(read)?
-        .iter()
-        .any(|s| owner_only_config(&s.config)))
-}
-
 impl Store {
     /// `readWriteVisibilityProbe(sourceId, slug, { policy })`: the opening read of a remote page
     /// write's visibility check, where `policy` is the empty-identity page policy with privacy.
@@ -100,13 +68,12 @@ impl Store {
         let read = self.read()?;
         let owner_only_any = any_owner_only(&*read)?;
         let identity_may_open = match read_page(&*read, source_id, slug)? {
-            Some(page) if hidden_for_writer(&*read, &page, policy, owner_only_any)? => {
+            Some(page) if page_hidden(&*read, &page, policy)? => {
                 Some(page.frontmatter.contains_key("readable_by"))
             }
             _ => None,
         };
-        let owner_only_source =
-            read_source(&*read, source_id)?.is_some_and(|s| owner_only_config(&s.config));
+        let owner_only_source = source_owner_only(&*read, source_id)?;
         Ok(WriteVisibilityProbe {
             any_labelled: false,
             identity_may_open,
@@ -125,7 +92,7 @@ impl Store {
     ) -> Result<bool> {
         let read = self.read()?;
         match read_page(&*read, source_id, slug)? {
-            Some(page) => hidden_for_writer(&*read, &page, policy, any_owner_only(&*read)?),
+            Some(page) => page_hidden(&*read, &page, policy),
             None => Ok(false),
         }
     }
@@ -139,7 +106,6 @@ impl Store {
         policy: &PrivacyPolicy,
     ) -> Result<Vec<CallerPageAccessRow>> {
         let read = self.read()?;
-        let owner_only_any = any_owner_only(&*read)?;
         let pairs: BTreeSet<(&str, &str)> = pages
             .iter()
             .map(|p| (p.source_id.as_str(), p.slug.as_str()))
@@ -149,8 +115,7 @@ impl Store {
             let Some(page) = read_page(&*read, source_id, slug)? else {
                 continue;
             };
-            let readable = page.deleted_at_us.is_none()
-                && !hidden_for_writer(&*read, &page, policy, owner_only_any)?;
+            let readable = page.deleted_at_us.is_none() && !page_hidden(&*read, &page, policy)?;
             rows.push(CallerPageAccessRow {
                 source_id: source_id.to_owned(),
                 slug: slug.to_owned(),

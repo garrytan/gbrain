@@ -5086,6 +5086,19 @@
           }
         ]
       },
+      "isSourceClaimed": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listAllSources": {
         "default": [
           {

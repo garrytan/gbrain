@@ -364,15 +364,13 @@ export interface AppliedAccess {
   relaxation: 'none' | 'granted_sources' | 'operator' | 'owner';
 }
 
-export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw'>, auth?: AuthInfo, sourceIds: readonly (string | undefined)[] = []): Promise<AppliedAccess> {
+export async function appliedAccessSummary(engine: Pick<BrainEngine, 'listAppliedPolicyRevisions'>, auth?: AuthInfo, sourceIds: readonly (string | undefined)[] = []): Promise<AppliedAccess> {
   const access = currentCallerAccess();
   const member = access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
   let policyRev: Record<string, number> | null = null;
   if (access.restricted) {
     try {
-      const rows = await engine.executeRaw<{ source_id: string; rev: number | string | null }>(
-        `SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
-          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`);
+      const rows = await engine.listAppliedPolicyRevisions();
       const visible = auth ? new Set([auth.sourceId, ...(auth.allowedSources ?? []), ...sourceIds].filter(Boolean)) : null;
       policyRev = Object.fromEntries(rows.filter(r => r.rev !== null && (!visible || visible.has(r.source_id))).map(r => [r.source_id, Number(r.rev)]));
     } catch { policyRev = null; }

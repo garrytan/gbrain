@@ -50,6 +50,7 @@ Differences from PGLite:
   id.
 - `upsertFile`: Postgres takes a serial id even when the insert turns into an update, so its ids can skip
   numbers. The store takes an id only for a new row. No caller reads id gaps.
-- `getRawData` with `excludePrivate`: the TypeScript member refuses with `engine_capability_missing` (the
-  store has no page privacy filter yet). PGLite's `getRawData` ignores the other `PageReadScope` options,
-  and so does the member.
+- `getRawData` with `excludePrivate`: the TypeScript member sends the caller's page policy (reader
+  identity and private-readable grant included), and a page it hides has no raw data. A caller whose
+  policy differs in any other way gets `engine_capability_missing`. PGLite's `getRawData` ignores the
+  other `PageReadScope` options, and so does the member.

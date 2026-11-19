@@ -1,34 +1,24 @@
-//! The derived generation ledger: the `derived_generations` and `derived_generation_items` tables
-//! (src/core/generations), as far as `listUnwithdrawnFacts` reads them.
+//! `listUnwithdrawnFacts` (engine-sql/facts-repair.ts): the retired fence rows of the derived
+//! generation ledger whose facts are expired and not withdrawn.
 //!
-//! A generation lives at `F 0x0E generation_id` (the table's primary key, 8 bytes big-endian) with
-//! the JSON value `{"source_id", "kind", "owner_key", "generation", "state", "created_at_us",
-//! "items": [{"item_key", "action", "preimage"}]}`: the generation row with its items inline, as the
-//! items' `ON DELETE CASCADE` keeps them.
-//!
-//! The store reads the ledger. No member writes it: a fence write publishes a generation with raw
-//! SQL (`publishFenceGeneration` in generations/fence.ts, through `activateGeneration` and
-//! `recordHeld` in generations/publish.ts, in the page write's transaction), and a managed source
-//! journals the activation (generations/managed.ts, the write journal). On Rust they stop on the
-//! typed `raw_sql` refusal, so the ledger stays empty and `listUnwithdrawnFacts` lists nothing. A
-//! writer that binds here must also delete a source's generations with the source.
+//! The ledger is the `derived_generations` and `derived_generation_items` tables under
+//! `keys::DERIVED_GENERATION` (`h`, `generations.rs`); this module reads it through
+//! [`ledger_rows`] and keeps no keys of its own. The ledger's writers and its source-delete
+//! cascade live in `generations.rs`.
 
 use super::purge::withdrawal_covers;
 use super::{FactRecord, fact_fingerprint, read_fact, source_rows};
 use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::keys;
-use crate::kv::{KvRead, scan_prefix};
+use crate::generations::{LedgerRow, ledger_rows};
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
 use crate::timeline_queries::jsonb_field_text;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-
-/// The byte after `keys::FACT` that marks a generation.
-const GENERATION: u8 = 0x0E;
 
 /// `listUnwithdrawnFacts({ sourceIds, slug, fenceKind })`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -39,77 +29,6 @@ pub struct UnwithdrawnArgs {
     pub fence_kind: String,
 }
 
-/// One item of a generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ItemRecord {
-    pub item_key: String,
-    pub action: String,
-    pub preimage: Option<Value>,
-}
-
-/// What is stored for a generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct GenerationRecord {
-    pub source_id: String,
-    pub kind: String,
-    pub owner_key: String,
-    pub generation: i32,
-    pub state: String,
-    pub created_at_us: i64,
-    pub items: Vec<ItemRecord>,
-}
-
-/// The key of one generation (the test writer's only use: no Rust writer
-/// fills this table yet).
-#[cfg(test)]
-fn key(id: u64) -> Vec<u8> {
-    let mut key = vec![keys::FACT, GENERATION];
-    key.extend_from_slice(&id.to_be_bytes());
-    key
-}
-
-/// Every generation, in id order.
-fn all_generations(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, GenerationRecord)>> {
-    let mut out = Vec::new();
-    let mut bad = None;
-    scan_prefix(read, &[keys::FACT, GENERATION], false, &mut |k, v| {
-        let id = k
-            .get(2..10)
-            .and_then(|b| b.try_into().ok())
-            .map(u64::from_be_bytes);
-        match (id, serde_json::from_slice::<GenerationRecord>(v)) {
-            (Some(id), Ok(g)) => {
-                out.push((id, g));
-                true
-            }
-            (_, Err(e)) => {
-                bad = Some(e.to_string());
-                false
-            }
-            (None, Ok(_)) => {
-                bad = Some("short key".into());
-                false
-            }
-        }
-    })?;
-    match bad {
-        Some(e) => Err(StoreError::invalid(format!(
-            "{op}: corrupt derived generation record: {e}"
-        ))),
-        None => Ok(out),
-    }
-}
-
-/// Test fixture: stores a generation as the fence writer would.
-#[cfg(test)]
-pub(crate) fn put_generation(
-    tx: &mut dyn crate::kv::KvWrite,
-    id: u64,
-    record: &GenerationRecord,
-) -> Result<()> {
-    crate::put_json(tx, &key(id), record)
-}
-
 /// `preimage ->> field` of an object preimage.
 fn field(preimage: &Value, name: &str) -> Option<String> {
     preimage.get(name).and_then(jsonb_field_text)
@@ -118,7 +37,7 @@ fn field(preimage: &Value, name: &str) -> Option<String> {
 /// A retired item the CTE keeps: the fact id, the generation and the page slug.
 struct Retired<'a> {
     generation_id: u64,
-    generation: &'a GenerationRecord,
+    generation: &'a LedgerRow,
     slug: &'a str,
     preimage: &'a Value,
 }
@@ -140,10 +59,11 @@ impl Store {
             no_nul(op, &[("slug", slug)])?;
         }
         let read = self.read()?;
-        let generations = all_generations(&*read, op)?;
+        let generations = ledger_rows(&*read)?;
         let sources: HashSet<&str> = a.source_ids.iter().map(String::as_str).collect();
         let mut retired: BTreeMap<i64, Retired> = BTreeMap::new();
-        for (id, g) in &generations {
+        for g in &generations {
+            let id = &g.id;
             let Some(slug) = g.owner_key.strip_prefix("page:") else {
                 continue;
             };
@@ -299,17 +219,18 @@ fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool>
 mod tests {
     use super::*;
     use crate::facts::{ExpireFactArgs, InsertFactsArgs};
+    use crate::generations::{LedgerItem, put_ledger_row};
 
-    fn generation(id_text: Value, owner: &str, state: &str, created: i64) -> GenerationRecord {
-        GenerationRecord {
+    fn generation(id: u64, id_text: Value, owner: &str, state: &str, created: i64) -> LedgerRow {
+        LedgerRow {
+            id,
             source_id: "default".into(),
             kind: "fact_fence".into(),
             owner_key: owner.into(),
             generation: 1,
             state: state.into(),
             created_at_us: created,
-            items: vec![ItemRecord {
-                item_key: "k".into(),
+            items: vec![LedgerItem {
                 action: "retired".into(),
                 preimage: Some(json!({ "id": id_text, "fact": "a retired claim",
                     "visibility": "world", "row_num": 1, "expired_at": null })),
@@ -333,13 +254,12 @@ mod tests {
         };
         store
             .write(|tx| {
-                put_generation(tx, 1, &generation(json!(id), "page:notes/a", "live", 0))?;
-                put_generation(
+                put_ledger_row(tx, &generation(1, json!(id), "page:notes/a", "live", 0))?;
+                put_ledger_row(
                     tx,
-                    2,
-                    &generation(json!(id.to_string()), "page:notes/a", "superseded", 5),
+                    &generation(2, json!(id.to_string()), "page:notes/a", "superseded", 5),
                 )?;
-                put_generation(tx, 3, &generation(json!(id), "page:notes/a", "held", 9))
+                put_ledger_row(tx, &generation(3, json!(id), "page:notes/a", "held", 9))
             })
             .unwrap();
         // The fact is still active: nothing lists.

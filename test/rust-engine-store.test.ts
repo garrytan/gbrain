@@ -276,7 +276,8 @@ describe('Rust engine on the store', () => {
     const [row] = await engine.getRawData('notes/a');
     expect(row!.data).toEqual({ keep: 1, at: '1970-01-01T00:00:00.000Z' });
     expect(row!.fetched_at).toBeInstanceOf(Date);
-    expect(await code(() => engine.getRawData('notes/a', undefined, { excludePrivate: true }))).toBe('engine_capability_missing');
+    // excludePrivate is served for a caller with no reader grants: a page that is not private keeps its row.
+    expect(await engine.getRawData('notes/a', undefined, { excludePrivate: true })).toEqual([row!]);
     // A size past 2^31 crosses N-API as a double and comes back whole.
     const spec = { page_id: created.id, filename: 'a.png', storage_path: 'f/a.png', content_hash: 'h', size_bytes: 5_000_000_000 };
     expect((await engine.upsertFile(spec)).created).toBe(true);

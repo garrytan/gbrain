@@ -5,8 +5,8 @@
  * stampWriteClaim, lockWriteRequest, completeWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
- * (readTopologyChange, insertTopologyChange) and readLedgerSource. insertPublicationEffects always refuses: the store
- * records no effect.
+ * (readTopologyChange, insertTopologyChange) and readLedgerSource, and the effects a publication or a managed-request
+ * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects).
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -16,12 +16,13 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
+import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
@@ -155,6 +156,16 @@ export const requireSynchronousCommit: StoreMember<[], void> = async () => undef
  */
 export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec], string[]> = async (brain, spec) =>
   await storeCall({ member: 'insertPublicationEffects' }, () => brain.insertPublicationEffects(spec)) as string[];
+
+/**
+ * Queues a managed-request withdrawal's `withdrawal-mirror`, `git` and `embedding` effects (rust/docs/store/persistence.md,
+ * "Withdrawal effects"), with the data the engine-sql statement binds. Inside `transaction` it is one more statement of
+ * the withdrawal's store write, so the effects commit with the withdrawal or not at all.
+ */
+export const insertWithdrawalEffects: StoreMember<[spec: WithdrawalEffectsSpec], void> = async (brain, spec) => {
+  await storeCall({ member: 'insertWithdrawalEffects' }, () => brain.insertWithdrawalEffects({ requestId: spec.requestId, sourceId: spec.sourceId,
+    data: withdrawalEffectsData(spec) }));
+};
 
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
