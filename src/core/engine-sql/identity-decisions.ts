@@ -155,13 +155,12 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
         decided_by = EXCLUDED.decided_by, decided_at = EXCLUDED.decided_at, origin = EXCLUDED.origin,
         home_source_id = EXCLUDED.home_source_id, git_blob = EXCLUDED.git_blob, evidence = EXCLUDED.evidence`);
   }
-  const groupsGone = async (sql: string) => Number((await exec.query<{ n: number | string }>(`WITH gone AS (${sql} RETURNING entity_id) SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0);
   let autoUnlinked = input.auto?.unlink.length
     ? Number((await exec.run<{ n: number | string }>(sqlFragment`
         WITH gone AS (DELETE FROM entity_identities WHERE established_by = 'dedupe:auto' AND entity_id = ANY(${input.auto.unlink}::text[]) RETURNING entity_id)
         SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0) : 0;
-  autoUnlinked += await groupsGone(`
-    DELETE FROM entity_identities ei
+  autoUnlinked += Number((await exec.query<{ n: number | string }>(`
+    WITH gone AS (DELETE FROM entity_identities ei
      WHERE ei.established_by = 'dedupe:auto'
        AND ei.entity_id IN (
          SELECT a.entity_id FROM entity_identities a JOIN pages p ON p.id = a.page_id
@@ -175,7 +174,9 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
            JOIN entity_identity_reviews r ON r.verdict = 'different'
             AND r.members @> jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'slug', p.slug))
             AND r.members @> jsonb_build_array(jsonb_build_object('source_id', pb.source_id, 'slug', pb.slug))
-          WHERE a.established_by = 'dedupe:auto')`);
+          WHERE a.established_by = 'dedupe:auto')
+     RETURNING ei.entity_id)
+    SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0);
   const plan = input.auto?.link.flatMap(g => g.members.map(m => ({ ...m, entity_id: g.entity_id, canonical_page_id: g.canonical_page_id }))) ?? [];
   let autoLinked = 0, autoSkipped = 0;
   if (plan.length) {
@@ -198,10 +199,12 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
     autoLinked = Number(counts[0]?.linked ?? 0);
     autoSkipped = Number(counts[0]?.planned ?? 0) - Number(counts[0]?.ok ?? 0);
   }
-  autoUnlinked += await groupsGone(`
-    DELETE FROM entity_identities ei
+  autoUnlinked += Number((await exec.query<{ n: number | string }>(`
+    WITH gone AS (DELETE FROM entity_identities ei
      WHERE ei.established_by = 'dedupe:auto'
-       AND (SELECT count(*) FROM entity_identities o WHERE o.entity_id = ei.entity_id) < 2`);
+       AND (SELECT count(*) FROM entity_identities o WHERE o.entity_id = ei.entity_id) < 2
+     RETURNING ei.entity_id)
+    SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0);
   const unlinked = (await exec.query(`
     DELETE FROM entity_identities ei
      WHERE ei.established_by = 'dedupe:confirm'
