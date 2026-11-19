@@ -20,14 +20,15 @@
  *    so no case compared them across engines.
  *  - Seam: none in the cases. Typed members only (no executeRaw: D18). The write journal's requests and effects are
  *    seeded through the typed journal members (insertWriteRequest, insertPublicationEffects, completeWriteRow); access
- *    rules, page purge tombstones and sources through the harness fixtures. Not seeded, because no typed writer or
- *    harness fixture exists: belief_events, page_segment_derivations and takes, so the ledger read, the derivation probe
- *    and the takes half of the fingerprint probe are compared on empty tables. Generated values (fact ids, effect ids,
- *    journal ids, revisions) are compared by relation or shape, never by value.
+ *    rules, page purge tombstones, sources and the belief ledger's coverage through the harness fixtures. Takes are
+ *    seeded with addTakesBatch, stored derivation results with publishSegmentedPage and upsertSegmentDerivations, and
+ *    belief events by the production baseline (enableBeliefCoverage), so each of those three has a case on real rows
+ *    next to the empty-table answers of the older cases. Generated values (fact ids, effect ids, journal ids, revisions,
+ *    page and occurrence ids) are compared by relation or shape, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, recordPagePurge, restrictFolder } from './harness.ts';
-import { pageMeta } from '../helpers/page-body-fixtures.ts';
+import { createSource, enableBeliefCoverage, parityArms, recordPagePurge, restrictFolder } from './harness.ts';
+import { pageMeta, publishSegmentedPage, segmentText, sha256 } from '../helpers/page-body-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX } from '../../src/core/facts/conversation-publication.ts';
@@ -550,6 +551,107 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
       nobody: await engine.countPurgeFingerprintResidue(SRC, hash, 'people/none'), otherHash: await engine.countPurgeFingerprintResidue(SRC, 'not-a-hash', '*'),
     };
     expect(answers).toEqual({ everyone: { facts: 3, takes: 0 }, alice: { facts: 2, takes: 0 }, nobody: { facts: 0, takes: 0 }, otherHash: { facts: 0, takes: 0 } });
+    return answers;
+  });
+
+  parityTest('countPurgeFingerprintResidue counts the takes that carry a purged claim, by the slug of the page that holds them', {
+    methods: ['insertFact', 'putPage', 'addTakesBatch', 'loadPurgeTarget', 'countPurgeFingerprintResidue'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const target = await fact(engine, 'Alice likes tea', { entity_slug: 'people/a' });
+    await fact(engine, 'Alice likes tea', { entity_slug: 'people/b' });
+    const a = Number((await engine.putPage('people/a', note('A', 'a person'))).id);
+    const b = Number((await engine.putPage('people/b', note('B', 'a person'))).id);
+    const elsewhere = Number((await engine.putPage('people/a', note('A elsewhere', 'a person'), { sourceId: 'other' })).id);
+    const take = (page_id: number, row_num: number, claim: string, extra: Record<string, unknown> = {}) =>
+      ({ page_id, row_num, claim, kind: 'take', holder: 'self', weight: 0.5, since_date: '2026-01-01', source: 'parity', ...extra }) as never;
+    expect(await engine.addTakesBatch([
+      take(a, 1, 'Alice likes tea'), take(a, 2, 'alice  LIKES tea'), take(a, 3, 'Alice likes coffee'), take(a, 4, 'Alice likes tea', { active: false }),
+      take(b, 1, 'Alice likes tea'), take(elsewhere, 1, 'Alice likes tea'),
+    ])).toBe(6);
+    const hash = (await engine.loadPurgeTarget(target, SRC))!.fact_hash;
+    const answers = {
+      everyone: await engine.countPurgeFingerprintResidue(SRC, hash, '*'), a: await engine.countPurgeFingerprintResidue(SRC, hash, 'people/a'),
+      b: await engine.countPurgeFingerprintResidue(SRC, hash, 'people/b'), nobody: await engine.countPurgeFingerprintResidue(SRC, hash, 'people/none'),
+      otherHash: await engine.countPurgeFingerprintResidue(SRC, 'not-a-hash', '*'), other: await engine.countPurgeFingerprintResidue('other', hash, '*'),
+    };
+    expect(answers).toEqual({ everyone: { facts: 2, takes: 4 }, a: { facts: 1, takes: 3 }, b: { facts: 1, takes: 1 }, nobody: { facts: 0, takes: 0 },
+      otherHash: { facts: 0, takes: 0 }, other: { facts: 0, takes: 1 } });
+    return answers;
+  });
+
+  parityTest('probePurgeDerivations counts the stored derivation results that hold a claim, swept or kept, and walks them in key order', {
+    methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
+      'setBodyStagingState', 'transaction', 'upsertSegmentDerivations', 'setPurgeProbeTimeout', 'probePurgeDerivations'],
+  }, async (engine) => {
+    const texts = [segmentText('# One\nfirst segment\n'), segmentText('## Two\nsecond segment\n'), segmentText('## Three\nthird segment\n')];
+    const a = await publishSegmentedPage(engine, 'notes/seg-a', texts);
+    const b = await publishSegmentedPage(engine, 'notes/seg-b', [segmentText('# Other\nanother page\n')]);
+    const row = (pageId: number, kind: 'links' | 'timeline', occurrenceId: number, segmentSha256: ReturnType<typeof sha256>, output: unknown, receipt: unknown = {}) =>
+      ({ pageId, kind, occurrenceId, version: 1, segmentSha256, contextHash: sha256(`ctx:${kind}`), state: 'done' as const, output, receipt });
+    await engine.upsertSegmentDerivations([
+      // Backed by its live segment and holding the claim inside a longer excerpt: kept, unless the purge rewrote its page.
+      row(a.pageId, 'links', a.occurrences[0]!, texts[0]!.sha256, { links: [{ excerpt: 'Today ALICE likes   tea at noon' }] }),
+      // No live segment backs it (the sha differs): swept.
+      row(a.pageId, 'links', a.occurrences[1]!, sha256('a segment since rewritten'), ['Alice likes tea']),
+      // A word apart from the claim: it passes the prefilter, but is no hit. Another pipeline, no claim: no candidate.
+      row(a.pageId, 'links', a.occurrences[2]!, texts[2]!.sha256, { note: 'Alice likes teas' }),
+      row(a.pageId, 'timeline', a.occurrences[2]!, texts[2]!.sha256, { dates: 1 }),
+      // The claim in an object key and in the receipt.
+      row(b.pageId, 'links', b.occurrences[0]!, sha256('b segment gone'), { 'alice likes tea': true }),
+      row(b.pageId, 'timeline', b.occurrences[0]!, sha256('b segment gone'), {}, { found: 'Alice likes tea' }),
+    ]);
+    const needles = [' alice likes tea '];
+    const patterns = ['%alice%likes%tea%'];
+    const pages = new Map<number, string>([[a.pageId, 'a'], [b.pageId, 'b']]);
+    const occurrences = [...a.occurrences, ...b.occurrences];
+    const probe = (source: string, pageIds: number[], cursor: [number, string, string] | null, rows: number) => engine.transaction(async tx => {
+      await tx.setPurgeProbeTimeout(5000);
+      const r = await tx.probePurgeDerivations(source, needles, pageIds, patterns, cursor, rows);
+      return { scanned: Number(r.scanned), normalized: Number(r.normalized), swept: Number(r.swept), kept: Number(r.kept),
+        last: r.last_page === null ? null : [pages.get(Number(r.last_page)), r.last_pipeline, occurrences.indexOf(Number(r.last_occurrence))] };
+    });
+    const first = await probe(SRC, [], null, 2);
+    const cursorOf = (last: Array<string | number | null | undefined> | null): [number, string, string] =>
+      [[...pages].find(([, label]) => label === last![0])![0], String(last![1]), String(occurrences[Number(last![2])])];
+    const answers = {
+      whole: await probe(SRC, [], null, 100), rewritten: await probe(SRC, [a.pageId], null, 100), first,
+      second: await probe(SRC, [], cursorOf(first.last), 2), third: await probe(SRC, [], cursorOf((await probe(SRC, [], cursorOf(first.last), 2)).last), 2),
+      past: await probe(SRC, [], [b.pageId, 'timeline', String(b.occurrences[0]!)], 100), other: await probe('other', [], null, 100),
+    };
+    expect(answers.whole).toMatchObject({ scanned: 6, normalized: 5, swept: 3, kept: 1 });
+    expect(answers.rewritten).toMatchObject({ scanned: 6, normalized: 5, swept: 4, kept: 0 });
+    expect(answers.first).toMatchObject({ scanned: 2, last: ['a', 'links', 1] });
+    expect(answers.past).toMatchObject({ scanned: 0, last: null });
+    return answers;
+  });
+
+  parityTest('listBeliefEventsForPurgeProbe reads the recorded values of a source after an id, in id order', {
+    methods: ['putPage', 'insertFact', 'listBeliefEventsForPurgeProbe'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/a', note('A', 'a body'));
+    await engine.putPage('notes/b', note('B', 'another body'));
+    await engine.putPage('notes/c', note('C', 'elsewhere'), { sourceId: 'other' });
+    await fact(engine, 'Alice likes tea', { entity_slug: 'people/a' });
+    await enableBeliefCoverage(engine, backend, SRC);
+    await enableBeliefCoverage(engine, backend, 'other');
+    const all = await engine.listBeliefEventsForPurgeProbe(SRC, 0);
+    const base = all[0]!.id;
+    // Page lifetimes, source incarnations, revisions and the write time are generated: each reads as its shape.
+    const unvolatile = (value: unknown) => JSON.parse(JSON.stringify(value)
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, '<time>'));
+    const view = (rows: typeof all) => rows.map(r => ({ id: Number(r.id) - Number(base), subject_kind: r.subject_kind, subject_key: unvolatile(r.subject_key), value: unvolatile(r.value) }));
+    const answers = {
+      all: view(all), afterFirst: view(await engine.listBeliefEventsForPurgeProbe(SRC, Number(base))),
+      afterAll: view(await engine.listBeliefEventsForPurgeProbe(SRC, Number(all[all.length - 1]!.id))), other: (await engine.listBeliefEventsForPurgeProbe('other', 0)).length,
+      nobody: await engine.listBeliefEventsForPurgeProbe('nobody', 0),
+    };
+    expect(answers.all.map(r => r.subject_kind)).toEqual(['page', 'page', 'fact']);
+    expect(answers.all[2]!.value).toMatchObject({ fact: 'Alice likes tea', valid_from: '<time>' });
+    expect(answers.afterFirst.map(r => r.id)).toEqual(answers.all.slice(1).map(r => r.id));
+    expect(answers.other).toBe(1);
+    expect({ afterAll: answers.afterAll, nobody: answers.nobody }).toEqual({ afterAll: [], nobody: [] });
     return answers;
   });
 });

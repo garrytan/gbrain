@@ -19,9 +19,12 @@
  *  - Seam: pages, facts, aliases, open loops, tombstones and sources are seeded through the typed members (`putPage`,
  *    `updateSlug`, `insertFacts`, `mergeOntologyFact`, `upsertOpenLoop`, `insertFactPurge`); the harness fixtures `createSource`,
  *    `archiveSource` and `restrictFolder` write the rest with SQL, and the Rust arm stops there on the typed raw_sql refusal.
- *    The write journal (persistence_requests, persistence_counters) has no typed writer that can enqueue a batch request, so
- *    its four reads assert the empty answer; the request join is pinned by the SQL text pin
- *    (test/facts-conversation-sites-sql-pin.test.ts). Generated values (ids) are compared by relation, never by value.
+ *    The write journal (persistence_requests, persistence_counters) is seeded through the typed journal members
+ *    (`readSourceMembership`, `lockPersistenceCounters`, `insertWriteRequest`, `stampWriteClaim`, `completeWriteRow`), so its four
+ *    reads are compared on queued, failed, committed and other-slug batch requests as well as on the empty journal; the one
+ *    write with no typed member, marking a request compacted, is a local `executeRaw` fixture that the Rust arm stops on. The
+ *    request join is also pinned by the SQL text pin (test/facts-conversation-sites-sql-pin.test.ts). Generated values (ids)
+ *    are compared by relation, never by value.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, basisEmbedding, parityArms, restrictFolder, sorted } from './harness.ts';
@@ -37,6 +40,10 @@ const TERMINAL = 'cli:extract-conversation-facts:terminal:v2';
 const NON_EXTRACTABLE = 'cli:extract-conversation-facts:non-extractable:v2';
 const LEGACY_TERMINAL = 'cli:extract-conversation-facts:terminal';
 const REQUEST = '6f9619ff-8b86-4d01-b42d-00cf4fc964ff';
+const WRITER = { kind: 'local_cli', id: 'writer-1' };
+const WRITER_KEYS = ['principal:local_cli:writer-1', 'brain'];
+const CLAIM = 'c0000000-0000-4000-8000-0000000000c1';
+const req = (n: number) => `b0000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
 const note = (title: string, body = 'body', frontmatter: Record<string, unknown> = {}, type = 'note') =>
   ({ type: type as 'note', title, compiled_truth: body, frontmatter });
 
@@ -72,6 +79,39 @@ async function state(engine: BrainEngine) {
   return sorted(found.map(r => ({ fact: r.fact, expired: r.expired_at !== null })), r => r.fact);
 }
 
+/** One conversation batch request in the write journal, queued; returns its journal id. `pages` are the batch's stored entries. */
+async function enqueueBatch(engine: BrainEngine, requestId: string, pages: Array<Record<string, unknown>>, over: { slug?: string; digest?: string } = {}): Promise<string> {
+  const source = await engine.readSourceMembership(SRC);
+  return engine.transaction(async tx => {
+    await tx.lockPersistenceCounters(WRITER_KEYS);
+    return (await tx.insertWriteRequest({
+      principalKind: WRITER.kind, principalId: WRITER.id, requestId, operation: 'submit_job', sourceId: SRC,
+      sourceIncarnation: source!.incarnation, pageId: null, slug: over.slug ?? PAGE, worktreeId: null, topologyGeneration: null,
+      digest: over.digest ?? 'a'.repeat(64), intent: { kind: 'submit_job', pages }, authority: { scopes: ['write'] }, intentBytes: 100,
+      terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: WRITER_KEYS,
+      clientRequestId: null, state: 'queued', deferredRefreshId: null,
+    })).id;
+  });
+}
+
+/** Claim a queued request and finish it in `state`. */
+async function settleBatch(engine: BrainEngine, id: string, state: 'committed' | 'failed', errorCode: string | null): Promise<void> {
+  await engine.transaction(async tx => {
+    await tx.lockPersistenceCounters(WRITER_KEYS);
+    await tx.stampWriteClaim(id, CLAIM, 60_000, JSON.stringify({ phase: 'parity' }));
+    await tx.completeWriteRow({
+      id, state, outcome: state === 'committed' ? { published: true } : null, errorCode, errorMessage: errorCode === null ? null : 'the batch did not publish',
+      consumerVersion: 'parity', consumerHostId: null, errorDetail: null, resultBytes: 1200, counterKeys: WRITER_KEYS, intentBytes: 100,
+      retainedBytes: 1500, terminalReservation: 4096, probePurges: false,
+    });
+  });
+}
+
+/** Marks a request compacted: no typed member does it (the compaction pass is housekeeping), so this is a raw fixture. */
+async function markCompacted(engine: BrainEngine, id: string): Promise<void> {
+  await engine.executeRaw('UPDATE persistence_requests SET compacted = true WHERE id = $1::uuid', [id]);
+}
+
 const win = (occurrence: number, ordinal: number, sha: string) => ({ occurrence_id: occurrence, window_ordinal: ordinal, window_text_sha: sha });
 
 describe('engine parity: group 5 facts conversation publication and relink statements', () => {
@@ -84,6 +124,63 @@ describe('engine parity: group 5 facts conversation publication and relink state
     const counters = await engine.readPrincipalCounters('principal:local_cli:writer-1');
     expect({ spent, batches, stored, counters }).toEqual({ spent: null, batches: [], stored: null, counters: null });
     return { spent, batches, stored, counters };
+  });
+
+  parityTest('the write journal reads see seeded batch requests: spent ids, unsettled and failed batches in order, stored entries and counters', {
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transaction',
+      'findSpentConversationRequest', 'listConversationBatchRequests', 'readStoredConversationEntry', 'readPrincipalCounters'],
+  }, async (engine) => {
+    const entry = (generation: string, attempt: number) => ({ generation, attempt, slug: PAGE, text: `window ${generation}` });
+    const queued = await enqueueBatch(engine, req(1), [entry('g1', 1), entry('g2', 2)]);
+    const failed = await enqueueBatch(engine, req(2), [entry('g3', 1)]);
+    const committed = await enqueueBatch(engine, req(3), [entry('g4', 1)]);
+    const compacted = await enqueueBatch(engine, req(4), [entry('g5', 1)]);
+    const elsewhere = await enqueueBatch(engine, req(5), [entry('g6', 1)], { slug: 'conversations/c2' });
+    const settledCompacted = await enqueueBatch(engine, req(6), [entry('g7', 1)]);
+    await settleBatch(engine, failed, 'failed', 'conversation_batch_failed');
+    await settleBatch(engine, committed, 'committed', null);
+    await settleBatch(engine, compacted, 'failed', 'conversation_batch_failed');
+    await settleBatch(engine, settledCompacted, 'committed', null);
+    const counters = await engine.readPrincipalCounters(WRITER_KEYS[0]!);
+    // The compaction pass, which has no typed member, marks the two settled requests compacted.
+    await markCompacted(engine, compacted);
+    await markCompacted(engine, settledCompacted);
+    const names = new Map([[queued, 'queued'], [failed, 'failed'], [committed, 'committed'], [compacted, 'compacted'], [elsewhere, 'elsewhere'], [settledCompacted, 'settledCompacted']]);
+    const nameOf = (id: string) => names.get(id) ?? `unknown:${id}`;
+    const spentOf = async (n: number, digest: string) => (await engine.findSpentConversationRequest(WRITER.kind, WRITER.id, req(n), digest))?.request_id === req(n);
+    const batchView = async (slug: string) => (await engine.listConversationBatchRequests(WRITER.kind, WRITER.id, SRC, slug)).map(b => ({
+      keys: Object.keys(b).sort(), id: nameOf(b.id), request_id: b.request_id === req(Number(b.request_id.slice(-2))) ? Number(b.request_id.slice(-2)) : b.request_id,
+      state: b.state, error_code: b.error_code, members: b.members }));
+    const out = {
+      spent: {
+        sameDigest: await spentOf(1, 'a'.repeat(64)), otherDigest: await spentOf(1, 'b'.repeat(64)), compactedFailed: await spentOf(4, 'a'.repeat(64)),
+        compactedCommitted: await spentOf(6, 'a'.repeat(64)), committed: await spentOf(3, 'a'.repeat(64)), unknown: await spentOf(99, 'a'.repeat(64)),
+        otherWriter: await engine.findSpentConversationRequest('local_cli', 'writer-2', req(1), 'b'.repeat(64)),
+      },
+      batches: await batchView(PAGE), elsewhere: await batchView('conversations/c2'), none: await batchView('conversations/none'),
+      otherWriter: await engine.listConversationBatchRequests('local_cli', 'writer-2', SRC, PAGE),
+      stored: {
+        first: await engine.readStoredConversationEntry(queued, 'g1'), second: await engine.readStoredConversationEntry(queued, 'g2'),
+        failed: await engine.readStoredConversationEntry(failed, 'g3'), committed: await engine.readStoredConversationEntry(committed, 'g4'),
+        wrongGeneration: await engine.readStoredConversationEntry(queued, 'g3'), compacted: await engine.readStoredConversationEntry(compacted, 'g5'),
+        unknownRow: await engine.readStoredConversationEntry(req(77), 'g1'),
+      },
+      counters: counters && { keys: Object.keys(counters).sort(), outstanding: Number(counters.outstanding_count), terminal: Number(counters.terminal_bytes), lifetime: Number(counters.lifetime_ids) },
+      brain: (await engine.readPrincipalCounters(WRITER_KEYS[1]!)) !== null,
+      noCounters: await engine.readPrincipalCounters('principal:local_cli:nobody'),
+    };
+    expect(out.spent).toEqual({ sameDigest: false, otherDigest: true, compactedFailed: true, compactedCommitted: false, committed: false, unknown: false, otherWriter: null });
+    expect(out.batches.map(b => [b.id, b.state, b.error_code])).toEqual([['queued', 'queued', null], ['failed', 'failed', 'conversation_batch_failed']]);
+    expect(out.batches[0]!.members).toEqual([{ generation: 'g1', attempt: 1 }, { generation: 'g2', attempt: 2 }]);
+    expect(out.elsewhere.map(b => b.id)).toEqual(['elsewhere']);
+    expect({ none: out.none, otherWriter: out.otherWriter }).toEqual({ none: [], otherWriter: [] });
+    expect(out.stored.first).toEqual(entry('g1', 1) as never);
+    expect(out.stored.second).toEqual(entry('g2', 2) as never);
+    expect(out.stored.compacted).toBeNull();
+    expect(out.stored.wrongGeneration).toBeNull();
+    // Six requests were admitted and four settled: two stay outstanding.
+    expect(out.counters).toMatchObject({ outstanding: 2, lifetime: 6 });
+    return out;
   });
 
   parityTest('the page counts: newest id, highest row number, active and total extractor rows, audit rows aside, and the held slots', {
