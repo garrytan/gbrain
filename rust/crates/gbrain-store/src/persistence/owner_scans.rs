@@ -31,6 +31,14 @@ pub(crate) fn lock_overdue_hold(hold: &str, id: Option<&str>) -> Result<bool> {
     Ok(false)
 }
 
+/// `listOwnerRecoveryHeads(hostId, excluded)`: no write here carries a recovery record (those
+/// live only on worktree-owned writes), so no head; a non-uuid host id refuses. The excluded
+/// worktree ids only narrow the rows.
+pub(crate) fn list_owner_recovery_heads(host_id: &str) -> Result<Vec<Value>> {
+    host_uuid(host_id)?;
+    Ok(Vec::new())
+}
+
 /// The two holds the SQL engines have a statement for; another kind is a caller bug.
 fn hold_kind(hold: &str) -> Result<()> {
     match hold {
@@ -50,6 +58,11 @@ impl Store {
     /// `lockOverdueHold(hold)`.
     pub fn lock_overdue_hold(&self, hold: &str, id: Option<&str>) -> Result<bool> {
         lock_overdue_hold(hold, id)
+    }
+
+    /// `listOwnerRecoveryHeads(hostId, excluded)`.
+    pub fn list_owner_recovery_heads(&self, host_id: &str) -> Result<Vec<Value>> {
+        list_owner_recovery_heads(host_id)
     }
 }
 
@@ -75,6 +88,13 @@ mod tests {
         assert!(!lock_overdue_hold("refresh", None).unwrap());
         assert!(!lock_overdue_hold("import", Some(HOST)).unwrap());
         let bad = lock_overdue_hold("import", Some("nope")).unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
+    }
+
+    #[test]
+    fn owner_recovery_heads_are_empty_and_refuse_a_non_uuid_host() {
+        assert!(list_owner_recovery_heads(HOST).unwrap().is_empty());
+        let bad = list_owner_recovery_heads("nope").unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 }

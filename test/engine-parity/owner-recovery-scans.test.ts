@@ -16,7 +16,8 @@
  *  - Why existing coverage misses it: no parity case ran an owner tick phase; the scans were only reached by a CLI put.
  *  - The deferred-write expiry's overdue lists and hold checks are typed members (listOverdueHeldWrites, lockOverdueHold):
  *    with no managed worktree each list is empty and no hold stands on every arm, and an id that is not a uuid refuses
- *    with the `::uuid` cast's message.
+ *    with the `::uuid` cast's message. The recovery scan is a typed member too (listOwnerRecoveryHeads): no head on any
+ *    arm, before or after a write is queued, and the same uuid refusal.
  *  - Seam: none. The real scans and typed members only (no executeRaw: D18). Generated ids are compared by equality
  *    with another member's answer.
  */
@@ -40,6 +41,7 @@ const REQUEST = 'c0000000-0000-4000-8000-0000000000c1';
 const IDLE_REQUEST = 'c0000000-0000-4000-8000-0000000000c2';
 const HELD_REQUEST = 'c0000000-0000-4000-8000-0000000000c3';
 const NO_REFRESH = 'c0000000-0000-4000-8000-0000000000f1';
+const RECOVERY_REQUEST = 'c0000000-0000-4000-8000-0000000000c4';
 
 /** The owner's idle probe (`hasWork`, private): what an idle tick asks before it runs the full fan-out. */
 function idleProbe(engine: BrainEngine): () => Promise<boolean> {
@@ -77,7 +79,7 @@ describe('engine parity: owner recovery scans', () => {
     await registerLocalWriter(engine, 'cli');
     const queued = await admitPut(engine, 'notes/parity-owner-scan', REQUEST);
     const host = hostIdFor(engine);
-    const heads = await readOwnerRecoveryHeads(engine, engine, host, []);
+    const heads = await readOwnerRecoveryHeads(engine, host, []);
     const refreshes = await resumeWorktreeRefreshes(engine, { hostId: host });
     const topologies = await recoverSourceTopologies(engine, { hostId: host });
     const expired = await expireDeferredWrites(engine, host);
@@ -121,5 +123,20 @@ describe('engine parity: owner recovery scans', () => {
     expect({ lists, held, bad }).toEqual({ lists: { refresh: 0, import: 0 }, held: { refresh: false, import: false },
       bad: { host: 'invalid input syntax for type uuid: "not-a-host"', id: 'invalid input syntax for type uuid: "not-a-request"' } });
     return { lists, held, bad };
+  });
+
+  parityTest('the owner recovery scan lists no recovery head without a managed worktree and refuses a non-uuid host', {
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'insertWriteRequest', 'listOwnerRecoveryHeads'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const host = hostIdFor(engine);
+    const empty = (await engine.listOwnerRecoveryHeads(host, [])).length;
+    await admitPut(engine, 'notes/parity-recovery-head', RECOVERY_REQUEST);
+    const queued = (await engine.listOwnerRecoveryHeads(host, [])).length;
+    const excluded = (await engine.listOwnerRecoveryHeads(host, [NO_REFRESH])).length;
+    const bad = await outcome(() => engine.listOwnerRecoveryHeads('not-a-host', []), /invalid input syntax for type uuid: "[^"]*"/);
+    expect({ empty, queued, excluded, bad }).toEqual({ empty: 0, queued: 0, excluded: 0, bad: 'invalid input syntax for type uuid: "not-a-host"' });
+    return { empty, queued, excluded, bad };
   });
 });

@@ -558,6 +558,7 @@ export const RUST_ENGINE_MEMBERS = {
   selectClaimableEffect: 'persistence_journal',
   listOverdueHeldWrites: 'persistence_journal',
   lockOverdueHold: 'persistence_journal',
+  listOwnerRecoveryHeads: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
   readWriterVersionCutoff: 'persistence_journal',
   listWriterVersions: 'persistence_journal',

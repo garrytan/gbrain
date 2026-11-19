@@ -3,7 +3,7 @@
  *
  * The reads the write owner's housekeeping sent through `executeRaw` on each scan tick: the deferred-write expiry
  * (persistence/refresh-barrier.ts `expireDeferredWrites`), its overdue lists and the per-row hold checks it makes under
- * the protocol lock. The text is the one those callers always sent, byte for byte; the idle probe
+ * the protocol lock, and the consumer's recovery scan (persistence/consumer.ts `readOwnerRecoveryHeads`). The text is the one those callers always sent, byte for byte; the idle probe
  * (`overdueDeferredWorkSql`) builds its EXISTS checks from the same fragments. Every scan joins the request to a
  * worktree the host owns, so an engine without managed worktrees answers none. Decisions stay with the callers.
  */
@@ -75,4 +75,21 @@ export async function lockOverdueHold(exec: LegacyUnscopedRead, hold: OverdueHol
     ? await exec.executeRaw(LOCK_OVERDUE_HOLD_SQL.refresh, [hold.refreshId])
     : await exec.executeRaw(LOCK_OVERDUE_HOLD_SQL.import, [hold.id, hold.importFrom, hold.maxWaitMs]);
   return rows.length > 0;
+}
+
+/** `listOwnerRecoveryHeads`: $1 host id, $2 the worktree ids to leave out (as text). */
+export const OWNER_RECOVERY_HEADS_SQL = `SELECT r.* FROM persistence_requests r
+    JOIN persistence_worktrees w ON w.id=r.worktree_id
+    WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
+      AND earlier.recovery IS NOT NULL AND earlier.sequence<r.sequence)
+    ORDER BY r.updated_at,r.sequence LIMIT 16`;
+
+/**
+ * The oldest recovering write of each worktree `hostId` owns that is not in `excluded`, at most 16, oldest update
+ * first (the consumer's recovery scan). A host id that is not a uuid refuses, as `::uuid` does.
+ */
+export function listOwnerRecoveryHeads<R = Record<string, unknown>>(exec: LegacyUnscopedRead, hostId: string,
+  excluded: readonly string[], opts?: QueryOpts): Promise<R[]> {
+  return exec.executeRaw<R>(OWNER_RECOVERY_HEADS_SQL, [hostId, excluded], opts);
 }

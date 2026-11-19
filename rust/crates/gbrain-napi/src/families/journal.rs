@@ -449,6 +449,17 @@ impl Brain {
         self.run(env, move |s| s.lock_overdue_hold(&hold, id.as_deref()))
     }
 
+    /// `listOwnerRecoveryHeads(hostId, excluded)`: the recovering write heads; `[]` (no worktree
+    /// here). The excluded worktree ids only narrow the rows, so they are not sent.
+    #[napi]
+    pub fn list_owner_recovery_heads<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_owner_recovery_heads(&host_id))
+    }
+
     #[napi]
     pub fn list_compactable_receipts<'env>(
         &self,

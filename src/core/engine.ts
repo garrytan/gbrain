@@ -3432,6 +3432,12 @@ export interface BrainEngine {
    * unreleased, or the write still deferred on the same pending import and past its limit (`expireDeferredWrites`).
    */
   lockOverdueHold(hold: OverdueHold): Promise<boolean>;
+  /**
+   * The oldest recovering write of each worktree `hostId` owns that is not in `excluded`, at most 16 (the consumer's
+   * recovery scan). `direct` takes the Postgres direct lane (the consumer passes `consumerOnDirectLane`). A non-uuid
+   * host id refuses.
+   */
+  listOwnerRecoveryHeads<R = Record<string, unknown>>(hostId: string, excluded: readonly string[], opts?: { signal?: AbortSignal; direct?: boolean }): Promise<R[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

@@ -1,6 +1,6 @@
 /**
  * The owner scans the Rust store answers (engine-sql/persistence-owner-scans.ts): the reads the write owner's
- * housekeeping makes on each scan tick (listOverdueHeldWrites, lockOverdueHold).
+ * housekeeping makes on each scan tick (listOverdueHeldWrites, lockOverdueHold, listOwnerRecoveryHeads).
  *
  * Each scan joins a write request to a persistence worktree the host owns. The store keeps no worktree (a request row
  * here always has a null `worktree_id`, and an insert that names a refresh hold refuses), so each list answers no row
@@ -19,3 +19,7 @@ export const listOverdueHeldWrites: StoreMember<[hostId: string, maxWaitMs: numb
 export const lockOverdueHold: StoreMember<[hold: OverdueHold], boolean> =
   (brain, hold) => storeCall({ member: 'lockOverdueHold' }, () =>
     brain.lockOverdueHold(hold.kind, hold.kind === 'refresh' ? hold.refreshId : hold.id));
+
+/** No write here carries a recovery record (those live only on worktree-owned writes), so there is no head; `excluded` changes nothing. */
+export const listOwnerRecoveryHeads: StoreMember<[hostId: string, excluded: readonly string[], opts?: { signal?: AbortSignal; direct?: boolean }], Record<string, unknown>[]> =
+  (brain, hostId) => storeCall({ member: 'listOwnerRecoveryHeads' }, () => brain.listOwnerRecoveryHeads(hostId));
