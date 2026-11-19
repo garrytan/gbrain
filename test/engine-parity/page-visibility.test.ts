@@ -27,6 +27,8 @@ const NOTE = { type: 'note' as const, title: 'Visibility note', compiled_truth: 
 const SLUGS = ['notes/vis-open', 'notes/vis-private', 'notes/vis-alice', 'notes/vis-gone'];
 const MEMBER = { identity: ['member:alice-example', 'group:team-a'], hidePrivate: true };
 const GRANTED = { identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true };
+/** An anonymous remote caller on a brain whose config holds no member-access restriction. */
+const UNRESTRICTED = { identity: [], hidePrivate: true, restricted: false };
 const WRITER = 'a0000000-0000-4000-8000-0000000000b1';
 const FENCED_WRITER = 'a0000000-0000-4000-8000-0000000000b2';
 const HASH = 'e'.repeat(64);
@@ -91,6 +93,36 @@ describe('engine parity: page visibility guards', () => {
       memberRead: [row('notes/vis-alice', true), row('notes/vis-gone', false), row('notes/vis-open', true), row('notes/vis-private', false)],
       memberAccess: [row('notes/vis-alice', true), row('notes/vis-gone', false), row('notes/vis-open', true), row('notes/vis-private', true)],
       empty: [],
+    });
+    return answers;
+  });
+
+  parityTest('a caller on a brain with no member-access restriction gets the same answers as the no-caller policy', {
+    methods: ['putPage', 'softDeletePage', 'readPageHiddenFromCaller', 'readCallerPageAccess'],
+  }, async (engine) => {
+    // An anonymous remote request on a brain whose config says no member-access restriction is present renders the
+    // short member-access form (restricted: false). No page carries readable_by, so the answers match the no-caller
+    // policy: the open page is readable, the private page is hidden by the read policy only.
+    await engine.putPage('notes/vis-open', NOTE);
+    await engine.putPage('notes/vis-private', { ...NOTE, frontmatter: { visibility: 'private' } });
+    await engine.putPage('notes/vis-gone', NOTE);
+    await engine.softDeletePage('notes/vis-gone');
+    const slugs = ['notes/vis-open', 'notes/vis-private', 'notes/vis-gone', 'notes/vis-missing'];
+    const hidden = async (policy: 'read' | 'access') => {
+      const out: Record<string, boolean> = {};
+      for (const slug of slugs) out[slug] = await engine.readPageHiddenFromCaller('default', slug, { policy });
+      return out;
+    };
+    const access = async (policy: 'read' | 'access') => (await engine.readCallerPageAccess(slugs.map(slug => ({ source_id: 'default', slug })), { policy }))
+      .map(r => `${r.slug}:${r.readable}`).sort();
+    const answers = await withCallerAccess(UNRESTRICTED, async () => ({
+      read: await hidden('read'), access: await hidden('access'), readRows: await access('read'), accessRows: await access('access'),
+    }));
+    expect(answers).toEqual({
+      read: { 'notes/vis-open': false, 'notes/vis-private': true, 'notes/vis-gone': false, 'notes/vis-missing': false },
+      access: { 'notes/vis-open': false, 'notes/vis-private': false, 'notes/vis-gone': false, 'notes/vis-missing': false },
+      readRows: ['notes/vis-gone:false', 'notes/vis-open:true', 'notes/vis-private:false'],
+      accessRows: ['notes/vis-gone:false', 'notes/vis-open:true', 'notes/vis-private:true'],
     });
     return answers;
   });
