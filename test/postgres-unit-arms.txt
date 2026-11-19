@@ -168,6 +168,7 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/open-loops.test.ts
+test/engine-parity/page-snapshot-alias.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts

@@ -282,6 +282,8 @@ pub struct ReadScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub include_deleted: bool,
+    /// `readPageSnapshot` only: on an exact-slug miss, follow a slug alias of a source in scope.
+    pub resolve_alias: bool,
 }
 
 /// Options of `addTag` and `addPageTagsById`: the page's source and who claims the tags.
@@ -792,6 +794,32 @@ pub(crate) fn find_in_scope(
     Ok(None)
 }
 
+/// The page a slug alias of `slug` names, in the first source in scope (in scope order) where the alias
+/// source is live (or deleted pages are asked for) and the named page passes the soft-delete rule. An
+/// alias that names `slug` itself is skipped, as the exact read already missed it.
+fn find_alias_in_scope(
+    read: &dyn KvRead,
+    slug: &str,
+    scope: &ReadScope,
+) -> Result<Option<PageRecord>> {
+    for id in scope_sources(read, &scope.source_id, &scope.source_ids)? {
+        let Some(alias) = crate::aliases::read_slug_alias(read, &id, slug)? else {
+            continue;
+        };
+        let live = scope.include_deleted
+            || crate::sources::read_source(read, &id)?.is_some_and(|s| !s.archived);
+        if !live || alias.canonical_slug == slug {
+            continue;
+        }
+        if let Some(page) = read_page(read, &id, &alias.canonical_slug)?
+            && (scope.include_deleted || page.deleted_at_us.is_none())
+        {
+            return Ok(Some(page));
+        }
+    }
+    Ok(None)
+}
+
 fn parse_date(text: &str, what: &str) -> Result<i64> {
     let full = if text.len() == 10 {
         format!("{text}T00:00:00Z")
@@ -1201,14 +1229,19 @@ impl Store {
     pub fn read_page_snapshot(&self, slug: &str, scope: &ReadScope) -> Result<Option<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
-        let Some(page) = find_in_scope(
+        let exact = find_in_scope(
             &*read,
             &slug,
             &scope.source_id,
             &scope.source_ids,
             scope.include_deleted,
-        )?
-        else {
+        )?;
+        let found = match exact {
+            Some(page) => Some(page),
+            None if scope.resolve_alias => find_alias_in_scope(&*read, &slug, scope)?,
+            None => None,
+        };
+        let Some(page) = found else {
             return Ok(None);
         };
         let incarnation = crate::sources::read_source(&*read, &page.source_id)?

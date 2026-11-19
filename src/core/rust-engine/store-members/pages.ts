@@ -11,7 +11,7 @@ import { refuseMember, storeCall, takeOptions, type StoreMember } from './common
 const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted'] as const;
 
 export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOptions], PageSnapshot | null> = async (brain, slug, opts) => {
-  const scope = takeOptions('readPageSnapshot', opts, READ_SCOPE);
+  const scope = takeOptions('readPageSnapshot', opts, [...READ_SCOPE, 'resolveAlias']);
   const snapshot: PageSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
   return snapshot === null ? null : { ...snapshot, page: toGetPage(snapshot.page) };
 };

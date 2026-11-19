@@ -13,7 +13,7 @@ use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
-    /// `readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted? }?)`: `{ page, tags,
+    /// `readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted?, resolveAlias? }?)`: `{ page, tags,
     /// revision, sourceIncarnation, withdrawals }` or `null`. Dates are ISO strings.
     #[napi]
     pub fn read_page_snapshot<'env>(
