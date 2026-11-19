@@ -169,7 +169,13 @@ pub(crate) fn write_text_projection_seal_in(
     }
     page.text_projection_revision = Some(page.knowledge_revision.clone());
     write_page(tx, &page)?;
-    record_search_timeline(tx, page.id, &page.knowledge_revision, &seal.timeline_text)
+    record_search_timeline(
+        tx,
+        page.id,
+        &page.knowledge_revision,
+        &page.title,
+        &seal.timeline_text,
+    )
 }
 
 /// Where one chunk ends up after the waves: its index and its projected span.

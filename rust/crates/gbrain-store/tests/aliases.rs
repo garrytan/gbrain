@@ -488,7 +488,7 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         canonical_refs(&store, &refs, json!({ "live": true })),
         strings(&["default/c/open", "default/c/private", "other/c/away"])
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
     assert_eq!(
         canonical_refs(
             &store,
@@ -665,7 +665,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("restricted", &["default/c/restricted"]),
         ]
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": policy })),
         vec![
@@ -673,7 +673,8 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("open", &["default/c/open"]),
         ]
     );
-    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true });
+    let no_aliases =
+        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": no_aliases })),
         vec![

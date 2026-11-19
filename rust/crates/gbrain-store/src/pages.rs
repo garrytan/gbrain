@@ -7,8 +7,9 @@
 //!
 //! `list_pages` and `resolve_slugs` scan every page: there are no secondary indexes yet.
 
-use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
-use crate::chunks::{ChunkInput, auto_chunks, clear_chunks, replace_chunks};
+use crate::chunks::{
+    ChunkInput, SAFE_FENCE_CHUNKER_VERSION, auto_chunks, clear_chunks, replace_chunks,
+};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
     CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_ARGUMENT, INVALID_SLUG, ORIGIN_CLAIMED,
@@ -118,8 +119,10 @@ impl PartialEq<String> for PageText {
 /// Nullable columns (shared item 12): `compiled_truth` and `timeline` are [`PageText`], NULL exactly on a segmented
 /// shell page. `content_hash` is `None` on a segmented shell page until its body is published, as PGLite's
 /// `createSegmentedPageShell` leaves it; `put_page` always sets it. `chunker_version` is `None` only on a record written
-/// before the store recorded one: `put_page` writes PGLite's value ([`body_write_chunker_version`]) and a seal writes
-/// the safe fence version. It is not part of `to_page` (PGLite's `rowToPage` leaves it out). Each new field reads as NULL from a record written before it existed.
+/// before the store recorded one (the safe-chunks fence reads that as unsafe, as SQL reads NULL): `put_page` writes
+/// PGLite's value ([`body_write_chunker_version`]), and chunk writes stamp it (4 on a certified seal, -1 when they
+/// change chunks). It is not part of `to_page` (PGLite's `rowToPage` leaves it out). Each new field reads as NULL from a
+/// record written before it existed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PageRecord {
     pub id: u64,
@@ -543,15 +546,33 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    write_page_as(tx, record, false)
+}
+
+/// `write_page` for a statement that SETs `title` and `timeline` whatever their values: PGLite's search vector trigger
+/// (`BEFORE INSERT OR UPDATE OF title, timeline`) then fires also when they are unchanged, and the vector it builds can
+/// have grown since (a timeline entry added, an entry's cutoff passed, a lead published), so the check and the
+/// sealed search timeline's forgetting run every time.
+pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    write_page_as(tx, record, true)
+}
+
+fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
     let stamped = stamp_page_trust(before.as_ref(), record)?;
     let record = &stamped;
-    // A write that changes the title or timeline sets them, so PGLite's search vector trigger fires.
-    if before
-        .as_ref()
-        .is_some_and(|b| b.title != record.title || b.timeline != record.timeline)
+    // A write that sets the title or timeline fires PGLite's search vector trigger. It builds the vector before the
+    // row is stored, and its error ("string is too long for tsvector") aborts the write. A write that does not set
+    // them fires it only when they changed.
+    if sets_vector
+        || before
+            .as_ref()
+            .is_none_or(|b| b.title != record.title || b.timeline != record.timeline)
     {
-        forget_search_timeline(tx, record.id)?;
+        crate::keyword::check_page_vector(&*tx, record)?;
+        if before.is_some() {
+            forget_search_timeline(tx, record.id)?;
+        }
     }
     let key = page_key(&record.source_id, &record.slug);
     put_json(tx, &key, record)?;
@@ -1074,8 +1095,7 @@ pub(crate) fn put_page_in(
     };
     // PGLite's `trg_pages_search_vector` (BEFORE INSERT OR UPDATE OF title, timeline) rewrites the
     // page keyword vector on every `putPage`, also when the values are unchanged.
-    forget_search_timeline(tx, record.id)?;
-    write_page(tx, &record)?;
+    write_page_setting_vector(tx, &record)?;
     if let Some(stamp) = &options.contextual_retrieval {
         crate::aliases::stamp_contextual_retrieval(tx, record.id, stamp)?;
     }
@@ -1084,12 +1104,12 @@ pub(crate) fn put_page_in(
         return Ok(record);
     }
     match &options.chunks {
-        Some(chunks) => replace_chunks(tx, &mut record, chunks, true, false)?,
+        Some(chunks) => replace_chunks(tx, &mut record, chunks, true, false, false)?,
         None if record.text_projection_revision.as_deref()
             != Some(record.knowledge_revision.as_str()) =>
         {
             let chunks = auto_chunks(&record);
-            replace_chunks(tx, &mut record, &chunks, true, false)?
+            replace_chunks(tx, &mut record, &chunks, true, false, false)?
         }
         None => {}
     }
@@ -1685,12 +1705,13 @@ pub(crate) fn search_timeline(read: &dyn KvRead, page_id: u64) -> Result<Option<
 }
 
 /// Records `timeline` (already sanitized by TypeScript) as the search timeline of page `page_id`
-/// at `revision`. Removes NUL (Postgres text holds none) and keeps the first
+/// at `revision`, for a page titled `title`; refuses a vector past the tsvector size cap. Removes NUL (Postgres text holds none) and keeps the first
 /// `SEARCH_TIMELINE_MAX_CHARS` characters, as `left(…, 65536)` does.
 pub(crate) fn record_search_timeline(
     tx: &mut dyn KvWrite,
     page_id: u64,
     revision: &str,
+    title: &str,
     timeline: &str,
 ) -> Result<()> {
     let timeline: String = timeline
@@ -1698,6 +1719,8 @@ pub(crate) fn record_search_timeline(
         .filter(|c| *c != '\0')
         .take(SEARCH_TIMELINE_MAX_CHARS)
         .collect();
+    // `pageSearchVectorSql` builds the vector in the seal's statement, and its error aborts the seal.
+    crate::keyword::check_sealed_page_vector(title, &timeline)?;
     let record = SearchTimeline {
         revision: revision.to_owned(),
         timeline,
@@ -1713,6 +1736,8 @@ pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Resu
 
 /// Deletes a page and everything that hangs off it.
 pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    // Before its links go: the marks are what keeps a concept derived from an owner-only page owner-only (v322).
+    crate::owner_only_marks::mark_before_delete(tx, page)?;
     let mut doomed = Vec::new();
     scan_prefix(&*tx, &keys::version_prefix(page.id), false, &mut |k, _| {
         doomed.push(k.to_vec());

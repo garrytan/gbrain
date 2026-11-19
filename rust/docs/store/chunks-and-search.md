@@ -31,7 +31,8 @@ One difference in `upsertChunks`: with `sealChunkerVersion`, `pageId` and `defer
 `pageId` and writes the rows into the page with that id. The store refuses another page's id with or without
 `deferSeal`, so a sealed write never lands in a page the slug does not name.
 
-`searchKeyword` is not parity with PGLite. Ranking is BM25 over chunks with index-wide statistics
+This is the core BM25 method. The TypeScript `searchKeyword` member no longer calls it: it runs the `ts_rank` arm in
+`keyword.md`, and this method stays in the addon unused. `searchKeyword` here is not parity with PGLite. Ranking is BM25 over chunks with index-wide statistics
 (`k1` 1.2, `b` 0.75), not the Postgres `ts_rank`, so scores and order differ. There is no stemming;
 the English stop words are dropped from the query (a query of only stop words keeps them); each CJK
 character is its own term; `websearch` syntax (quotes, `or`, `-`) is not interpreted. Like PGLite:

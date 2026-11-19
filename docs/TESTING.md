@@ -593,6 +593,28 @@ above, and each E2E file keeps a PGLite arm in the unit lane.
   after a conversion; only `sql-text/_driver.json` moves (tagged ->
   `runUnsafe`).
 
+### Rust parity arm (opt-in)
+
+Every `test/engine-parity/` file can add a Rust engine to its arms, next to PGLite and (with `DATABASE_URL`) Postgres.
+Nothing selects the Rust engine outside the test, and without the flag the suite runs as before.
+
+```bash
+bun run rust:build                                              # writes the addon under rust/target/addon
+GBRAIN_TEST_RUST_ARM=1 bun test test/engine-parity/search.test.ts   # one file; run each file in its own process, as CI does
+```
+
+- The flag must be exactly `1`. With it set and no addon, the run fails instead of skipping. Point
+  `GBRAIN_TEST_RUST_ENGINE_ADDON` at another addon file to use one you built elsewhere (`bunfig.toml` strips
+  `GBRAIN_RUST_ENGINE_ADDON` from a test run, so that name does nothing here).
+- A case that reaches a member or an option the Rust engine refuses must end on the typed `engine_capability_missing`
+  refusal. Every other case must return what PGLite returns.
+- A case that differs on purpose gets a row in `test/rust-expected-divergence/<family>.tsv` (parity file, case name,
+  normaliser from `DIVERGENCE_NORMALIZERS` in `test/engine-parity/rust-arm.ts`, reason). Rust must still return a value, both
+  answers must be equal after the normaliser, and when the case starts to match PGLite the run fails until the row is
+  removed. A thrown error never passes. `search.tsv` is empty today.
+- Rules: `test/engine-parity/rust-arm.ts` header; what the engine serves and refuses: `docs/ENGINES.md` ("What a Rust
+  brain serves now").
+
 ### Native writer locks
 
 Native lock tests, the eight-target `native-locks.yml` matrix, compiled smokes and the OpenClaw native-host

@@ -21,9 +21,14 @@
  * the policy (`readers_allowed` and `orPrivateReadableSource` in privacy.rs). Folder rules, pending coverage,
  * audiences, lineage, owner-only sources, labelled-only grants and relaxed reads still refuse.
  *
+ * Every form carries the owner-only part of the policy (src/core/access/owner-only.ts) as the canonical text renders it:
+ * `ownerOnly` names that form, and a text that holds neither refuses. The canonical records are non-owner records, so
+ * the part always applies; an owner caller renders other text and refuses.
+ *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
+import { ANY_OWNER_ONLY_SQL, ownerOnlyPageSql } from '../../access/owner-only.ts';
 import {
   currentCallerAccess,
   privacyAliasSql,
@@ -47,6 +52,22 @@ export interface StorePrivacyPolicy {
   privateReadableSources?: string[];
   /** The fact policy's member-page case: the caller's own member page, the one provenance page judged by `identity`. */
   memberPage?: string;
+  ownerOnly: StoreOwnerOnly;
+}
+
+/**
+ * The owner-only part of the policy, as the baseline renders it (src/core/access/owner-only.ts): `lineage` is the v320
+ * form (a page of an owner-only source, or a concept or question synthesized from one, is hidden), which a brain at or
+ * above that schema version renders; `closed` is the form below it or outside an engine scope (any owner-only source in
+ * the brain hides every page). The part always applies to the no-caller baseline, whatever the other settings say.
+ */
+export type StoreOwnerOnly = 'lineage' | 'closed';
+
+/** Which owner-only form `baseline` renders for the page alias `alias`; a text that holds neither refuses (the store has no third form). */
+function ownerOnlyOf(member: string, baseline: string, alias: string): StoreOwnerOnly {
+  if (baseline.includes(ownerOnlyPageSql(alias, 'fn'))) return 'lineage';
+  if (baseline.includes(ANY_OWNER_ONLY_SQL)) return 'closed';
+  return refuseMember(member, 'excludePrivate under an owner-only rule the store does not model');
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -103,7 +124,7 @@ export function storePrivacyPolicy(
   const text = normalizeConceptInputs(rendered());
   for (const form of FACT_FORMS) {
     const baseline = withoutCallerAccess(() => form.sql('facts'));
-    if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
+    if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(member, baseline);
   }
   if (opts.callerReaders) {
     const access = currentCallerAccess();
@@ -115,17 +136,18 @@ export function storePrivacyPolicy(
       if (text !== normalizeConceptInputs(canonical)) continue;
       const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
       const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
-      return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}) };
+      return { ...factPolicyFlags(member, canonical), ...readers, ...(judged ? { memberPage } : {}) };
     }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
 
 /** The process-setting flags of a rendered fact policy. */
-function factPolicyFlags(sql: string): StorePrivacyPolicy {
+function factPolicyFlags(member: string, sql: string): StorePrivacyPolicy {
   return {
     honorAliases: sql.includes(privacyAliasSql('pp')),
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('entity_pp')),
+    ownerOnly: ownerOnlyOf(member, sql, 'pp'),
   };
 }
 
@@ -155,21 +177,22 @@ export function storePageTextPolicy(
 ): StorePrivacyPolicy {
   const text = normalizeConceptInputs(rendered());
   const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
-  if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+  if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(member, baseline);
   if (opts.callerReaders) {
     const access = currentCallerAccess();
     const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
     const canonical = withoutCallerAccess(() =>
       withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
-    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
+    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(member, canonical), ...readers };
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
 
-/** The process-setting flags of a rendered page policy. */
-function pagePolicyFlags(sql: string): StorePrivacyPolicy {
+/** The process-setting and owner-only flags of a rendered page policy over `p`. */
+export function pagePolicyFlags(member: string, sql: string): StorePrivacyPolicy {
   return {
     honorAliases: sql.includes(privacyAliasSql('p')),
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('p')),
+    ownerOnly: ownerOnlyOf(member, sql, 'p'),
   };
 }

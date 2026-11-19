@@ -95,7 +95,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 
 | Tag | Records | Owner |
 |---|---|---|
-| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`) | core |
+| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`), per-page search timelines (`M page_search_timeline/<page id>`), owner-only marks (`M owner_only_mark/pages/<page id>`) | core |
 | `C` | config | core |
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
@@ -584,7 +584,7 @@ others. Each family below must give the PGLite answer for a segmented shell page
 
 | Family and reader | Member | Today | PGLite for a segmented shell | What the family must do |
 | --- | --- | --- | --- | --- |
-| chunk_queries `chunkless_pages` | `countChunklessPagesWithContent`, `listChunklessPagesWithContent` | excludes the shell (its body reads as empty) | includes a segmented page with `body_bytes > 0` (`engine-sql/chunks.ts`, the chunkless queries) and returns `''` for its body and timeline (`COALESCE`) | test segmented pages by `body_bytes`, not by the body text; output `""`, never `null` |
+| chunk_queries `chunkless_pages` | `countChunklessPagesWithContent`, `listChunklessPagesWithContent` | a segmented page counts when its published `body_bytes` (page_body body state, `segmented_body_bytes`) is positive; an unpublished shell does not | includes a segmented page with `body_bytes > 0` (`engine-sql/chunks.ts`, the chunkless queries) and returns `''` for its body and timeline (`COALESCE`) | test segmented pages by `body_bytes`, not by the body text; output `""`, never `null` |
 | chunk_queries `get_chunk_windows` | `getChunkWindows` | `segmented: false` on every page row | the page row says `segmented: true` and carries no body; chunk rows carry their occurrence and span | report `segmented` from the page's body storage and send no body for a segmented page |
 | extraction `stale_row` | `listStalePagesForExtraction` (and its count) | outputs `null` for the body | lists the shell; `rowToStalePage` returns `''` | keep the shell in the list and output `""` |
 | page_ops `snapshot_json` | `readPageSnapshotsBatch` | outputs `null` for the body and `content_hash` | returns the page through `rowToPage`, so its body getters throw `page_body_segmented`; `content_hash` is `null` | keep the `null` in the JSON and decode each page in TypeScript with `toGetPage`, which applies the guard |
@@ -620,9 +620,10 @@ carries its output to the store.
   the last write that set the title or timeline.
 - **Forget.** `pub(crate) fn forget_search_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>` deletes it.
   PGLite's `trg_pages_search_vector` (`BEFORE INSERT OR UPDATE OF title, timeline`) puts the trigger form back on
-  every write whose `SET` list names either column, also with an unchanged value. `put_page_in` calls it on every
-  `putPage`; `write_page` calls it when the title or timeline changed. The page_body family calls it from
-  `refresh_page_body` and the body generation flip, and `seal_segmented_page` calls `record_search_timeline`. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
+  every write whose `SET` list names either column, also with an unchanged value. `write_page` calls it when the title or timeline changed (`write_page_setting_vector` every time, for the statements that SET them: `putPage`, the refresh, the flip), after it has built the page's trigger-form vector
+  (`keyword::check_page_vector`) and refused a vector past the 1,048,575-byte tsvector cap with PGLite's "string is too
+  long for tsvector" error. `record_search_timeline` takes the page title and refuses a sealed vector past the cap the same way. The page_body family calls it from
+  `refresh_page_body` and the body generation flip (through `write_page_setting_vector`, the flip after it has stored its body state, so the check reads the incoming lead), and `seal_segmented_page` calls `record_search_timeline`. `rust/docs/store/pages.md` ("Search timeline") lists each PGLite
   statement.
 - **Delete.** `remove_page` deletes it on a hard delete. A soft delete keeps it.
 - **Other writers.** A family that seals a page by another path and has the sanitized text from TypeScript calls
@@ -684,11 +685,9 @@ unless the PGLite query uses `lower()` on non-ASCII text in a parity case.
 
 A float score (cosine similarity, salience, rank) matches PGLite within an absolute tolerance of `1e-6`. Ties break the
 way the PGLite `ORDER BY` breaks them, usually by id. Postgres `REAL` columns (`emotional_weight`, take `weight`)
-are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is a plain BM25 today;
-the one keyword case that differs because of it is the row in `test/rust-expected-divergence/search.tsv`. The
-`ts_rank` compatibility ranker (design D5), which the keyword family writes in `keyword.rs` over the core `T`
-postings, is the parity baseline it builds toward; every other
-keyword, title and trigram case must match exactly.
+are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is the `ts_rank` and `ts_rank_cd` compatibility
+ranker (design D5, `keyword/rank.rs`); it has no expected difference (`search.tsv` is empty), so every keyword, title
+and trigram case must match exactly.
 
 ### Expected differences
 
@@ -1167,17 +1166,17 @@ Timeline reads by date and event projections.
 
 ### keyword
 
-Keyword search members the keyword_search capability still refuses, and title trigrams.
+Keyword search members of the keyword_search capability (all served), and title trigrams.
 
 - **Files:** `gbrain-store/src/keyword.rs`, `gbrain-napi/src/families/keyword.rs`, `store-members/keyword.ts`.
 - **Tag:** `R` (`TRIGRAM`). Cascade on page delete: no.
-- **Members (5), capability:** `keyword_search` (5).
-- **Store and binding:** `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
+- **Members (6), capability:** `keyword_search` (6).
+- **Store and binding:** `searchKeyword` (`search_keyword`; the hybrid arm is in `keyword/arm.rs`), `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
-- **Keys:** Postings stay core (`T`). `R <source> 0x00 <trigram> 0x00 <page id>` title trigram postings, kept by the core page index hook (`page_index::reindex_page`; the stub is in `keyword.rs`).
-- **Depends on:** Core search postings (`T`). The family writes the `ts_rank` compatibility ranker (design D5) in `keyword.rs` over those postings; the facts keyword arm reuses it. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
+- **Keys:** None written yet; every member scans the live pages and rebuilds vectors from text (`rust/docs/store/keyword.md`, "Keys"). The family owns the `R` tag (`TRIGRAM`).
+- **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are not used; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
 - **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
-- **Notes:** Every keyword case except the one in `search.tsv` must match PGLite exactly, order and score within `1e-6`.
+- **Notes:** Every keyword case must match PGLite exactly, order and score within `1e-6`; `search.tsv` is empty.
 - **Parity cases (4, in `links.test.ts`, `search.test.ts`):**
   - `links.test.ts`: findByTitleFuzzy returns the best title match above the threshold, honoring prefix and source
   - `search.test.ts`: countKeywordPages and searchKeywordPages page through strict keyword matches
@@ -1186,7 +1185,7 @@ Keyword search members the keyword_search capability still refuses, and title tr
 
 ### chunk_queries
 
-Chunk reads the chunks capability still refuses.
+Chunk reads of the chunks capability (served; the capability stays unreported while other chunk members refuse).
 
 - **Files:** `gbrain-store/src/chunk_queries.rs`, `gbrain-napi/src/families/chunk_queries.rs`, `store-members/chunk-queries.ts`.
 - **Tag:** `c` (`CHUNK_QUERIES`). Cascade on page delete: no.
