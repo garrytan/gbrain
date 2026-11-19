@@ -8,7 +8,9 @@
  *
  * Each read runs once before the archive (the control: the op reads the archived page's marker at all), after the
  * archive (nothing), and after `sources restore` (exactly the control again), for the owner's token, another member's
- * token and a token bound to nobody. The owner keeps reading the default source's page through every op throughout.
+ * token and a token bound to nobody, plus a token that also reads every shared source. A token whose write source, or
+ * every source, is archived reads nothing and answers unknown_source. The owner keeps reading the default source's page
+ * through every op throughout.
  * Repo-less, keyless, synthetic values only.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -28,6 +30,8 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
+import { resolveTokenGrant } from '../src/core/grants/legacy-token.ts';
+import { tokenReadSources } from '../src/core/grants/read-shared.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -54,6 +58,7 @@ const readsOf = (m: typeof ARCHIVED, person: string, note: string): Read[] => [
   ['recall', 'recall', { entity: person }, [m.fact]],
   ['chronicle_day', 'chronicle_day', { date: DAY }, [m.timeline]],
   ['chronicle_since', 'chronicle_since', { date: DAY }, [m.timeline]],
+  ['resolve_slugs (naming the source)', 'resolve_slugs', { partial: person.split('/')[1], source_id: m === ARCHIVED ? SRC : 'default' }, [person]],
   ['assemble_evidence', 'assemble_evidence', { hits: [{ source_id: m === ARCHIVED ? SRC : 'default', slug: person, chunk_id: 0 }] }, [m.body]],
 ];
 const ARCHIVED_READS = readsOf(ARCHIVED, 'people/carol-example', 'notes/retired-plan');
@@ -81,6 +86,7 @@ for (const kind of testBackends()) {
     const tokens: Record<string, string> = {};
     const control: Record<string, Record<string, boolean>> = {};
     const ownerLive: Record<string, boolean> = {};
+    let deltaBefore = '';
     const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 
     /** The `serve` HTTP transport, over the wire. */
@@ -134,8 +140,8 @@ for (const kind of testBackends()) {
       await seed(engine, 'default', LIVE, 'people/dave-example', 'notes/current-plan', 'Dave Example');
       await addMember(engine, OWNER);
       await setOwner(engine, OWNER);
-      const mint = async (name: string, member: string | null, grant: string[]) => {
-        const minted = await mintLegacyToken(engine, { name: 'tok-' + name, scopes: ['read'], takesHolders: ['world'], sourceGrant: grant });
+      const mint = async (name: string, member: string | null, grant: string[], readShared = false) => {
+        const minted = await mintLegacyToken(engine, { name: 'tok-' + name, scopes: ['read'], takesHolders: ['world'], sourceGrant: grant, ...(readShared ? { readShared } : {}) });
         tokens[name] = minted.token;
         if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
       };
@@ -144,10 +150,12 @@ for (const kind of testBackends()) {
       await mint('owner', OWNER, ['default', SRC]);
       await mint('write-first', OWNER, [SRC, 'default']);
       await mint('only-archived', OWNER, [SRC]);
+      await mint('read-shared', OWNER, ['default'], true);
       server = await startHttpTransport({ port: 0, engine, surface: 'full', limiters: {
         ip: new RateLimiter({ limit: 10_000, windowMs: 60_000, lruCap: 100 }), token: new RateLimiter({ limit: 10_000, windowMs: 60_000, lruCap: 100 }),
       } }) as never;
       for (const who of Object.keys(tokens)) control[who] = await matrix(who, ARCHIVED_READS);
+      deltaBefore = await overHttp('write-first', 'delta', { since: '2000-01-01' });
       Object.assign(ownerLive, await matrix('owner', LIVE_READS));
       await softDeleteSource(engine, SRC);
     }, 240_000);
@@ -180,8 +188,8 @@ for (const kind of testBackends()) {
       expect(await everyToken(ARCHIVED_READS, true)).toEqual(none());
     });
 
-    test('naming the archived source still answers unknown_source', async () => {
-      for (const who of Object.keys(tokens)) {
+    test('naming the archived source still answers unknown_source for every token whose grant names it', async () => {
+      for (const who of Object.keys(tokens).filter(w => w !== 'read-shared')) {
         for (const call of Object.values(PATHS)) {
           const text = await call(who, 'get_page', { slug: 'people/carol-example', source_id: SRC });
           expect(text).toContain('unknown_source');
@@ -190,10 +198,29 @@ for (const kind of testBackends()) {
       }
     });
 
+    test('a token whose write source or every source is archived reads nothing and is told unknown_source', async () => {
+      expect(deltaBefore).toContain('people/carol-example');
+      for (const who of ['write-first', 'only-archived']) {
+        for (const call of Object.values(PATHS)) {
+          for (const [op, params] of [['delta', { since: '2000-01-01' }], ['list_pages', { limit: 100 }], ['get_page', { slug: 'people/dave-example' }]] as const) {
+            const text = await call(who, op, params);
+            expect([who, op, text.includes('unknown_source'), [ARCHIVED.body, LIVE.body, 'people/carol-example\\"', 'notes/'].some(n => text.includes(n))]).toEqual([who, op, true, false]);
+          }
+        }
+      }
+    });
+
+    test('a token whose sources cannot be read fails closed instead of keeping its stored list', async () => {
+      const [row] = await engine.executeRaw<Record<string, unknown>>("SELECT * FROM access_tokens WHERE name = 'tok-owner'");
+      const grant = await resolveTokenGrant(sqlQueryForEngine(engine), row!);
+      const failing = (async () => { throw new Error('sources unreadable'); }) as never;
+      await expect(tokenReadSources(failing, grant, async () => OWNER)).rejects.toThrow('sources unreadable');
+    });
+
     test('the owner keeps reading the live source through every op', async () => {
       expect(keys(ownerLive, false)).toEqual([]);
       expect(await matrix('owner', LIVE_READS)).toEqual(ownerLive);
-      expect(await matrix('write-first', LIVE_READS)).toEqual(ownerLive);
+      expect(await matrix('read-shared', LIVE_READS)).toEqual(ownerLive);
     });
 
     test('sources restore brings the pages back for the same tokens', async () => {

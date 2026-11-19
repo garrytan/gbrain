@@ -73,7 +73,9 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
 /**
  * The AuthInfo source fields of a token: authSourcesFromGrant with every archived source dropped from the sources it
  * names, then widened by the shared set when the switch applies. Membership is live, as for OAuth clients: an archived
- * source reads as absent until it is restored, and a grant left with no live source reads nothing. The dropped ids
+ * source reads as absent until it is restored. A grant whose write source is archived reads nothing, as an OAuth client
+ * whose source is archived exposes no operations: reads that scope to the write source alone would otherwise still
+ * reach it. The dropped ids
  * stay on `archivedSources`, so naming one still answers unknown_source rather than permission_denied. The switch does
  * not apply when off, on the deny-all `none` (also every drifted or malformed grant), or on a token with no source
  * list, which already reads the floor. The write source never changes; `member` is read only for a switched key.
@@ -89,9 +91,10 @@ export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, mem
   const stored = named.filter(id => live.has(id));
   const archived = named.filter(id => !live.has(id));
   const archivedSources = archived.length ? { archivedSources: archived } : {};
-  const sources = grant.readShared === true ? [...new Set([...stored, ...sharedSetFromRows(rows, await member())])] : stored;
   const shared = grant.readShared === true ? { readShared: true as const } : {};
-  if (sources.length === 0) return { sourceId: NO_SOURCES, allowedSources: [], hasSourceGrant: true, ...shared, ...archivedSources };
+  const denied = { sourceId: NO_SOURCES, allowedSources: [], hasSourceGrant: true, ...shared, ...archivedSources };
+  if (!live.has(base.sourceId)) return denied;
+  const sources = grant.readShared === true ? [...new Set([...stored, ...sharedSetFromRows(rows, await member())])] : stored;
   if (grant.readShared !== true && !base.allowedSources) return { ...base, ...archivedSources };
   return { sourceId: base.sourceId, allowedSources: sources, hasSourceGrant: true, ...shared, ...archivedSources };
 }
