@@ -17,6 +17,15 @@
  *  - Regression: the Rust arm refused `listFactsByEntity` with the `eligibility` option, so the card's facts failed open
  *    to an empty list and `gbrain recall <entity>` failed on a Rust brain.
  *  - Why existing coverage misses it: trust-reads.test.ts reads the eligibility in the hot-memory shape only.
+ *  - Contract: the card's `referenced_by` groups (mentions/referrers.ts readReferrerGroups, called from entity-card.ts
+ *    cardReferences) hold every live page in the caller's sources that links to the entity, grouped by pack-canonical
+ *    type, newest `COALESCE(effective_date, updated_at)` first with `(source_id, slug)` breaking a tie, at most
+ *    GROUP_ROW_CAP rows per group; an untrusted read leaves out private and restricted referrers and links whose origin
+ *    page is private; the eligibility floor and quarantine apply before the cap; each row carries its date source,
+ *    preview and trust label.
+ *  - Regression: the Rust arm refused the read (raw SQL), so the card's `referenced_by` failed open to empty on a Rust
+ *    brain and `gbrain entity --json` differed from PGLite.
+ *  - Why existing coverage misses it: no parity case reads the referrer groups; mentions tests run PGLite only.
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
@@ -25,6 +34,7 @@ import type { Link, PageInput } from '../../src/core/types.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { TERMINAL_AUDIT_SOURCE } from '../../src/core/facts/audit-sources.ts';
+import { readReferrerGroups, type ReferrerScope } from '../../src/core/mentions/referrers.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -189,6 +199,88 @@ describe('engine parity: the entity card and recall fact reads', () => {
         grep: ['Alice moved to Widget'],
         limited: ['Alice is said to be leaving', 'Alice keeps a private diary'],
       });
+      return out;
+    },
+  );
+});
+
+/**
+ * Pages that link to Acme: two people dated on one day (the slug tie), a meeting stored as the pack alias `call`,
+ * twelve dated notes (past the per-group cap), an undated note, private, restricted and quarantined referrers, a note
+ * whose link's origin page is private, a soft-deleted referrer and a referrer in another source.
+ */
+async function seedReferrers(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<void> {
+  await createSource(engine, backend, 'team');
+  const dated = (date: string, extra: Partial<PageInput> = {}, source: 'date' | 'event_date' = 'date'): Partial<PageInput> =>
+    ({ ...extra, frontmatter: { date, ...(extra.frontmatter ?? {}) }, effective_date: new Date(`${date}T00:00:00Z`), effective_date_source: source });
+  await engine.putPage(ACME, page('Acme', { type: 'company' }));
+  await declared(engine, 'operator_curated', tx => tx.putPage(ALICE, page('Alice', dated('2026-03-01', { type: 'person',
+    compiled_truth: '# Alice\n\nAlice   works with Acme on the platform.' }))));
+  await engine.putPage('people/bob-example', page('Bob', dated('2026-03-01', { type: 'person' })));
+  await engine.putPage('meetings/standup', page('Standup', dated('2026-02-01', { type: 'call' }, 'event_date')));
+  await declared(engine, 'operator_curated', tx => tx.putPage('meetings/review', page('Review', dated('2026-04-01', { type: 'meeting' }))));
+  for (let i = 1; i <= 12; i++) {
+    const n = String(i).padStart(2, '0');
+    await engine.putPage(`notes/n${n}`, page(`Note ${n}`, dated(`2026-01-${n}`)));
+  }
+  await engine.putPage('notes/undated', page('Undated'));
+  await engine.putPage('notes/private-ref', page('Private ref', dated('2026-05-01', { frontmatter: { visibility: 'private' } })));
+  await engine.putPage('notes/restricted', page('Restricted', dated('2026-05-02', { frontmatter: { readable_by: ['member:bob-example'] } })));
+  await engine.putPage('notes/via-private', page('Via private', dated('2026-05-03')));
+  await engine.putPage('notes/held', page('Held', dated('2026-05-04', { frontmatter: { quarantine: { reason: 'test' } } })));
+  await engine.putPage('notes/gone', page('Gone', dated('2026-05-05')));
+  await engine.putPage('notes/team-ref', page('Team ref', dated('2026-06-01')), { sourceId: 'team' });
+  const refs = [ALICE, 'people/bob-example', 'meetings/standup', 'meetings/review', 'notes/undated', 'notes/private-ref',
+    'notes/restricted', 'notes/held', 'notes/gone', ...Array.from({ length: 12 }, (_, i) => `notes/n${String(i + 1).padStart(2, '0')}`)];
+  await engine.addLinksBatch(refs.map(from => ({ from_slug: from, to_slug: ACME, link_type: 'mentions', context: 'Acme',
+    link_source: 'manual', from_source_id: 'default', to_source_id: 'default' })));
+  await engine.addLinksBatch([
+    { from_slug: 'notes/via-private', to_slug: ACME, link_type: 'works_at', context: 'Acme', link_source: 'frontmatter',
+      origin_slug: 'notes/private-ref', origin_field: 'company', from_source_id: 'default', to_source_id: 'default', origin_source_id: 'default' } as LinkBatchInput,
+    { from_slug: 'notes/team-ref', to_slug: ACME, link_type: 'mentions', context: 'Acme', link_source: 'manual',
+      from_source_id: 'team', to_source_id: 'default' },
+  ]);
+  await engine.softDeletePage('notes/gone', { sourceId: 'default' });
+}
+
+const PACK = { page_types: [{ name: 'meeting', aliases: ['call'] }, { name: 'person' }, { name: 'note' }, { name: 'company' }] };
+
+describe('engine parity: the entity card referrer groups', () => {
+  parityTest(
+    'readReferrerGroups in the entity card shape groups referrers by canonical type, newest first, capped per group, under each caller scope',
+    { methods: ['putPage', 'transaction', 'applyTransactionSettings', 'addLinksBatch', 'softDeletePage'] },
+    async (engine: BrainEngine, backend) => {
+      await seedReferrers(engine, backend);
+      const read = async (opts: Partial<ReferrerScope>) => {
+        const out = await readReferrerGroups(engine, {
+          slug: ACME, sourceId: 'default', referrerSources: ['default'], excludePrivate: false, pack: PACK,
+          keepVisibility: ['private', 'world'], ...opts,
+        });
+        return { total: out.total, groups: out.groups.map(g => ({ type: g.canonical_type, total: g.total,
+          rows: g.rows.map(r => ({ ...r, date: r.date_source === 'updated_at' ? typeof r.date : r.date })) })) };
+      };
+      const out = {
+        local: await read({}),
+        remote: await read({ excludePrivate: true, keepVisibility: ['world'] }),
+        floored: await read({ eligibility: { floor: 'operator_curated' } }),
+        quarantined: await read({ includeQuarantined: true }),
+        bothSources: await read({ referrerSources: ['default', 'team'] }),
+      };
+      const shape = (r: typeof out.local) => r.groups.map(g => `${g.type}:${g.total}:${g.rows.map(x => x.slug).join(',')}`);
+      const notes = (newest: number, count: number) => Array.from({ length: count }, (_, k) => `notes/n${String(newest - k).padStart(2, '0')}`).join(',');
+      const others = ['meeting:2:meetings/review,meetings/standup', 'person:2:people/alice-example,people/bob-example'];
+      // The undated note sorts by its write time (newest); Alice and Bob share a date and the slug breaks the tie.
+      expect({ local: shape(out.local), remote: shape(out.remote), floored: shape(out.floored), quarantined: shape(out.quarantined),
+        bothSources: shape(out.bothSources) }).toEqual({
+        local: [`note:16:notes/undated,notes/via-private,notes/restricted,notes/private-ref,${notes(12, 6)}`, ...others],
+        remote: [`note:13:notes/undated,${notes(12, 9)}`, ...others],
+        floored: ['meeting:1:meetings/review', 'person:1:people/alice-example'],
+        quarantined: [`note:17:notes/undated,notes/held,notes/via-private,notes/restricted,notes/private-ref,${notes(12, 5)}`, ...others],
+        bothSources: [`note:17:notes/undated,notes/team-ref,notes/via-private,notes/restricted,notes/private-ref,${notes(12, 5)}`, ...others],
+      });
+      expect(out.local.groups[1]!.rows[1]).toMatchObject({ slug: 'meetings/standup', type: 'call', canonical_type: 'meeting',
+        date: '2026-02-01T00:00:00.000000Z', date_source: 'event_date' });
+      expect(out.local.groups[2]!.rows[0]).toMatchObject({ preview: 'Alice works with Acme on the platform.', trust_tier: 'operator_curated' });
       return out;
     },
   );
