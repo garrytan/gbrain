@@ -12,11 +12,14 @@
  * `listHeldTimelineRows` is `heldRows`' read of the timeline rows a write may not delete or overwrite (rows above the
  * writer, and rows an open `forget` contest holds), the statement `heldRows` sent through `executeRaw` for
  * `timeline_entries`, with the named writer's rank bound as a number.
+ *
+ * `listHeldTakeRows` is the same read for `takes`: the statement `heldRows` sent through `executeRaw`, byte for byte
+ * (the named writer bound as text and ranked by the tier CASE), now one member PGLite, Postgres and the Rust store serve.
  */
 import { openedFactRowSql } from '../persistence/context.ts';
-import { TRUST_TIER_RANK, trustRankSql, type TrustTier } from '../trust/tier.ts';
+import { TRUST_TIER_RANK, trustRankArmsSql, trustRankSql, type TrustTier } from '../trust/tier.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** SQL for the writer's trust rank: the transaction's declared tier (`gbrain.write_trust_tier`), `unknown` when undeclared. */
 export const WRITER_RANK_SQL = trustRankSql(`COALESCE(NULLIF(current_setting('gbrain.write_trust_tier', true), ''), 'unknown')`);
@@ -81,4 +84,33 @@ export async function listHeldTimelineRows(exec: LegacyUnscopedRead, spec: HeldT
   return exec.run<HeldTimelineRow>(sqlFragment`SELECT x.id, x.trust_tier FROM timeline_entries x WHERE x.id = ANY(${[...spec.ids]}::bigint[])
       AND (${trustedSql(trustRankSql('x.trust_tier'))} > COALESCE(${writer}::int, ${trustedSql(WRITER_RANK_SQL)})${contest}) ORDER BY x.id FOR UPDATE`)
     .then(result => result.rows.map(row => ({ id: Number(row.id), trust_tier: row.trust_tier })));
+}
+
+/** What `heldRows` asks of takes (trust/fence-guard.ts): the row ids, the writer and whether an open contest holds. */
+export interface HeldTakeRowsSpec {
+  ids: readonly number[];
+  /** The writer's tier; the transaction's declared tier (`gbrain.write_trust_tier`, `unknown` when undeclared) when omitted. */
+  writer?: TrustTier;
+  /** Also hold a row a pending `forget` proposal targets (an open contest). */
+  pending?: boolean;
+}
+
+/** A held take and its stored tier. */
+export interface HeldTakeRow { id: number; trust_tier: string }
+
+/**
+ * Of `spec.ids`, the takes a write may not delete or overwrite, by id and locked (`FOR UPDATE`): rows more trusted than
+ * the writer and, with `pending`, rows a pending `forget` proposal targets. An id with no row reads no row. The text and
+ * the bound values are the ones `heldRows` sent through `executeRaw` (pinned by test/engine-sql-held-take-rows-golden.test.ts).
+ */
+export async function listHeldTakeRows(exec: LegacyUnscopedRead, spec: HeldTakeRowsSpec): Promise<HeldTakeRow[]> {
+  if (!spec.ids.length) return [];
+  const writer = spec.writer === undefined ? sqlFragment`${trustedSql(WRITER_RANK_SQL)}` : sqlFragment`(CASE ${spec.writer}::text${trustedSql(trustRankArmsSql())}`;
+  const contest = trustedSql(spec.pending ? ` OR EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'
+  AND tp.target_table = 'takes' AND tp.target_id = x.id)` : '');
+  // `executeRaw`, the path `heldRows` took (Postgres counts it on the raw gauge), not `run`.
+  const { text, params } = renderFragment(sqlFragment`SELECT x.id, x.trust_tier FROM takes x WHERE x.id = ANY(${[...spec.ids]}::bigint[])
+      AND (${trustedSql(trustRankSql('x.trust_tier'))} > ${writer}${contest}) ORDER BY x.id FOR UPDATE`);
+  const rows = await exec.executeRaw<HeldTakeRow>(text, params);
+  return rows.map(row => ({ id: Number(row.id), trust_tier: row.trust_tier }));
 }

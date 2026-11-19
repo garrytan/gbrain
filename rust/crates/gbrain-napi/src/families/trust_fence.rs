@@ -1,6 +1,6 @@
 //! The fence guard's read of a page's fact rows with their trust tier (`gbrain_store::facts`,
-//! `list_fence_fact_rows`), its read of held timeline rows (`gbrain_store::timeline`,
-//! `list_held_timeline_rows`), the held fence cells of a world-only fact read (`list_held_fence_cells`), and the fence
+//! `list_fence_fact_rows`), its reads of held timeline rows and takes (`gbrain_store::timeline`,
+//! `list_held_timeline_rows`; `gbrain_store::takes`, `list_held_take_rows`), the held fence cells of a world-only fact read (`list_held_fence_cells`), and the fence
 //! overlay's read of one page (`read_fence_overlay_rows`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::{FenceOverlayInput, FenceTarget, HeldFenceCellsInput};
+use gbrain_store::takes::HeldTakeSpec;
 use gbrain_store::timeline::HeldTimelineSpec;
 
 #[napi]
@@ -45,6 +46,21 @@ impl Brain {
         self.run(env, move |s| {
             let spec: HeldTimelineSpec = required(spec, "listHeldTimelineRows spec")?;
             s.list_held_timeline_rows(&spec, &s.fence_context())
+        })
+    }
+
+    /// `listHeldTakeRows({ ids, writer?, pending? })`: `[{ id, trust_tier }]`, the listed takes the
+    /// writer may not delete or overwrite, by id. Without `writer` the writer's tier comes from the
+    /// store's write trust context (`applyWriteTrust`).
+    #[napi]
+    pub fn list_held_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: HeldTakeSpec = required(spec, "listHeldTakeRows spec")?;
+            s.list_held_take_rows(&spec, &s.fence_context())
         })
     }
 

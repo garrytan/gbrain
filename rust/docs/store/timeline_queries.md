@@ -156,7 +156,7 @@ tier, a name that is no tier ranking 0 as the SQL rank `CASE` does, else the sto
 (`fence_context()`, `unknown` when undeclared). Entries are keyed by page, so the read walks every `E` record once;
 `FOR UPDATE` needs nothing in a store with one writer. Rows come back as `{ id, trust_tier }` by id; an id with no
 row, and an empty list, read nothing. Parity case: `test/engine-parity/timeline-held-rows.test.ts`. The `takes` half of
-`heldRows` stays on its SQL statement.
+`heldRows` is `listHeldTakeRows` ("Held takes" in `takes.md`).
 
 ## Known differences
 

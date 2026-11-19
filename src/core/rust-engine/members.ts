@@ -338,6 +338,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFenceRetireCandidates: 'facts',
   listFenceFactRows: 'facts',
   listHeldTimelineRows: 'timeline',
+  listHeldTakeRows: 'takes',
   listHeldFenceCells: 'facts',
   readFenceOverlayRows: 'facts',
   findCandidateDuplicates: 'facts',

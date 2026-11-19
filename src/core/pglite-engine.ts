@@ -3387,6 +3387,7 @@ export class PGLiteEngine implements BrainEngine {
   readStoredBodyBytes(slug: string, sourceId: string) { return largePageImpl.readStoredBodyBytes(unscopedExecutor(this.engineSql, 'large page: stored body size read ran unscoped through executeRaw'), slug, sourceId); }
   listFenceFactRows(target: trustFenceImpl.FenceRowsTarget) { return trustFenceImpl.listFenceFactRows(unscopedExecutor(this.engineSql, 'fence guard: locking fact read ran unscoped through executeRaw'), target); }
   listHeldTimelineRows(spec: trustFenceImpl.HeldTimelineRowsSpec) { return trustFenceImpl.listHeldTimelineRows(unscopedExecutor(this.engineSql, 'fence guard: locking timeline read ran unscoped through executeRaw'), spec); }
+  listHeldTakeRows(spec: trustFenceImpl.HeldTakeRowsSpec) { return trustFenceImpl.listHeldTakeRows(unscopedExecutor(this.engineSql, 'fence guard: locking takes read ran unscoped through executeRaw'), spec); }
   insertTrustProposal(input: trustProposalsImpl.NewTrustProposal) { return trustProposalsImpl.insertTrustProposal(this.engineSql, input); }
   getTrustProposal(id: number, lock = false) { return trustProposalsImpl.getTrustProposal(unscopedExecutor(this.engineSql, 'trust: the trust proposal read ran through executeRaw unscoped'), id, lock); }
   listTrustProposals(filter: trustProposalsImpl.TrustProposalFilter = {}) { return trustProposalsImpl.listTrustProposals(unscopedExecutor(this.engineSql, 'trust: the trust proposal read ran through executeRaw unscoped'), filter); }

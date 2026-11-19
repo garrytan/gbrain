@@ -1,0 +1,18 @@
+{
+  "golden": [
+    {
+      "params": [
+        "object",
+        "string"
+      ],
+      "text": "SELECT x.id, x.trust_tier FROM takes x WHERE x.id = ANY($1::bigint[])\n      AND ((CASE x.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) > (CASE $2::text WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) OR EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'\n  AND tp.target_table = 'takes' AND tp.target_id = x.id)) ORDER BY x.id FOR UPDATE"
+    },
+    {
+      "params": [
+        "object"
+      ],
+      "text": "SELECT x.id, x.trust_tier FROM takes x WHERE x.id = ANY($1::bigint[])\n      AND ((CASE x.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) > (CASE COALESCE(NULLIF(current_setting('gbrain.write_trust_tier', true), ''), 'unknown') WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END)) ORDER BY x.id FOR UPDATE"
+    }
+  ],
+  "normalizer": "held-take-rows-v1"
+}

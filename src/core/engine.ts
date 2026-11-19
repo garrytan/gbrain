@@ -48,7 +48,7 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
-import type { FenceFactRow, FenceRowsTarget, HeldTimelineRow, HeldTimelineRowsSpec } from './engine-sql/trust-fence.ts';
+import type { FenceFactRow, FenceRowsTarget, HeldTakeRow, HeldTakeRowsSpec, HeldTimelineRow, HeldTimelineRowsSpec } from './engine-sql/trust-fence.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3115,6 +3115,8 @@ export interface BrainEngine {
    * `spec.pending`, targeted by a pending `forget` proposal. Each row carries its stored `trust_tier`.
    */
   listHeldTimelineRows(spec: HeldTimelineRowsSpec): Promise<HeldTimelineRow[]>;
+  /** listHeldTimelineRows for takes (engine-sql/trust-fence.ts): the listed takes a write may not delete or overwrite, locked. */
+  listHeldTakeRows(spec: HeldTakeRowsSpec): Promise<HeldTakeRow[]>;
   /**
    * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
    * for the same (action, target, related) with `created: false`. The proposer principal and request come from the

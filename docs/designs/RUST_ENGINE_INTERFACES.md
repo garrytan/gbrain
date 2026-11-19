@@ -551,7 +551,9 @@ store keeps the same rule in `pages.rs`.
   writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md). The fence
   guard's read of held timeline rows is the typed member `listHeldTimelineRows` (capability `timeline`, SQL in
   `engine-sql/trust-fence.ts`), served from `timeline/held.rs`; see "Held timeline rows" in
-  [`rust/docs/store/timeline_queries.md`](../../rust/docs/store/timeline_queries.md).
+  [`rust/docs/store/timeline_queries.md`](../../rust/docs/store/timeline_queries.md). Its read of held takes is
+  `listHeldTakeRows` (capability `takes`, the same SQL text `heldRows` sent), served from `takes/held.rs`; see "Held
+  takes" in [`rust/docs/store/takes.md`](../../rust/docs/store/takes.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)

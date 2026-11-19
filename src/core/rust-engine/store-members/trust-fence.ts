@@ -1,6 +1,6 @@
 /**
  * The fence guard's read of a page's fact rows with their trust tier (BrainEngine listFenceFactRows;
- * engine-sql/trust-fence.ts on the SQL engines), fence-guard's held timeline rows (listHeldTimelineRows; the same module), the held fence cells of a world-only fact read (listHeldFenceCells;
+ * engine-sql/trust-fence.ts on the SQL engines), fence-guard's held timeline rows and takes (listHeldTimelineRows, listHeldTakeRows; the same module), the held fence cells of a world-only fact read (listHeldFenceCells;
  * engine-sql/cli-reads-ops.ts), and the fence overlay's read of one page (readFenceOverlayRows; engine-sql/cli-reads-ops.ts).
  *
  * The store reads the writer's tier and the opened fact ids from its write trust context (rust/docs/store/write_trust.md),
@@ -9,7 +9,7 @@
  * tier yet), so only an opened row, or a writer below `unknown`, lists a row. What the read answers and why:
  * rust/docs/store/facts.md, "The fence guard's reads".
  */
-import type { FenceFactRow, HeldTimelineRow, HeldTimelineRowsSpec } from '../../engine-sql/trust-fence.ts';
+import type { FenceFactRow, HeldTakeRow, HeldTakeRowsSpec, HeldTimelineRow, HeldTimelineRowsSpec } from '../../engine-sql/trust-fence.ts';
 import type { FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
 import { callerMember, grantedPrivateFactSql, memberFactAdmitSql, memberPageSlug } from '../../access/member-facts.ts';
 import { privateFactSources, privatePagesFilterForCaller } from '../../search/private-visibility.ts';
@@ -32,6 +32,19 @@ export const listHeldTimelineRows: StoreMember<[spec: HeldTimelineRowsSpec], Hel
   if (!spec.ids.length) return [];
   const input = { ids: [...spec.ids], ...(spec.writer !== undefined ? { writer: spec.writer } : {}), ...(spec.pending ? { pending: true } : {}) };
   const rows = await storeCall({ member: 'listHeldTimelineRows' }, () => brain.listHeldTimelineRows(input)) as HeldTimelineRow[];
+  return rows.map((row) => ({ id: Number(row.id), trust_tier: row.trust_tier }));
+};
+
+/**
+ * Fence-guard's held takes (BrainEngine listHeldTakeRows; engine-sql/trust-fence.ts on the SQL engines): of the listed
+ * ids, the takes more trusted than the writer and, with `pending`, the takes a pending `forget` proposal targets. The
+ * store compares each take's stamped tier; without `writer` the writer is its write trust context's tier.
+ * rust/docs/store/takes.md, "Held takes".
+ */
+export const listHeldTakeRows: StoreMember<[spec: HeldTakeRowsSpec], HeldTakeRow[]> = async (brain, spec) => {
+  if (!spec.ids.length) return [];
+  const input = { ids: [...spec.ids], ...(spec.writer !== undefined ? { writer: spec.writer } : {}), ...(spec.pending ? { pending: true } : {}) };
+  const rows = await storeCall({ member: 'listHeldTakeRows' }, () => brain.listHeldTakeRows(input)) as HeldTakeRow[];
   return rows.map((row) => ({ id: Number(row.id), trust_tier: row.trust_tier }));
 };
 

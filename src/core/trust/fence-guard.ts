@@ -199,19 +199,13 @@ const OPEN_CONTEST = (table: HeldTable) => `EXISTS (SELECT 1 FROM trust_proposal
 /**
  * Of `ids`, the rows a write may not delete or overwrite, locked: rows more trusted than `writer` (the transaction's
  * declared tier when omitted) and, with `pending`, rows an open contest already holds. A reconcile that restates the
- * page text passes `pending`: the held row is absent from that text by design. Timeline rows are read through the typed
- * member `listHeldTimelineRows` (engine-sql/trust-fence.ts; served by the Rust store too); takes stay on this statement.
+ * page text passes `pending`: the held row is absent from that text by design. Both tables are read through typed members
+ * (engine-sql/trust-fence.ts `listHeldTimelineRows` and `listHeldTakeRows`; served by the Rust store too).
  */
 export async function heldRows(tx: BrainEngine, table: HeldTable, ids: readonly number[], opts: { writer?: TrustTier; pending?: boolean } = {}): Promise<Map<number, TrustTier>> {
   if (!ids.length) return new Map();
-  if (table === 'timeline_entries') {
-    const rows = await tx.listHeldTimelineRows({ ids, ...(opts.writer ? { writer: opts.writer } : {}), ...(opts.pending ? { pending: true } : {}) });
-    return new Map(rows.map(r => [Number(r.id), storedTrustTier(r.trust_tier)]));
-  }
-  const writer = opts.writer ? trustRankSql('$2::text') : WRITER_RANK;
-  const rows = await tx.executeRaw<{ id: number; trust_tier: string }>(`SELECT x.id, x.trust_tier FROM ${table} x WHERE x.id = ANY($1::bigint[])
-      AND (${trustRankSql('x.trust_tier')} > ${writer}${opts.pending ? ` OR ${OPEN_CONTEST(table)}` : ''}) ORDER BY x.id FOR UPDATE`,
-  opts.writer ? [[...ids], opts.writer] : [[...ids]]);
+  const spec = { ids, ...(opts.writer ? { writer: opts.writer } : {}), ...(opts.pending ? { pending: true } : {}) };
+  const rows = table === 'timeline_entries' ? await tx.listHeldTimelineRows(spec) : await tx.listHeldTakeRows(spec);
   return new Map(rows.map(r => [Number(r.id), storedTrustTier(r.trust_tier)]));
 }
 

@@ -95,6 +95,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   getFtsLanguage: 'src/core/fts-language.ts: the brain full-text config name; passes VALID_CONFIG_NAME ([a-z][a-z0-9_]*) or falls back to the default',
   grantedPrivateFactSql: 'src/core/access/member-facts.ts: private-facts grant predicate over a caller alias; granted source ids passed isValidSourceId, so they embed as literals',
   trustRankSql: 'src/core/trust/tier.ts: CASE mapping a caller column expression to a rank from the constant tier table; callers pass a column, never a value',
+  trustRankArmsSql: 'src/core/trust/tier.ts: the constant WHEN ... ELSE 0 END) tail of trustRankSql from the constant tier table; takes no input, the subject is bound through sqlFragment',
   claimPendingSql: 'src/core/trust/claim-state.ts: constant claim-pending predicate over a caller sources alias; config keys are module constants',
   conversationSlotSql: 'src/core/engine-sql/facts-trust.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
   savedFactCollapseColumns: 'src/core/engine-sql/facts-trust.ts: SAVED_FACT_COLLAPSE_COLUMNS, the constant select list the capture-dedup collapse reads; no values',

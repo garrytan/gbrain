@@ -5489,6 +5489,7 @@
         "listHeldFenceCells": "none",
         "listHeldFenceFactRows": "none",
         "listHeldFenceTakeRows": "none",
+        "listHeldTakeRows": "none",
         "listHeldTimelineRows": "none",
         "listHostConsumerRows": "none",
         "listJobAttachmentNames": "none",
