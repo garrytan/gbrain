@@ -212,6 +212,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listInterimStoredObjectCounts', 'readOldestSourceCreatedAt', 'readBrainMaturity', 'listVisibilityCandidatePages', 'countVisibilityNoncanonicalHolds', 'listContentBlockedReceipts', 'listPassAdmittedReceipts', 'listOrphanConnectorCheckpoints',
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (engine-sql/doctor-sync.ts; covered by test/engine-parity/doctor-sync.test.ts)
   'listManagedSyncCursorFailureRows', 'listManagedSyncOrphanRowsets', 'listDurableManagedSyncFailureKeys',
+  // Doctor fence census reads (engine-sql/fence-census.ts; covered by test/engine-parity/doctor-fence-census.test.ts)
+  'listFenceCensusSources', 'readFencePassHorizon', 'listFenceCensusPagesById', 'listFenceCensusPagesUpdated', 'listLiveFencePageIds', 'readFenceScanRecord', 'writeFenceScanRecord', 'upsertFenceCandidatePart', 'clearFenceCandidateParts', 'readFenceTrendRecords', 'countSegmentedFencePages', 'listGitSourceHoldRecords', 'readBudgetLedgerDay',
   // Doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts; covered by test/engine-parity/doctor-facts-trust.test.ts)
   'countConversationPipelinePages', 'listPersistentWriterContention', 'countRowTrustTiers', 'countDerivedTaintRows', 'countLegacyUnknownBySource', 'listTrustColumns', 'listTrustClaimTargets', 'countClaimLiftedRows',
   // Doctor source reads (engine-sql/doctor-sources.ts; covered by test/engine-parity/doctor-sources.test.ts)

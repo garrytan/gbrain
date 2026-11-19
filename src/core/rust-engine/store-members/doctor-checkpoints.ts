@@ -3,7 +3,8 @@
  * (rust/crates/gbrain-store/src/cli_reads/doctor_checkpoints.rs, rust/docs/store/cli-reads-doctor-checkpoints.md).
  *
  * Served from the store: the doctor last-known pair, the latest connector receipt and the facts-absorb failure groups
- * (`ingest_log`), and the sync-admission setting's config value.
+ * (`ingest_log`), the sync-admission setting's config value, and the fence census candidate rows (written by the census,
+ * rust/docs/store/cli-reads-doctor-fence.md).
  *
  * Empty, no writer: every other `op_checkpoints` operation is written only through `executeRaw`, which a Rust brain
  * refuses, so no row of it exists there. Those members answer the empty value without a store call: what the same read
@@ -15,7 +16,6 @@ import { storeCall, type StoreMember } from './common.ts';
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
 export const readOpCheckpointKeys: Member<'readOpCheckpointKeys'> = async () => null;
-export const listFenceCandidateRecords: Member<'listFenceCandidateRecords'> = async () => [];
 export const listDerivedOriginParks: Member<'listDerivedOriginParks'> = async () => [];
 export const listPurgeParks: Member<'listPurgeParks'> = async () => [];
 export const readSoakCounterRows: Member<'readSoakCounterRows'> = async () => [];
@@ -27,6 +27,10 @@ export const listLiveManagedSyncPassRows: Member<'listLiveManagedSyncPassRows'> 
 export const listCheckpointBlockedSources: Member<'listCheckpointBlockedSources'> = async () => [];
 export const listOpenIdentityDowngrades: Member<'listOpenIdentityDowngrades'> = async () => [];
 export const listHeldManagedAtomRows: Member<'listHeldManagedAtomRows'> = async () => [];
+
+/** The candidate parts the census wrote (`upsertFenceCandidatePart`), of live source incarnations, by fingerprint. */
+export const listFenceCandidateRecords: Member<'listFenceCandidateRecords'> = (brain, op, sourceIds) =>
+  storeCall({ member: 'listFenceCandidateRecords' }, () => brain.listFenceCandidateRecords({ op, sourceIds: sourceIds ? [...sourceIds] : null }));
 
 export const readDoctorLastKnown: Member<'readDoctorLastKnown'> = (brain, op) =>
   storeCall({ member: 'readDoctorLastKnown' }, () => brain.readDoctorLastKnown(op));

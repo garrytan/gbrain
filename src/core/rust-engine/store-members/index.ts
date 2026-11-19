@@ -85,6 +85,7 @@ import * as doctorTerminal from './doctor-terminal.ts';
 import * as doctorBrain from './doctor-brain.ts';
 import * as doctorSync from './doctor-sync.ts';
 import * as doctorFactsTrust from './doctor-facts-trust.ts';
+import * as fenceCensus from './fence-census.ts';
 import * as doctorSources from './doctor-sources.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -155,6 +156,7 @@ export const STORE_MEMBERS = {
   ...doctorSources,
   // The doctor facts, fence and trust reads (rust/docs/store/cli-reads-doctor-facts-trust.md).
   ...doctorFactsTrust,
+  ...fenceCensus,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

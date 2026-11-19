@@ -27,7 +27,7 @@ import type { CapSource } from '../consent.ts';
 import { priceFor, type PricingOverrides, type PricingSource } from './reservation-cost.ts';
 import { noPricingGuidance, type NoPricingGuidance } from './no-pricing.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readBudgetLedgerDay'>;
 
 export interface LedgerKey { scope: string; resolver: string }
 export const FENCE_REPAIR_LEDGER: LedgerKey = Object.freeze({ scope: 'llm_repair', resolver: 'fences' });
@@ -134,9 +134,8 @@ export function dailyLedger(engine: Exec, key: LedgerKey, opts: { now?: () => Da
   const params = (...rest: unknown[]) => [key.scope, key.resolver, ...rest];
 
   const readDay = async (day = utcDay(now())): Promise<LedgerDay> => {
-    const [row] = await engine.executeRaw<{ reserved: string; committed: string; cap: string | null }>(
-      'SELECT reserved_usd::text AS reserved, committed_usd::text AS committed, cap_usd::text AS cap FROM budget_ledger WHERE scope = $1 AND resolver_id = $2 AND local_date = $3::date',
-      params(day));
+    // engine-sql/fence-census.ts: the same SELECT, served by the Rust store as no row.
+    const row = await engine.readBudgetLedgerDay(key.scope, key.resolver, day);
     return { day, reservedUsd: Number(row?.reserved ?? 0), committedUsd: Number(row?.committed ?? 0), capUsd: row?.cap == null ? null : Number(row.cap) };
   };
 

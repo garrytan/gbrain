@@ -58,8 +58,8 @@ import { carriedKeepDeleted, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirro
 export { CARRIED_SAMPLE, carriedHolds, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type CarriedHolds, type KeepDeletedDecision } from './sync-holds-carried.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
-
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
+import { listGitSourceHoldRecords } from '../engine-sql/fence-census.ts';
 export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
 export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
@@ -569,12 +569,15 @@ export async function countGitHolds(engine: Exec, sourceId: string, incarnation:
  * status` and `sources retry-held` merge the two.
  */
 export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
-  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`, [GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null]);
+  return groupGitHolds(await listGitSourceHoldRecords(engine.executeRaw.bind(engine), GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null));
+}
+/** `readGitSourceHolds` through the typed engine member, for readers a Rust brain serves (the doctor fence census). */
+export async function readGitSourceHoldsTyped(engine: Pick<BrainEngine, 'listGitSourceHoldRecords'>, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
+  return groupGitHolds(await engine.listGitSourceHoldRecords(GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null));
+}
+function groupGitHolds(rows: readonly GitHoldRecord[]): GitSourceHolds[] {
   const out = new Map<string, GitSourceHolds>();
-  for (const { record } of rows) {
+  for (const record of rows) {
     const entry = out.get(record.source_id) ?? { sourceId: record.source_id, incarnation: record.incarnation, count: 0, holds: [] };
     entry.holds.push(record); entry.count++;
     out.set(record.source_id, entry);

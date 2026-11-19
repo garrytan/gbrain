@@ -44,7 +44,6 @@ src/commands/doctor/checks/embedding-health.ts	execute_raw	4
 src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	4
-src/commands/doctor/checks/fence-integrity.ts	execute_raw	1
 src/commands/doctor/checks/folder-access.ts	execute_raw	1
 src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
@@ -236,7 +235,7 @@ src/core/bootstrap/harness-skills.ts	execute_raw	1
 src/core/bootstrap/verify.ts	execute_raw	6
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/brainstorm/orchestrator.ts	execute_raw	1
-src/core/budget/daily-ledger.ts	execute_raw	6
+src/core/budget/daily-ledger.ts	execute_raw	5
 src/core/by-mention.ts	execute_raw	5
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
@@ -403,8 +402,7 @@ src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	1
 src/core/feedback/store.ts	execute_raw	16
 src/core/fence-repair/attempts.ts	execute_raw	3
-src/core/fence-repair/census-store.ts	execute_raw	8
-src/core/fence-repair/census.ts	execute_raw	6
+src/core/fence-repair/census-store.ts	execute_raw	2
 src/core/fence-repair/hold-fix.ts	execute_raw	2
 src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
@@ -742,7 +740,7 @@ src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
 src/core/persistence/sync-holds-carried.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	30
+src/core/persistence/sync-holds.ts	execute_raw	29
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-lease.ts	execute_raw	5
