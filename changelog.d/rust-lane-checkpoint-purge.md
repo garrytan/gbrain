@@ -3,3 +3,6 @@
 ### Changed
 - The purge of stale checkpoints moved from raw SQL into a typed engine member. PGLite and Postgres run the same SQL as before.
 - On the Rust engine the purge keeps the same durable records the SQL engines keep, where the Rust store holds the data.
+
+### Fixed
+- On the Rust engine the purge now reads a sync delete tombstone's recorded time in the form Postgres stores it, with a time zone offset. Before, it kept such a tombstone even after its page was restored or deleted again.

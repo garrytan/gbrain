@@ -130,13 +130,16 @@ Differences from the SQL engines:
 - The SQL read names no order; the store lists the paths in path order. `resumeFilter` and every caller
   use the keys as a set.
 - The purge keeps the exemptions whose data the store has: the ops never purged, the sync delete
-  tombstone and identity downgrade while their page has the recorded `deleted_at`, the rows kept
+  tombstone and identity downgrade while their page has the recorded `deleted_at` (read as
+  `::timestamptz` reads the writers' text: ISO with `Z`, or the Postgres jsonb form with the
+  session's offset, such as `2026-11-19T09:05:00.123456-08:00`), the rows kept
   while their source incarnation lives, and the managed sync run and manifest rules. The store keeps
   no `source_ingestion_receipts`, so the incomplete-receipt exemption never holds. A recorded time or
   hold count the store cannot read keeps the row, where Postgres fails the whole purge (and the
   caller answers 0).
-- The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
-  persistence receipts) are still raw SQL. Their rows are not in this store.
+- The other `op_checkpoints` writers (sync delete tombstones, sync identity downgrades, sync holds,
+  fence repair, the persistence receipts) are still raw SQL. Their rows are not in this store, so
+  the store's unit test is the only check of the tombstone and downgrade exemptions on this engine.
 
 ## Effect scans
 

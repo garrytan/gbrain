@@ -20,8 +20,8 @@
 //! `source_ingestion_receipts`, so that exemption never holds here.
 
 use super::housekeeping::HousekeepingRow;
+use super::projection_queue::parse_timestamptz;
 use crate::env::Env;
-use crate::env::parse_iso;
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::read_page_by_id;
@@ -249,8 +249,11 @@ impl Parent {
     }
 }
 
-/// Whether the page whose id text is `fingerprint` has `deleted_at` equal to the time `at`. A time
-/// the store cannot read counts as equal, so the row stays (Postgres would refuse the whole purge).
+/// Whether the page whose id text is `fingerprint` has `deleted_at` equal to the time `at`
+/// (`p.deleted_at = (...->>'deleted_at')::timestamptz`). `at` is read as `::timestamptz` reads the
+/// forms the writers store: the Postgres writer's jsonb text, with the session's offset
+/// (`2026-11-19T17:05:00.123456+00:00`), and ISO with `Z`. A time the store cannot read counts as
+/// equal, so the row stays (Postgres would refuse the whole purge).
 fn page_deleted_at(read: &dyn KvRead, fingerprint: &str, at: Option<String>) -> Result<bool> {
     let Some(at) = at else {
         return Ok(false);
@@ -265,9 +268,9 @@ fn page_deleted_at(read: &dyn KvRead, fingerprint: &str, at: Option<String>) -> 
     let Some(page) = read_page_by_id(read, id)? else {
         return Ok(false);
     };
-    Ok(match parse_iso(&at) {
-        Some(at) => page.deleted_at_us == Some(at),
-        None => true,
+    Ok(match parse_timestamptz(&at, "deleted_at") {
+        Ok(at) => page.deleted_at_us == Some(at),
+        Err(_) => true,
     })
 }
 
@@ -643,6 +646,136 @@ mod tests {
         assert_eq!(paths, 0, "the stale checkpoint's paths go with it");
         drop(read);
         assert!(store.purge_stale_checkpoints(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn the_purge_keeps_a_sync_delete_tombstone_while_its_page_has_the_recorded_deleted_at() {
+        use super::{HousekeepingRow, parent_key};
+        use crate::env::{Env, iso};
+        use crate::pages::{PageInput, PutPageOptions, read_page};
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        const DAY: i64 = 86_400_000_000;
+        // A clock with microseconds, as Postgres's `now()` has.
+        let clock = Arc::new(Clock(std::sync::atomic::AtomicI64::new(
+            1_800_000_000_123_456,
+        )));
+        let store = crate::test_support::store_on(clock.clone());
+        // Writes `slug`, soft-deletes it and returns its id and `deleted_at`.
+        let deleted = |slug: &str| -> (u64, i64) {
+            let input: PageInput = serde_json::from_value(
+                json!({ "type": "note", "title": slug, "compiled_truth": "body" }),
+            )
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap();
+            store.soft_delete_page(slug, None).unwrap().unwrap();
+            let page = read_page(&*store.read().unwrap(), "default", slug)
+                .unwrap()
+                .unwrap();
+            (page.id, page.deleted_at_us.unwrap())
+        };
+        let put = |op: &str, fingerprint: &str, first: serde_json::Value| {
+            let now = clock.now_micros();
+            store
+                .write(|tx| {
+                    crate::put_json(
+                        tx,
+                        &parent_key(op, fingerprint).unwrap(),
+                        &HousekeepingRow {
+                            completed_keys: json!([first]),
+                            updated_at_us: now,
+                        },
+                    )
+                })
+                .unwrap();
+        };
+        let tombstone = |fingerprint: &str, deleted_at: &str| {
+            put(
+                "sync-delete-tombstone",
+                fingerprint,
+                json!({ "deleted_at": deleted_at }),
+            )
+        };
+
+        let (open, open_at) = deleted("notes/open");
+        tombstone(&open.to_string(), &iso(open_at));
+        // The millisecond form `Date#toISOString` gives names the same time when it has no
+        // microseconds; this page's `deleted_at` has them, so the millisecond form does not match.
+        let (ms, ms_at) = deleted("notes/ms");
+        tombstone(&ms.to_string(), &iso(ms_at - ms_at.rem_euclid(1_000)));
+        let (moved, moved_at) = deleted("notes/moved");
+        tombstone(&moved.to_string(), &iso(moved_at - 1));
+        let (restored, restored_at) = deleted("notes/restored");
+        tombstone(&restored.to_string(), &iso(restored_at));
+        assert!(store.restore_page("notes/restored", None).unwrap());
+        // A fingerprint that is not the exact text of a page id names no page.
+        let (padded, padded_at) = deleted("notes/padded");
+        tombstone(&format!("0{padded}"), &iso(padded_at));
+        // The form the Postgres writer stores (`jsonb_build_object('deleted_at', p.deleted_at)`): the
+        // session's offset, here UTC and Pacific. Each names its page's `deleted_at`.
+        let offset_form = |us: i64, zone: &str, zone_us: i64| {
+            iso(us + zone_us).trim_end_matches('Z').to_string() + zone
+        };
+        let (utc, utc_at) = deleted("notes/utc");
+        tombstone(&utc.to_string(), &offset_form(utc_at, "+00:00", 0));
+        let (pacific, pacific_at) = deleted("notes/pacific");
+        let pst = -8 * 3_600_000_000;
+        tombstone(
+            &pacific.to_string(),
+            &offset_form(pacific_at, "-08:00", pst),
+        );
+        // The same form one microsecond off names another time.
+        let (utc_moved, utc_moved_at) = deleted("notes/utc-moved");
+        tombstone(
+            &utc_moved.to_string(),
+            &offset_form(utc_moved_at + 1, "+00:00", 0),
+        );
+        // A time the store cannot read keeps the record (Postgres fails the whole purge).
+        let (unread, _) = deleted("notes/unread");
+        tombstone(&unread.to_string(), "not a time");
+        // An identity downgrade with no disposition is kept the same way, on `old_deleted_at`.
+        let (down, down_at) = deleted("notes/down");
+        put(
+            "sync-identity-downgrade",
+            &down.to_string(),
+            json!({ "old_deleted_at": iso(down_at) }),
+        );
+        let (decided, decided_at) = deleted("notes/decided");
+        put(
+            "sync-identity-downgrade",
+            &decided.to_string(),
+            json!({ "old_deleted_at": iso(decided_at), "disposition": "kept" }),
+        );
+
+        clock.0.fetch_add(8 * DAY, Ordering::SeqCst);
+        // Deleted: the millisecond, moved, restored, padded and offset-form moved tombstones and the
+        // decided downgrade.
+        assert_eq!(store.purge_stale_checkpoints(7.0).unwrap(), 6);
+        let read = store.read().unwrap();
+        let mut left = Vec::new();
+        scan_prefix(
+            &*read,
+            &[keys::PERSISTENCE, super::super::HOUSEKEEPING],
+            false,
+            &mut |k, _| {
+                left.push(String::from_utf8_lossy(&k[2..]).replace('\0', "/"));
+                true
+            },
+        )
+        .unwrap();
+        left.sort();
+        let mut want = vec![
+            format!("sync-delete-tombstone/{open}"),
+            format!("sync-delete-tombstone/{utc}"),
+            format!("sync-delete-tombstone/{pacific}"),
+            format!("sync-delete-tombstone/{unread}"),
+            format!("sync-identity-downgrade/{down}"),
+        ];
+        want.sort();
+        assert_eq!(left, want);
     }
 
     #[test]
