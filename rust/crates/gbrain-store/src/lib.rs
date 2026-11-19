@@ -77,7 +77,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub use crate::env::{Env, SystemEnv};
 pub use crate::error::{Result, StoreError};
@@ -101,6 +101,10 @@ pub struct OpenOptions {
     /// writer at a time, as before. The binding turns it on with
     /// `GBRAIN_RUST_CONCURRENT_WRITES=1`.
     pub concurrent_writes: bool,
+    /// Run the keyword index build on a background thread while the index is incomplete
+    /// (`keyword/index_build.rs`). Off, the index is built only by
+    /// [`Store::keyword_index_build_step`]; writes keep it in step either way.
+    pub keyword_index_builder: bool,
 }
 
 impl Default for OpenOptions {
@@ -111,6 +115,7 @@ impl Default for OpenOptions {
             catalog_version: 0,
             created_by: format!("gbrain-store {}", env!("CARGO_PKG_VERSION")),
             concurrent_writes: false,
+            keyword_index_builder: true,
         }
     }
 }
@@ -143,6 +148,11 @@ pub struct Store {
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
+    /// The keyword index build this store runs (`keyword/index_build.rs`); dropping the store
+    /// stops it after its current batch. `None` on a bound store and on the builder's own store.
+    builder: Mutex<Option<keyword::Builder>>,
+    /// `OpenOptions::keyword_index_builder` as this store was opened (false on the stores above).
+    runs_builder: bool,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -186,12 +196,28 @@ impl Store {
     /// Errors: `store_locked` when another handle or process owns it, `format_unknown` for a
     /// `FORMAT` or format record this build does not read, `store_io` and `store_corrupt`.
     pub fn open_dir(dir: &Path, options: OpenOptions) -> Result<Store> {
+        Store::open_dir_in(dir, options, FORMAT_VERSIONS)
+    }
+
+    /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
+    /// tests use (`format::check_version_in`).
+    pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
         fs::create_dir_all(dir)
             .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
-        let existing = format::read(dir)?;
+        let existing = format::read_in(dir, known)?;
+        if existing.is_none() {
+            // Without FORMAT the record file says which format it is. Read that without
+            // opening the file for writing, so a newer brain is refused with every byte as it was.
+            let peeked = redb_kv::peek(&dir.join(format::RECORDS_FILE), &keys::meta("format"));
+            if let Some(stored) =
+                peeked.and_then(|b| serde_json::from_slice::<StoredFormat>(&b).ok())
+            {
+                format::check_version_in(stored.format_version, known)?;
+            }
+        }
         let kv = open_records(dir, options.concurrent_writes)?;
-        let store = Store::open_kv(kv, Arc::new(SystemEnv), options.clone())?;
+        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
@@ -211,12 +237,21 @@ impl Store {
     /// Opens a brain on any `Kv`: the entry point for the simulation and for tests that run the
     /// store on a fault-injecting disk. Creates the brain's records when the store is empty.
     pub fn open_kv(kv: Arc<dyn Kv>, env: Arc<dyn Env>, options: OpenOptions) -> Result<Store> {
+        Store::open_kv_in(kv, env, options, FORMAT_VERSIONS)
+    }
+
+    fn open_kv_in(
+        kv: Arc<dyn Kv>,
+        env: Arc<dyn Env>,
+        options: OpenOptions,
+        known: &[u32],
+    ) -> Result<Store> {
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
         let (stored, created) = match stored {
             Some(stored) => {
-                format::check_version(stored.format_version)?;
+                format::check_version_in(stored.format_version, known)?;
                 let stored = if stored.format_version < FORMAT_VERSION {
                     upgrade_format(&*kv)?
                 } else {
@@ -233,7 +268,7 @@ impl Store {
                 let mut tx = kv.begin_write()?;
                 // Another handle may have created the brain between the read and this write.
                 if let Some(raced) = get_json::<StoredFormat>(&*tx, &keys::meta("format"))? {
-                    format::check_version(raced.format_version)?;
+                    format::check_version_in(raced.format_version, known)?;
                     drop(tx);
                     (raced, false)
                 } else {
@@ -244,6 +279,7 @@ impl Store {
                 }
             }
         };
+        let index = keyword::open_index(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
@@ -261,7 +297,72 @@ impl Store {
                 created,
             },
             bound: None,
+            builder: Mutex::new(None),
+            runs_builder: options.keyword_index_builder,
         })
+        .inspect(|store| {
+            if index.needs_build && store.runs_builder {
+                store.start_keyword_index_builder();
+            }
+        })
+    }
+
+    /// A store on the same records with no transaction and no builder: the build thread's handle.
+    fn sibling(&self) -> Store {
+        Store {
+            kv: self.kv.clone(),
+            env: self.env.clone(),
+            vectors: vectors::VectorCache::default(),
+            write_context: write_trust::WriteContextSlot::default(),
+            info: self.info.clone(),
+            bound: None,
+            builder: Mutex::new(None),
+            runs_builder: false,
+        }
+    }
+
+    /// Starts the background build unless one is running on this store.
+    fn start_keyword_index_builder(&self) {
+        let mut slot = self.builder.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|b| !b.finished()) {
+            return;
+        }
+        *slot = Some(keyword::Builder::start(self.sibling()));
+    }
+
+    /// The keyword index state (`None`: this store keeps no index state).
+    pub fn keyword_index_state(&self) -> Result<Option<keyword::KeywordIndexState>> {
+        Ok(keyword::read_index_state(&*self.read()?)?.map(Into::into))
+    }
+
+    /// Runs one build batch of at most `max_pages` pages in its own write transaction and returns
+    /// the state it leaves: what the background build does, for callers that step it themselves.
+    pub fn keyword_index_build_step(
+        &self,
+        max_pages: usize,
+    ) -> Result<Option<keyword::KeywordIndexState>> {
+        Ok(self
+            .write(|w| keyword::build_batch(w, max_pages))?
+            .map(Into::into))
+    }
+
+    /// Compares the stored keyword postings with the postings rebuilt from the first `max_pages`
+    /// pages (every page when `None`). Reads one snapshot; writes nothing.
+    pub fn keyword_index_verify(
+        &self,
+        max_pages: Option<u64>,
+    ) -> Result<keyword::KeywordIndexReport> {
+        keyword::verify_index(&*self.read()?, max_pages)
+    }
+
+    /// Drops every keyword posting and marks the index incomplete in one transaction, then starts
+    /// the build (when this store runs builds). Searches scan until the build completes.
+    pub fn keyword_index_rebuild(&self) -> Result<()> {
+        self.write(keyword::reset_index)?;
+        if self.runs_builder {
+            self.start_keyword_index_builder();
+        }
+        Ok(())
     }
 
     /// A store on the same brain whose reads and writes run inside `tx` (`transactions.rs`).
@@ -280,6 +381,8 @@ impl Store {
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: Some(tx),
+            builder: Mutex::new(None),
+            runs_builder: false,
         }
     }
 
@@ -325,12 +428,15 @@ impl Store {
     /// Postgres writer waits on a row lock. Callers never see `write_conflict` unless a write
     /// loses `WRITE_RETRY_LIMIT` times in a row. A bound statement runs once: the transaction
     /// holds the store's exclusive writer, so nothing can conflict with it.
+    ///
+    /// Either way `f` writes through the store's write handle chain ([`write_chain`]), made fresh
+    /// for each run.
     pub(crate) fn write<T>(&self, mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
             let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-            return tx.statement(f);
+            return tx.statement(|w| write_chain(w, &mut f));
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
@@ -343,7 +449,7 @@ impl Store {
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
-                match f(&mut *tx) {
+                match write_chain(&mut *tx, &mut f) {
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
                 }
@@ -378,6 +484,21 @@ impl Store {
     }
 }
 
+/// Runs `f` on the store's write handle chain over `inner`: every `Store::write` run (one OCC
+/// attempt, or one bound statement) goes through it, and it ends the run's handle work before
+/// the run is kept. Today the chain is `keyword::IndexingWriter(inner)`; a wrapper added later
+/// goes inside it (`IndexingWriter(OtherWriter(inner))`), and each wrapper forwards the special
+/// `KvWrite` primitives (`allocate`, `raise_counter`, `add_i64`, `counter_below`).
+fn write_chain<T>(
+    inner: &mut dyn KvWrite,
+    f: &mut impl FnMut(&mut dyn KvWrite) -> Result<T>,
+) -> Result<T> {
+    let mut indexing = keyword::IndexingWriter::new(inner);
+    let value = f(&mut indexing)?;
+    indexing.flush()?;
+    Ok(value)
+}
+
 /// The format record kept inside the store (the copy `FORMAT` is rebuilt from).
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub(crate) struct StoredFormat {
@@ -386,11 +507,11 @@ pub(crate) struct StoredFormat {
     pub created_at_us: i64,
 }
 
-/// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`) and the `default` source.
 /// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
-/// the per-counter records (`format.rs`). The format record is re-read inside the transaction:
+/// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
+/// (`format.rs`); every upgrade to format 4 starts an empty, incomplete keyword index
+/// (`keyword/index_build.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -404,18 +525,28 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
         chunks::fold_format_1_stats(&mut *tx)?;
         journal::fold_format_1_counters(&mut *tx)?;
     }
+    if stored.format_version <= 2 {
+        persistence::projection_queue::compact_format_2_jobs(&mut *tx)?;
+    }
+    // Format 4 keeps keyword postings: the build starts from an empty, incomplete index.
+    keyword::reset_index(&mut *tx)?;
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
 }
 
+/// Records a fresh brain starts with, written in the same transaction as its format record: the
+/// schema version config (`getConfig('version')`), the `default` source and a complete, empty
+/// keyword index.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
-    sources::seed_default_source(tx, env)
+    sources::seed_default_source(tx, env)?;
+    // No documents yet, so the keyword index is complete.
+    keyword::seed_complete_index(tx)
 }
 
 #[cfg(test)]
@@ -602,5 +733,134 @@ mod concurrency_tests {
         drop(read);
         drop(store);
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// What an older build does with a newer brain (rust/docs/store/format.md, "Older builds"): it
+/// refuses before it writes anything, with `format_unknown`, and leaves every file as it was.
+/// `Store::open_dir_in` opens with the format list an older build was shipped with.
+#[cfg(test)]
+mod older_build_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-tmp")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// Every file under `dir`, by path, with its bytes.
+    fn files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        let mut out = BTreeMap::new();
+        let mut todo = vec![dir.to_path_buf()];
+        while let Some(at) = todo.pop() {
+            for entry in fs::read_dir(&at).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    todo.push(path);
+                } else {
+                    out.insert(path.clone(), fs::read(&path).unwrap());
+                }
+            }
+        }
+        out
+    }
+
+    /// A closed brain with one committed record, stamped `version` in `FORMAT` and in its format
+    /// record. At `FORMAT_VERSION` it is this build's own format; above it, the stamp is all an
+    /// older build looks at before it refuses.
+    fn brain_at(name: &str, version: u32) -> PathBuf {
+        let dir = fresh_dir(name).join("brain");
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        store
+            .write(|tx| {
+                tx.put(&keys::meta("test/older-build"), b"kept")?;
+                let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?.unwrap();
+                stored.format_version = version;
+                put_json(tx, &keys::meta("format"), &stored)
+            })
+            .unwrap();
+        drop(store);
+        let mut record = format::read(&dir).unwrap().unwrap();
+        record.format_version = version;
+        format::write(&dir, &record).unwrap();
+        dir
+    }
+
+    fn assert_refused(dir: &Path, known: &[u32], version: u32) {
+        let before = files(dir);
+        let err = Store::open_dir_in(dir, OpenOptions::default(), known)
+            .err()
+            .expect("an older build must refuse a newer brain");
+        assert_eq!(err.code, crate::error::FORMAT_UNKNOWN);
+        assert_eq!(
+            err.message,
+            format!(
+                "this brain has store format {version}, newer than the formats this build opens ({known:?}); nothing was changed"
+            )
+        );
+        let after = files(dir);
+        let changed: Vec<String> = before
+            .keys()
+            .chain(after.keys())
+            .filter(|path| before.get(*path) != after.get(*path))
+            .map(|path| {
+                let (a, b) = (before.get(path), after.get(path));
+                let first = match (a, b) {
+                    (Some(a), Some(b)) => a
+                        .iter()
+                        .zip(b.iter())
+                        .position(|(x, y)| x != y)
+                        .map(|i| (i, a[i], b[i])),
+                    _ => None,
+                };
+                format!(
+                    "{} ({:?} -> {:?} bytes, first differing byte {first:?})",
+                    path.strip_prefix(dir).unwrap_or(path).display(),
+                    a.map(Vec::len),
+                    b.map(Vec::len)
+                )
+            })
+            .collect();
+        assert!(
+            changed.is_empty(),
+            "a refused open changed files: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn a_format_2_build_refuses_a_format_3_brain_and_changes_no_byte() {
+        let dir = brain_at("older-2-vs-3", 3);
+        assert_refused(&dir, &[1, 2], 3);
+        // Without FORMAT the format record decides, still before any write.
+        fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+        assert_refused(&dir, &[1, 2], 3);
+        // The brain is whole: this build opens it, rebuilds FORMAT and reads the record.
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        let kept = store.read().unwrap().get(&keys::meta("test/older-build"));
+        assert_eq!(kept.unwrap().as_deref(), Some(&b"kept"[..]));
+        drop(store);
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    #[test]
+    fn every_build_refuses_the_next_format_and_changes_no_byte() {
+        for n in 1..=FORMAT_VERSION {
+            let known: Vec<u32> = (1..=n).collect();
+            let dir = brain_at(&format!("older-{n}-vs-next"), n + 1);
+            assert_refused(&dir, &known, n + 1);
+            fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+            assert_refused(&dir, &known, n + 1);
+            let _ = fs::remove_dir_all(dir.parent().unwrap());
+        }
+        // This build's own list is the case above with n = FORMAT_VERSION.
+        assert_eq!(
+            FORMAT_VERSIONS,
+            (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
+        );
     }
 }

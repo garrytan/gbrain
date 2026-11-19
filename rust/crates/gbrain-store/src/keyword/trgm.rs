@@ -132,6 +132,12 @@ fn trigram_set(text: &str) -> Vec<Trgm> {
     set
 }
 
+/// The sorted, unique raw trigrams of `text`, as `similarity` counts them (the keyword index's
+/// `R 0x03` postings).
+pub(crate) fn trigram_bytes(text: &str) -> Vec<[u8; 3]> {
+    trigram_set(text)
+}
+
 /// `show_trgm(text)`: the sorted, unique trigrams, printed as text when every byte is an ASCII
 /// alphanumeric or a space, else as `0x` and six hex digits.
 pub(crate) fn trigrams(text: &str) -> Vec<String> {
@@ -151,7 +157,7 @@ pub(crate) fn trigrams(text: &str) -> Vec<String> {
 }
 
 /// `CALCSML` with DIVUNION.
-fn calc_sml(count: usize, len1: usize, len2: usize) -> f32 {
+pub(crate) fn calc_sml(count: usize, len1: usize, len2: usize) -> f32 {
     count as f32 / (len1 + len2 - count) as f32
 }
 

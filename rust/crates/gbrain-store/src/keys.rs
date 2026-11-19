@@ -112,6 +112,76 @@ pub fn meta(name: &str) -> Vec<u8> {
     text(META, &[name])
 }
 
+/// `R 0x00`: the keyword index state (`keyword/index.rs`). Kind byte 0x00 of the `keyword`
+/// family; its later kinds are listed in `keyword.rs`.
+pub fn keyword_index_state() -> Vec<u8> {
+    vec![TRIGRAM, KW_STATE]
+}
+
+/// The kind bytes of the keyword index records (`keyword.rs` lists them).
+pub const KW_STATE: u8 = 0x00;
+pub const KW_CHUNK_POSTING: u8 = 0x01;
+pub const KW_PAGE_POSTING: u8 = 0x02;
+pub const KW_TITLE_TRIGRAM: u8 = 0x03;
+pub const KW_BASENAME: u8 = 0x04;
+pub const KW_CHUNK_FORWARD: u8 = 0x05;
+pub const KW_PAGE_FORWARD: u8 = 0x06;
+
+/// `R kind len(2) text`: the start of the postings of one lexeme or basename. The length prefix
+/// keeps one text's range apart from a longer text that starts with it.
+pub fn keyword_term_prefix(kind: u8, term: &[u8]) -> Vec<u8> {
+    let len = u16::try_from(term.len()).unwrap_or(u16::MAX);
+    let mut key = Vec::with_capacity(4 + term.len() + 12);
+    key.extend_from_slice(&[TRIGRAM, kind]);
+    key.extend_from_slice(&len.to_be_bytes());
+    key.extend_from_slice(term);
+    key
+}
+
+/// `R 0x01 len(2) lexeme page_id chunk_index`: a chunk's entry for one lexeme.
+pub fn chunk_posting(lexeme: &str, page_id: u64, index: u32) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_CHUNK_POSTING, lexeme.as_bytes());
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
+}
+
+/// `R 0x02 len(2) lexeme page_id`: a page vector's entry for one lexeme.
+pub fn page_posting(lexeme: &str, page_id: u64) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_PAGE_POSTING, lexeme.as_bytes());
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x03 len(2) trigram page_id`: a page whose title has the raw pg_trgm trigram (`trgm.rs`).
+pub fn title_trigram_posting(trigram: [u8; 3], page_id: u64) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_TITLE_TRIGRAM, &trigram);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x04 len(2) basename page_id`: a page whose slug ends in `basename`.
+pub fn basename_posting(basename: &str, page_id: u64) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_BASENAME, basename.as_bytes());
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x05 page_id chunk_index`: the lexemes a chunk has postings for.
+pub fn chunk_forward(page_id: u64, index: u32) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_CHUNK_FORWARD];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
+}
+
+/// `R 0x06 page_id`: the lexemes, title trigrams and basename a page has postings for.
+pub fn page_forward(page_id: u64) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_PAGE_FORWARD];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
 /// `P source \0 slug`
 pub fn page(source_id: &str, slug: &str) -> Vec<u8> {
     text(PAGE, &[source_id, slug])

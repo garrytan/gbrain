@@ -3,9 +3,11 @@
 //! (`listPendingSegmentedProjections`, `selectProjectionWindowJobs` of
 //! `src/core/engine-sql/persistence-housekeeping.ts`).
 //!
-//! Key `d 0x04 <source incarnation> 0x00 <slug>`, JSON `JobRecord`. An incarnation is the 36-byte
-//! lower-case UUID text, so key order is `(source_incarnation, slug)` order: UUID text order is
-//! Postgres's UUID order, and the slug compares by bytes (the C collation).
+//! Key `d 0x04 <source incarnation> 0x00 <slug>`, value a `JobRecord` in the compact form of
+//! `encode_job` (store format 3; format 2 kept JSON, which `decode_job` still reads). An
+//! incarnation is the 36-byte lower-case UUID text, so key order is `(source_incarnation, slug)`
+//! order: UUID text order is Postgres's UUID order, and the slug compares by bytes (the C
+//! collation).
 //!
 //! `queue_page_projection` keeps the queue in step with every page write as PGLite's
 //! `gbrain_queue_page_projection` trigger does. It is the only writer here: the other writers of a
@@ -16,12 +18,12 @@
 
 use super::{QUEUE, uuid_param};
 use crate::env::{Env, parse_iso, transaction_clock};
-use crate::error::{Result, StoreError};
+use crate::error::{Result, STORE_CORRUPT, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, read_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
-use crate::{Store, keys, put_json};
-use serde::{Deserialize, Serialize};
+use crate::{Store, keys};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -40,11 +42,159 @@ const RECENT_LIMIT: usize = 100;
 const WINDOW_LIMIT: usize = 400;
 
 /// One `page_projection_jobs` row; the key holds `source_incarnation` and `slug`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct JobRecord {
     pub revision: String,
     pub reason: String,
     pub updated_at_us: i64,
+}
+
+/// The first byte of a compact job value. A JSON value starts with `{`.
+const COMPACT: u8 = 1;
+/// Flag: the revision is a lower-case UUID, stored as its 16 bytes.
+const PACKED_UUID: u8 = 1;
+/// Flag: the reason is `canonical_change`, stored as nothing.
+const CANONICAL: u8 = 2;
+
+/// The 16 bytes of `text` when it is a lower-case hyphenated UUID, the only form that prints back
+/// to the same text.
+fn pack_uuid(text: &str) -> Option<[u8; 16]> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 36 {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    let mut nibbles = 0;
+    for (at, b) in bytes.iter().enumerate() {
+        if matches!(at, 8 | 13 | 18 | 23) {
+            if *b != b'-' {
+                return None;
+            }
+            continue;
+        }
+        let v = match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            _ => return None,
+        };
+        out[nibbles / 2] |= if nibbles % 2 == 0 { v << 4 } else { v };
+        nibbles += 1;
+    }
+    Some(out)
+}
+
+fn unpack_uuid(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(36);
+    for (at, b) in bytes.iter().enumerate() {
+        if matches!(at, 4 | 6 | 8 | 10) {
+            out.push('-');
+        }
+        out.push(HEX[usize::from(b >> 4)] as char);
+        out.push(HEX[usize::from(b & 0x0f)] as char);
+    }
+    out
+}
+
+/// A job's stored value: `COMPACT`, a flags byte, `updated_at_us` (8 bytes, big-endian), the
+/// revision (16 UUID bytes, or a 4-byte length and its text), then the reason text unless it is
+/// `canonical_change`. A trigger job is 26 bytes where its JSON is about 110; each page write
+/// puts one, so the queue's B-tree stays smaller and a write copies less of it.
+fn encode_job(job: &JobRecord) -> Result<Vec<u8>> {
+    let uuid = pack_uuid(&job.revision);
+    let canonical = job.reason == CANONICAL_CHANGE;
+    let mut out = Vec::with_capacity(26);
+    out.push(COMPACT);
+    let mut flags = 0;
+    if uuid.is_some() {
+        flags |= PACKED_UUID;
+    }
+    if canonical {
+        flags |= CANONICAL;
+    }
+    out.push(flags);
+    out.extend_from_slice(&job.updated_at_us.to_be_bytes());
+    match uuid {
+        Some(bytes) => out.extend_from_slice(&bytes),
+        None => {
+            let len = u32::try_from(job.revision.len())
+                .map_err(|_| StoreError::invalid("a projection job revision is too long"))?;
+            out.extend_from_slice(&len.to_be_bytes());
+            out.extend_from_slice(job.revision.as_bytes());
+        }
+    }
+    if !canonical {
+        out.extend_from_slice(job.reason.as_bytes());
+    }
+    Ok(out)
+}
+
+/// Reads a job value in either stored form.
+pub(crate) fn decode_job(value: &[u8]) -> Result<JobRecord> {
+    let malformed = || StoreError::new(STORE_CORRUPT, "a projection job record is malformed");
+    match value.first() {
+        Some(b'{') => return Ok(serde_json::from_slice(value)?),
+        Some(&COMPACT) => {}
+        _ => return Err(malformed()),
+    }
+    let flags = *value.get(1).ok_or_else(malformed)?;
+    let stamp: [u8; 8] = value
+        .get(2..10)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(malformed)?;
+    let rest = &value[10..];
+    let (revision, rest) = if flags & PACKED_UUID != 0 {
+        (
+            unpack_uuid(rest.get(..16).ok_or_else(malformed)?),
+            &rest[16..],
+        )
+    } else {
+        let len: [u8; 4] = rest
+            .get(..4)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(malformed)?;
+        let end = usize::try_from(u32::from_be_bytes(len))
+            .ok()
+            .and_then(|n| n.checked_add(4))
+            .ok_or_else(malformed)?;
+        let text = std::str::from_utf8(rest.get(4..end).ok_or_else(malformed)?)
+            .map_err(|_| malformed())?;
+        (text.to_owned(), &rest[end..])
+    };
+    let reason = if flags & CANONICAL != 0 {
+        if !rest.is_empty() {
+            return Err(malformed());
+        }
+        CANONICAL_CHANGE.to_owned()
+    } else {
+        std::str::from_utf8(rest)
+            .map_err(|_| malformed())?
+            .to_owned()
+    };
+    Ok(JobRecord {
+        revision,
+        reason,
+        updated_at_us: i64::from_be_bytes(stamp),
+    })
+}
+
+fn put_job(tx: &mut dyn KvWrite, key: &[u8], job: &JobRecord) -> Result<()> {
+    tx.put(key, &encode_job(job)?)
+}
+
+/// Store format 2 to 3: rewrites every JSON job in the compact form. The keys stay.
+pub(crate) fn compact_format_2_jobs(tx: &mut dyn KvWrite) -> Result<()> {
+    let mut json = Vec::new();
+    scan_prefix(&*tx, &prefix(), false, &mut |k, v| {
+        if v.first() == Some(&b'{') {
+            json.push((k.to_vec(), v.to_vec()));
+        }
+        true
+    })?;
+    for (key, value) in json {
+        put_job(tx, &key, &decode_job(&value)?)?;
+    }
+    Ok(())
 }
 
 /// A job with its key fields.
@@ -107,7 +257,7 @@ pub(crate) fn queue_page_projection(
             reason: CANONICAL_CHANGE.into(),
             updated_at_us: now,
         };
-        put_json(tx, &key, &job)?;
+        put_job(tx, &key, &job)?;
     }
     Ok(())
 }
@@ -120,14 +270,14 @@ fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     scan_prefix(read, &prefix(), false, &mut |k, v| {
         let rest = &k[start..];
         let split = rest.iter().position(|b| *b == 0);
-        match (split, serde_json::from_slice::<JobRecord>(v)) {
+        match (split, decode_job(v)) {
             (Some(at), Ok(record)) => out.push(Job {
                 incarnation: String::from_utf8_lossy(&rest[..at]).into_owned(),
                 slug: String::from_utf8_lossy(&rest[at + 1..]).into_owned(),
                 record,
             }),
             (None, _) => failure = Some(StoreError::invalid("a projection job key has no slug")),
-            (_, Err(e)) => failure = Some(StoreError::from(e)),
+            (_, Err(e)) => failure = Some(e),
         }
         failure.is_none()
     })?;
@@ -456,15 +606,60 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn a_job_reads_back_from_its_compact_form_and_from_json() {
+        let job = |revision: &str, reason: &str, at: i64| JobRecord {
+            revision: revision.into(),
+            reason: reason.into(),
+            updated_at_us: at,
+        };
+        let cases = [
+            job(
+                "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+                CANONICAL_CHANGE,
+                1_763_500_000_123_456,
+            ),
+            // Text that is not a lower-case UUID keeps its exact bytes.
+            job("0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0", CANONICAL_CHANGE, 0),
+            job("not-a-uuid", "rebuild_failed", -1),
+            job("", "", i64::MIN),
+            job("ünïcode revision", PROTOCOL_ACTIVATION, i64::MAX),
+        ];
+        for case in &cases {
+            let bytes = encode_job(case).unwrap();
+            assert_eq!(bytes[0], COMPACT);
+            assert_eq!(&decode_job(&bytes).unwrap(), case);
+            let json = serde_json::to_vec(&json!({
+                "revision": case.revision, "reason": case.reason,
+                "updated_at_us": case.updated_at_us,
+            }))
+            .unwrap();
+            assert_eq!(&decode_job(&json).unwrap(), case);
+        }
+        assert_eq!(encode_job(&cases[0]).unwrap().len(), 26);
+        for bad in [
+            &b""[..],
+            b"x",
+            &[COMPACT],
+            &[COMPACT, 3, 0, 0],
+            &[COMPACT, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        ] {
+            assert_eq!(decode_job(bad).unwrap_err().code, STORE_CORRUPT);
+        }
+        let mut tail = encode_job(&cases[0]).unwrap();
+        tail.push(b'x');
+        assert!(decode_job(&tail).is_err(), "bytes after a canonical job");
+    }
+
     fn set_job(store: &Store, slug: &str, reason: &str, age_us: i64) {
         let now = store.env.now_micros();
         store
             .write(|tx| {
                 let key = job_key(&incarnation_of(&*tx, "default")?, slug);
-                let mut job: JobRecord = crate::get_json(&*tx, &key)?.unwrap();
+                let mut job = decode_job(&tx.get(&key)?.unwrap())?;
                 job.reason = reason.into();
                 job.updated_at_us = now - age_us;
-                put_json(tx, &key, &job)
+                put_job(tx, &key, &job)
             })
             .unwrap();
     }
