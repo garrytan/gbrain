@@ -152,10 +152,14 @@ export const resolveSlugsByPaths: StoreMember<[paths: string[], opts: { sourceId
 };
 
 export const findPages: StoreMember<[query: FindPagesQuery], FoundPages> = async (brain, query) => {
-  const taken = takeOptions('findPages', query, ['pattern', 'types', 'limit', 'sourceId', 'sourceIds', 'excludeSlugPrefixes']);
+  const { untrusted, ...taken } = takeOptions('findPages', query,
+    ['pattern', 'types', 'limit', 'sourceId', 'sourceIds', 'excludeSlugPrefixes', 'untrusted']);
   const pattern = query.pattern;
-  const found: FoundPages = await storeCall({ member: 'findPages' }, () =>
-    brain.findPages({ ...taken, pattern: { kind: pattern.kind, like: pattern.like }, limit: Math.max(0, Math.trunc(Number(query.limit))) }));
+  // PGLite applies an untrusted policy (any object) as a live page read filter; the store reads it as a read scope.
+  const policy = untrusted ? readScope('findPages', untrusted as PageReadScope) : null;
+  const found: FoundPages = await storeCall({ member: 'findPages' }, () => brain.findPages({
+    ...taken, pattern: { kind: pattern.kind, like: pattern.like }, limit: Math.max(0, Math.trunc(Number(query.limit))), untrusted: policy,
+  }));
   return { rows: found.rows, total: Number(found.total) };
 };
 
