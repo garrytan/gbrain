@@ -27,11 +27,11 @@ const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
 /**
  * Methods made to throw on demand (`failing`: the call rejects; `throwOnAccess`:
- * reading the property throws, which escapes `.catch()` chains); `sql`
- * makes executeRaw reject for statements matching a pattern; `delayMs` adds
- * latency to listPages. Everything else passes through.
+ * reading the property throws, which escapes `.catch()` chains; the
+ * session-state members are typed, so an outage is a failing member); `delayMs`
+ * adds latency to listPages. Everything else passes through.
  */
-interface Faults { failing: Set<string>; throwOnAccess: Set<string>; sql: RegExp | null; delayMs: number }
+interface Faults { failing: Set<string>; throwOnAccess: Set<string>; delayMs: number }
 
 function faulty(engine: BrainEngine, faults: Faults): BrainEngine {
   return new Proxy(engine, {
@@ -40,13 +40,6 @@ function faulty(engine: BrainEngine, faults: Faults): BrainEngine {
       if (typeof k === 'string' && faults.throwOnAccess.has(k)) throw new Error(`injected ${k} access failure`);
       if (typeof k === 'string' && faults.failing.has(k)) {
         return async () => { throw new Error(`injected ${k} failure`); };
-      }
-      if (k === 'executeRaw' && faults.sql) {
-        const re = faults.sql;
-        return (sql: string, params?: unknown[]) => {
-          if (re.test(sql)) return Promise.reject(new Error('injected session-state failure'));
-          return t.executeRaw(sql as never, params as never);
-        };
       }
       if (k === 'listPages' && faults.delayMs > 0) {
         const ms = faults.delayMs;
@@ -62,7 +55,7 @@ for (const kind of testBackends()) {
     let engine: BrainEngine;
     let close: () => Promise<void>;
     let databaseUrl = '';
-    const faults: Faults = { failing: new Set(), throwOnAccess: new Set(), sql: null, delayMs: 0 };
+    const faults: Faults = { failing: new Set(), throwOnAccess: new Set(), delayMs: 0 };
     let notices: Notice[] = [];
     const ctx = (): OperationContext => ({
       engine: faulty(engine, faults), config: {} as GBrainConfig, logger: noopLogger, dryRun: false, remote: false, sourceId: 'default',
@@ -121,7 +114,6 @@ for (const kind of testBackends()) {
     beforeEach(async () => {
       faults.failing.clear();
       faults.throwOnAccess.clear();
-      faults.sql = null;
       faults.delayMs = 0;
       notices = [];
       __resetHotMemoryCacheForTests();
@@ -226,9 +218,9 @@ for (const kind of testBackends()) {
       await rewind('10 seconds');
       const before = (await state())!.last_wake_at;
       await page('notes/after-checkpoint', 5_000);
-      faults.sql = /SELECT[\s\S]*session_context_state/;
+      faults.failing.add('readDeltaSessionRow');
       await expect(call({ session_id: 's1' })).rejects.toMatchObject({ code: 'unavailable', reason: 'session_state' });
-      faults.sql = null;
+      faults.failing.clear();
       expect((await state())!.last_wake_at).toBe(before);
       const r = await call({ session_id: 's1' });
       expect(r.pages.map((p: R) => p.slug)).toContain('notes/after-checkpoint');
@@ -238,13 +230,13 @@ for (const kind of testBackends()) {
       await call({ session_id: 's1' });
       await rewind('10 seconds');
       await page('notes/write-fails', 5_000);
-      faults.sql = /INSERT INTO session_context_state/;
+      faults.failing.add('upsertSessionContextRow');
       const r = await call({ session_id: 's1' });
       expect(r.degraded_reason).toBe('session_state');
       expect(r.pages.map((p: R) => p.slug)).toEqual(['notes/write-fails']);
       expect(typeof r.next_cursor.cursor).toBe('string');
       expect(incomplete()).toHaveLength(1);
-      faults.sql = null;
+      faults.failing.clear();
       const resumed = await call({ cursor: r.next_cursor.cursor });
       expect(resumed.pages).toEqual([]);
     });
@@ -304,7 +296,7 @@ for (const kind of testBackends()) {
       const sid = `down-${kind}`;
       await call({ session_id: sid });
       faults.failing.add('listPages');
-      faults.sql = /INSERT INTO session_context_state/;
+      faults.failing.add('upsertSessionContextRow');
       for (let i = 0; i < 3; i++) await call({ session_id: sid });
       expect(incomplete().map((n) => renderNotice(n, stdio).fix?.next)).toEqual(['wait', 'wait', 'report']);
     });

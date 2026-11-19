@@ -459,18 +459,17 @@ describe('delta cursor lifecycle', () => {
   });
 
   test('fail-open: a session_context_state outage never blocks the delta read path (v0.45.7)', async () => {
-    // Proxy engine: executeRaw throws ONLY for statements touching
-    // session_context_state; everything else hits the real engine (the delta
+    // Proxy engine: the typed session-state members (the session_context_state
+    // reads and writes) throw; everything else hits the real engine (the delta
     // page/fact reads must keep working through the outage).
+    const sessionStateMembers = new Set([
+      'readSessionContextState', 'readDeltaSessionRow', 'readCheckpointManifest',
+      'upsertSessionContextRow', 'writeCheckpointManifest', 'gcSessionContextRows',
+    ]);
     const failing = new Proxy(engine, {
       get(t, k) {
-        if (k === 'executeRaw') {
-          return (sql: unknown, params?: unknown[]) => {
-            if (typeof sql === 'string' && sql.includes('session_context_state')) {
-              throw new Error('injected session-state outage');
-            }
-            return t.executeRaw(sql as never, params as never);
-          };
+        if (typeof k === 'string' && sessionStateMembers.has(k)) {
+          return async () => { throw new Error('injected session-state outage'); };
         }
         const v = (t as unknown as Record<string | symbol, unknown>)[k];
         return typeof v === 'function' && k !== 'constructor'

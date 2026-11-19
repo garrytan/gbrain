@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 909/909
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -62,6 +62,7 @@
 # trust: 29/29
 # open_loops: 4/4
 # entity_identities: 5/5
+# session_state: 6/6
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 34/34
@@ -93,7 +94,7 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	541	yes	yes	yes	serves
+putPage	pages	yes	542	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -827,6 +828,12 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
+readSessionContextState	session_state	yes	2	no	yes	yes	serves
+readDeltaSessionRow	session_state	yes	3	no	yes	yes	serves
+readCheckpointManifest	session_state	yes	1	no	yes	yes	serves
+upsertSessionContextRow	session_state	yes	4	no	yes	yes	serves
+writeCheckpointManifest	session_state	yes	1	no	yes	yes	serves
+gcSessionContextRows	session_state	yes	2	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

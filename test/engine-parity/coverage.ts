@@ -236,6 +236,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   open_loops: ['upsertOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'closeOpenLoop'],
   // entity_identities: the identity link, unlink and group reads (engine-sql/entity-identities.ts)
   entity_identities: ['linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin'],
+  // session_state: ambient recall's per-session cursor, standing entities and checkpoint manifest (engine-sql/session-state.ts)
+  session_state: ['readSessionContextState', 'readDeltaSessionRow', 'readCheckpointManifest', 'upsertSessionContextRow', 'writeCheckpointManifest', 'gcSessionContextRows'],
   cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
     'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],

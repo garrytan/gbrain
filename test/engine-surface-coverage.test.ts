@@ -311,7 +311,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
   // GST-3032 owner-only delete triggers (src/core/engine-sql/owner-only-marks.ts; covered by test/owner-only-removal-lineage.test.ts)
   'ownerOnlyMarkTriggers',
-  'readEntityOpenLoops', 'linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin', 'listPendingContradictions', 'listTrustAllowRuleRows', 'notifierCoverageRecorded', 'bumpPageRetrievals',
+  'readEntityOpenLoops', 'linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin', 'readSessionContextState', 'readDeltaSessionRow', 'readCheckpointManifest', 'upsertSessionContextRow', 'writeCheckpointManifest', 'gcSessionContextRows', 'listPendingContradictions', 'listTrustAllowRuleRows', 'notifierCoverageRecorded', 'bumpPageRetrievals',
 ];
 
 /**
@@ -351,6 +351,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'aliasFanoutRead',
   // Entity identity reads: the unscoped engine-sql executor they run through.
   'entityIdentityRead',
+  // Session state: the unscoped engine-sql executor the session_context_state members run through.
+  'sessionStateRead',
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',
