@@ -527,6 +527,18 @@ impl Store {
     }
 }
 
+/// The fact ids every loop of every source names (`EXISTS (SELECT 1 FROM open_loops l WHERE
+/// l.fact_id = f.id)`), whatever its status.
+pub(crate) fn loop_fact_ids(
+    read: &dyn KvRead,
+    op: &str,
+) -> Result<std::collections::BTreeSet<u64>> {
+    Ok(all_rows(read, op)?
+        .into_iter()
+        .filter_map(|(_, r)| r.fact_id.and_then(|id| u64::try_from(id).ok()))
+        .collect())
+}
+
 /// Every loop row, in id order (the key order of `F 0x08 id`).
 fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
     let mut rows = Vec::new();

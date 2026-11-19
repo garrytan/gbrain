@@ -10,12 +10,12 @@
  *  - Regression: an engine that answers one of these differently changes what the repair commands classify and
  *    repair, which loops_close retires and which world facts the visibility check flags; the Rust engine has no SQL,
  *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves the four that read
- *    only `facts` and `pages`, and closedLoopWithActiveFact and loopFactDrift over its open loops; the other four
- *    refuse (rust/docs/store/facts.md).
+ *    only `facts` and `pages`, closedLoopWithActiveFact and loopFactDrift over its open loops, and countLabelFacts;
+ *    the other three refuse (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none. Every fact, page and loop is seeded through the typed members. The tables behind the four refused members
- *    (fact_withdrawals, persistence_requests, page_purges, derived_generations) have no typed writer on the
+ *  - Seam: none. Every fact, page, loop and withdrawal is seeded through the typed members. The tables behind the three
+ *    refused members (persistence_requests, page_purges, derived_generations) have no typed writer on the
  *    engine, so those cases seed the facts the statement joins from and assert the answer an empty table gives; the
  *    Rust arm counts each as a typed refusal. Generated values (ids) are compared by relation, never by value.
  */
