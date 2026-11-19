@@ -114,7 +114,11 @@ export const ACCESS_MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kin
 
 /** The statements access/members.ts getMember and listMembers ran through executeRaw. */
 export const ACCESS_MEMBER_SQL = {
-  by_id: `${ACCESS_MEMBER_SELECT} WHERE m.id = $1 GROUP BY m.id`,
+  // Written out in full, not spliced from ACCESS_MEMBER_SELECT: a composed string may not carry a hand-written $n
+  // (check:engine-sql-dynamic). The text is the select above plus the id filter.
+  by_id: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`,
   live: `${ACCESS_MEMBER_SELECT} WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
   all: `${ACCESS_MEMBER_SELECT} GROUP BY m.id ORDER BY m.id`,
 } as const;

@@ -327,8 +327,8 @@ const scenarios: Scenario[] = [
 
   // 10. listColumnsOnly
   {
-    name: 'listPages with listColumnsOnly',
-    expect: 'refused',
+    name: 'listPages with listColumnsOnly returns the list columns with a blank body, timeline and frontmatter',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('cols/page', NOTE);
       return engine.listPages({ slugPrefix: 'cols/', listColumnsOnly: true } as never);
