@@ -100,6 +100,9 @@
       "founder": [
         "./commands/founder-scorecard.ts"
       ],
+      "graph-map": [
+        "./commands/graph-map.ts"
+      ],
       "graph-query": [
         "./commands/graph-query.ts"
       ],

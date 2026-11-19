@@ -1022,6 +1022,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "graph-map": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "graph-query": {
         "hasSwitchCase": true,
         "phase": "post-connect",

@@ -22,7 +22,7 @@ import { loadCuratedHelp, renderCuratedHelp } from '../src/cli/help/render.ts';
 import { curatedFlagError } from '../src/cli/help/validate.ts';
 import { unknownFlagError } from '../src/cli/cli-error.ts';
 
-const OPS_CRITICAL = ['apply-migrations', 'autopilot', 'diag', 'doctor', 'filing', 'import', 'inbox', 'nav', 'onboard', 'serve', 'status'];
+const OPS_CRITICAL = ['apply-migrations', 'autopilot', 'diag', 'doctor', 'filing', 'graph-map', 'import', 'inbox', 'nav', 'onboard', 'serve', 'status'];
 /** Handlers that parse `--yes` (doctor --remediate, apply-migrations parseArgs). */
 const PARSES_YES = ['apply-migrations', 'doctor'];
 
