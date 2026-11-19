@@ -6,11 +6,13 @@
  * Fails when: an identical copy stops passing, a one-character change to a copied statement stops failing, a
  * statement written as a quoted string (not a template) goes unchecked, or the removed-statement half stops
  * flagging a statement that left src/ without a new home.
- * Seams: a throwaway git repo with a base commit and a head commit; the script runs against it with `--repo`.
+ * Seams: a throwaway git repo with a base commit and a head commit; the script runs against it with `--repo`. The last
+ * describe reads the real repository files: the eleven statements that split-a copied into src/core/engine-sql/ must
+ * stay byte-identical to the text still inline in the files they came from.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -103,5 +105,59 @@ describe('sql-move-check', () => {
     expect(out).toMatch(/^NOT-IDENTICAL/m);
     expect(out).toContain('RESULT: FAIL');
     expect(code).toBe(1);
+  });
+});
+
+// The eleven statements copied into engine-sql, each found by the text it starts with, and the file whose inline text
+// it must equal byte for byte. The callers still hold their own copy until the cut that switches them over; that cut
+// moves each row's origin to the engine-sql text it now calls, or drops the row with the inline statement.
+const REPO = resolve(import.meta.dir, '..', '..');
+const COPIED: { module: string; start: string; origin: string }[] = [
+  { module: 'code-traversal-cache', start: 'SELECT response_json, computed_at', origin: 'code-intel/traversal-cache.ts' },
+  { module: 'code-traversal-cache', start: 'INSERT INTO code_traversal_cache', origin: 'code-intel/traversal-cache.ts' },
+  { module: 'code-traversal-cache', start: 'WITH deleted AS (DELETE FROM code_traversal_cache RETURNING 1)', origin: 'code-intel/traversal-cache.ts' },
+  { module: 'code-traversal-cache', start: 'WITH deleted AS (\n       DELETE FROM code_traversal_cache WHERE source_id', origin: 'code-intel/traversal-cache.ts' },
+  { module: 'wanted-links', start: 'SELECT id FROM sources WHERE id = ANY', origin: 'wanted-links-store.ts' },
+  { module: 'wanted-links', start: 'DELETE FROM wanted_links w', origin: 'wanted-links-store.ts' },
+  { module: 'wanted-links', start: 'INSERT INTO wanted_links\n', origin: 'wanted-links-store.ts' },
+  { module: 'takes', start: 'SELECT k.row_num FROM takes k', origin: 'persistence/canonical-projections.ts' },
+  { module: 'takes', start: 'DELETE FROM takes WHERE page_id=$1 AND row_num=ANY', origin: 'persistence/canonical-projections.ts' },
+  { module: 'timeline', start: 'DELETE FROM timeline_entries t USING jsonb_to_recordset', origin: 'persistence/canonical-projections.ts' },
+  { module: 'timeline', start: 'UPDATE timeline_entries t SET detail=r.next', origin: 'persistence/canonical-projections.ts' },
+];
+
+/** The literal (template or quoted string) in `src` that begins right after a quote at `start`, or null. */
+function literalStartingWith(src: string, start: string): string | null {
+  for (const quote of ['`', "'"]) {
+    const at = src.indexOf(quote + start);
+    if (at < 0) continue;
+    const end = src.indexOf(quote, at + 1);
+    if (end > at) return src.slice(at + 1, end);
+  }
+  return null;
+}
+
+describe('sql-move-check: the real engine-sql copies', () => {
+  const read = (rel: string) => readFileSync(join(REPO, 'src/core', rel), 'utf8');
+
+  it('lists eleven statements', () => {
+    expect(COPIED.length).toBe(11);
+  });
+
+  for (const { module, start, origin } of COPIED) {
+    it(`${module}: "${start.replace(/\n/g, ' ').slice(0, 44)}" equals its origin in ${origin} byte for byte`, () => {
+      const text = literalStartingWith(read(`engine-sql/${module}.ts`), start);
+      expect(text).not.toBeNull();
+      expect(read(origin)).toContain(text!);
+    });
+  }
+
+  it('a one-character change to a copied statement is caught', () => {
+    for (const { module, start, origin } of COPIED) {
+      const text = literalStartingWith(read(`engine-sql/${module}.ts`), start)!;
+      const changed = text.replace(/\s=\s|\sAND\s|\sFROM\s|\sON\s/, (m) => m.replace(' ', '  '));
+      expect(changed).not.toBe(text);
+      expect(read(origin).includes(changed)).toBe(false);
+    }
   });
 });
