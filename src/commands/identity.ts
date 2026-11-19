@@ -4,6 +4,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { usageError } from '../cli/cli-error.ts';
+import { listMembers } from '../core/access/members.ts';
 import { ownerIdentity, type OwnerIdentity } from '../core/identity/owner.ts';
 
 const HELP = `Usage: gbrain identity [--member <id>] [--json]
@@ -45,6 +46,7 @@ export async function runIdentity(engine: BrainEngine, args: string[]): Promise<
   const at = args.indexOf('--member');
   const member = at >= 0 ? args[at + 1] : undefined;
   if (at >= 0 && (!member || member.startsWith('--'))) throw usageError('gbrain identity: --member needs a member id.', 'Pass a member id from gbrain access member list, as in gbrain identity --member <id>.');
+  if (member && !(await listMembers(engine)).some(m => m.id === member)) throw usageError(`gbrain identity: no member has the id ${member}.`, 'Pass a member id from gbrain access member list, as in gbrain identity --member <id>.');
   const id = await ownerIdentity(engine, member ? { member } : {});
   console.log(args.includes('--json') ? JSON.stringify(id, null, 2) : renderIdentity(id));
 }

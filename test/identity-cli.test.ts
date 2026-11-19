@@ -46,4 +46,11 @@ describe('gbrain identity (CLI)', () => {
     expect(status).toBe(2);
     expect(stderr).toContain('--member needs a member id');
   }, 60_000);
+
+  test('--member with an id no member has is a usage error, not a made-up identity', () => {
+    const { stdout, stderr, status } = run(['identity', '--member', 'nobody-example', '--json']);
+    expect(status).toBe(2);
+    expect(stdout).not.toContain('memory/members/nobody-example');
+    expect(`${stdout}${stderr}`).toContain('no member has the id nobody-example');
+  }, 60_000);
 });
