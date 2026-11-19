@@ -443,7 +443,7 @@ export async function listFactsByEntity(
         ${visibilityClause(visibility)}${privacyClause(opts)}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
         ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
-      ORDER BY valid_from DESC, id DESC
+      ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
     return rows.map(rowToFact);
