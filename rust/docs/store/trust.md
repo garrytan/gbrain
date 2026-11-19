@@ -33,7 +33,9 @@ tier is refused with `invalid_argument` ("gbrain trust setting names no tier"; P
 only under backfill.
 
 The caller decides `content_changed` by comparing the content columns of the old and new row; `stamp` does not
-see the row.
+see the row. `trust::stamp_row(table, old, supplied, content_changed)` wraps it for a row whose writers never set
+the tier or the origin (takes and timeline entries, `trust::RowTrust`): it reads the open write's context, starts
+an update from the stored tier and origin, and stores `unknown` as no tier.
 
 Rust guesses and gaps (1x parity):
 
