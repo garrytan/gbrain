@@ -27,6 +27,7 @@ import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite, assertWriteHeadroom, readOutstandingRoom } from '../../src/core/persistence/journal.ts';
 import { principalKey, type WriteAuthority } from '../../src/core/persistence/model.ts';
 import { schemaAdmissionRefusal } from '../../src/core/persistence/schema-admission.ts';
+import { submitSharedSkillMutation } from '../../src/core/shared-skills/publication.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -204,9 +205,8 @@ describe('engine parity: persistence declaration', () => {
     return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
   });
 
-  parityTest('a skill bundle write refuses on an engine without managed persistence, naming that capability', {
+  parityTest('a skill bundle write before shared skill activation refuses writer_not_quiesced on every engine', {
     methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
-    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
@@ -214,17 +214,16 @@ describe('engine parity: persistence declaration', () => {
     const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
       logger: { info() {}, warn() {}, error() {} } } as OperationContext;
     const authority = await submissionAuthority(ctx, 'put_skill', 'default', source!.incarnation, 'skills/parity-pack/parity-skill');
-    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
+    const admission = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
       sourceIncarnation: source!.incarnation, slug: 'skills/parity-pack/parity-skill', requestId: REQUESTS[1]!, targetKind: 'skill_bundle', protocolVersion: 2,
-      callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
-    // An engine without the capability refuses the bundle by name, not as a shared-skill owner that is not yet activated.
-    if (!engine.capabilities.has('managed_persistence')) {
-      expect({ code: refusal?.code, reason: refusal?.reason }).toEqual({ code: 'engine_capability_missing', reason: 'managed_persistence' });
-      throw refusal;
-    }
-    // An engine with it checks the shared-skill owner; none was activated, so nothing is accepted.
-    expect(refusal?.code).toBe('writer_not_quiesced');
-    return { code: refusal?.code, message: refusal?.message };
+      callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; message?: string }) => e);
+    // The CLI and MCP entry (put_skill, delete_skill) reaches the same shared-skill owner check.
+    const mutation = await submitSharedSkillMutation(ctx, 'put_skill', { pack_id: 'parity-pack', name: 'parity-skill', files: [] })
+      .then(() => null, (e: { code?: string; message?: string }) => e);
+    // No shared-skill owner was activated, so nothing is accepted, and no engine names a missing capability instead.
+    const result = { admission: { code: admission?.code, message: admission?.message }, mutation: { code: mutation?.code, message: mutation?.message } };
+    expect({ admission: result.admission.code, mutation: result.mutation.code }).toEqual({ admission: 'writer_not_quiesced', mutation: 'writer_not_quiesced' });
+    return result;
   });
 
   parityTest('every admission branch a plain write reaches ends typed: admit, replay, changed replay, background pause, and a managed sync job past the cap', {
