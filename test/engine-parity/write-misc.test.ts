@@ -3,8 +3,9 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
- *    listAppliedPolicyRevisions, readLiveMember, readFolderAccess, expireMemoryProposals,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers,
+ *    isFolderRestricted, listAppliedPolicyRevisions, readLiveMember, hasLabelledOnlyMember, readFolderAccess,
+ *    expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -116,6 +117,27 @@ describe('engine parity: write misc', () => {
     const members = await engine.listActiveAccessMembers();
     expect(members).toEqual([]);
     return { members };
+  });
+
+  // A write's publication resolves its writer's member through this read (access/caller.ts memberIdentityFor). A fresh
+  // brain has no member, no stdio binding and no credential, so every lookup reads as nobody on every arm.
+  parityTest('readLiveMember resolves no member on a fresh brain, by id, stdio binding, token or OAuth client', { methods: ['readLiveMember'] }, async (engine) => {
+    const answers = {
+      member: await engine.readLiveMember('member', 'alice-example'),
+      stdio: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      token: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-000000000001'),
+      oauth: await engine.readLiveMember('oauth_client', 'client-example'),
+    };
+    expect(answers).toEqual({ member: null, stdio: null, token: null, oauth: null });
+    return answers;
+  });
+
+  // A remote page write asks this before it resolves its writer (access/labelled-only.ts anyLabelledOnlyMember, from
+  // persistence/page-visibility.ts). A fresh brain has no member, so none carries the grant on any arm.
+  parityTest('hasLabelledOnlyMember answers no on a fresh brain', { methods: ['hasLabelledOnlyMember'] }, async (engine) => {
+    const any = await engine.hasLabelledOnlyMember();
+    expect(any).toBe(false);
+    return { any };
   });
 
   // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer

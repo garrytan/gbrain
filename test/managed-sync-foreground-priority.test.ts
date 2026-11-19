@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { ClaimHeadSpec } from '../src/core/engine-sql/persistence-claims.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performSync } from '../src/commands/sync/perform.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -60,6 +61,12 @@ function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: (
     if (/^UPDATE persistence_requests( r)? SET state='running'/.test(sql.trim())) for (const row of out) if (row.id && row.state === 'running') claims.set(String(row.id), chose.get(this) ?? sent);
     return out as never;
   } as BrainEngine['executeRaw'];
+  // claimNextWrite reads its FIFO head through the typed selectClaimableWrite member (engine-sql/persistence-claims.ts).
+  const head = e.selectClaimableWrite;
+  e.selectClaimableWrite = async function (this: BrainEngine, spec: ClaimHeadSpec) {
+    chose.set(this, Date.now());
+    return head.call(this, spec);
+  } as BrainEngine['selectClaimableWrite'];
   // claimNextWrite stamps its claim through the typed stampWriteClaim member (engine-sql/persistence-journal.ts), not executeRaw.
   const stamp = e.stampWriteClaim;
   e.stampWriteClaim = async function (this: BrainEngine, id: string, token: string, leaseMs: number, phaseJson: string) {
@@ -68,7 +75,7 @@ function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: (
     if (row?.id && row.state === 'running') claims.set(String(row.id), chose.get(this) ?? sent);
     return row;
   } as BrainEngine['stampWriteClaim'];
-  return { claims, restore: () => { e.executeRaw = execute; e.stampWriteClaim = stamp; } };
+  return { claims, restore: () => { e.executeRaw = execute; e.selectClaimableWrite = head; e.stampWriteClaim = stamp; } };
 }
 function writer(source: string, slugs: string[], intervalMs = 0, go?: string, preparingHoldMs = 0, ready?: string) {
   const out = join(home, `worker-${randomUUID()}.json`);

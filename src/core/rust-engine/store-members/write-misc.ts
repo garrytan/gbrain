@@ -67,6 +67,9 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
 /** The store keeps no access members, so none is active. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
 
+/** The store keeps no access members, so none carries the labelled-only grant and a write skips the labelled-only checks. */
+export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
+
 /**
  * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that
  * state is raw SQL, which this engine refuses). A slug is restricted under none of them, so the answer is false, as

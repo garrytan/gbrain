@@ -129,6 +129,15 @@ export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise
   return rows.map(row => row.id);
 }
 
+/**
+ * Whether any access member carries the labelled-only grant, disabled and removed members included (the one cheap test
+ * a write runs before resolving its writer, access/labelled-only.ts anyLabelledOnlyMember). A failed read is thrown;
+ * the caller counts it as yes.
+ */
+export async function hasLabelledOnlyMember(exec: LegacyUnscopedRead): Promise<boolean> {
+  return (await exec.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
+}
+
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */
 export interface AttachSourcePathOptions { name?: string | null; federated?: boolean | null }
 

@@ -13,7 +13,7 @@ use crate::error::{Result, StoreError};
 use serde_json::Value;
 
 /// `$1::uuid`: the message Postgres gives for text that is not a uuid.
-fn host_uuid(text: &str) -> Result<()> {
+pub(super) fn host_uuid(text: &str) -> Result<()> {
     if is_uuid(text) {
         Ok(())
     } else {
