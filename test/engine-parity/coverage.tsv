@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 752/752
+# covered: 753/753
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -49,6 +49,7 @@
 # facts_trust: 8/8
 # trust_tier_reads: 13/13
 # memory_mutation_reads: 12/12
+# withdrawal_discovery: 1/1
 # raw_sql: 4/4
 # code_edges: 9/9
 # eval_capture: 5/5
@@ -77,15 +78,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	82	no	yes	yes	serves
+transaction	lifecycle	yes	84	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	102	yes	yes	yes	serves
+getPage	pages	yes	103	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	422	yes	yes	yes	serves
+putPage	pages	yes	425	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -298,7 +299,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	47	yes	yes	yes	serves
-insertFacts	facts	yes	62	no	yes	yes	serves
+insertFacts	facts	yes	63	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	32	no	yes	yes	serves
 listFactsByEntity	facts	yes	20	yes	yes	yes	serves
@@ -312,17 +313,17 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	3	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	4	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	6	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	6	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	11	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	8	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	12	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	9	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	2	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	9	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	8	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
@@ -360,7 +361,7 @@ readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	46	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	47	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -651,6 +652,7 @@ readLinkedFactCopies	memory_mutation_reads	yes	2	no	yes	yes	serves
 hasHiddenFactCopy	memory_mutation_reads	yes	2	no	yes	yes	serves
 ownerReachesFact	memory_mutation_reads	yes	2	no	yes	yes	serves
 readFactWithdrawalClaim	memory_mutation_reads	yes	1	no	yes	yes	serves
+readWithdrawalDiscovery	withdrawal_discovery	yes	5	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

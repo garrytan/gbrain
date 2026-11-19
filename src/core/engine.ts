@@ -96,6 +96,7 @@ import type {
 } from './engine-sql/jobs-subagent.ts';
 import type { JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
+import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from './engine-sql/withdrawal-discovery.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
@@ -4094,6 +4095,8 @@ export interface BrainEngine {
   ownerReachesFact(spec: OwnerReachSpec): Promise<boolean>;
   /** The claim a withdrawal of a fact changes (FactWithdrawalClaimSpec); null when the caller may not withdraw it. */
   readFactWithdrawalClaim(spec: FactWithdrawalClaimSpec): Promise<FactWithdrawalClaim | null>;
+  /** One read withdrawal discovery makes (WithdrawalDiscoveryRead: claim keys, provenance pages, fence and chunk matches, targets). */
+  readWithdrawalDiscovery<K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K }>): Promise<WithdrawalDiscoveryRows[K]>;
 
   // Decide family, group B: calibration profiles (engine-sql/calibration-profiles.ts).
   /** The newest calibration profile (`generated_at DESC`, then `id DESC`) of `holder` (any holder when unset) in `sourceIds` (an empty list matches nothing) or else `sourceId`; null when none. `id` is the BIGSERIAL as text. */

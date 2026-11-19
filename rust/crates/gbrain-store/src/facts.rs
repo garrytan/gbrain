@@ -60,6 +60,7 @@ pub mod relink_writes;
 pub mod repair;
 pub mod trust;
 pub mod trust_reads;
+pub mod withdrawal_discovery;
 
 pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};

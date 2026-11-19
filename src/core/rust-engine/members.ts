@@ -845,6 +845,7 @@ export const RUST_ENGINE_MEMBERS = {
   hasHiddenFactCopy: 'facts',
   ownerReachesFact: 'facts',
   readFactWithdrawalClaim: 'facts',
+  readWithdrawalDiscovery: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

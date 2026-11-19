@@ -898,6 +898,13 @@ Facts and their supersession chains.
     a member page or a private-facts grant widens, a remote provenance floor that is not the no-caller one, and
     `ownerReachesFact` for an owner bound to a member. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`
     and `test/engine-parity/forget-reach-reads.test.ts`.
+  - The reads withdrawal discovery makes (`discoverWithdrawalTargets`, `facts/withdrawal-discovery.ts`) are one typed
+    member, `readWithdrawalDiscovery(read)` (`engine-sql/withdrawal-discovery.ts`), tagged by `kind`: `claim_keys`,
+    `provenance_pages`, `claim_matches`, `inline_fence_pages`, `segment_fence_rows`, `split_fence_slots`,
+    `target_pages` and `sample_slugs`. PGLite and Postgres run the statement text the call site ran. The store serves
+    every kind from the `F 0x01` fact rows, the page records and the live segmented-body rows with facts slots
+    (`facts/withdrawal_discovery.rs`, no new key prefix; rust/docs/store/facts.md). The member refuses a cursor, limit
+    or id that is not a safe integer. Pinned by `test/engine-parity/withdrawal-discovery-reads.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

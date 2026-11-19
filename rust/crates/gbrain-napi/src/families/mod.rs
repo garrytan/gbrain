@@ -70,5 +70,6 @@ mod transactions;
 mod trust_tier_reads;
 mod vectors;
 mod wanted_links;
+mod withdrawal_discovery;
 // Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
 mod decide_proposals;

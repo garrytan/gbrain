@@ -5434,6 +5434,7 @@
         "readWaitingScopeState": "none",
         "readWakeDoctor": "none",
         "readWedgeSignals": "none",
+        "readWithdrawalDiscovery": "none",
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",

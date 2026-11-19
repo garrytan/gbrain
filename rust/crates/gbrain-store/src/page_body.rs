@@ -2063,6 +2063,31 @@ pub(crate) fn closed_manifest_rows(read: &dyn KvRead, page_id: u64) -> Result<Ve
         .collect())
 }
 
+/// The live published manifest rows of segmented page `page_id` that carry facts slots
+/// (`gen_to IS NULL AND staging_id IS NULL AND facts_slots <> '[]'`), each with the bytes of its
+/// segment text (`None` when the source holds no text of that sha). An inline or missing page has
+/// none. Withdrawal discovery (facts/withdrawal_discovery.rs) scans them for facts fences.
+pub(crate) fn live_facts_slot_rows(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Vec<(ManifestRow, Option<Vec<u8>>)>> {
+    if !is_segmented(read_body_state(read, page_id)?.as_ref()) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (_, row) in manifest_rows(read, page_id)? {
+        if !live_published(&row) || row.facts_slots.as_array().is_none_or(Vec::is_empty) {
+            continue;
+        }
+        let sha = from_hex(&row.sha256, "sha256")?;
+        let text = get_json::<TextRecord>(read, &text_key(&row.source_id, &sha))?
+            .map(|t| from_hex(&t.body, "body"))
+            .transpose()?;
+        out.push((row, text));
+    }
+    Ok(out)
+}
+
 /// The body of `sweepSegments`, run in the open write `tx`: `prune_versions` calls it after a
 /// segmented prune deletes versions, as PGLite's `insertSegmentedVersion` calls
 /// `sweepSegments({ pageId })` in the version's transaction.

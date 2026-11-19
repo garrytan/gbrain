@@ -186,6 +186,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
   memory_mutation_reads: ['readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier', 'readForgetTarget',
     'isFactEntityUnbacked', 'readLinkedFactCopies', 'hasHiddenFactCopy', 'ownerReachesFact', 'readFactWithdrawalClaim'],
 
+  // withdrawal_discovery: the reads discoverWithdrawalTargets makes to find every page that carries a withdrawn claim
+  withdrawal_discovery: ['readWithdrawalDiscovery'],
+
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
     // group D (code-edge read)

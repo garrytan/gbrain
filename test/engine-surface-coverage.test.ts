@@ -139,6 +139,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // Memory mutation reads (engine-sql/memory-mutation-reads.ts; covered by test/engine-parity/memory-mutation-reads.test.ts)
   'readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier', 'readForgetTarget',
   'isFactEntityUnbacked', 'readLinkedFactCopies', 'hasHiddenFactCopy', 'ownerReachesFact', 'readFactWithdrawalClaim',
+  // Withdrawal discovery reads (engine-sql/withdrawal-discovery.ts; covered by test/engine-parity/withdrawal-discovery-reads.test.ts)
+  'readWithdrawalDiscovery',
   // Timeline site reads (engine-sql/timeline-reads.ts)
   'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered',
   'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows',
