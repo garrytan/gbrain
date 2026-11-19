@@ -316,7 +316,7 @@ describe('judge preflight estimates price the cap chat() sends (W9F item 5)', ()
     expect(sent).toEqual({
       'openai:gpt-5.2': 2000,
       'anthropic:claude-opus-4-7': 2000,
-      'google:gemini-2.5-flash': 2000,
+      'google:gemini-3.5-flash-lite': THINKING_MODEL_MAX_OUTPUT_TOKENS,
       'openai:gpt-5': THINKING_MODEL_MAX_OUTPUT_TOKENS,
     });
   });
