@@ -3305,6 +3305,8 @@ export interface BrainEngine {
   listEmbeddingStores(): Promise<EmbeddingCatalogSql.EmbeddingStore[]>;
   /** Whether any row of `store` holds a vector. */
   hasStoredVectors(store: EmbeddingCatalogSql.EmbeddingStore): Promise<boolean>;
+  /** Per source with chunks, the chunk count and how many hold a vector in a fixed column (`embedding_image`, `embedding_multimodal`), in source id order. */
+  countChunkVectorCoverage(column: EmbeddingCatalogSql.FixedVectorColumn): Promise<EmbeddingCatalogSql.ChunkVectorCoverageRow[]>;
 
   // Facts relink attempts (engine-sql/fact-relink-attempts.ts): the `fact_relink_attempts` writes and reads relink ran through executeRaw.
   /** Records a fact's latest relink attempt (`attempted_at` now), replacing its stored one; `keepModelAndRun` keeps the stored `model` and `run_id` on a conflict. */

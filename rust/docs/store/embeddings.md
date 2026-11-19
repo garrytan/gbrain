@@ -78,8 +78,13 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | `brain.getTakeEmbeddings(ids)` | `[{ id, embedding }]` for takes with a current vector | `getTakeEmbeddings` |
 | `brain.countStaleTakes(opts)` / `brain.listStaleTakes(opts)` | active takes on live pages with no current vector, or one of another model or width; the list is by id, at most 100000 | `countStaleTakes`, `listStaleTakes` |
 
-A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
-stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
+A take vector is current only at the take's `claim_rev`: it counts only while its `B 'k'` row equals the
+take's `claim_rev`, so a claim edit makes it stale at once. Postgres and PGLite set `takes.embedding` (and its
+model, time and text hash) to NULL when `addTakesBatch` changes a claim (`src/core/engine-sql/takes.ts:81`,
+`CASE WHEN takes.claim IS DISTINCT FROM EXCLUDED.claim THEN NULL`), and keep it when the claim is the same.
+The store keeps the old vector record, so this rule is what hides it from every read: `hasStoredVectors`,
+the stale-take queue and take search. Test: `a_take_vector_is_current_only_at_the_claim_revision` in
+`rust/crates/gbrain-store/tests/embedding_catalog.rs`.
 
 ## Vector catalog
 
@@ -88,12 +93,15 @@ stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 
 | Brain method | Returns | Members |
 |---|---|---|
-| `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, or for any other column, `{ exists: false, dims: null }` | `readChunkVectorColumn` |
+| `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, `{ exists: false, dims: null }`. `embedding_image` and `embedding_multimodal`: always `{ exists: true, dims: 1024 }`. Any other column: `{ exists: false, dims: null }` | `readChunkVectorColumn` |
 | `brain.readEmbeddingIdentity()` | `{ model, dimensions }` with the same width; the model is the first chunk vector's, else the config `embedding_model`; null with no width | `readEmbeddingIdentity` |
 | `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
 
 `listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
-`embedding_image` and `embedding_multimodal` read as absent: the store keeps no such vectors.
+`embedding_image` and `embedding_multimodal` are declared `vector(1024)` on every Postgres and PGLite brain
+(`src/schema.sql`, `engine-sql/bootstrap.ts`, migration v078) and no migration changes their width, so the
+store reports them present at 1024, as PGLite does. The store keeps no vector for them: a chunk image vector
+is still refused on write.
 
 ## Known edges
 

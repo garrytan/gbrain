@@ -244,6 +244,9 @@ describe('Rust engine on the store', () => {
     await engine.setConfig('search_embedding_column', 'embedding_other');
     expect(await code(() => engine.getStats())).toBe('engine_capability_missing');
     expect(await code(() => engine.getHealth())).toBe('engine_capability_missing');
+    // An image search column leaves PGLite's active column at `embedding`, so the store answers.
+    await engine.setConfig('search_embedding_column', 'embedding_image');
+    expect((await engine.getStats()).page_count).toBe(1);
     await engine.unsetConfig('search_embedding_column');
     expect((await engine.getHealth()).page_count).toBe(1);
   });

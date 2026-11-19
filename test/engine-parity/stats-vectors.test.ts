@@ -11,6 +11,7 @@
  *    inbound links. `gbrain stats`, `doctor`'s embed coverage and `enrich --thin` read these.
  *  - Why existing coverage misses it: config-ingest.test.ts embeds chunks only on live, eligible pages; stats.test.ts
  *    writes no vectors; code-eval-salience.test.ts never asks for the salience order.
+ *  - Also: with `search_embedding_column = embedding_image` the active column stays `embedding`, so the counts stay.
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
@@ -22,6 +23,26 @@ const { parityTest } = parityArms(testBackends());
 const HEALTH_KEYS = ['page_count', 'embed_coverage', 'missing_embeddings', 'embed_coverage_score', 'brain_score'] as const;
 
 describe('engine parity: stats with vectors', () => {
+  parityTest(
+    'search_embedding_column = embedding_image keeps the counts on the text vectors, as the active column stays embedding',
+    { methods: ['putPage', 'upsertChunks', 'setConfig', 'getStats', 'getHealth', 'countStaleChunks'] },
+    async (engine) => {
+      await engine.putPage('notes/img-col', { type: 'note', title: 'img', compiled_truth: 'Img.', timeline: '' });
+      await engine.upsertChunks('notes/img-col', [
+        { chunk_index: 0, chunk_text: 'Img zero.', chunk_source: 'compiled_truth', embedding: basisEmbedding(1) },
+        { chunk_index: 1, chunk_text: 'Img one.', chunk_source: 'compiled_truth' },
+      ]);
+      await engine.setConfig('search_embedding_column', 'embedding_image');
+      const stats = await engine.getStats();
+      const health = pick(await engine.getHealth(), HEALTH_KEYS);
+      const stale = await engine.countStaleChunks();
+      expect(stats.embedded_count).toBe(1);
+      expect(health.missing_embeddings).toBe(1);
+      expect(stale).toBe(1);
+      return { stats, health, stale };
+    },
+  );
+
   parityTest(
     'embedding counts cover soft-deleted and embed_skip pages in getStats only, and follow chunk rewrites and deletes',
     { methods: ['putPage', 'upsertChunks', 'softDeletePage', 'deleteChunks', 'getStats', 'getHealth'] },
