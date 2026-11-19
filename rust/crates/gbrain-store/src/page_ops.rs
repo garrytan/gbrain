@@ -116,10 +116,30 @@ pub struct FindPattern {
 pub struct FindPagesQuery {
     pub pattern: FindPattern,
     pub types: Option<Vec<String>>,
-    pub limit: i64,
+    /// `None` (missing or null) is no limit, as PGLite's `LIMIT NULL`.
+    #[serde(deserialize_with = "integral_limit")]
+    pub limit: Option<i64>,
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub exclude_slug_prefixes: Option<Vec<String>>,
+}
+
+/// An optional integer limit. A JavaScript number past the i32 range reaches the store as a
+/// float (`2 ** 53`), so an integral float is read as its integer; a fraction is refused.
+fn integral_limit<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<i64>, D::Error> {
+    let Some(n) = Option::<serde_json::Number>::deserialize(d)? else {
+        return Ok(None);
+    };
+    n.as_i64()
+        .or_else(|| {
+            n.as_f64()
+                .filter(|f| f.fract() == 0.0 && *f >= i64::MIN as f64 && *f < i64::MAX as f64)
+                .map(|f| f as i64)
+        })
+        .map(Some)
+        .ok_or_else(|| serde::de::Error::custom(format!("limit {n} is not an integer")))
 }
 
 /// `PageCountQuery` without `untrusted`. `since` is an ISO string; `typeGroups` maps each type the
@@ -934,7 +954,8 @@ impl Store {
     }
 
     /// `purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? })`: the pages soft-deleted more
-    /// than `floor(max(0, hours))` hours ago, minus `excludeIds` and the pages a retirement hold
+    /// than `floor(max(0, hours))` hours ago (NaN and Infinity hours are refused, as PGLite's
+    /// interval cast refuses them), minus `excludeIds` and the pages a retirement hold
     /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
@@ -944,11 +965,19 @@ impl Store {
         older_than_hours: f64,
         options: &PurgeOptions,
     ) -> Result<Value> {
-        let hours = if older_than_hours.is_nan() {
-            0
-        } else {
-            older_than_hours.floor().max(0.0) as i64
-        };
+        // PGLite sends `max(0, floor(hours))` as interval text: NaN and Infinity do not parse, and
+        // nothing is purged. -Infinity is 0 hours there too.
+        if older_than_hours.is_nan() || older_than_hours == f64::INFINITY {
+            let text = if older_than_hours.is_nan() {
+                "NaN"
+            } else {
+                "Infinity"
+            };
+            return Err(StoreError::invalid(format!(
+                "invalid input syntax for type interval: \"{text} hours\""
+            )));
+        }
+        let hours = older_than_hours.floor().max(0.0) as i64;
         let excluded: HashSet<i64> = options.exclude_ids.iter().flatten().copied().collect();
         let select = |read: &dyn KvRead, now: i64| -> Result<Vec<PageRecord>> {
             let cutoff = now.saturating_sub(hours.saturating_mul(3_600_000_000));
@@ -1043,8 +1072,8 @@ impl Store {
     /// slugs under an `excludeSlugPrefixes` prefix. Rows sort by slug, then source; `total` counts
     /// every match before `limit`, or 0 when no row is returned (as PGLite).
     pub fn find_pages(&self, query: &FindPagesQuery) -> Result<Value> {
-        if query.limit < 0 {
-            return Err(StoreError::invalid("findPages: limit must not be negative"));
+        if query.limit.is_some_and(|l| l < 0) {
+            return Err(StoreError::invalid("LIMIT must not be negative"));
         }
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
@@ -1083,7 +1112,7 @@ impl Store {
         let matched = found.len();
         let rows: Vec<Value> = found
             .iter()
-            .take(query.limit as usize)
+            .take(query.limit.map_or(usize::MAX, |l| l as usize))
             .map(|p| {
                 json!({
                     "slug": p.slug,
@@ -1836,5 +1865,130 @@ mod tests {
         );
         tombstone(&store, "atoms/a", 10);
         assert!(purged(&store, json!({ "dryRun": true })).is_empty());
+    }
+
+    // #9823 review note 8: PGLite casts `max(0, floor(hours)) || ' hours'` to an interval, so NaN and
+    // Infinity fail to parse and nothing is purged; -Infinity is 0 hours.
+    #[test]
+    fn nan_and_infinity_hours_are_refused_and_purge_nothing() {
+        let store = store();
+        put(&store, "notes/a", None);
+        tombstone(&store, "notes/a", 10);
+        for (hours, text) in [(f64::NAN, "NaN"), (f64::INFINITY, "Infinity")] {
+            for dry_run in [true, false] {
+                let options = serde_json::from_value(json!({ "dryRun": dry_run })).unwrap();
+                let err = store.purge_deleted_pages(hours, &options).unwrap_err();
+                assert_eq!(
+                    err.message,
+                    format!("invalid input syntax for type interval: \"{text} hours\"")
+                );
+            }
+        }
+        assert!(
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "notes/a")
+                .unwrap()
+                .is_some()
+        );
+        let options = serde_json::from_value(json!({ "dryRun": true })).unwrap();
+        let out = store
+            .purge_deleted_pages(f64::NEG_INFINITY, &options)
+            .unwrap();
+        assert_eq!(out["slugs"], json!(["notes/a"]));
+    }
+
+    // #9823 review note 9: PGLite's `LIMIT NULL` is no limit, and a negative limit is refused.
+    #[test]
+    fn find_pages_reads_a_missing_or_null_limit_as_no_limit() {
+        let store = store();
+        for slug in ["notes/a", "notes/b", "notes/c"] {
+            put(&store, slug, None);
+        }
+        let find = |query: Value| store.find_pages(&serde_json::from_value(query).unwrap());
+        let pattern = json!({ "kind": "prefix", "like": "notes/%" });
+        for query in [
+            json!({ "pattern": pattern }),
+            json!({ "pattern": pattern, "limit": null }),
+        ] {
+            let out = find(query).unwrap();
+            assert_eq!(out["total"], json!(3));
+            assert_eq!(out["rows"].as_array().unwrap().len(), 3);
+        }
+        assert_eq!(
+            find(json!({ "pattern": pattern, "limit": 2 })).unwrap()["rows"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let err = find(json!({ "pattern": pattern, "limit": -1 })).unwrap_err();
+        assert_eq!(err.message, "LIMIT must not be negative");
+        // 2 ** 53 crosses the addon as a float.
+        let big = find(json!({ "pattern": pattern, "limit": 9007199254740992.0 })).unwrap();
+        assert_eq!(big["rows"].as_array().unwrap().len(), 3);
+    }
+
+    /// #9823 review note 10. `purge_deleted_pages` applies neither `op_checkpoints` purge hold
+    /// (sync identity downgrade, derived origin park; rust/docs/store/page_ops.md, "The
+    /// purgeDeletedPages holds"). That is right only while no store code can write a row either hold
+    /// reads: a row of that op keyed by a page id. Today the one `op_checkpoints` writer is the
+    /// housekeeping turn, keyed by a host uuid. This test fails when another writer arrives, when
+    /// the store names either hold's op, or when a housekeeping row could be keyed by a page id: then
+    /// add both holds to `purge_deleted_pages` and change this test.
+    #[test]
+    fn nothing_writes_a_row_the_two_unapplied_purge_holds_read() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let hold_ops = [
+            concat!("sync-identity", "-downgrade"),
+            concat!("derived-origin", "-park"),
+        ];
+        let writers = ["persistence.rs", "persistence/housekeeping.rs"];
+        let keyspace = [concat!("HOUSE", "KEEPING"), concat!("op_", "checkpoints")];
+        let mut stack = vec![src.clone()];
+        let mut found = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let rel = path
+                    .strip_prefix(&src)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (n, line) in text.lines().enumerate() {
+                    let code = line.trim_start();
+                    let comment = code.starts_with("//");
+                    if hold_ops.iter().any(|op| line.contains(op)) {
+                        found.push(format!("{rel}:{}: names a purge hold op", n + 1));
+                    }
+                    if !writers.contains(&rel.as_str())
+                        && !comment
+                        && keyspace.iter().any(|k| line.contains(k))
+                    {
+                        found.push(format!(
+                            "{rel}:{}: names the checkpoint keyspace outside housekeeping",
+                            n + 1
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(found.is_empty(), "{found:#?}");
+        // A housekeeping row is keyed by a host uuid, so it never names a page id, whatever its op.
+        let store = store();
+        for op in hold_ops {
+            let claim: crate::persistence::HousekeepingClaim = serde_json::from_value(
+                json!({ "op": op, "hostId": "1", "intervalMs": 0, "leaseMs": 0 }),
+            )
+            .unwrap();
+            let err = store.claim_housekeeping_turn(&claim).unwrap_err();
+            assert!(err.message.contains("hostId"), "{op}: {}", err.message);
+        }
     }
 }

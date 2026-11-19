@@ -32,9 +32,9 @@ refuses.
 | `brain.findDuplicatePages(sourceId, queries)` | one `findDuplicatePage` answer per query | `findDuplicatePages` |
 | `brain.softDeletePages(slugs, { sourceId? }?)` | slugs that turned deleted now, once each, in page id order. `updated_at` stays; the knowledge revision changes | `softDeletePages` |
 | `brain.deletePages(slugs, { sourceId? }?)` | slugs removed (live or deleted), in page id order. In the same transaction it drops those slugs from captured eval candidates of the source (`eval_capture::remove_retrieved_slugs`), then their page aliases, the slug aliases that resolve to them and the rename history rows that end at them (`aliases::scrub_purged_slug_stores`, the `scrubPurgedSlugStores` order of `src/core/persistence/purge-slug-stores.ts:6`) | `deletePages` |
-| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run | `purgeDeletedPages` (minus the pages a hold keeps, see below) |
+| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0; NaN and Infinity are refused as PGLite's interval cast refuses them) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run | `purgeDeletedPages` (minus the pages a hold keeps, see below) |
 | `brain.resolveSlugsByPaths(paths, { sourceId })` | `[{ slug, source_path, live }]` for every page of the source whose `source_path` is one of `paths`, sorted by path then slug; the TypeScript member keeps one slug per path (`pickCanonicalOrigin`) | `resolveSlugsByPaths` |
-| `brain.findPages({ pattern: { kind, like }, types?, limit, sourceId?, sourceIds?, excludeSlugPrefixes? })` | `{ rows, total }`. `like` is a Postgres `LIKE` pattern (`%`, `_`, `\` escape), case-folded. A `name` pattern matches the title, or the slug when its last segment matches too; `prefix` and `glob` match the slug or `source_path`. Live pages of unarchived sources only. Rows sort by slug, then source; `total` is every match, or 0 when no row is returned | `findPages` |
+| `brain.findPages({ pattern: { kind, like }, types?, limit, sourceId?, sourceIds?, excludeSlugPrefixes? })` | `{ rows, total }`. `like` is a Postgres `LIKE` pattern (`%`, `_`, `\` escape), case-folded. A `name` pattern matches the title, or the slug when its last segment matches too; `prefix` and `glob` match the slug or `source_path`. Live pages of unarchived sources only. Rows sort by slug, then source; `total` is every match, or 0 when no row is returned. A missing or null `limit` is no limit (PGLite's `LIMIT NULL`); the member refuses a limit whose text is not a bigint or is negative with PGLite's message | `findPages` |
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
 | `brain.getAllSlugs({ sourceId? }?)` | every slug, deleted pages included, sorted and distinct; `''` means every source | `getAllSlugs` |
 | `brain.listAllPageRefs()` | `[{ source_id, slug, updated_at }]` of live pages, by source then slug | `listAllPageRefs` |
@@ -93,7 +93,9 @@ applies the two that read only the page row and `config`, and the other two neve
   never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
   (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
   called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
-  family that serves `op_checkpoints` must add both holds.
+  store's one `op_checkpoints` writer is the housekeeping turn (`persistence/housekeeping.rs`), whose
+  rows are keyed by a host uuid, never a page id. A store writer of either op must add both holds;
+  `nothing_writes_a_row_the_two_unapplied_purge_holds_read` (`page_ops.rs`) fails until it does.
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.

@@ -374,6 +374,23 @@ describe('engine parity: pages', () => {
     };
   });
 
+  // PGLite reads the hours as `max(0, floor(hours))` hours of interval text, so NaN and Infinity fail to parse and purge
+  // nothing, while -Infinity is 0 hours. A store that read NaN as 0 would purge every tombstone (#9823 review note 8).
+  parityTest('purgeDeletedPages refuses NaN and Infinity hours and purges nothing', { methods: ['purgeDeletedPages', 'softDeletePage'] }, async (engine) => {
+    await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE]]);
+    await engine.softDeletePage('notes/a');
+    await tombstonesSettle();
+    const outcome = (p: Promise<{ slugs: string[] }>) => p.then((r) => ({ slugs: r.slugs }), (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+    const nanDry = await outcome(engine.purgeDeletedPages(Number.NaN, { dryRun: true }));
+    const nan = await outcome(engine.purgeDeletedPages(Number.NaN));
+    const infinity = await outcome(engine.purgeDeletedPages(Number.POSITIVE_INFINITY));
+    const stillThere = (await engine.getPage('notes/a', { includeDeleted: true }))?.slug ?? null;
+    expect(stillThere).toBe('notes/a');
+    const minusInfinity = await outcome(engine.purgeDeletedPages(Number.NEGATIVE_INFINITY, { dryRun: true }));
+    expect(minusInfinity).toEqual({ slugs: ['notes/a'] });
+    return { nanDry, nan, infinity, stillThere, minusInfinity };
+  });
+
   parityTest('resolveSlugsByPaths maps stored source paths to slugs', { methods: ['resolveSlugsByPaths'] }, async (engine) => {
     await seed(engine, [['notes/a', { ...NOTE, source_path: 'Notes/A File.md' }], ['notes/b', NOTE]]);
     const empty = await engine.resolveSlugsByPaths([], { sourceId: 'default' });
@@ -398,6 +415,22 @@ describe('engine parity: pages', () => {
     const glob = await run('*example', ['company']);
     expect(glob.rows).toEqual(['default:companies/acme-example:company']);
     return { name, prefix, glob };
+  });
+
+  // PGLite binds the limit as text for `LIMIT $n` (a bigint): null is no limit, a negative integer is refused, and a
+  // fraction, NaN or an infinity fails to parse (#9823 review note 9). postgres.js refuses an undefined parameter, so the
+  // missing-limit read runs on PGLite and Rust only; on Postgres it reads null, which PGLite answers the same way.
+  parityTest('findPages reads a missing, null, non-integer or negative limit as PGLite does', { methods: ['findPages'] }, async (engine, backend) => {
+    await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE], ['notes/c', NOTE]]);
+    const find = (limit: unknown) => engine.findPages({ pattern: parseFindPattern('notes/'), limit: limit as number, excludeSlugPrefixes: [] })
+      .then((f) => ({ total: f.total, rows: f.rows.map((r) => r.slug) }), (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+    const missing = await find(backend === 'postgres' ? null : undefined);
+    expect(missing).toEqual({ total: 3, rows: ['notes/a', 'notes/b', 'notes/c'] });
+    const out: Record<string, unknown> = { missing };
+    for (const limit of [null, 2, 0, -0, 2 ** 53, -1, 1.5, 0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1e21, 2 ** 63]) {
+      out[String(Object.is(limit, -0) ? '-0' : limit)] = await find(limit);
+    }
+    return out;
   });
 
   parityTest('countPagesBy counts live pages per source and type', { methods: ['countPagesBy'] }, async (engine) => {

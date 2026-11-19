@@ -151,11 +151,33 @@ export const resolveSlugsByPaths: StoreMember<[paths: string[], opts: { sourceId
   return out;
 };
 
+/** A Postgres-shaped error: PGLite throws these with the SQLSTATE on `code`. */
+function sqlError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
+/**
+ * The `LIMIT` PGLite applies for `findPages`' `limit`, which it binds as a bigint parameter: missing or null is no
+ * limit (`LIMIT NULL`); the text of anything else must parse as a bigint (so NaN, Infinity, 1.5 and 1e21 are
+ * refused) and must not be negative. A limit past every row is no limit, so the store gets at most 2^53 - 1.
+ */
+function findLimit(limit: unknown): number | null {
+  if (limit === undefined || limit === null) return null;
+  const text = String(limit);
+  const n = Number(limit);
+  const integer = typeof limit === 'number' ? Number.isInteger(n) && !/e/i.test(text) : /^\s*[+-]?\d+\s*$/.test(text);
+  if (!integer) throw sqlError('22P02', `invalid input syntax for type bigint: "${text}"`);
+  if (n >= 2 ** 63 || n < -(2 ** 63)) throw sqlError('22003', `value "${text}" is out of range for type bigint`);
+  if (n < 0) throw sqlError('2201W', 'LIMIT must not be negative');
+  return n === 0 ? 0 : Math.min(n, Number.MAX_SAFE_INTEGER);
+}
+
 export const findPages: StoreMember<[query: FindPagesQuery], FoundPages> = async (brain, query) => {
   const taken = takeOptions('findPages', query, ['pattern', 'types', 'limit', 'sourceId', 'sourceIds', 'excludeSlugPrefixes']);
   const pattern = query.pattern;
+  const limit = findLimit(query.limit);
   const found: FoundPages = await storeCall({ member: 'findPages' }, () =>
-    brain.findPages({ ...taken, pattern: { kind: pattern.kind, like: pattern.like }, limit: Math.max(0, Math.trunc(Number(query.limit))) }));
+    brain.findPages({ ...taken, pattern: { kind: pattern.kind, like: pattern.like }, limit }));
   return { rows: found.rows, total: Number(found.total) };
 };
 
