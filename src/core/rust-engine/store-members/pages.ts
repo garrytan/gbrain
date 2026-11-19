@@ -108,7 +108,7 @@ export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (br
  */
 export const resolveSlugs: StoreMember<[partial: string, opts?: PageReadScope], string[]> = async (brain, partial, opts) => {
   // PGLite's resolveSlugs reads only the source scope and excludePrivate; the rest of a read policy has no effect there.
-  const scope = pageScope('resolveSlugs', opts, ['sourceId', 'sourceIds', 'excludePrivate'], ['requireSafeChunks', 'minTrust', 'suppressFlagged']);
+  const scope = pageScope('resolveSlugs', opts, ['sourceId', 'sourceIds', 'excludePrivate'], ['requireSafeChunks', 'takesHoldersAllowList', 'minTrust', 'suppressFlagged']);
   const found: string[] = await storeCall({ member: 'resolveSlugs' }, () => brain.resolveSlugs(partial, scope));
   if (found.length === 0) refuseMember('resolveSlugs', 'a name with no exact page needs trigram matching');
   return found;

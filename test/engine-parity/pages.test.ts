@@ -750,7 +750,7 @@ describe('engine parity: pages', () => {
         const resolved = await engine.resolveSlugs('people/alice-example', { excludePrivate: true });
         // resolve_slugs passes the caller's whole read policy; only the source scope and excludePrivate apply.
         const resolvedUnderPolicy = await engine.resolveSlugs('people/alice-example',
-          { excludePrivate: true, requireSafeChunks: true, minTrust: 'operator_curated', suppressFlagged: true });
+          { excludePrivate: true, requireSafeChunks: true, takesHoldersAllowList: ['world'], minTrust: 'operator_curated', suppressFlagged: true } as Parameters<BrainEngine['resolveSlugs']>[1]);
         expect(resolvedUnderPolicy).toEqual(resolved);
         const found = (await engine.findPages({ pattern: parseFindPattern('people/*'), limit: 50, excludeSlugPrefixes: [], untrusted: { excludePrivate: true } }))
           .rows.map((r) => `${r.source_id}:${r.slug}`);
