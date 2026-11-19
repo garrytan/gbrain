@@ -1,7 +1,7 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers, readLiveMember, readAccessGroups and listPagesNamingReader; SQL in engine-sql/access-control.ts). The source read, the path attach and the pages naming a reader are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers, readLiveMember, readAccessGroups and listPagesNamingReader; SQL in engine-sql/access-control.ts), and the credential revokes (revokeAccessTokensNamed, revokeAccessToken and deleteOAuthClient; SQL in engine-sql/access-credentials.ts). The source read, the path attach and the pages naming a reader are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
@@ -10,6 +10,7 @@ import type {
 } from '../../engine-sql/write-misc.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
 import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
+import type { DeletedOAuthClient } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -105,6 +106,15 @@ export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemb
 
 /** The store keeps no access tokens and no OAuth clients (see readMayActFor), so no name or member binding names a live credential. */
 export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
+
+/** The store keeps no access tokens (see readAccessCredentials), so no name revokes one: the list of revoked ids is empty. */
+export const revokeAccessTokensNamed: StoreMember<[name: string], string[]> = async () => [];
+
+/** The store keeps no access tokens (see readAccessCredentials), so no id names an active one to revoke. */
+export const revokeAccessToken: StoreMember<[id: string], string | null> = async () => null;
+
+/** The store keeps no OAuth clients (see readAccessCredentials), so no client id names one to delete. */
+export const deleteOAuthClient: StoreMember<[clientId: string], DeletedOAuthClient | null> = async () => null;
 
 /** The store keeps no access members (see listActiveAccessMembers), so no member is of kind audience. */
 export const listAudienceAccessMembers: StoreMember<[], string[]> = async () => [];

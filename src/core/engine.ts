@@ -4,6 +4,7 @@ import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
+import type { DeletedOAuthClient } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -3502,6 +3503,13 @@ export interface BrainEngine {
   /** Live credentials (active legacy tokens, clients not deleted): the tokens with one exact name, or those bound to one member. */
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]>;
 
+  /** Revoke every active access token with this exact name; the revoked ids (none on a store that keeps no credentials). */
+  revokeAccessTokensNamed(name: string): Promise<string[]>;
+  /** Revoke the active access token with this id (a UUID); its name, or null when no active token has it. */
+  revokeAccessToken(id: string): Promise<string | null>;
+  /** Delete an OAuth client, its tokens and codes cascading; the deleted client, or null when none has this id. */
+  deleteOAuthClient(clientId: string): Promise<DeletedOAuthClient | null>;
+
   /** The ids of the enabled, untombstoned audience-kind members, by id. */
   listAudienceAccessMembers(): Promise<string[]>;
 
@@ -4191,6 +4199,8 @@ export interface BrainEngine {
   queueWakeForget(wakeUser: string, memberId: string | null): Promise<void>;
   /** A removed member's Wakeshift state: queue a forget of each user it watched under, end its open watches, drop its terms acceptances. */
   forgetWakeMember(memberId: string): Promise<{ ended: number; queued: number }>;
+  /** A revoked token's or deleted OAuth client's Wakeshift state: queue a forget of each user its member-less watches ran under, end its open watches, drop its terms acceptances. */
+  forgetWakeCredential(kind: JobsWake.WakeCredentialKind, id: string): Promise<{ ended: number; queued: number }>;
   /** Lease up to `limit` due pending forgets. */
   claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */

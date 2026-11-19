@@ -648,3 +648,101 @@ fn forgetting_a_member_queues_its_users_ends_its_open_watches_and_drops_only_its
         .unwrap();
     assert_eq!(other.len(), 1);
 }
+
+#[test]
+fn forgetting_a_credential_queues_its_memberless_users_ends_all_its_open_watches_and_drops_only_its_terms()
+ {
+    let b = brain("forget-credential");
+    let client = |n: u32, member: Value, u: u32| {
+        json!({ "target": n.to_string(), "principalKind": "oauth_client", "principalId": "client-A",
+                "memberId": member, "wakeUser": user(u) })
+    };
+    let leased = open(&b, 1, client(1, Value::Null, 2));
+    open(&b, 2, client(2, json!("m-1"), 3));
+    let gone = open(&b, 3, client(3, Value::Null, 4));
+    b.end_wake_watches(&end("unwatched", Some(gone))).unwrap();
+    b.queue_wake_forget(&user(4), None).unwrap();
+    open(
+        &b,
+        4,
+        json!({ "target": "4", "principalKind": "oauth_client", "principalId": "client-a", "wakeUser": user(5) }),
+    );
+    open(
+        &b,
+        5,
+        json!({ "target": "5", "principalKind": "legacy_token", "principalId": "client-A", "wakeUser": user(6) }),
+    );
+    open(
+        &b,
+        6,
+        json!({ "target": "6", "principalKind": "legacy_token", "principalId": "abcd-ef", "wakeUser": user(7) }),
+    );
+    let lease = b.claim_wake_watch(leased, 60).unwrap().unwrap()["lease"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let v = "a".repeat(16);
+    let keys = [
+        "oauth_client:client-A",
+        "oauth_client:client-AB",
+        "oauth_client:client-a",
+        "legacy_token:client-A",
+        "legacy_token:abcd-ef",
+    ];
+    for key in keys {
+        b.record_wake_terms_acceptance(key, &v).unwrap();
+    }
+    // Both open watches of the client end, the member's one too; only the member-less users
+    // queue: user 2 new, user 4 pending already (its candidate still spends a sequence value).
+    assert_eq!(
+        b.forget_wake_credential("oauth_client", "client-A")
+            .unwrap(),
+        json!({ "ended": 2, "queued": 1 })
+    );
+    assert!(
+        !b.settle_wake_watch(&settle(leased, &lease, "delivered", json!({})))
+            .unwrap()
+    );
+    // A token id is matched in lower case; a client id is not.
+    assert_eq!(
+        b.forget_wake_credential("legacy_token", "ABCD-EF").unwrap(),
+        json!({ "ended": 1, "queued": 1 })
+    );
+    let claim: ForgetClaimSpec =
+        serde_json::from_value(json!({ "leaseSeconds": 60, "limit": 10 })).unwrap();
+    let claimed: Vec<(i64, String)> = b
+        .claim_wake_forgets(&claim)
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["id"].as_i64().unwrap(),
+                c["wake_user"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(claimed, vec![(1, user(4)), (2, user(2)), (4, user(7))]);
+    for (key, kept) in keys.into_iter().zip([false, true, true, true, false]) {
+        assert_eq!(b.has_wake_terms_acceptance(key, &v).unwrap(), kept, "{key}");
+    }
+    for (kind, id) in [("oauth_client", "client-a"), ("legacy_token", "client-A")] {
+        let open_rows = b
+            .list_wake_watches(
+                &serde_json::from_value(json!({
+                    "principalKind": kind, "principalId": id, "memberId": null, "scope": "open",
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(open_rows.len(), 1, "{kind}:{id}");
+    }
+    assert_eq!(
+        b.forget_wake_credential("oauth_client", "client-A")
+            .unwrap(),
+        json!({ "ended": 0, "queued": 0 })
+    );
+    assert_eq!(
+        b.forget_wake_credential("legacy_token", "abc\0").unwrap(),
+        json!({ "ended": 0, "queued": 0 })
+    );
+}

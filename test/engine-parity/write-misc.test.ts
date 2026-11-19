@@ -5,6 +5,7 @@
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
  *    listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
+ *    revokeAccessTokensNamed, revokeAccessToken, deleteOAuthClient,
  *    listAudienceAccessMembers, readLiveMember, readAccessGroups, listPagesNamingReader, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -370,6 +371,59 @@ describe('engine parity: write misc', () => {
     });
     return { byName, byMember };
   });
+
+  parityTest('revoking a token by name or id and deleting an OAuth client find nothing on a brain with none',
+    { methods: ['revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient'] }, async (engine) => {
+      const answers = {
+        named: await engine.revokeAccessTokensNamed('laptop'),
+        byId: await engine.revokeAccessToken('00000000-0000-4000-8000-0000000000c1'),
+        client: await engine.deleteOAuthClient('client-alice'),
+      };
+      expect(answers).toEqual({ named: [], byId: null, client: null });
+      return answers;
+    });
+
+  // Leak case (access checks): a revoke by name revokes only live tokens with exactly that name, a revoke by id only
+  // that live token, a client delete only that client id; a repeat finds nothing. The Rust store keeps no tokens or
+  // clients (empty above), so the token write stops on the raw_sql refusal.
+  parityTest('revoking a token by name or id and deleting an OAuth client touch only the exact live credential',
+    { methods: ['revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient'] }, async (engine, backend) => {
+      const write = await engine.executeRaw(
+        `INSERT INTO access_tokens (id, name, token_hash, member_id, created_at, revoked_at) VALUES
+           ('00000000-0000-4000-8000-0000000000c1', 'laptop', 'h1', NULL, '2026-01-01T00:00:00Z', NULL),
+           ('00000000-0000-4000-8000-0000000000c2', 'laptop', 'h2', NULL, '2026-01-02T00:00:00Z', NULL),
+           ('00000000-0000-4000-8000-0000000000c3', 'laptop', 'h3', NULL, '2026-01-03T00:00:00Z', now()),
+           ('00000000-0000-4000-8000-0000000000c4', 'Laptop', 'h4', NULL, '2026-01-04T00:00:00Z', NULL),
+           ('00000000-0000-4000-8000-0000000000c5', 'phone', 'h5', NULL, '2026-01-05T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
+      if (backend === 'rust') {
+        expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+        expect(await engine.revokeAccessTokensNamed('laptop')).toEqual([]);
+        throw write;
+      }
+      expect(write).toBeNull();
+      await engine.executeRaw(
+        `INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-alice', 'alice-app'), ('client-alice2', 'alice-app')`);
+      const answers = {
+        named: (await engine.revokeAccessTokensNamed('laptop')).sort(),
+        namedAgain: await engine.revokeAccessTokensNamed('laptop'),
+        injected: await engine.revokeAccessTokensNamed("x' OR '1'='1"),
+        byId: await engine.revokeAccessToken('00000000-0000-4000-8000-0000000000c5'),
+        byIdAgain: await engine.revokeAccessToken('00000000-0000-4000-8000-0000000000c5'),
+        byIdUpper: await engine.revokeAccessToken('00000000-0000-4000-8000-0000000000C4'),
+        client: await engine.deleteOAuthClient('client-alice'),
+        clientAgain: await engine.deleteOAuthClient('client-alice'),
+        clientName: await engine.deleteOAuthClient('alice-app'),
+        live: (await engine.executeRaw<{ id: string }>('SELECT id FROM access_tokens WHERE revoked_at IS NULL ORDER BY id')).map(r => r.id),
+        clients: (await engine.executeRaw<{ client_id: string }>('SELECT client_id FROM oauth_clients ORDER BY client_id')).map(r => r.client_id),
+      };
+      expect(answers).toEqual({
+        named: ['00000000-0000-4000-8000-0000000000c1', '00000000-0000-4000-8000-0000000000c2'], namedAgain: [], injected: [],
+        byId: 'phone', byIdAgain: null, byIdUpper: 'Laptop',
+        client: { client_id: 'client-alice', client_name: 'alice-app' }, clientAgain: null, clientName: null,
+        live: [], clients: ['client-alice2'],
+      });
+      return answers;
+    });
 
   parityTest('listAudienceAccessMembers lists no member on a brain with none', { methods: ['listAudienceAccessMembers'] }, async (engine) => {
     const ids = await engine.listAudienceAccessMembers();

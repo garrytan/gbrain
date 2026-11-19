@@ -213,7 +213,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'declarePersistence', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'beginSnapshotRead', 'readLedgerSource', 'isFolderRestricted', 'listAppliedPolicyRevisions', 'readMayActFor', 'readAudiencePrincipals', 'readAccessMembers', 'readAccessCredentials', 'listAudienceAccessMembers', 'readLiveMember', 'readAccessGroups', 'listPagesNamingReader', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'declarePersistence', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'beginSnapshotRead', 'readLedgerSource', 'isFolderRestricted', 'listAppliedPolicyRevisions', 'readMayActFor', 'readAudiencePrincipals', 'readAccessMembers', 'readAccessCredentials', 'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'listAudienceAccessMembers', 'readLiveMember', 'readAccessGroups', 'listPagesNamingReader', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
@@ -249,6 +249,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'openWakeWatch', 'listWakeWatches', 'endWakeWatches', 'countWakeWatches', 'readWakeDoctor', 'countPendingWakeForgets', 'listWakeCrons',
   'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun', 'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches',
   'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget', 'forgetWakeMember',
+  'forgetWakeCredential',
 ];
 
 /**

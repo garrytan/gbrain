@@ -579,6 +579,9 @@ export const RUST_ENGINE_MEMBERS = {
   readAudiencePrincipals: 'access_control',
   readAccessMembers: 'access_control',
   readAccessCredentials: 'access_control',
+  revokeAccessTokensNamed: 'access_control',
+  revokeAccessToken: 'access_control',
+  deleteOAuthClient: 'access_control',
   listAudienceAccessMembers: 'access_control',
   readLiveMember: 'access_control',
   readAccessGroups: 'access_control',
@@ -743,6 +746,7 @@ export const RUST_ENGINE_MEMBERS = {
   settleWakeWatch: 'minion_queue',
   queueWakeForget: 'minion_queue',
   forgetWakeMember: 'minion_queue',
+  forgetWakeCredential: 'minion_queue',
   claimWakeForgets: 'minion_queue',
   settleWakeForget: 'minion_queue',
   // Group D (trust tier reads)

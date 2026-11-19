@@ -9,7 +9,7 @@
  */
 import type {
   EndedWakeWatch, EndWakeWatches, WakeCronRow, WakeDoctorRead, WakeForgetClaim, WakeForgetSettle, WakeRow, WakeWatchFilter,
-  WakeWatchInsert, WakeWatchRow, WakeWatchSettle,
+  WakeCredentialKind, WakeWatchInsert, WakeWatchRow, WakeWatchSettle,
 } from '../../engine-sql/jobs-wake.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -79,6 +79,9 @@ export const queueWakeForget: StoreMember<[wakeUser: string, memberId: string | 
 
 export const forgetWakeMember: StoreMember<[memberId: string], { ended: number; queued: number }> = (brain, memberId) =>
   call('forgetWakeMember', () => brain.forgetWakeMember(memberId));
+
+export const forgetWakeCredential: StoreMember<[kind: WakeCredentialKind, id: string], { ended: number; queued: number }> = (brain, kind, id) =>
+  call('forgetWakeCredential', () => brain.forgetWakeCredential(kind, id));
 
 export const claimWakeForgets: StoreMember<[spec: { leaseSeconds: number; limit: number }], WakeForgetClaim[]> = (brain, spec) =>
   call('claimWakeForgets', () => brain.claimWakeForgets(spec));

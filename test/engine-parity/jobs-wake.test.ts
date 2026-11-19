@@ -682,4 +682,87 @@ describe('engine parity: wake watch and forget leases', () => {
       expect(answers.terms).toEqual({ m1v1: false, m1v2: false, m10: true, m2: true, bare: true });
       return answers;
     });
+  const revoked = ['ended', 'principal_revoked'];
+  const watchOf = (engine: BrainEngine, principalKind: WakeWatchInsert['principalKind'], principalId: string) =>
+    async (memberId: string | null, id: number) => {
+      const [row] = await engine.listWakeWatches({ principalKind, principalId, memberId, scope: 'open_or_recent', id });
+      return row ? [row.state, row.last_error] : null;
+    };
+  parityTest('forgetWakeCredential for a deleted OAuth client queues its member-less users, ends all its open watches and drops only its own terms acceptances',
+    { methods: ['forgetWakeCredential', 'openWakeWatch', 'endWakeWatches', 'listWakeWatches', 'queueWakeForget', 'claimWakeForgets', 'countPendingWakeForgets', 'recordWakeTermsAcceptance', 'hasWakeTermsAcceptance'] }, async (engine) => {
+      const c = { principalKind: 'oauth_client', principalId: 'client-A' } as const;
+      const bare = await engine.openWakeWatch(watch({ ...c, wakeUser: user(1) }));
+      const bound = await engine.openWakeWatch(watch({ ...c, memberId: 'm-1', wakeUser: user(2) }));
+      const alreadyEnded = await engine.openWakeWatch(watch({ ...c, wakeUser: user(3) }));
+      await engine.endWakeWatches({ reason: 'unwatched', id: alreadyEnded });
+      const pendingUser = await engine.openWakeWatch(watch({ ...c, wakeUser: user(4) }));
+      await engine.queueWakeForget(user(4), null);
+      const otherCase = await engine.openWakeWatch(watch({ principalKind: 'oauth_client', principalId: 'client-a', wakeUser: user(5) }));
+      const otherKind = await engine.openWakeWatch(watch({ principalKind: 'legacy_token', principalId: 'client-A', wakeUser: user(6) }));
+      const v1 = 'a'.repeat(16);
+      const keys = ['oauth_client:client-A', 'oauth_client:client-AB', 'oauth_client:client-a', 'legacy_token:client-A', 'client-A'];
+      for (const key of keys) await engine.recordWakeTermsAcceptance(key, v1);
+      const first = await engine.forgetWakeCredential('oauth_client', 'client-A');
+      const again = await engine.forgetWakeCredential('oauth_client', 'client-A');
+      const nobody = await engine.forgetWakeCredential('oauth_client', 'client-none');
+      const pending = await engine.countPendingWakeForgets();
+      const claimed = (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(r => r.wake_user).sort();
+      const stateOf = watchOf(engine, 'oauth_client', 'client-A');
+      const answers = {
+        first, again, nobody, pending, claimed,
+        watches: {
+          bare: await stateOf(null, bare), bound: await stateOf('m-1', bound), alreadyEnded: await stateOf(null, alreadyEnded),
+          pendingUser: await stateOf(null, pendingUser), otherCase: await watchOf(engine, 'oauth_client', 'client-a')(null, otherCase),
+          otherKind: await watchOf(engine, 'legacy_token', 'client-A')(null, otherKind),
+        },
+        terms: Object.fromEntries(await Promise.all(keys.map(async k => [k, await engine.hasWakeTermsAcceptance(k, v1)] as const))),
+      };
+      // users 1 and 3 queue (3's watch had ended); user 2 rode a member and outlives the client; user 4 had a forget pending
+      expect(first).toEqual({ ended: 3, queued: 2 });
+      expect(again).toEqual({ ended: 0, queued: 0 });
+      expect(nobody).toEqual({ ended: 0, queued: 0 });
+      expect(pending).toBe(3);
+      expect(claimed).toEqual([user(1), user(3), user(4)]);
+      expect(answers.watches).toEqual({
+        bare: revoked, bound: revoked, alreadyEnded: ['ended', 'unwatched'], pendingUser: revoked,
+        otherCase: ['open', null], otherKind: ['open', null],
+      });
+      expect(answers.terms).toEqual({
+        'oauth_client:client-A': false, 'oauth_client:client-AB': true, 'oauth_client:client-a': true, 'legacy_token:client-A': true, 'client-A': true,
+      });
+      return answers;
+    });
+  parityTest('forgetWakeCredential for a revoked legacy token matches the token id in lower case and leaves other tokens alone',
+    { methods: ['forgetWakeCredential', 'openWakeWatch', 'listWakeWatches', 'claimWakeForgets', 'countPendingWakeForgets', 'recordWakeTermsAcceptance', 'hasWakeTermsAcceptance'] }, async (engine) => {
+      const id = 'abcdef01-2345-6789-abcd-ef0123456789';
+      const t = { principalKind: 'legacy_token', principalId: id } as const;
+      const bare = await engine.openWakeWatch(watch({ ...t, wakeUser: user(1) }));
+      const bound = await engine.openWakeWatch(watch({ ...t, memberId: 'm-1', wakeUser: user(2) }));
+      const otherToken = await engine.openWakeWatch(watch({ principalKind: 'legacy_token', principalId: id.replace('a', 'b'), wakeUser: user(3) }));
+      const sameIdClient = await engine.openWakeWatch(watch({ principalKind: 'oauth_client', principalId: id, wakeUser: user(4) }));
+      const v1 = 'a'.repeat(16);
+      const keys = [`legacy_token:${id}`, `legacy_token:${id.toUpperCase()}`, `oauth_client:${id}`];
+      for (const key of keys) await engine.recordWakeTermsAcceptance(key, v1);
+      const first = await engine.forgetWakeCredential('legacy_token', id.toUpperCase());
+      const again = await engine.forgetWakeCredential('legacy_token', id);
+      const pending = await engine.countPendingWakeForgets();
+      const claimed = (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(r => r.wake_user).sort();
+      const stateOf = watchOf(engine, 'legacy_token', id);
+      const answers = {
+        first, again, pending, claimed,
+        watches: {
+          bare: await stateOf(null, bare), bound: await stateOf('m-1', bound),
+          otherToken: await watchOf(engine, 'legacy_token', id.replace('a', 'b'))(null, otherToken),
+          sameIdClient: await watchOf(engine, 'oauth_client', id)(null, sameIdClient),
+        },
+        terms: Object.fromEntries(await Promise.all(keys.map(async k => [k, await engine.hasWakeTermsAcceptance(k, v1)] as const))),
+      };
+      expect(first).toEqual({ ended: 2, queued: 1 });
+      expect(again).toEqual({ ended: 0, queued: 0 });
+      expect(pending).toBe(1);
+      expect(claimed).toEqual([user(1)]);
+      expect(answers.watches).toEqual({ bare: revoked, bound: revoked, otherToken: ['open', null], sameIdClient: ['open', null] });
+      expect(answers.terms).toEqual({ [`legacy_token:${id}`]: false, [`legacy_token:${id.toUpperCase()}`]: true, [`oauth_client:${id}`]: true });
+      return answers;
+    });
 });
