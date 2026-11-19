@@ -41,9 +41,11 @@ async function writtenWhileManaged(engine: BrainEngine, ctx: OperationContext): 
   for (const date of ['2026-02-03', '2026-02-04']) {
     await submitPageMutation(ctx, { operation: 'add_timeline_entry', params: { slug: SLUG, date, summary: `Met about ${CANARY} on ${date}`, request_id: randomUUID() } });
   }
+  const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: 'default' });
+  await submitPageMutation(ctx, { operation: 'edit_page', params: { slug: SLUG, expected_revision: snapshot!.revision, request_id: randomUUID(), edits: [{ old_text: 'still says', new_text: 'now says' }] } });
   await engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
-    await tx.executeRaw("UPDATE persistence_requests SET intent=NULL, compacted=true WHERE operation='add_timeline_entry' AND outcome->'entry'->>'summary' LIKE '%2026-02-04'");
+    await tx.executeRaw("UPDATE persistence_requests SET intent=NULL, compacted=true WHERE (operation='add_timeline_entry' AND outcome->'entry'->>'summary' LIKE '%2026-02-04') OR operation='edit_page'");
   });
   await deletePage(engine, ctx, SLUG);
   expect(await journalCopies(engine)).toBeGreaterThan(0);
