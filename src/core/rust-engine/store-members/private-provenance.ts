@@ -21,6 +21,14 @@
  * the policy (`readers_allowed` and `orPrivateReadableSource` in privacy.rs). Folder rules, pending coverage,
  * audiences, lineage, owner-only sources, labelled-only grants and relaxed reads still refuse.
  *
+ * A remote read on a brain that holds no member restriction (config access.restrictions_present unset, so
+ * `CallerAccess.restricted` is false) renders the short member-access form `page_readers IS NULL AND
+ * folder_rule_ids IS NULL`, which is the full form under its premise: no page names readers and no member exists (the
+ * flag is sticky and set by a trigger the moment either happens). The store implements the full form, so both
+ * policies judge the caller as the same record with `restricted` true. That is no wider than the short form on any
+ * brain the premise holds for, and on a brain it does not (a store that keeps no such trigger) it is the policy the
+ * short form stands in for: readers named by `readable_by` still apply and a page derived from one stays hidden.
+ *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
  */
@@ -100,6 +108,9 @@ export function storePrivacyPolicy(
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy | undefined {
   if (excludePrivate !== true) return undefined;
+  if (currentCallerAccess().restricted === false) {
+    return withCallerAccess({ restricted: true }, () => storePrivacyPolicy(member, excludePrivate, rendered, opts));
+  }
   const text = normalizeConceptInputs(rendered());
   for (const form of FACT_FORMS) {
     const baseline = withoutCallerAccess(() => form.sql('facts'));
@@ -153,6 +164,9 @@ export function storePageTextPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy {
+  if (currentCallerAccess().restricted === false) {
+    return withCallerAccess({ restricted: true }, () => storePageTextPolicy(member, rendered, opts));
+  }
   const text = normalizeConceptInputs(rendered());
   const baseline = withoutCallerAccess(() => privatePagesFilterForCaller('p'));
   if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
