@@ -354,6 +354,35 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { open, floored };
   });
 
+  parityTest('findActiveSingleFact under the remote provenance floor judges only the provenance page, not the entity page', { methods: ['findActiveSingleFact'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await engine.putPage('people/secret', note('Secret', 'private person', { visibility: 'private' }));
+    await engine.putPage('notes/open', note('Open', 'open'));
+    await engine.putPage('notes/readers', note('Readers', 'kept to one member', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/aliased', note('Aliased', 'aliased', { access: 'private' }));
+    // The lowest id is on the readers page, so a scan with no page names it only without the floor.
+    await seed.fence([{ label: 'readers-page', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/readers', entity_slug: 'people/secret' }]);
+    await seed.fence([{ label: 'open-page', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/open', entity_slug: 'people/secret' }]);
+    await seed.fence([{ label: 'aliased-page', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/aliased', entity_slug: 'people/secret' }]);
+    const find = async (pageSlug: string | null, remoteFloor: boolean) => {
+      const row = await engine.findActiveSingleFact({ sourceId: SRC, entitySlug: 'people/secret', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor });
+      return row === null ? null : seed.name(row.id);
+    };
+    const found: Record<string, string | null> = {};
+    for (const page of ['notes/open', 'notes/readers', 'notes/aliased', null] as const) {
+      found[`${page ?? 'none'}:open`] = await find(page, false);
+      found[`${page ?? 'none'}:floor`] = await find(page, true);
+    }
+    // The entity page is private, yet the floor keeps the fact on an open page: it has no entity gate.
+    expect(found).toEqual({
+      'notes/open:open': 'open-page', 'notes/open:floor': 'open-page',
+      'notes/readers:open': 'readers-page', 'notes/readers:floor': null,
+      'notes/aliased:open': 'aliased-page', 'notes/aliased:floor': null,
+      'none:open': 'readers-page', 'none:floor': 'open-page',
+    });
+    return found;
+  });
+
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
