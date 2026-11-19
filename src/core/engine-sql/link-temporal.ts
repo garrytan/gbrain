@@ -25,7 +25,7 @@ import {
   type AssertionRow, type ExistingRow, type RelationshipEvidence, type RelationshipKey, type RelationshipStateWrite, type TransitionRow,
 } from '../link-relationships.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { referrerGroupsSql } from '../mentions/referrers-sql.ts';
+import { referrerGroupsSql, referrerPageDetailsSql } from '../mentions/referrers-sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { SqlExecutor } from './executor.ts';
 
@@ -451,4 +451,25 @@ export async function readReferrerGroupRows(exec: Exec, target: { sources: reado
   const rows = await exec.executeRaw<ReferrerGroupRow>(referrerGroupsSql(scope),
     [[...target.sources], [...target.slugs], [...scope.referrerSources], [...scope.storedTypes], [...scope.canonicalTypes], scope.perGroup]);
   return rows.map(r => ({ ...r, id: Number(r.id), gtotal: Number(r.gtotal) }));
+}
+
+/** One referring page's card details: its bounded body, date source, trust fields, activation flag and frontmatter. */
+export interface ReferrerPageDetailRow {
+  id: number;
+  title: string | null;
+  /** The first 4000 characters of the bounded body prefix. */
+  body: string | null;
+  /** `updated_at` when the page has no effective date, else the effective date's source. */
+  date_source: string;
+  trust_tier: string;
+  write_origin: unknown;
+  /** `activationSuppressedSql`: a flagged low-trust write the card marks unconfirmed. */
+  flagged: boolean;
+  frontmatter: Record<string, unknown> | null;
+}
+
+/** The card details of these page ids, one row per id that exists (soft-deleted pages too), in no set order. */
+export async function readReferrerPageDetails(exec: Exec, ids: readonly number[]): Promise<ReferrerPageDetailRow[]> {
+  const rows = await exec.executeRaw<ReferrerPageDetailRow>(referrerPageDetailsSql(), [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
 }

@@ -5335,6 +5335,7 @@
         "readQueuedSpendRows": "none",
         "readReceiptBudget": "none",
         "readReferrerGroupRows": "none",
+        "readReferrerPageDetails": "none",
         "readRetirementHop": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",

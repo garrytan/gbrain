@@ -25,6 +25,7 @@ writes the rows the builder returns.
 | `brain.edgeValidityCounts({ sourceIds, staleLimit })` | `{ byStatus, stale, proposals }` | `edgeValidityCounts` |
 | `brain.listPageStatusByRef(...)` / `brain.listRecordMetadataRows(...)` | the frontmatter `status` of each ref / the status and supersession links of referring pages | `listPageStatusByRef` / `listRecordMetadataRows` |
 | `brain.readReferrerGroupRows(input)` | the live pages that link to the targets, grouped by canonical type (a pack alias maps to its canonical type, an empty type is `untyped`), newest first (`effective_date`, else `updated_at`; ties by source and slug), at most `perGroup` per group, each with its group's total | `readReferrerGroupRows` |
+| `brain.readReferrerPageDetails({ ids })` | the title, body (its first 4000 characters), date source, trust tier, write origin, activation flag and frontmatter of each page id that exists, soft-deleted pages too | `readReferrerPageDetails` |
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
 | `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000 | `countPendingProjectionPages` |
 | `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while `protocol_activation` jobs are queued, else null | `projectionRebuildProgress` |
@@ -56,7 +57,7 @@ writes the rows the builder returns.
 | `link-temporal-apply.ts` | linkRelationshipKeysForOrigin, applyLinkTemporalRows, writeManualLinkTransitions, removeManualLinkTransitions | equal |
 | `link-relationship-notes.ts` | listRelationshipNoteRows | equal |
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
-| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows | equal (the referenced-by card still refuses: its page-detail read is raw SQL) |
+| `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails | equal |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
 | `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal (a capped count refuses: see Known differences) |
 | `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses, cached until the next write |

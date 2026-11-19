@@ -1,14 +1,15 @@
 /**
  * The SQL text of the referrer reads (mentions/referrers.ts): the shared `typed` CTE, its filters, and the full
- * statements the engines run for the entity card's referrer groups (engine-sql/link-temporal.ts
- * readReferrerGroupRows). The text is master's, byte for byte: the single-target CTE numbers its parameters by hand
+ * statements the engines run for the entity card's referrer groups and their page details (engine-sql/link-temporal.ts
+ * readReferrerGroupRows, readReferrerPageDetails). The text is master's, byte for byte: the single-target CTE numbers its parameters by hand
  * ($1..$5 fixed, $6 the per-group cap), so it is spliced as constant text, never rebuilt with sqlFragment (which
  * would renumber a repeated parameter). Every builder here takes only code-provided aliases and the caller's read
  * scope flags; no value reaches the text. scripts/check-engine-sql-dynamic.ts vets the builders engine-sql calls.
  */
 import { privatePagesFilterFastForCaller, privatePagesFilterForCaller, privateLinkOriginFilterForCaller } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
-import { pageEligibleSql } from '../eligibility/sql.ts';
+import { activationSuppressedSql, pageEligibleSql } from '../eligibility/sql.ts';
+import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 
 /** The caller's read filters the referrer CTEs apply. */
@@ -71,4 +72,12 @@ export function referrerGroupsSql(scope: ReferrerSqlScope): string {
          SELECT * FROM typed t WHERE t.canonical_type = c.canonical_type ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $6
        ) x
       ORDER BY c.canonical_type, x.d DESC NULLS LAST, x.source_id, x.slug`;
+}
+
+/** The card details of the referring pages a group read kept (`$1` the page ids, as int[]). */
+export function referrerPageDetailsSql(): string {
+  return `SELECT id, title, left(${boundedBodyPrefixSql('pages')}, 4000) AS body,
+            CASE WHEN effective_date IS NULL THEN 'updated_at' ELSE COALESCE(effective_date_source, 'effective_date') END AS date_source,
+            trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged, frontmatter
+       FROM pages WHERE id = ANY($1::int[])`;
 }

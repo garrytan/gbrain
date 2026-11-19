@@ -17,7 +17,7 @@ import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
-import { pageEligibleSql } from '../src/core/eligibility/sql.ts';
+import { activationSuppressedSql, pageEligibleSql } from '../src/core/eligibility/sql.ts';
 import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 
 interface Pin {
@@ -184,6 +184,14 @@ const PINS: Pin[] = [
        ) x
       ORDER BY c.canonical_type, x.d DESC NULLS LAST, x.source_id, x.slug`],
   })),
+  {
+    from: 'src/core/mentions/referrers.ts:99 hydrate',
+    case: { method: 'readReferrerPageDetails', variant: 'default', run: e => e.readReferrerPageDetails([7, 3]) },
+    texts: () => [`SELECT id, title, left(${boundedBodyPrefixSql('pages')}, 4000) AS body,
+            CASE WHEN effective_date IS NULL THEN 'updated_at' ELSE COALESCE(effective_date_source, 'effective_date') END AS date_source,
+            trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged, frontmatter
+       FROM pages WHERE id = ANY($1::int[])`],
+  },
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },

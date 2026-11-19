@@ -7,7 +7,8 @@
 //! linkRelationshipKeysForPages, staleLinkRelationshipKeys, linkRelationshipKeysForOrigin,
 //! linkRelationshipKeysTouching, applyLinkTemporalRows, writeManualLinkTransitions,
 //! removeManualLinkTransitions, listRelationshipNoteRows, readEntityInboundEdges, edgeValidityCounts,
-//! listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, countSearchVectorRows.
+//! listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails,
+//! countSearchVectorRows.
 //!
 //! The state itself (stints, status, evidence hash) is built by the pure TypeScript builder in
 //! `src/core/link-relationships.ts` on every engine; the store only keeps rows.
@@ -561,6 +562,34 @@ pub struct ReferrerGroupRow {
     pub d: String,
     pub gtotal: u64,
 }
+
+/// `readReferrerPageDetails` input: the page ids to read.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReferrerPageDetailsInput {
+    pub ids: Vec<u64>,
+}
+
+/// One referring page's card details (`readReferrerPageDetails`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerPageDetailRow {
+    pub id: u64,
+    pub title: String,
+    /// `left(left(coalesce(compiled_truth, truth_lead), BOUNDED_PREFIX_BYTES), 4000)`: the first
+    /// 4000 code points of the body.
+    pub body: Option<String>,
+    /// `updated_at` with no effective date, else the effective date's source (`effective_date`
+    /// when none is recorded).
+    pub date_source: String,
+    pub trust_tier: String,
+    pub write_origin: Option<Value>,
+    /// `activationSuppressedSql('pages', 'pages')`.
+    pub flagged: bool,
+    pub frontmatter: Value,
+}
+
+/// `left(text, n)`: the first `n` code points.
+const REFERRER_BODY_CHARS: usize = 4000;
 
 /// What `countSearchVectorRows` returns.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1825,6 +1854,50 @@ impl Store {
             status,
             links: links.into_iter().collect(),
         })
+    }
+
+    /// `readReferrerPageDetails`: the title, bounded body, date source, trust fields, flag and
+    /// frontmatter of each page id that exists (soft-deleted pages too, as `id = ANY($1)` reads
+    /// them), once per id, in id order.
+    pub fn read_referrer_page_details(
+        &self,
+        input: &ReferrerPageDetailsInput,
+    ) -> Result<Vec<ReferrerPageDetailRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let ids: BTreeSet<u64> = input.ids.iter().copied().collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(page) = read_page_by_id(read, id)? else {
+                continue;
+            };
+            let body = match page.compiled_truth.as_deref() {
+                Some(text) => Some(text.to_string()),
+                None => crate::page_body::truth_lead(read, page.id)?,
+            };
+            let tier = TrustTier::stored(page.trust_tier.as_deref());
+            out.push(ReferrerPageDetailRow {
+                id: page.id,
+                body: body.map(|b| {
+                    b.char_indices()
+                        .nth(REFERRER_BODY_CHARS)
+                        .map_or(b.clone(), |(at, _)| b[..at].to_string())
+                }),
+                date_source: if page.effective_date_us.is_none() {
+                    "updated_at".to_owned()
+                } else {
+                    page.effective_date_source
+                        .clone()
+                        .unwrap_or_else(|| "effective_date".to_owned())
+                },
+                trust_tier: tier.as_str().to_owned(),
+                write_origin: page.write_origin.clone(),
+                flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
+                frontmatter: Value::Object(page.frontmatter.clone()),
+                title: page.title,
+            });
+        }
+        Ok(out)
     }
 
     /// `readReferrerGroupRows`: the live pages in `referrerSources` that link to a live target (other
