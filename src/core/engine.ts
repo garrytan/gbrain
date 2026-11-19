@@ -3576,9 +3576,6 @@ export interface BrainEngine {
   /** Which of `memberIds` are enabled members (with their groups) and which of `groupIds` exist; an empty list reads nothing. */
   readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows>;
 
-  /** Applied folder rules whose readers name any of `readers` (none when empty) and every pending prefix; throws on failure. */
-  readFolderAccess(readers: readonly string[]): Promise<FolderAccessRows>;
-
   /**
    * The folder-rule policy members access/policy.ts runs (engine-sql/access-policy.ts says what each reads or writes).
    * lockAccessPolicy, applyAccessRuleChanges, finishAccessRestamp and the revision writes belong inside one transaction.
