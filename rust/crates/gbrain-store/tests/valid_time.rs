@@ -430,7 +430,6 @@ fn pick_as(b: &Brain, page: i64, policy: Value) -> bool {
     b.pick_valid_time_edition(&args::<ValidTimePickQuery>(json!({
         "pageId": page, "asOf": "2026-02-01", "excludePrivate": true, "pinOrd": null,
         "inlineMaxBytes": 1_000_000, "policy": policy,
-        "pruneMaxBytes": 1_000_000, "pruneKept": 100,
     })))
     .unwrap()["row"]["visible"]
         .as_bool()
