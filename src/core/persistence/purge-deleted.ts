@@ -33,7 +33,24 @@ async function readRederiveHeldConcepts(engine: Pick<BrainEngine, 'executeRaw'>)
     AND EXISTS (SELECT 1 FROM needs_rederive n WHERE n.derived_table = 'pages' AND n.derived_id = p.id::text AND n.marked_at = p.deleted_at)`);
   return rows.map(row => Number(row.id));
 }
+
+/**
+ * #9653: the preview lines for the concepts an input purge hid: how many the next concept synthesis rebuilds, and one
+ * line per concept it keeps hidden with the reason (concept-rebuild.ts). `removes` (an explicit purge) says it purges
+ * the expired ones instead.
+ */
+export function rebuildNote(rebuild: PurgeSelection['rebuild'], removes = false): string {
+  if (!rebuild.held.length) return '';
+  const kept = new Set(rebuild.kept.map(k => `${k.source_id}/${k.slug}`));
+  const next = rebuild.held.filter(c => !kept.has(`${c.source_id}/${c.slug}`));
+  return [`${rebuild.held.length} concept(s) hidden by an input purge are kept out of the automatic purge.`,
+    ...(next.length ? [`${next.length} of them are rebuilt by the next concept synthesis that still finds at least two members for them (one with fewer stays hidden until an explicit purge): ${next.slice(0, 20).map(c => `${c.source_id}/${c.slug}`).join(', ')}${next.length > 20 ? ` and ${next.length - 20} more` : ''}.`] : []),
+    ...rebuild.kept.slice(0, 20).map(keptReason), ...(rebuild.kept.length > 20 ? [`...and ${rebuild.kept.length - 20} more kept hidden`] : []),
+    ...(removes ? ['This purge removes any of them listed above instead.'] : [])].join('\n');
+}
+
 import { scrubPurgedSlugs } from '../feedback/store.ts';
+import { keptReason, readHeldConcepts, type RebuildKept } from './concept-rebuild.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from './purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
@@ -248,6 +265,8 @@ export interface PurgeSelection {
   writers: Record<string, boolean>;
   /** GST-2689: the candidates that are parked origins the run's carry releases first (`forecast.release`). */
   released_origins: Array<{ source_id: string; slug: string }>;
+  /** #9653: the concepts an input purge hid, which an automatic purge keeps, and those the next synthesis will not rebuild, with why. */
+  rebuild: { held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] };
 }
 
 /**
@@ -265,7 +284,7 @@ export function purgeHoldsSql(page: string, source: string, released?: string): 
  * selection the run makes once its carry has run, so it counts the parked origins the carry releases and leaves out the
  * origins it parks; the run itself reads the parks as they are.
  */
-export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; forecast?: CarryForecast } = {}): Promise<PurgeSelection> {
+export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; forecast?: CarryForecast; model?: boolean } = {}): Promise<PurgeSelection> {
   const release = (opts.forecast?.release ?? []).map(origin => origin.id), hold = (opts.forecast?.hold ?? []).map(origin => origin.id);
   if (!await managedPersistenceEnabled(engine)) {
     const parked = (await recordedTombstones(engine, String(Math.max(0, Math.floor(olderThanHours))), release))
@@ -287,7 +306,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
       blocked: [...(opts.retryParked ? [] : parked.map(row => ({ source_id: row.source_id, slug: row.slug, code: 'purge_parked', reason: parkedReason(row.park) }))),
         ...held.map(row => syncDeleteHeld(row, olderThanHours))],
       parked: parked.map(row => ({ source_id: row.source_id, slug: row.slug, failures: row.park.failures, code: row.park.code, retried: opts.retryParked === true })),
-      inactive: 0, held: held.length, sync_unreviewed: opts.automatic ? 0 : unreviewed.filter(row => row.expired).length, writers: {} };
+      inactive: 0, held: held.length, sync_unreviewed: opts.automatic ? 0 : unreviewed.filter(row => row.expired).length, writers: {}, rebuild: await readHeldConcepts(engine, opts.model ?? true) };
   }
   const hours = Math.max(0, Math.floor(olderThanHours));
   const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; cutoff: string; deleted_us: string }>(
@@ -300,7 +319,8 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
   const unreviewed = new Set(rows.length ? (await readUnreviewedSyncTombstones(engine, hours)).map(row => row.id) : []);
   const rederive = new Set(rows.length && opts.automatic ? await readRederiveHeldConcepts(engine) : []);
-  const selection: PurgeSelection = { managed: true, count: 0, slugs: [], candidates: [], blocked: [], parked: [], inactive: 0, held: 0, sync_unreviewed: 0, writers: {}, released_origins: [] };
+  const selection: PurgeSelection = { managed: true, count: 0, slugs: [], candidates: [], blocked: [], parked: [], inactive: 0, held: 0, sync_unreviewed: 0, writers: {}, released_origins: [],
+    rebuild: await readHeldConcepts(engine, opts.model ?? true) };
   for (const { id, ...row } of rows) {
     const writer = states.get(row.source_id);
     const active = writer?.state !== 'recovery_required';
