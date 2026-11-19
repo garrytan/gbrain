@@ -190,7 +190,7 @@ async function pool<T, R>(items: T[], n: number, fn: (item: T, i: number) => Pro
 // ---- brains --------------------------------------------------------------------------------------------------
 
 async function pgExec(sql: string): Promise<void> {
-  const { default: postgres } = await import('postgres');
+  const { default: postgres } = await import('#postgres');
   const db = postgres(PG_URL!, { max: 1, onnotice: () => undefined });
   try { await db.unsafe(sql); } finally { await db.end(); }
 }
