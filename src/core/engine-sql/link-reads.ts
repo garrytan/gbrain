@@ -206,20 +206,18 @@ export interface EntityInboundEdgeRow {
  * columns in the `world` scope with `excludePrivate`, else `all` (the entity card's incoming edges).
  */
 export async function readEntityInboundEdges(exec: LegacyUnscopedRead, slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }): Promise<EntityInboundEdgeRow[]> {
-  const inboundPrivacy = (opts.excludePrivate
-    ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
-    : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${opts.originSameSource ? ' AND lo.source_id = $2' : ''}))`;
-  return exec.executeRaw<EntityInboundEdgeRow>(
-        `SELECT f.slug AS from_slug, l.link_type, l.context${TEMPORAL_LINK_SELECT_SQL}
+  const privacy = opts.excludePrivate
+    ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('f'))} AND ${trustedSql(privateLinkOriginFilterForCaller('l'))}`
+    : sqlFragment``;
+  const originSource = opts.originSameSource ? sqlFragment` AND lo.source_id = ${sourceId}` : sqlFragment``;
+  return rows<EntityInboundEdgeRow>(exec, sqlFragment`SELECT f.slug AS from_slug, l.link_type, l.context${trustedSql(TEMPORAL_LINK_SELECT_SQL)}
            FROM links l
            JOIN pages f ON f.id = l.from_page_id
            JOIN pages t ON t.id = l.to_page_id
-           ${temporalLinkJoinSql('l', opts.excludePrivate)}
-          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $2 AND f.deleted_at IS NULL
-            AND COALESCE(l.link_source, '') <> 'mentions'${inboundPrivacy}
-          ORDER BY l.id`,
-        [slug, sourceId],
-      );
+           ${trustedSql(temporalLinkJoinSql('l', opts.excludePrivate))}
+          WHERE t.slug = ${slug} AND t.source_id = ${sourceId} AND f.source_id = ${sourceId} AND f.deleted_at IS NULL
+            AND COALESCE(l.link_source, '') <> 'mentions'${privacy} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${originSource}))
+          ORDER BY l.id`);
 }
 
 /**

@@ -111,12 +111,14 @@ const PINS: Pin[] = [
   },
   {
     // readAka ran `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 ORDER BY alias_norm`. It now
-    // sends the sibling statement with a one-slug array: the same rows in the same order (one slug, so no tie), the
-    // one statement in this file that is not byte for byte.
+    // sends the sibling statement with a one-slug array: the same rows in the same order (one slug, so no tie).
     from: 'src/core/verbs/entity-card.ts:783 readAka (one slug)',
     case: { method: 'readEntityAliasRows', variant: 'aka', run: e => e.readEntityAliasRows('default', ['people/alice-example']) },
     texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
   },
+  // The caller bound the source once as $2 and named it three times (four for a remote read). The member binds it at
+  // each use (engine-sql numbers every value once: check-engine-sql-dynamic), so the source is $2, $3 and $4: the same
+  // value at each place, so the same rows in the same order.
   ...([[false, false], [true, true]] as const).map(([excludePrivate, remote]): Pin => ({
     from: 'src/core/verbs/entity-card.ts:617 assembleCard incoming edges',
     case: {
@@ -132,10 +134,10 @@ const PINS: Pin[] = [
            LEFT JOIN link_relationships lr_t ON lr_t.from_page_id = l.from_page_id
       AND lr_t.to_page_id = l.to_page_id AND lr_t.link_type = l.link_type
       AND lr_t.scope = '${excludePrivate ? 'world' : 'all'}'
-          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $2 AND f.deleted_at IS NULL
+          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $3 AND f.deleted_at IS NULL
             AND COALESCE(l.link_source, '') <> 'mentions'${excludePrivate
     ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
-    : ''} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))
+    : ''} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $4' : ''}))
           ORDER BY l.id`],
   })),
   {

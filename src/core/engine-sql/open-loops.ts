@@ -10,6 +10,8 @@
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { ListLoopsOpts, LoopStatus, OpenLoopUpsert } from '../loops/loops-store.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
+import { rows } from './search-reads.ts';
 
 /** What `upsertOpenLoop` resolves: the row id, whether the row is new, and whether the write landed. */
 export interface OpenLoopUpsertResult { id: number; created: boolean; applied: boolean }
@@ -122,16 +124,13 @@ export interface EntityOpenLoopRow {
  * parameters the caller ran; `limit` is the integer literal it interpolated.
  */
 export async function readEntityOpenLoops(exec: LegacyUnscopedRead, slug: string, sourceId: string, limit: number): Promise<EntityOpenLoopRow[]> {
-  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error(`readEntityOpenLoops: limit must be a positive integer, got ${limit}`);
-  return exec.executeRaw<EntityOpenLoopRow>(
-    `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+  if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 1) throw new Error(`readEntityOpenLoops: limit must be a positive integer, got ${limit}`);
+  return rows<EntityOpenLoopRow>(exec, sqlFragment`SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
        FROM open_loops
-       WHERE status = 'open' AND counterparty_slug = $1
-         AND COALESCE(counterparty_source_id, source_id) = $2
+       WHERE status = 'open' AND counterparty_slug = ${slug}
+         AND COALESCE(counterparty_source_id, source_id) = ${sourceId}
        ORDER BY last_activity_at DESC
-       LIMIT ${limit}`,
-    [slug, sourceId],
-  );
+       LIMIT ${trustedSql(`${limit}`)}`);
 }
 
 export async function listOpenLoops(exec: LegacyUnscopedRead, opts: ListLoopsOpts = {}): Promise<OpenLoopDbRow[]> {
