@@ -1152,12 +1152,18 @@ mod tests {
     fn a_slug_move_keeps_the_page_tier_whatever_the_mover_declares() {
         let store = crate::test_support::store();
         let declare = |tier: &str| {
-            let names = ["gbrain.write_trust_tier", "gbrain.write_trust_promotion"].map(String::from);
-            store.apply_write_trust(&names, &[tier.to_string(), tier.to_string()]).unwrap();
+            let names =
+                ["gbrain.write_trust_tier", "gbrain.write_trust_promotion"].map(String::from);
+            store
+                .apply_write_trust(&names, &[tier.to_string(), tier.to_string()])
+                .unwrap();
         };
         let tier = |slug: &str| {
             let read = store.read().unwrap();
-            read_page(&*read, "default", slug).unwrap().unwrap().trust_tier
+            read_page(&*read, "default", slug)
+                .unwrap()
+                .unwrap()
+                .trust_tier
         };
         let input = crate::pages::PageInput {
             page_type: "note".into(),
