@@ -21,6 +21,7 @@ import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
 import { admitWrite, admitWriteInTransaction, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { assertRefusalBreakerClosed } from './refusal-breaker.ts';
 import { retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
+import { outstandingAdmissionWindow } from './limits.ts';
 import { resolveAdmissionOrigin } from './admission-origin.ts';
 import { declareDurablePersistence } from './protocol.ts';
 import { CANONICAL_FILE_MISSING } from './publication-failure.ts';
@@ -279,7 +280,8 @@ export async function publishMaintenancePage(engine: BrainEngine, authority: Mai
 
 /**
  * G6: one run's maintenance pages as one batch. Every page is checked, then every request is admitted in one transaction
- * before any is waited on, each carrying the batch id, so the owner claims them as one contiguous run and publishes them
+ * before any is waited on (#9708: a batch longer than outstandingAdmissionWindow goes in parts of that size, each
+ * settled before the next is admitted, so a batch larger than the outstanding-request cap drains instead of being refused), each carrying the batch id, so the owner claims them as one contiguous run and publishes them
  * in groups of up to PAGE_BATCH_GROUP_MAX on Postgres (journal.ts publicationGroupKey: an independent group, one page's
  * failure never cancels another). The batch id is derived from its pages, so a rerun over the same pages and revisions
  * replays the same requests; a caller that names each page's request id passes a `batch` id that a rerun over a different
@@ -291,6 +293,12 @@ export async function publishMaintenancePages(engine: BrainEngine, authority: Ma
   pages: Array<{ slug: string; content: string } & MaintenancePageOptions>, opts: { batch?: string } = {}): Promise<Array<{ receipt: Record<string, unknown> } | { error: unknown }>> {
   if (new Set(pages.map(page => page.slug)).size !== pages.length) throw new TypeError('A maintenance batch publishes each page once.');
   const batch = opts.batch ?? digest(['maintenance-batch-v1', authority.writer.sourceId, pages.map(page => [page.slug, page.expectedRevision, sha256(page.content)])]);
+  const window = pages.length > 1 ? await outstandingAdmissionWindow(engine) : 1;
+  if (pages.length > window) {
+    const parts: Array<{ receipt: Record<string, unknown> } | { error: unknown }> = [];
+    for (let at = 0; at < pages.length; at += window) parts.push(...await publishMaintenancePages(engine, authority, pages.slice(at, at + window), { batch }));
+    return parts;
+  }
   const prepared: Array<{ prior: WriteRequest } | { admission: WriteAdmission } | { error: unknown }> = [];
   for (const page of pages) {
     const { intent, requestId } = maintenancePageRequest(authority, page.slug, page.content, page, batch);

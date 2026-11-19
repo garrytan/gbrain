@@ -10,6 +10,109 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.741.0] - 2026-11-19
+
+**You can now confirm or reject the duplicate people and companies `gbrain dedupe --preview` finds, and a confirmed group counts as one person in rankings and enrichment.**
+
+### Added
+- `gbrain dedupe confirm` prints the groups you can confirm, clean ones first, each with what differs between the pages (employer, title, city, birth year) and, for a group that shares only an email, phone, X handle or domain, a hint line with how many other pages carry the value. `gbrain dedupe confirm <group-id>` links one group as one identity, and `gbrain dedupe confirm --clean --expect <hash>` links every clean group in the list you read and refuses if the list changed. A group that shares only contact keys is confirmed on its own.
+- `gbrain dedupe reject <group-id>` records that the pages are different people: the pair is never proposed again, a confirmed group is unlinked, and two pages in one source also get `distinct_from`.
+- Your decisions are kept in `.gbrain/identity/` in the default source's repository, committed through `gbrain git commit-push` before anything reaches the database, so a database rebuilt from git keeps them; a brain whose default source has no repository keeps them in the database. A decision file names each member's source and slug, so a decision about pages in several sources writes every member's source and slug into the default source's repository, where anyone who reads that repository can see them. On such a brain `confirm` and `reject` refuse a group with a page in an owner-only source (archived ones included) or a page outside the default source that not every reader of it may read (`dedupe_group_not_confirmable`), and the bulk `--clean` list leaves those groups out; a brain with no repository records them in the database. `reconcile` never rewrites a committed decision from the database: git wins. `confirm --join` refuses to put two pages recorded as different people in one identity. `gbrain dedupe reconcile` moves decisions the database holds alone into git, and `gbrain doctor` reports when the two disagree.
+- Six new error codes: `dedupe_group_unknown`, `dedupe_group_not_confirmable`, `identity_member_in_other_group`, `dedupe_page_changed`, `identity_link_owned_by_dedupe` and `dedupe_decision_store_mismatch`.
+
+### Changed
+- `rank_entities` counts a confirmed group once, on its main page, and enrichment tiering counts the mentions in every source of a confirmed group. Groups linked by hand are unchanged.
+- `entity_identity_link` and `entity_identity_unlink` refuse to move or remove a page that `gbrain dedupe confirm` linked; use `gbrain dedupe reject`.
+
+<!-- behavior-change: dedupe_confirmed_counts_once -->
+
+**Three fixes for duplicate-people decisions: `confirm --join` on an already confirmed group, a sync that could write an older decision back, and a doctor fix that never cleared.**
+
+### Fixed
+- `gbrain dedupe confirm <group-id> --join <entity>` no longer crashes with a TypeError when the group is already confirmed and the joined identity holds two pages recorded as different people. It says the group is already confirmed and writes nothing.
+- A sync that read the duplicate decisions before a newer `confirm` or `reject` was committed no longer writes the older verdict back into the database. Decisions are applied one at a time, and a sync whose read is out of date reads again.
+- `gbrain doctor` offers `gbrain dedupe reconcile` only when reconcile can clear what it found. A confirmed group with a missing page, a page that sits in another identity group, or a decision file that does not validate now gets its own remedy (restore the page, `gbrain dedupe reject`, `gbrain entity-identity-unlink`, or fix the file), instead of a reconcile that leaves the warning in place.
+
+**`gbrain dream --phase patterns` no longer fails on every run when a managed brain has more unverified pattern pages than its write cap, two smaller bugs from outside reports are fixed, and a flaky performance test is steadier.**
+
+### Fixed
+- On a managed brain, `gbrain dream --phase patterns` published every leftover pattern page in one write batch. A backlog larger than the brain's outstanding-write cap was refused at the cap, nothing was saved, and the phase failed the same way on every run. Long maintenance batches are now written in parts that each fit inside the cap, so the backlog drains in one run. The cap and its default are unchanged. Reported by @superyuriy, first fixed by @Masashi-Ono0611 (#9708).
+- A `--json` command run from a directory whose `.env` sets a protected key now prints one JSON document. It used to print a second `command_failed` document after the real one. Reported and first fixed by @Masashi-Ono0611 (#9717).
+- The thin-client launcher that `gbrain connect --install` writes from a source checkout now says how to restore missing dependencies (`bun install --frozen-lockfile --ignore-scripts` in that checkout) instead of printing a module-not-found stack. Reported by @Kkkkkuro, first fixed by @Masashi-Ono0611 (#9665).
+- The entity-card performance test for a company with 10,000 links no longer fails on busy CI runners. It now measures only the work that grows with the number of referrers and holds that to a tighter limit, so a slow read still fails it.
+
+**Three nightly test flakes are fixed, and five small bugs, three of them from outside reports.**
+
+### Fixed
+- `gbrain reindex --synopsis` now sweeps pages that choose the synopsis tier in their own frontmatter (`contextual_retrieval: per_chunk_synopsis`) on a source that trusts frontmatter. It used to say "Nothing to do". Reported and first fixed by @Masashi-Ono0611 (#9683).
+- An Ollama server that answers "connection refused" while its model runner restarts is now a retryable error instead of a permanent one. Reported by @benswinney, first fixed by @Masashi-Ono0611 (#9696).
+- On a managed brain, `add_link` no longer records a Chronicle decision for a page with no automatic extraction pending. Reported by @frxiaobei, first fixed by @Masashi-Ono0611 (#9636).
+- `gbrain auth rescope` shows the hint about reading shared sources only when shared reads were off before and after and the key still reads a source.
+- A held fact move's planning reads stop at the move's deadline, including while they wait for a database connection.
+- `bun run regen:all` now rewrites the doctor hot-checks golden.
+- Three tests that failed on busy CI runners (the stdio boot deadline, the notifier owner lease and the held-move timing bound) no longer depend on wall-clock speed.
+
+### Fixed
+- `gbrain dedupe --preview` no longer reads a GitHub address under a page GitHub runs itself (such as `github.com/enterprises/...`, `github.com/watching` or `github.com/customer-stories/...`), or the `ghost` account GitHub gives deleted users, as somebody's login. Two pages that both carried such an address could be listed as one person or company; now that value is not used as a key.
+
+**The brain owner's own remote credential now reads private fact rows, held rows, graph-hop context and every take holder the way the local CLI does.**
+
+<!-- behavior-change: owner_remote_reads_protected_gst3058 -->
+
+### Fixed
+- A direct remote call from a credential bound to the brain owner, speaking for itself with no room declared, reads as the local CLI does. get_page and fetch give it the Facts fence as stored, and the Takes fence too when the credential carries no holders list; a segmented page's `view: 'markdown'` reads as for the local CLI then. A credential with a list reads takes through takes_list, as before.
+- With no holders list that call reads every holder wherever a read filters takes by holder, among them takes_list, takes_search, takes_scorecard, takes_calibration, search, query, recall, delta, think and synthesize; synthesize now reads world takes only for a non-owner with no list.
+- traverse_graph hops give that call the stored edge context; one with a holders list still skips evidence pages that hold takes.
+- Both HTTP transports give an owner-bound credential with no holders list every holder; every other credential keeps `['world']`.
+- Every other context reads as before: stdio, on-behalf-of audiences, attested actors, agent jobs and group chats (a declared room), until GST-3066. An agent job now reads its client's stored takes holders list, else world takes.
+- With a room declared, a get_page whole-body read or `view: 'markdown'` whose returned body carries rows a world-only read strips is marked `room_access: {readable: false, reason: 'private_label'}`. The mark is per page; held rows inside read-view windows and in a segmented page's markdown view are not marked, as before (GST-3066). The local CLI's `--room` marks a page whose body carries private rows, held rows or takes the same way.
+- Known limit: an owner's edit or delete of a private Facts row through remote put_page does not stick yet (the old row is restored); use the local CLI until the follow-up lands.
+
+**Calls imported before calls were kept to their attendees can now be fixed by preview, then approval.**
+
+### Changed
+- `gbrain repair visibility --propose` now covers imported calls with no reader list: each one is proposed for the brain owner plus the teammates its `Attendees:` or `Participants:` header names, matched exactly as `gbrain import --calls` matches them, owner first. Names that match no enabled member are listed beside the proposal instead of holding the call back, and a call with no list is proposed for the owner only. With no owner set, calls are listed with the `gbrain access owner set` command and nothing is proposed. Nothing changes until the admin applies a printed command with its `--expect` hash; the owner reads every call before and after.
+
+**GBrain Helper on a Mac can now send a one-to-one iMessage for the owner's agent; upgrading gbrain installs nothing on the Mac, and sending stays off until the owner turns it on at the Mac with Touch ID.**
+
+### Added
+- `POST /v1/imessage/send` on the helper's tailnet listener sends one iMessage to one phone number or email address. Each request is signed with an Ed25519 send key, carries an `Idempotency-Key`, and only addresses listed in `listen.tailnet.allowed_peers` may call it. The answer says `sent`, `unknown` (Messages took it but didn't confirm in time) or a refusal, with `retryable` and `side_effects`, so an agent knows whether a retry could send twice. A retry with the same key never sends again.
+- Sending is off until the owner runs `gbrain-apple-helper send-setup` at the Mac and confirms with Touch ID. Adding a send key (`send-key add`) and raising a limit (`send-limits set`) also need Touch ID. `send-setup --off` or `send.enabled: false` in the config stops the next send without a restart, and once the helper has seen it off, turning sending on again needs Touch ID.
+- Limits on by default: 5 texts a minute, 30 an hour and 60 a day, 10 an hour to one recipient, and 3 a day to people never texted one-to-one before. A banner shows on the Mac for every send.
+- Every attempt and outcome goes to a send log on the Mac (mode 0600). After 90 days each line keeps only its time, outcome, code and a short hash of the recipient. `gbrain-apple-helper send-audit show --redacted` prints the redacted form.
+- `src/core/apple/send-sign.ts` signs send requests the way the helper checks them, tested against shared vectors.
+
+**`embedding_disabled` now stops most of the routes that still sent text to the embedding provider; two (a contextual reindex queued before the setting was turned on, and a `reindex-multimodal` run already in progress) are closed by #9754.**
+
+<!-- behavior-change: embedding_disabled_every_route_9715 -->
+
+### Fixed
+- With `embedding_disabled` set (in the config file or the database), the synthesize phase-end embed, the safe-chunks, contextual-mode and secret-spans repairs, the `doctor --remediate` embed step, imports run by derived writers (concepts, patterns, enrichment), code and image imports, extract_facts' fence facts, `reindex-code`, the grounding check and brainstorm's question still sent text to the embedding provider. They now send nothing. `gbrain embed` and its sync, connector and auto-fix callers also refuse when only the database says embedding is off, and `gbrain reindex-multimodal` refuses with the same enable-command message. If the database setting can't be read, these routes now treat embedding as off instead of on, and `gbrain serve` stops retrying its background embed on such a brain. Reported by @DaCal90 (#9715).
+- Not covered yet: a contextual reindex queued before the setting was turned on, and a `reindex-multimodal` run already in progress; both are fixed in a later release.
+
+**Turning on `embedding_disabled` now also stops reindex work that was already queued or running, and an unreadable setting keeps work pending instead of marking it done.**
+
+<!-- behavior-change: embedding_disabled_rechecks_9715 -->
+
+### Fixed
+- A contextual reindex job queued before `embedding_disabled` was set now sends nothing when the worker runs it. A job already running checks the setting again before each embedding send and each per-chunk synopsis call, and a `gbrain reindex-multimodal` run already in progress stops before its next batch with the enable-command message. When the database setting can't be read, the contextual reindex job, the `doctor --remediate` embed step and `gbrain serve`'s background embed send nothing, and keep the work pending to try again later instead of counting it as done. Reported by @DaCal90 (#9715).
+
+### Changed
+- Contributors: `/ship`'s reviewers now leave the Rust store's three PostgreSQL search goldens (`english_stem.tsv`, `ts_parse.json` and `tsearch.json`) out of their diffs, as they already do for docs and other generated goldens. Those files are about 1.7 MB of generated test data, and `regen-search-goldens.ts` checks every output column against PostgreSQL 18.6. Nothing changes for gbrain users.
+
+**The experimental Rust engine now stores and serves config, sources, tags, pages (including pages over 1 MiB stored in segments), versions, chunks, keyword search, links, graph and timeline from a brain directory, but nothing selects it yet; PGLite and Postgres brains are unchanged.**
+
+### Added
+- Opening a Rust engine now opens the brain directory through the addon, and closing it closes the store. A second engine on the same directory refuses `rust_store_locked`, and a directory the store cannot read refuses `rust_store_unreadable` with a reason (`format_unknown`, `store_corrupt` or `store_io`). `gbrain errors <code>` explains each.
+- The Rust engine serves these members on that store with the results PGLite gives: config, sources, tags, pages (including soft delete and restore), page versions, chunks, links, graph traversal and timeline. It reports the `config`, `sources`, `tags` and `schema` capabilities, the ones it now serves completely. The store keeps each tag's claim (`added` or `frontmatter`), so an import prunes only the tags the import added. A page over 1 MiB is stored in segments as on PGLite; `sweepSegments` still refuses.
+- Keyword search runs on the store with BM25. Its scores and tie order are not the same as PGLite's. It hides the pages PGLite hides, including soft-deleted pages, archived sources, and pages marked with the `quarantine` or `pinned_question` frontmatter key. `docs/ENGINES.md` says what matches and what does not.
+- The engine parity suite has an opt-in Rust arm. Run it with `GBRAIN_TEST_RUST_ARM=1` after `bun run rust:build`. A case that reaches a member or an option the Rust engine refuses must end on that refusal. Every other case must match PGLite, or differ only as a row of `test/rust-expected-divergence/` names; a thrown error never passes. Without the flag the suite runs as before.
+
+### Changed
+- When the Rust engine cannot keep an option or an input, or cannot answer the way PGLite does, it refuses `engine_capability_missing` and writes nothing instead of dropping it. This covers a chunk that carries a vector (vectors are refused with that typed code for now and arrive in a later release; until then a Rust brain has no vector search), a config that names an embedding column, a `putPage` with a `source_path` into a source-root source below its repository root, `listPages` with `listColumnsOnly`, a `resolveSlugs` with no exact match (PGLite would try a fuzzy match), a `getChunks` over several sources, a read of unsealed chunks or embeddings, a keyword search with an offset, `where` or a date window.
+- The Rust `putPage` writes the page alone and `upsertChunks` does not seal, as on PGLite; only `sealChunks` seals. An unscoped `softDeletePage` or `restorePage` acts on every source, as on PGLite. A write already running in the native store cannot be cancelled by an `AbortSignal` (it is checked before the write starts), which PGLite does differently.
+- `transaction`, `transactionDirect`, `lockPageKeys` and the belief ledger still refuse on the Rust engine. `docs/ENGINES.md` says why.
+
 ## [0.60.740.0] - 2026-11-18
 
 **An agent job a starter client submits is now confined to the starter tool surface, so its tool calls cannot read soft-deleted pages either.**

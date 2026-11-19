@@ -39,6 +39,12 @@ public enum Interfaces {
     }
 }
 
+extension Interfaces {
+    public static func tailnetAddress(_ interfaces: [UInt32: String] = ipv4()) -> UInt32? {
+        interfaces.filter { IPv4.isTailnet($0.key) && $0.value.hasPrefix("utun") }.keys.sorted().first
+    }
+}
+
 public enum BindPolicy {
     public static func problem(host: UInt32, interfaces: [UInt32: String]) -> String? {
         guard IPv4.isTailnet(host) else { return "host \(IPv4.string(host)) is not a Tailscale address (100.64.0.0/10)" }
