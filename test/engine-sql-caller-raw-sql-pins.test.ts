@@ -302,6 +302,44 @@ const PINS: Pin[] = [
     case: { method: 'listSourceIds', variant: 'default', run: e => e.listSourceIds() },
     texts: ['SELECT id FROM sources ORDER BY id COLLATE "C"'],
   },
+  ...([
+    'src/core/mentions/pass.ts:148 sourcesInScope', 'src/core/access/open-pages.ts:167 openPages', 'src/core/link-single-value.ts:82 previewSingleValue',
+    'src/commands/doctor/skill-checks.ts:257 listSourceIds',
+  ]).map((from): Pin => ({
+    // Not the caller's text: the caller sent 'SELECT id FROM sources ORDER BY id'; COLLATE "C" makes Postgres give byte order.
+    from: `${from} (at f579f07cfc), plus COLLATE "C"`,
+    case: { method: 'listSourceIds', variant: 'default', run: e => e.listSourceIds() },
+    texts: ['SELECT id FROM sources ORDER BY id COLLATE "C"'],
+  })),
+  {
+    // Not the caller's text: the caller sent 'SELECT id FROM sources' with no order; listSourceIds adds ORDER BY id COLLATE "C".
+    from: 'src/cli/enforced-member.ts:178 (at f579f07cfc), plus ORDER BY id COLLATE "C"',
+    case: { method: 'listSourceIds', variant: 'default', run: e => e.listSourceIds() },
+    texts: ['SELECT id FROM sources ORDER BY id COLLATE "C"'],
+  },
+  ...(['src/core/context/corpus-source.ts:250 soleSourceId', 'src/commands/sweep.ts:230', 'src/commands/doctor/checks/memory-writeback.ts:132 corpusSourceHoldProblem'])
+    .map((from): Pin => ({
+      from: `${from} (at f579f07cfc)`,
+      case: { method: 'readSoleSourceId', variant: 'default', run: e => e.readSoleSourceId() },
+      texts: ['SELECT id FROM sources ORDER BY id LIMIT 2'],
+    })),
+  {
+    // Not the caller's text: the caller's id tie-break had no COLLATE "C", so a Postgres server with a linguistic locale
+    // picked another first id than PGLite and the Rust engine when no `default` source exists.
+    from: 'src/commands/doctor/checks/origin-twins.ts:35 (at f579f07cfc), plus COLLATE "C" on the id tie-break',
+    case: { method: 'readFirstSourceId', variant: 'default', run: e => e.readFirstSourceId() },
+    texts: [`SELECT id FROM sources ORDER BY (id = 'default') DESC, id COLLATE "C" LIMIT 1`],
+  },
+  ...(['src/core/persistence/deactivation.ts:298', 'src/core/persistence/pre-activation-release.ts:80']).map((from): Pin => ({
+    from: `${from} (at f579f07cfc)`,
+    case: { method: 'lockAllSourceRows', variant: 'update', run: e => e.lockAllSourceRows('update') },
+    texts: ['SELECT id FROM sources ORDER BY id FOR UPDATE'],
+  })),
+  {
+    from: 'src/core/persistence/skill-activation.ts:56 (at f579f07cfc)',
+    case: { method: 'lockAllSourceRows', variant: 'share', run: e => e.lockAllSourceRows('share') },
+    texts: ['SELECT id FROM sources ORDER BY id FOR SHARE'],
+  },
   {
     from: 'src/core/mentions/referrers.ts:414 hydrateRecords (at 97bf5544dd)',
     case: { method: 'readReferrerRecordPages', variant: 'default', run: e => e.readReferrerRecordPages([7, 3]) },

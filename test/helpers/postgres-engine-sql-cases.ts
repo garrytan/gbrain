@@ -498,7 +498,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
-  'listStaleSyncSourceIds': 'sources', 'listSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
+  'listStaleSyncSourceIds': 'sources', 'listSourceIds': 'sources', 'readSoleSourceId': 'sources', 'readFirstSourceId': 'sources', 'lockAllSourceRows': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
   // files
@@ -974,6 +974,9 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
   ...variants('listStaleSyncSourceIds', [['default', (e) => e.listStaleSyncSourceIds()]]),
   ...variants('listSourceIds', [['default', (e) => e.listSourceIds()]]),
+  ...variants('readSoleSourceId', [['default', (e) => e.readSoleSourceId()]]),
+  ...variants('readFirstSourceId', [['default', (e) => e.readFirstSourceId()]]),
+  ...variants('lockAllSourceRows', [['update', (e) => e.lockAllSourceRows('update')], ['share', (e) => e.lockAllSourceRows('share')]]),
   ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
   ...variants('lockSourceRow', [['default', (e) => e.lockSourceRow(SRC)]]),
   ...variants('readSourceChunkerVersion', [['default', (e) => e.readSourceChunkerVersion(SRC)]]),

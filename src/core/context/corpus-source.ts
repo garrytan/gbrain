@@ -247,8 +247,7 @@ export type CorpusFileSource =
   | { ok: false; reason: CorpusSourceHold };
 
 async function soleSourceId(engine: BrainEngine): Promise<string | null> {
-  const ids = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
-  return ids.length === 1 ? ids[0].id : null;
+  return engine.readSoleSourceId();
 }
 
 /**

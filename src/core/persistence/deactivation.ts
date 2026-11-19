@@ -295,7 +295,7 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
           { fix: readFix('Shows whether managed persistence is enabled, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] }) });
       }
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
-      await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR UPDATE');
+      await tx.lockAllSourceRows('update');
       await opts.hooks?.afterLocks?.();
       const inside = await deactivationBlockers(tx);
       if (inside.length) throw blockedError(inside);

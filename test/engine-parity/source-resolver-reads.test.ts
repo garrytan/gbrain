@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
  * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`, `readSourceRow`,
- * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`, `listSourceIds`) that `src/core/source-resolver.ts`
+ * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`, `listSourceIds`, `readSoleSourceId`, `readFirstSourceId`, `lockAllSourceRows`) that `src/core/source-resolver.ts`
  * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -16,6 +16,9 @@
  *    sync preflight reads the source's stamped chunker version, null before the first stamp; a source's page count keeps
  *    to that source and counts soft-deleted pages only when asked; `sources add` inserts a row with its name, path and
  *    config (a key set to undefined is dropped), and a taken id or name throws and leaves the first row as it was.
+ *    Every source id lists in byte order, archived ones too, on any Postgres locale; the sole-source read answers the
+ *    only id or null; the first-source read answers `default`, else the lowest id in byte order; the all-rows lock
+ *    leaves the rows as they were.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
@@ -26,7 +29,8 @@
  *    check then misjudge the source); a chunker-version read of the wrong column (every sync then reimports in full); a
  *    page count that leaks across sources with a shared id prefix or ignores the soft-delete filter (`sources list` and
  *    `sources remove` then report the wrong count); an insert that overwrites a taken id or name, or double-encodes
- *    the config into a JSON string (every config key then reads as absent).
+ *    the config into a JSON string (every config key then reads as absent); a source-id list or first-source read in
+ *    the server locale (an en_US.utf8 Postgres then orders `a-c` after `ab` and `B` after `a_b`, unlike PGLite).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
@@ -312,6 +316,39 @@ describe('engine parity: source-resolution reads', () => {
     const ids = (await engine.listSourceIds()).filter(id => common.includes(id));
     expect(ids).toEqual(common);
     return ids;
+  });
+  parityTest('readSoleSourceId answers the only source, and null once a second one exists', { methods: ['readSoleSourceId'] }, async (engine, backend) => {
+    const alone = await engine.readSoleSourceId();
+    await createSource(engine, backend, 'a-c');
+    await archiveSource(engine, backend, 'a-c');
+    const two = await engine.readSoleSourceId();
+    expect([alone, two]).toEqual(['default', null]);
+    return [alone, two];
+  });
+
+  parityTest('readFirstSourceId answers default first, else the lowest id in byte order whatever the server locale', { methods: ['readFirstSourceId'] }, async (engine, backend) => {
+    for (const id of ['ab', 'a0', 'a-c']) await createSource(engine, backend, id);
+    const first = await engine.readFirstSourceId();
+    expect(first).toBe('default');
+    if (backend !== 'rust') {
+      // Only a SQL brain can drop `default`. en_US.utf8 skips the hyphen and answers a0; byte order answers a-c.
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'default'`);
+      expect(await engine.readFirstSourceId()).toBe('a-c');
+      await engine.executeRaw('DELETE FROM sources');
+      expect(await engine.readFirstSourceId()).toBeNull();
+    }
+    return first;
+  });
+
+  parityTest('lockAllSourceRows locks every source row inside a transaction and leaves the rows unchanged', { methods: ['lockAllSourceRows', 'listSourceIds'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'a-c');
+    const seen = await engine.transaction(async tx => {
+      await tx.lockAllSourceRows('update');
+      await tx.lockAllSourceRows('share');
+      return tx.listSourceIds();
+    });
+    expect(seen).toEqual(['a-c', 'default']);
+    return seen;
   });
 });
 

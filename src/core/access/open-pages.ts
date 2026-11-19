@@ -164,7 +164,7 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
     const { reads, privateSources } = await memberReads(engine, owner, opts.planned);
     const reading = [...reads.values()].filter(s => s.size > 0);
     const readSources = [...new Set(reading.flatMap(s => [...s]))].sort();
-    const sources = readSources.length ? readSources : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(s => s.id);
+    const sources = readSources.length ? readSources : await engine.listSourceIds();
     if (sources.length) await readHonorAliases(engine);
     const relaxed = sources.length ? await remotePrivacyRelaxed(engine) : false;
     const scope: OpenScope = { owner, members: { reading: reading.length, counted: reads.size }, sources, relaxed, privateSources: [...privateSources].sort() };

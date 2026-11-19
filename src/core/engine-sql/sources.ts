@@ -131,6 +131,27 @@ export async function listSourceIds(exec: LegacyUnscopedRead): Promise<string[]>
   return rows.map(r => r.id);
 }
 
+/** The only source's id, or null when the brain has none or more than one (corpus-source.ts, sweep, doctor memory_writeback). Unscoped on master. */
+export async function readSoleSourceId(exec: LegacyUnscopedRead): Promise<string | null> {
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
+  return rows.length === 1 ? rows[0]!.id : null;
+}
+
+/** `default` when it exists, else the lowest id in byte order, else null (doctor origin_twins). Unscoped on master. */
+export async function readFirstSourceId(exec: LegacyUnscopedRead): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY (id = 'default') DESC, id COLLATE "C" LIMIT 1`);
+  return row?.id ?? null;
+}
+
+/**
+ * Locks every source row (`FOR UPDATE`, or `FOR SHARE`) until the caller's transaction ends (persistence deactivation,
+ * pre-activation release, skill activation).
+ */
+export async function lockAllSourceRows(exec: SqlExecutor, mode: 'update' | 'share'): Promise<void> {
+  // Plain ORDER BY id on purpose, not COLLATE "C": the same lock order as topology-locks.ts and core-guard.ts, so no deadlock.
+  await exec.executeRaw(mode === 'update' ? 'SELECT id FROM sources ORDER BY id FOR UPDATE' : 'SELECT id FROM sources ORDER BY id FOR SHARE');
+}
+
 /**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.

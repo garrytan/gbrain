@@ -36,6 +36,12 @@ The source members below behave differently on the Rust engine. Each difference 
 - `listSourceIds` reads the ids from `listSourceRecords`, archived sources included, and sorts them in
   byte order. The SQL engines sort `ORDER BY id COLLATE "C"`, the same byte order on any server
   locale.
+- `readSoleSourceId` and `readFirstSourceId` read `listSourceRecords` too. The first answers the
+  only id or null; the second answers `default`, else the lowest id in byte order, as the SQL
+  engines' `COLLATE "C"` tie-break does. No parity case can drop `default` on a Rust brain, so
+  only the SQL arms check the case without it.
+- `lockAllSourceRows` takes no lock, like `lockSourceRow`. The SQL engines read every row
+  `ORDER BY id FOR UPDATE` (or `FOR SHARE`).
 - `lockSourceRow` reads the row from `listSourceRecords` and takes no lock. The SQL engines read
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one

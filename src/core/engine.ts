@@ -1359,6 +1359,12 @@ export interface BrainEngine {
   listStaleSyncSourceIds(): Promise<string[]>;
   /** Every source id, archived sources included, by id (engine-sql/sources.ts). */
   listSourceIds(): Promise<string[]>;
+  /** The only source's id, or null when there are none or several (engine-sql/sources.ts). */
+  readSoleSourceId(): Promise<string | null>;
+  /** `default` when it exists, else the lowest source id in byte order, else null (engine-sql/sources.ts). */
+  readFirstSourceId(): Promise<string | null>;
+  /** Locks every source row FOR UPDATE or FOR SHARE until the transaction ends (engine-sql/sources.ts). */
+  lockAllSourceRows(mode: 'update' | 'share'): Promise<void>;
   /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
   readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;

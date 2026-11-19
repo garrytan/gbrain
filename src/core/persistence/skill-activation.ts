@@ -53,7 +53,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
       await declarePersistenceProtocol(tx);
       await assertWriterAdminUnlocked(tx);
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
-      await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR SHARE');
+      await tx.lockAllSourceRows('share');
       await tx.executeRaw('LOCK TABLE gbrain_cycle_locks IN SHARE MODE');
       const current = await loadBindings(tx);
       const identity = (rows: WorktreeBinding[]) => JSON.stringify(rows.map(row => [row.source_id, row.source_incarnation, row.worktree_id,

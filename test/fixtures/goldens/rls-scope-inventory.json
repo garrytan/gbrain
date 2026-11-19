@@ -2941,6 +2941,28 @@
         ],
         "flagOnScopes": []
       },
+      "lockAllSourceRows#share": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "lockAllSourceRows#update": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "lockPageKeys#default": {
         "flagOffLanes": [
           "tx"
@@ -3291,6 +3313,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "reserved"
+        ],
+        "flagOnScopes": []
+      },
+      "readFirstSourceId#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -3653,6 +3686,17 @@
         "flagOnScopes": []
       },
       "readRetirementHop#none": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSoleSourceId#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5221,6 +5265,7 @@
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "loadPurgeTarget": "none",
+        "lockAllSourceRows": "none",
         "lockOAuthClient": "none",
         "lockPageKeys": "none",
         "lockPersistenceCounters": "none",
@@ -5300,6 +5345,7 @@
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
         "readFieldUsageSamples": "none",
+        "readFirstSourceId": "none",
         "readFolderAccess": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
@@ -5365,6 +5411,7 @@
         "readSearchStats": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
+        "readSoleSourceId": "none",
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",
