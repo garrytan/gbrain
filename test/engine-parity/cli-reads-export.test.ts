@@ -33,4 +33,37 @@ describe('engine parity: export reads', () => {
     expect(refusal).toContain('non-negative integer');
     return { title, refusal };
   });
+
+  // The batch keys: live pages after the cursor, in id order, within the source, type and slug prefix, each with its
+  // raw_data count and payload size. Postgres answers bigint columns as strings, so the counts are compared as numbers.
+  parityTest('listExportPageKeys pages live keys after the cursor with their payload sizes', {
+    methods: ['listExportPageKeys', 'putPage', 'putRawData', 'addTag', 'softDeletePage'],
+  }, async (engine) => {
+    await engine.putPage('export/a', { type: 'note', title: 'A', compiled_truth: 'alpha body', frontmatter: { k: 'v' } });
+    await engine.putPage('export/b', { type: 'person', title: 'Bee', compiled_truth: 'beta', timeline: '- 2026: met' });
+    await engine.putPage('other/c', { type: 'note', title: 'C', compiled_truth: 'gamma' });
+    await engine.putPage('export/gone', { type: 'note', title: 'Gone', compiled_truth: 'deleted' });
+    await engine.putRawData('export/a', 'crm', { id: 7, name: 'x' });
+    await engine.putRawData('export/a', 'mail', { n: 1 });
+    await engine.addTag('export/b', 'friend');
+    await engine.softDeletePage('export/gone');
+    const shape = (rows: Awaited<ReturnType<typeof engine.listExportPageKeys>>) => rows.map(r => ({
+      segmented: r.segmented, slug: r.slug, source_id: r.source_id, source_path: r.source_path,
+      source_path_bytes: r.source_path_bytes === null ? null : Number(r.source_path_bytes),
+      raw_count: Number(r.raw_count), bytes: r.bytes === null ? null : Number(r.bytes),
+    }));
+    const q = { afterId: '0', sourceId: null, type: null, slugPrefix: null };
+    const all = await engine.listExportPageKeys(q);
+    const ids = all.map(r => BigInt(r.id));
+    expect(ids).toEqual([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    const afterFirst = await engine.listExportPageKeys({ ...q, afterId: all[0]!.id });
+    return {
+      all: shape(all),
+      afterFirst: afterFirst.map(r => r.slug),
+      byType: (await engine.listExportPageKeys({ ...q, type: 'person' })).map(r => r.slug),
+      byPrefix: (await engine.listExportPageKeys({ ...q, slugPrefix: 'export/' })).map(r => r.slug),
+      bySource: (await engine.listExportPageKeys({ ...q, sourceId: 'default' })).length,
+      otherSource: (await engine.listExportPageKeys({ ...q, sourceId: 'nowhere' })).length,
+    };
+  });
 });

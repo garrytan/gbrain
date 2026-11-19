@@ -93,7 +93,7 @@ impl<'a> Sources<'a> {
 
 /// Walks the page-id index from `after + 1` in id order until `f` returns false. Ids are read in
 /// slices so the callback can read other records between scans.
-fn pages_after(
+pub(super) fn pages_after(
     read: &dyn KvRead,
     after: i64,
     f: &mut dyn FnMut(PageRecord) -> Result<bool>,

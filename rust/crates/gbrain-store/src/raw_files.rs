@@ -261,6 +261,16 @@ fn put_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<()> {
     put_json(tx, &file_key(&record.storage_path), record)
 }
 
+/// The raw_data rows of page `page_id`, in key order (the export reads every row of a page).
+pub(crate) fn page_raw_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect(),
+    )
+}
+
 fn collect_values<T: serde::de::DeserializeOwned>(
     read: &dyn KvRead,
     prefix: &[u8],

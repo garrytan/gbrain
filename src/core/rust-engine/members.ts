@@ -47,6 +47,7 @@ export const RUST_ENGINE_MEMBERS = {
   // pages
   aliasCanonicalRefs: 'pages',
   nextLivePageAfter: 'pages',
+  listExportPageKeys: 'pages',
   listExactIdentityCandidates: 'pages',
   listExtractionPendingPages: 'pages',
   slugsEndingIn: 'pages',

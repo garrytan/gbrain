@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 729/729
+# covered: 730/730
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -39,7 +39,7 @@
 # minion_queue: 80/80
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_export: 1/1
+# cli_reads_export: 2/2
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
@@ -85,13 +85,13 @@ getPage	pages	yes	84	yes	yes	yes	serves
 readPageSnapshot	pages	yes	18	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	331	yes	yes	yes	serves
+putPage	pages	yes	332	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	103	yes	yes	yes	serves
+softDeletePage	pages	yes	104	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -235,7 +235,7 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	3	no	yes	yes	serves
 getSalienceScores	links	yes	4	yes	yes	yes	serves
 findOrphanPages	links	yes	3	yes	yes	yes	serves
-addTag	tags	yes	10	yes	yes	yes	serves
+addTag	tags	yes	11	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
@@ -263,7 +263,7 @@ mergeOntologyFact	ontology	yes	8	no	yes	yes	serves
 getOntology	ontology	yes	4	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	3	no	yes	yes	serves
-putRawData	raw_files	yes	2	yes	yes	yes	serves
+putRawData	raw_files	yes	3	yes	yes	yes	serves
 getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
@@ -552,6 +552,7 @@ recordSubagentToolExecutions	minion_subagent	yes	13	no	yes	yes	serves
 startSubagentToolExecution	minion_subagent	yes	3	no	yes	yes	serves
 completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
+listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	serves
 setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
