@@ -93,3 +93,41 @@ export async function expectReplacementPastV240(engine: BrainEngine): Promise<vo
   await v326.handler!(engine);
   await expectReplacedIndexes(engine);
 }
+
+async function indexValid(engine: BrainEngine): Promise<boolean | null> {
+  const [row] = await engine.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [TITLE_INDEX]);
+  return row ? row.valid : null;
+}
+
+/** The boot-time replay of schema.sql builds no title index (a plain CREATE INDEX there would block page writes); the migrations own it. */
+export async function expectReplayBuildsNoTitleIndex(engine: BrainEngine): Promise<void> {
+  await engine.executeRaw(`DROP INDEX IF EXISTS ${TITLE_INDEX}`);
+  await engine.initSchema();
+  expect(await indexDef(engine, TITLE_INDEX)).toBeNull();
+  await v326.handler!(engine);
+  await expectReplacedIndexes(engine);
+}
+
+/** A fresh brain ends with the title index present and valid, built by the migrations alone. */
+export async function expectFreshBrainHasTitleIndex(engine: BrainEngine): Promise<void> {
+  await expectReplacedIndexes(engine);
+  expect(await indexValid(engine)).toBe(true);
+}
+
+/**
+ * Postgres: an interrupted concurrent build leaves an INVALID index under the
+ * name. The next upgrade drops and rebuilds it instead of taking it as built.
+ */
+export async function expectInvalidTitleIndexRebuilt(engine: BrainEngine): Promise<void> {
+  await engine.executeRaw(`DROP INDEX IF EXISTS ${TITLE_INDEX}`);
+  await engine.executeRaw(LEGACY_BTREE_SQL);
+  await engine.putPage('people/invalid-build', { type: 'person', title: 'Carol Example', compiled_truth: 'Body.' });
+  await expect(engine.executeRaw(`CREATE INDEX CONCURRENTLY ${TITLE_INDEX} ON pages USING hash ((1 / (length(title) - length(title))))`))
+    .rejects.toThrow('division by zero');
+  expect(await indexValid(engine)).toBe(false);
+  await engine.setConfig('version', String(v326.version - 1));
+  await engine.initSchema();
+  await expectReplacedIndexes(engine);
+  expect(await indexValid(engine)).toBe(true);
+  await expectFoundByTitle(engine, 'people/invalid-build', 'carol example');
+}

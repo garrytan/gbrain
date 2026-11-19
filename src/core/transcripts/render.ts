@@ -87,7 +87,8 @@ export const TRANSCRIPT_IMPORT_VERSION = 1;
  * #9779: the longest title a transcript page gets, in characters. Some
  * harnesses report a session's opening text as its title, which can run to
  * 100 KB; the full text is already in the page body. A longer title is cut at
- * a codepoint boundary and ends in an ellipsis, so a cut title reads as cut.
+ * a codepoint boundary and ends in an ellipsis, so a cut title reads as cut;
+ * a split session's " (part N)" suffix counts toward the cap.
  * A session whose stored page already has a title over the cap (`existing`,
  * a page written before the cap) keeps its title as given, so a re-import
  * never rewrites a page only to shorten its title; a page written under the
@@ -427,9 +428,13 @@ export function renderSessionParts(
     throw new Error(`session ${meta.sessionId} renders ${groups.length} parts at ${partTargetBytes} bytes per part, over the ${TRANSCRIPT_MAX_PARTS}-part cap; nothing was written for it`);
   }
   const single = (opts.layout ?? 'single') === 'single' && groups.length === 1;
-  const cps = [...(meta.title?.trim() ?? '')];
-  const title = (cps.length > TRANSCRIPT_TITLE_MAX_CHARS && !opts.existing ? cps.slice(0, TRANSCRIPT_TITLE_MAX_CHARS - 1).join('').trimEnd() + '…' : cps.join(''))
-    || `${meta.harness} session ${meta.sessionId.slice(0, 12)}`;
+  const title = meta.title?.trim() || `${meta.harness} session ${meta.sessionId.slice(0, 12)}`;
+  const partTitle = (part: number): string => {
+    const suffix = single ? '' : ` (part ${part})`;
+    const cps = [...title];
+    const room = TRANSCRIPT_TITLE_MAX_CHARS - suffix.length;
+    return (cps.length > room && !opts.existing ? cps.slice(0, room - 1).join('').trimEnd() + '…' : title) + suffix;
+  };
 
   const parts: RenderedPart[] = groups.map((group, idx) => {
     const part = idx + 1;
@@ -440,7 +445,7 @@ export function renderSessionParts(
       : new Set(group.filter((b) => redacted.imperativeFlags![b.message]).map((b) => b.message)).size;
     const fm: Record<string, unknown> = {
       type: 'conversation',
-      title: single ? title : `${title} (part ${part})`,
+      title: partTitle(part),
       date: dateIso.slice(0, 10),
       id: frontmatterId,
       transcript_import: {

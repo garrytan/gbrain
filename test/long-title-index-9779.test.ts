@@ -15,7 +15,7 @@ import { renderSessionParts, TRANSCRIPT_TITLE_MAX_CHARS } from '../src/core/tran
 import type { RedactedSession } from '../src/core/transcripts/render.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { v326 } from '../src/core/schema-migrations/v326-pages-title-lower-hash-index.ts';
-import { expectReplacementPastV240, expectUpgradeFromBeforeV240, incompressibleTitle } from './helpers/long-title-index.ts';
+import { expectFreshBrainHasTitleIndex, expectReplacementPastV240, expectReplayBuildsNoTitleIndex, expectUpgradeFromBeforeV240, incompressibleTitle } from './helpers/long-title-index.ts';
 
 // Each scenario rewinds the schema version, so each gets its own brain, connected
 // cold: a snapshot-restored brain does not replay migrations after a rewind.
@@ -42,6 +42,23 @@ describe('long page titles past v240 (#9779, PGLite)', () => {
 
   test('a brain with the old title btree gets the hash index, then saves a 3,000-byte title; a rerun changes nothing', async () => {
     await expectReplacementPastV240(engine);
+  }, 120_000);
+});
+
+describe('the title index is the migrations\' alone (#9779, PGLite)', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await withColdPglite(async () => { await engine.connect({}); await engine.initSchema(); });
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); }, 60_000);
+
+  test('a fresh brain has the index, valid', async () => {
+    await expectFreshBrainHasTitleIndex(engine);
+  });
+
+  test('a boot that replays schema.sql on an existing brain builds no title index', async () => {
+    await expectReplayBuildsNoTitleIndex(engine);
   }, 120_000);
 });
 
@@ -88,6 +105,40 @@ describe('transcript re-imports (#9779, PGLite)', () => {
     expect((await importWith(4)).title).toBe(first.title);
     await engine.executeRaw('UPDATE pages SET title = $1 WHERE slug = $2', [name, first.slug]);
     expect((await importWith(6)).title).toBe(name);
+  }, 120_000);
+});
+
+describe('split transcript re-imports (#9779, PGLite)', () => {
+  let engine: PGLiteEngine;
+  let tmp: string;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    await engine.setConfig('content_sanity.bytes_block', '60000');
+    tmp = mkdtempSync(join(tmpdir(), 'gb-long-title-split-'));
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); rmSync(tmp, { recursive: true, force: true }); }, 60_000);
+
+  test('every part of a split session is titled at most 200 characters with its part suffix, and stays so on re-import', async () => {
+    const name = 'bob-example split session '.repeat(20).trim();
+    const path = join(tmp, 'conversations.json');
+    const importWith = async (messages: number) => {
+      writeFileSync(path, JSON.stringify([{ uuid: 'long-title-split-1', name, created_at: '2026-08-01T10:00:00Z',
+        chat_messages: Array.from({ length: messages }, (_, i) => ({
+          uuid: `m${i}`, sender: i % 2 ? 'assistant' : 'human', created_at: `2026-08-01T10:00:0${i}Z`, text: `message ${i} ` + incompressibleTitle(30_000, 10 + i) })) }]));
+      await runTranscriptsIngest(engine, { paths: [path], sourceId: 'default', format: 'claude-export' });
+      return engine.executeRaw<{ slug: string; title: string }>('SELECT slug, title FROM pages WHERE deleted_at IS NULL ORDER BY slug');
+    };
+    const first = await importWith(3);
+    expect(first.length).toBeGreaterThan(1);
+    first.forEach((row, i) => {
+      expect([...row.title].length).toBeLessThanOrEqual(TRANSCRIPT_TITLE_MAX_CHARS);
+      expect(row.title.endsWith(` (part ${i + 1})`)).toBe(true);
+    });
+    const again = await importWith(4);
+    expect(again.slice(0, first.length).map(r => r.title)).toEqual(first.map(r => r.title));
+    for (const row of again) expect([...row.title].length).toBeLessThanOrEqual(TRANSCRIPT_TITLE_MAX_CHARS);
   }, 120_000);
 });
 
