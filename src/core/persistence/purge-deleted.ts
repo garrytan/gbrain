@@ -44,7 +44,7 @@ export function rebuildNote(rebuild: PurgeSelection['rebuild'], removes = false)
   const kept = new Set(rebuild.kept.map(k => `${k.source_id}/${k.slug}`));
   const next = rebuild.held.filter(c => !kept.has(`${c.source_id}/${c.slug}`));
   return [`${rebuild.held.length} concept(s) hidden by an input purge are kept out of the automatic purge.`,
-    ...(next.length ? [`${next.length} of them are rebuilt by the next concept synthesis from their current members: ${next.slice(0, 20).map(c => `${c.source_id}/${c.slug}`).join(', ')}${next.length > 20 ? ` and ${next.length - 20} more` : ''}.`] : []),
+    ...(next.length ? [`${next.length} of them are rebuilt by the next concept synthesis that still finds at least two members for them (one with fewer stays hidden until an explicit purge): ${next.slice(0, 20).map(c => `${c.source_id}/${c.slug}`).join(', ')}${next.length > 20 ? ` and ${next.length - 20} more` : ''}.`] : []),
     ...rebuild.kept.slice(0, 20).map(keptReason), ...(rebuild.kept.length > 20 ? [`...and ${rebuild.kept.length - 20} more kept hidden`] : []),
     ...(removes ? ['This purge removes any of them listed above instead.'] : [])].join('\n');
 }

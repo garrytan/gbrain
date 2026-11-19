@@ -23,6 +23,8 @@ import { bindCredential } from '../src/core/access/members.ts';
 import { runPages } from '../src/commands/pages.ts';
 import { runMaintain } from '../src/commands/maintain.ts';
 import { runCycle } from '../src/core/cycle.ts';
+import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
+import { readEvents } from './helpers/belief-ledger.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
@@ -161,6 +163,19 @@ for (const backend of testBackends()) {
             await runCycle(engine, { brainDir: root, phases: ['extract'], sourceId: 'default' });
             expect((await state(engine)).links_in).toBe(1);
           }
+        }, { databaseUrl });
+      }, 300_000);
+
+      if (unmanaged) test('unmanaged, belief ledger on: the rebuild ends the old page as page.expired and the fresh page starts its own lifetime', async () => {
+        await managedBrain(async ({ engine, ctx, root }) => {
+          await heldConcept(engine, ctx, root);
+          await enableBeliefLedger(engine, 'default');
+          const after = Math.max(0, ...(await readEvents(engine, 'default')).map(e => e.id));
+          expect((await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW, unmanaged: true })).rebuilt).toEqual([CONCEPT]);
+          const events = (await readEvents(engine, 'default', after)).filter(e => e.slug === CONCEPT && e.subject_kind === 'page');
+          const expired = events.find(e => e.event_type === 'page.expired');
+          expect(expired?.purged).toBe(false);
+          expect(events.filter(e => e.page_lifetime !== expired!.page_lifetime).length).toBeGreaterThan(0);
         }, { databaseUrl });
       }, 300_000);
 
@@ -372,7 +387,7 @@ for (const backend of testBackends()) {
         __setChatTransportForTests(async () => reply(NEW));
         for (const automatic of [true, false]) expect((await selectPurgeCandidates(engine, 72, { automatic, model: true })).rebuild).toEqual({ held, kept: [] });
         const note = rebuildNote({ held, kept: [] });
-        expect(note).toContain(`1 of them are rebuilt by the next concept synthesis from their current members: default/${CONCEPT}`);
+        expect(note).toContain(`1 of them are rebuilt by the next concept synthesis that still finds at least two members for them (one with fewer stays hidden until an explicit purge): default/${CONCEPT}`);
         const explicit = await printedJson(() => runPages(engine, ['purge-deleted', '--dry-run', '--json']));
         expect(explicit).toMatchObject({ rebuild: { held } });
         expect(explicit.rebuild_note).toEndWith('This purge removes any of them listed above instead.');

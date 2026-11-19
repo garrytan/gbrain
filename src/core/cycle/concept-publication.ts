@@ -25,7 +25,7 @@ import { acquirePageLock } from '../page-lock.ts';
 import { derivedFileTarget, writeDerivedPageThrough } from './derived-write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../facts/file-body-guard.ts';
 import { declareDerivation, deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
-import { finishConceptRebuild, purgeHeldConcept, type ConceptRebuild } from '../persistence/concept-rebuild.ts';
+import { rebuildHeldConcept, type ConceptRebuild } from '../persistence/concept-rebuild.ts';
 
 /** #5575 I2: the narrative carries the tier of the member atoms its prompt was built from (capped at agent_written). */
 const conceptDerivation = (engine: BrainEngine, sourceId: string, members: readonly string[]) =>
@@ -269,7 +269,7 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
   try {
     const { rebuild } = opts;
     const snapshot = await engine.readPageSnapshot(slug, { sourceId, ...(rebuild ? { includeDeleted: true } : {}) });
-    // #9653: a rebuild is composed from nothing in the tombstone; purgeHeldConcept confirms the hold under the lock.
+    // #9653: a rebuild is composed from nothing in the tombstone; rebuildHeldConcept confirms the hold under the lock.
     const page = rebuild ? null : snapshot?.page ?? null;
     if (rebuild ? snapshot?.page.deleted_at == null : stripFenceSections(page?.compiled_truth ?? '') !== stripFenceSections(baseline)
       || (page && !String(page.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts'))) {
@@ -285,12 +285,7 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
       ? composeConceptRepublication(page, snapshot!.tags, synthesized, narrative)
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
     if (rebuild) {
-      await engine.transaction(async tx => {
-        const before = await purgeHeldConcept(tx, sourceId, slug, rebuild);
-        if (typeof before === 'string') throw Object.assign(new Error(before), { code: 'revision_conflict' });
-        await opts.importPage(markdown, tx);
-        await finishConceptRebuild(tx, sourceId, slug, before);
-      });
+      await rebuildHeldConcept(engine, sourceId, slug, rebuild, tx => opts.importPage(markdown, tx));
     } else await opts.importPage(markdown);
     // The import stamps the page by its own channel; the derivation lowers it to the members' taint and records the edges.
     if (opts.members) await lowerDerivedPage(engine, await conceptDerivation(engine, sourceId, opts.members), sourceId, slug);
