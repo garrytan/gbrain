@@ -9,12 +9,10 @@ import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
-import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../core/connectors/db-cursor.ts';
-import { connectorIdentity } from '../core/persistence/connector-identity.ts';
 import type { ConnectorKind } from '../core/persistence/connector-kinds.ts';
 import { isOwnedFolderKind, ownedFolderRel } from '../core/owned-folder/paths.ts';
 import { resolveOwnedDestination, samePushUrls } from '../core/owned-folder/destination.ts';
-import type { OwnedFolderState } from '../core/owned-folder/writer.ts';
+import { readOwnedState, writeOwnedState } from '../core/owned-folder/writer.ts';
 
 const USAGE = 'gbrain sources rebind <id> [--expect <current-push-urls>] [--yes] [--json]';
 
@@ -42,10 +40,8 @@ export async function rebindOwnedSource(engine: BrainEngine, opts: ReturnType<ty
     throw opError('invalid_params', `${opts.sourceId} is not an active source that keeps its pages in ${ownedFolderRel(opts.sourceId)}/.`,
       'Name an iMessage source; gbrain sources list prints them.');
   }
-  const key = connectorDbCursorKey(opts.sourceId, src.incarnation, connectorIdentity(src.config!.kind as ConnectorKind, src.config!, src.local_path));
-  const cursor = await readConnectorDbCursor(engine, key);
-  const state = (cursor.state ?? {}) as Record<string, unknown> & { owned?: OwnedFolderState };
-  const owned = state.owned?.incarnation === src.incarnation ? state.owned : undefined;
+  const kind = src.config!.kind as ConnectorKind;
+  const owned = await readOwnedState(engine, opts.sourceId, src.incarnation, kind);
   if (!owned) {
     throw opError('invalid_params', `${opts.sourceId} has not written ${ownedFolderRel(opts.sourceId)}/ yet, so there is no destination to re-bind.`,
       `Run gbrain sync --source ${opts.sourceId}; its first write records the destination.`);
@@ -67,7 +63,7 @@ export async function rebindOwnedSource(engine: BrainEngine, opts: ReturnType<ty
     return { source_id: opts.sourceId, applied: false, recorded: owned.push_urls, current, changed,
       apply: ['gbrain', 'sources', 'rebind', opts.sourceId, '--expect', shown, '--yes'] };
   }
-  if (changed) await writeConnectorDbCursor(engine, key, { ...state, owned: { ...owned, push_urls: current } });
+  if (changed) await writeOwnedState(engine, opts.sourceId, kind, { ...owned, push_urls: current });
   return { source_id: opts.sourceId, applied: true, recorded: owned.push_urls, current, changed };
 }
 

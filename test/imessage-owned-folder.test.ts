@@ -29,6 +29,8 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { resolveOwnedDestination } from '../src/core/owned-folder/destination.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 import { redactUnpushed, spoolSealer, type RedactOutcome } from '../src/core/git/redact-unpushed.ts';
+import { ownedStateKey, readOwnedState, writeOwnedState } from '../src/core/owned-folder/writer.ts';
+import { syncLockId, tryAcquireDbLock } from '../src/core/db-lock.ts';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-06-15T12:00:00Z');
@@ -93,7 +95,9 @@ async function cursorKey(id: string) {
   const [src] = await engine.executeRaw<{ incarnation: string; local_path: string | null; config: Record<string, unknown> }>('SELECT incarnation::text AS incarnation,local_path,config FROM sources WHERE id=$1', [id]);
   return connectorDbCursorKey(id, src!.incarnation, connectorIdentity('imessage', src!.config, src!.local_path));
 }
-const stateOf = async (id: string) => (await readConnectorDbCursor(engine, await cursorKey(id))).state as IMessageState;
+const incarnationOf = async (id: string) => (await engine.executeRaw<{ i: string }>('SELECT incarnation::text AS i FROM sources WHERE id=$1', [id]))[0]!.i;
+const stateOf = async (id: string) => ({ ...(await readConnectorDbCursor(engine, await cursorKey(id))).state,
+  owned: await readOwnedState(engine, id, await incarnationOf(id), 'imessage') }) as IMessageState;
 const pageCount = async (id: string) => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [id]))[0]!.n;
 
 for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
@@ -285,6 +289,110 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect((await stateOf(id)).owned!.held ?? {}).toEqual({});
   });
 
+  test('a run stopped by a timeout keeps the chat windows it started with, so the next run imports what it never wrote', async () => {
+    const { id, cfg, folder } = await setup();
+    const fake = mac();
+    fake.chats[0]!.messages.unshift({ rowid: 5, at: at(20, 9), text: 'Plans from three weeks ago.' });
+    fake.chats[1]!.messages.unshift({ rowid: 15, at: at(20, 10), text: 'The first venue fell through.', from: 'Bob Example' });
+    const h = helper(fake);
+    let reads = 0;
+    const stopping: typeof h = { ...h, messages: (thread, since, signal) => ++reads === 2
+      ? Promise.reject(Object.assign(new Error('the sync timed out'), { name: 'AbortError' })) : h.messages(thread, since, signal) };
+    let threw = false;
+    try { await runIMessageSync(engine, id, cfg, options, { helper: stopping, now: () => NOW }); } catch { threw = true; }
+    expect(threw).toBe(true);
+    await run(id, cfg, fake, { now: NOW + 60_000 });
+    expect(existsSync(join(folder, dayFile(ALICE, 20)))).toBe(true);
+    expect(existsSync(join(folder, dayFile(GROUP, 20)))).toBe(true);
+  });
+
+  test('a day too large to render is held on its own; the chat\'s other days are written', async () => {
+    const { id, cfg, folder } = await setup();
+    const fake = mac();
+    fake.chats[0]!.messages.unshift({ rowid: 5, at: at(3, 9), text: 'x'.repeat(2_200_000) });
+    await run(id, cfg, fake);
+    expect(existsSync(join(folder, dayFile(ALICE, 3)))).toBe(false);
+    expect(existsSync(join(folder, dayFile(ALICE, 2)))).toBe(true);
+    expect(existsSync(join(folder, dayFile(ALICE, 1)))).toBe(true);
+  });
+
+  test('removing a source while its sync holds the lock removes nothing and says so; once the lock is free it removes the files', async () => {
+    const { id, cfg, folder } = await setup();
+    await run(id, cfg, mac());
+    const lock = await tryAcquireDbLock(engine, syncLockId(id));
+    expect(lock).not.toBeNull();
+    try {
+      await expect(removeSource(engine, { id, yes: true })).rejects.toThrow(`A sync of source ${id} is running`);
+      expect(existsSync(join(folder, dayFile(ALICE, 1)))).toBe(true);
+    } finally {
+      await lock!.release();
+    }
+    expect((await removeSource(engine, { id, yes: true })).owned_files).toBe(3);
+    expect(existsSync(join(folder, dayFile(ALICE, 1)))).toBe(false);
+  });
+
+  test('a push destination not proven private keeps the pages database-only, and rebind refuses it', async () => {
+    const { repo, remote, id, cfg, folder } = await setup();
+    const fake = mac();
+    const unproven = 'https://github.invalid/acme-example/notes.git';
+    git(repo, 'remote', 'set-url', 'origin', unproven);
+    await run(id, cfg, fake);
+    expect(existsSync(folder)).toBe(false);
+    expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'not_private' });
+    expect(await pageCount(id)).toBe(3);
+    git(repo, 'remote', 'set-url', 'origin', remote);
+    await run(id, cfg, fake, { now: NOW + 60_000, full: true });
+    expect(existsSync(join(folder, dayFile(ALICE, 1)))).toBe(true);
+    git(repo, 'remote', 'set-url', 'origin', unproven);
+    await expect(rebindOwnedSource(engine, { sourceId: id, yes: true })).rejects.toThrow('not proven private');
+    await run(id, cfg, fake, { now: NOW + 120_000 });
+    expect((await stateOf(id)).record_status?.record).toBe('database');
+  });
+
+  test('changing the source\'s timezone keeps the record of its files, so removal still takes them', async () => {
+    const { id, cfg, folder } = await setup();
+    await run(id, cfg, mac());
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"i_timezone":"America/New_York"}'::jsonb WHERE id=$1`, [id]);
+    expect((await removeSource(engine, { id, yes: true })).owned_files).toBe(3);
+    expect(existsSync(join(folder, dayFile(ALICE, 1)))).toBe(false);
+  });
+
+  test('a run that committed an update and stopped before saving its record adopts the update instead of holding the day', async () => {
+    const { repo, id, cfg } = await setup();
+    const fake = mac();
+    await run(id, cfg, fake);
+    const before = await stateOf(id);
+    fake.chats[0]!.messages.push({ rowid: 13, at: at(1, 9), text: 'Parking on level two.' });
+    await run(id, cfg, fake, { now: NOW + 60_000 });
+    const c1 = commits(repo);
+    await writeConnectorDbCursor(engine, await cursorKey(id), { ...before, owned: undefined });
+    await writeOwnedState(engine, id, 'imessage', before.owned!);
+    await run(id, cfg, fake, { now: NOW + 120_000 });
+    expect(commits(repo)).toBe(c1);
+    expect((await stateOf(id)).owned!.held ?? {}).toEqual({});
+  });
+
+  test('a write that fails partway undoes the batch and the run goes to the database; the next run writes the folder', async () => {
+    const { repo, id, cfg, folder } = await setup();
+    const fake = mac();
+    await run(id, cfg, fake);
+    const CAROL = '+15555550102';
+    fake.chats[0]!.messages.push({ rowid: 13, at: at(1, 9), text: 'Parking on level two.' });
+    fake.chats.push({ threadId: CAROL, displayName: 'Carol Example', participants: [CAROL], messages: [{ rowid: 30, at: at(3, 7), text: 'New number, saving it.' }] });
+    const blocker = join(folder, 'imessage', imessageChatKey(CAROL));
+    writeFileSync(blocker, 'in the way\n');
+    await run(id, cfg, fake, { now: NOW + 60_000 });
+    expect((await stateOf(id)).record_status).toMatchObject({ record: 'database', reason: 'conflict' });
+    expect(git(repo, 'status', '--porcelain', '--', '.gbrain-owned').stdout.trim()).toBe(`?? .gbrain-owned/${id}/imessage/${imessageChatKey(CAROL)}`);
+    rmSync(blocker);
+    const c1 = commits(repo);
+    await run(id, cfg, fake, { now: NOW + 120_000 });
+    expect(commits(repo)).toBe(c1 + 1);
+    expect(readFileSync(join(folder, dayFile(ALICE, 1)), 'utf8')).toContain('Parking on level two.');
+    expect(existsSync(join(folder, dayFile(CAROL, 3)))).toBe(true);
+    expect((await stateOf(id)).owned!.held ?? {}).toEqual({});
+  });
+
   test('the first write after a failed one is not blocked by the empty folders it left; the README names the remote gbrain pushes to', async () => {
     const { repo, remote, id, cfg, folder } = await setup();
     mkdirSync(join(folder, 'imessage', imessageChatKey(ALICE)), { recursive: true });
@@ -420,6 +528,7 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     await run(id, cfg, fake);
     const c1 = commits(repo);
     await writeConnectorDbCursor(engine, await cursorKey(id), {});
+    await writeConnectorDbCursor(engine, ownedStateKey(id, await incarnationOf(id), 'imessage'), {});
     await run(id, cfg, fake, { now: NOW + 60_000 });
     expect(commits(repo)).toBe(c1);
     const state = await stateOf(id);

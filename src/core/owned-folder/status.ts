@@ -11,7 +11,7 @@ import type { ConnectorKind } from '../persistence/connector-kinds.ts';
 import { git } from '../git/git-run.ts';
 import { getLastPushOutcome } from '../brain-repo-durability.ts';
 import { isOwnedFolderKind, ownedFolderRel } from './paths.ts';
-import { adoptRedactions, type OwnedFolderState, type OwnedHold } from './writer.ts';
+import { adoptRedactions, readOwnedState } from './writer.ts';
 import { defaultCheckout } from './destination.ts';
 
 export interface PagesIn {
@@ -28,7 +28,7 @@ export interface PagesIn {
   files: number;
 }
 
-interface StoredState { owned?: OwnedFolderState & { held?: Record<string, OwnedHold> }; record_status?: { record: 'folder' | 'database'; folder: string | null; reason: string | null; detail: string | null } }
+interface StoredState { record_status?: { record: 'folder' | 'database'; folder: string | null; reason: string | null; detail: string | null } }
 
 function pushState(root: string, rel: string, sha: string, pushUrls: readonly string[]): Pick<PagesIn, 'pushed' | 'last_push'> {
   const branch = git(root, ['symbolic-ref', '-q', '--short', 'HEAD']).stdout.trim();
@@ -54,7 +54,7 @@ export async function readPagesIn(engine: BrainEngine, sourceIds: string[]): Pro
     if (root === undefined) { const checkout = await defaultCheckout(engine); root = 'root' in checkout ? checkout.root : null; }
     const kind = row.config!.kind as ConnectorKind;
     const state = (await readConnectorDbCursor(engine, connectorDbCursorKey(row.id, row.incarnation, connectorIdentity(kind, row.config!, row.local_path))).catch(() => null))?.state as StoredState | null;
-    const stored = state?.owned?.incarnation === row.incarnation ? state.owned : undefined;
+    const stored = await readOwnedState(engine, row.id, row.incarnation, kind).catch(() => undefined);
     const owned = stored && { ...stored, files: { ...stored.files } };
     if (owned && root) adoptRedactions(root, ownedFolderRel(row.id), owned);
     const status = state?.record_status;

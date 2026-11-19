@@ -41,7 +41,7 @@ import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessa
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
 import { resolveOwnedDestination, type OwnedDatabaseOnlyReason } from '../owned-folder/destination.ts';
 import { git } from '../git/git-run.ts';
-import { adoptRedactions, commitOwnedBatch, ownedConflict, OWNER_FILE, README_FILE, type OwnedFolderState, type OwnedHold } from '../owned-folder/writer.ts';
+import { adoptRedactions, commitOwnedBatch, ownedConflict, OWNER_FILE, readOwnedState, README_FILE, writeOwnedState, type OwnedFolderState, type OwnedHold } from '../owned-folder/writer.ts';
 import { ownedFolderRel } from '../owned-folder/paths.ts';
 
 export interface IMessageChatState {
@@ -64,7 +64,7 @@ export interface IMessageState extends Record<string, unknown> {
   /** Keyed by the handle-free chat key, so no handle is stored in the cursor. */
   chats: Record<string, IMessageChatState>;
   item_holds?: unknown;
-  /** The owned folder's record (GST-3022): what this source last committed there. */
+  /** The owned folder's record (GST-3022): what this source last committed there, saved in its own row (readOwnedState). */
   owned?: OwnedFolderState & { held?: Record<string, OwnedHold> };
   record_status?: IMessageRecordStatus;
 }
@@ -142,7 +142,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   const identity = connectorIdentity('imessage', source.config, source.local_path);
   const cursorKey = connectorDbCursorKey(sourceId, source.incarnation, identity);
   const state: IMessageState = managed ? { ...emptyState(), ...managed.state<IMessageState>(emptyState()) }
-    : { ...emptyState(), ...(await readConnectorDbCursor(engine, cursorKey)).state as IMessageState | null };
+    : { ...emptyState(), ...(await readConnectorDbCursor(engine, cursorKey)).state as IMessageState | null, owned: await readOwnedState(engine, sourceId, source.incarnation, 'imessage') };
 
   const chatsBefore = structuredClone(state.chats);
   const summary: Summary = { status: 'synced', added: 0, modified: 0, deleted: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], factsRetired: 0, failedFiles: 0 };
@@ -153,7 +153,8 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       await managed.saveState(state, final && summary.status === 'synced', final ? newest() ?? undefined : undefined);
       return;
     }
-    await writeConnectorDbCursor(engine, cursorKey, state, final ? { run_id: runId, finished_at: new Date(now()).toISOString(),
+    if (state.owned) await writeOwnedState(engine, sourceId, 'imessage', state.owned);
+    await writeConnectorDbCursor(engine, cursorKey, { ...state, owned: undefined }, final ? { run_id: runId, finished_at: new Date(now()).toISOString(),
       counts: { added: summary.added, modified: summary.modified, deleted: summary.deleted, facts_retired: summary.factsRetired, failed: summary.failedFiles } } : undefined);
   };
   // The database rows are imported after the run's one commit (owned-folder/writer.ts); the import itself is database-mode.
@@ -239,8 +240,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     delete state.chats[op.chatKey]!.days[op.day];
   };
 
-  const pageExists = async (slug: string) =>
-    (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]))[0]!.n > 0;
+  const pageExists = async (slug: string) => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]))[0]!.n > 0;
 
   const dayOf = (m: IMessageMessage) => slackDayKey(Date.parse(m.timestamp), cfg.timezone);
 
@@ -275,7 +275,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       if (!shownMessages(messages).length) { byDay.delete(day); continue; }
       const fp = imessageDayFingerprint(thread!, day, messages);
       if (!opts.full && ch.days[day]?.fp === fp && !heldPaths.has(imessagePagePath(chatKey, day))) continue;
-      publishDay(thread!, chatKey, day, messages, fp);
+      await handle(key, async () => publishDay(thread!, chatKey, day, messages, fp), slugifyPath(imessagePagePath(chatKey, day)));
     }
     for (const day of Object.keys(ch.days)) {
       const start = slackDayStartMs(day, cfg.timezone);
@@ -396,7 +396,8 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     }
   } catch (error) {
     if (stopsRun(error) && !(error as { name?: string }).name?.startsWith('Lock')) {
-      try { state.item_holds = holds.holds.finish().state; await save(false); } catch { /* the original error is what the caller sees */ }
+      // Windows close as each chat is read and pages are written at the end, so a stopped run keeps the windows it started with.
+      try { state.chats = chatsBefore; state.item_holds = holds.holds.finish().state; await save(false); } catch { /* the original error is what the caller sees */ }
     }
     throw error;
   }

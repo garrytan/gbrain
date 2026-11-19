@@ -53,8 +53,11 @@ On a personal brain (one owner, not shared) whose default source is a Git checko
   `imessage(messages): 3 chat-days updated, 1 removed`; a quiet sync commits nothing. The commit lands before the
   database rows, so Git stays the record.
 - **Who reads them.** gbrain still shows them only to you. Anyone who can read the repository can read the files, so
-  the first commit's README names where the checkout pushes. If that destination changes later, the pages stay in the
-  database only until you confirm it: `gbrain sources rebind <id>` previews, then `--yes` records the new one.
+  gbrain writes them only when it can prove the checkout pushes to a private repository (or to a path on this
+  machine), and the first commit's README names where it pushes. A public repository, or one gbrain cannot check
+  (offline, an unknown host), keeps the pages in the database only (`not_private`). If the destination changes
+  later, the pages stay in the database only until you confirm it: `gbrain sources rebind <id>` previews, then
+  `--yes` records the new one; it refuses a destination that is not proven private.
 - **Nothing else touches the folder.** The default source's sync, import, repairs, `frontmatter --fix`,
   `file_upload` and `gbrain git commit-push` all leave `.gbrain-owned/` alone. A file there that gbrain did not
   write, or one you edited, is never overwritten or deleted: that day stays in the database only. To change a
@@ -85,7 +88,8 @@ is not committed (`owned_day_secret_held`); it stays searchable in the database 
 ### How to stop it
 
 `gbrain sources remove <id>` removes the folder's files in one commit (it keeps any file it cannot prove it wrote)
-and removes the pages. The remote's history still holds what was pushed. `--keep-storage` leaves the files.
+and removes the pages. The remote's history still holds what was pushed. `--keep-storage` leaves the files. While a
+sync of that source is running, the removal refuses (`lock_busy`) and removes nothing; run it again when the sync ends.
 
 ### owned_folder_conflict
 

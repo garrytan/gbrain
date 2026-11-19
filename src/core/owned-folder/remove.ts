@@ -9,13 +9,11 @@
 import { existsSync, lstatSync, readdirSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
-import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
-import { connectorIdentity } from '../persistence/connector-identity.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import type { ConnectorKind } from '../persistence/connector-kinds.ts';
 import { defaultCheckout } from './destination.ts';
 import { isOwnedFolderKind, OWNED_FOLDER_ROOT, ownedFolderRel } from './paths.ts';
-import { adoptRedactions, commitOwnedBatch, OWNER_FILE, README_FILE, type OwnedFolderState } from './writer.ts';
+import { adoptRedactions, commitOwnedBatch, OWNER_FILE, readOwnedState, README_FILE, writeOwnedState, type OwnedFolderState } from './writer.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConfig'>>;
 
@@ -25,11 +23,27 @@ async function ownedRecord(engine: Exec, sourceId: string) {
   const [src] = await engine.executeRaw<{ incarnation: string; local_path: string | null; config: Record<string, unknown> | null }>(
     'SELECT incarnation::text AS incarnation, local_path, config FROM sources WHERE id=$1', [sourceId]);
   if (!src || !isOwnedFolderKind(src.config)) return null;
-  const key = connectorDbCursorKey(sourceId, src.incarnation, connectorIdentity(src.config!.kind as ConnectorKind, src.config!, src.local_path));
-  const state = ((await readConnectorDbCursor(engine, key)).state ?? {}) as Record<string, unknown> & { owned?: OwnedFolderState };
-  const owned = state.owned?.incarnation === src.incarnation ? state.owned : undefined;
+  const kind = src.config!.kind as ConnectorKind;
+  const owned = await readOwnedState(engine, sourceId, src.incarnation, kind);
   if (!owned || !Object.keys(owned.files).length) return null;
-  return { key, state, owned, kind: String(src.config!.kind) };
+  return { owned, kind };
+}
+
+/**
+ * Removes the source's folder (removeOwnedFolder), then runs `deleteRow`, both under the source's sync lock, so a
+ * sync of an owned-folder source that is still reading Messages cannot commit day files after the folder and the row
+ * are gone. A busy lock refuses with nothing removed. A source that wrote no file takes no lock.
+ */
+export async function removeOwnedFolderThen<T>(engine: BrainEngine, sourceId: string, opts: { keep?: boolean }, deleteRow: () => Promise<T>): Promise<T> {
+  const work = async () => { await removeOwnedFolder(engine, sourceId, opts); return deleteRow(); };
+  if (!(await previewOwnedRemoval(engine, sourceId))) return work();
+  const { syncLockId, tryAcquireDbLock } = await import('../db-lock.ts');
+  const lock = await tryAcquireDbLock(engine, syncLockId(sourceId));
+  if (!lock) {
+    throw opError('lock_busy', `A sync of source ${sourceId} is running, so nothing was removed: it could still commit day files to ${ownedFolderRel(sourceId)}/.`,
+      `Wait for the sync to finish, then run gbrain sources remove ${sourceId} again.`);
+  }
+  try { return await work(); } finally { await lock.release(); }
 }
 
 /** Removes the directories left empty under `dir`, bottom-up, never following a symlink. */
@@ -85,7 +99,7 @@ export async function removeOwnedFolder(engine: Exec, sourceId: string, opts: { 
     message: `${record.kind}(${sourceId}): remove the source's ${files} chat-day file(s) from ${rel}` }, record.owned);
   const kept = Object.keys(batch.held);
   const remaining = Object.fromEntries(Object.entries(record.owned.files).filter(([p]) => !batch.removed.includes(p)));
-  await writeConnectorDbCursor(engine, record.key, { ...record.state, owned: { ...record.owned, files: remaining } });
+  await writeOwnedState(engine, sourceId, record.kind, { ...record.owned, files: remaining });
   pruneEmptyDirs(join(root, rel));
   try { const top = join(root, OWNED_FOLDER_ROOT); if (!readdirSync(top).length) rmdirSync(top); } catch { /* a folder something else holds stays */ }
   process.stderr.write(`[gbrain notice owned_folder_removed] ${sourceId}: removed ${batch.removed.length} file(s) from ${rel}/${batch.sha ? ` in commit ${batch.sha.slice(0, 12)}` : ''}; the remote's history still holds what was pushed.${

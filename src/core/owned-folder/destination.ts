@@ -9,7 +9,8 @@
  * ignores the folder nor filters it. The push destination's collaborators cannot be seen from the checkout, so the
  * branch's push URLs are recorded at the first write; a later run whose URLs differ (compared normalized: no
  * credentials, no `.git` suffix, case-folded host) writes nothing more until the owner re-binds it
- * (`gbrain sources rebind <id>`), which records the new destination and changes no file.
+ * (`gbrain sources rebind <id>`), which records the new destination and changes no file. A push destination that is
+ * not proven private (public, or not checkable) is database-only too (`not_private`), and rebind refuses it.
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
@@ -18,10 +19,11 @@ import { git } from '../git/git-run.ts';
 import { classifyBrainAudience } from '../facts/writeback-audience.ts';
 import { brainServes } from '../access/serves.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { readCachedPrivateVerdict, verifyRepoVisibility, writeVisibilityCache } from '../repo-visibility.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { ownedFolderRel } from './paths.ts';
 
-export type OwnedDatabaseOnlyReason = 'no_repository' | 'not_personal' | 'managed' | 'ignored' | 'remote_changed' | 'read_only_root' | 'conflict' | 'git_error';
+export type OwnedDatabaseOnlyReason = 'no_repository' | 'not_personal' | 'managed' | 'ignored' | 'remote_changed' | 'not_private' | 'read_only_root' | 'conflict' | 'git_error';
 
 export type OwnedDestination =
   | { record: 'folder'; root: string; rel: string; folder: string; pushUrls: string[] }
@@ -44,14 +46,34 @@ export function normalizePushUrl(url: string): string {
   }
 }
 
-/** The normalized push URLs of the remote gbrain's publish pushes the current branch to (commit-push.ts resolveCtx: the branch remote, else origin); [] when none. */
-export function branchPushUrls(root: string): string[] {
+/** The push URLs, as configured, of the remote gbrain's publish pushes the current branch to (commit-push.ts resolveCtx: the branch remote, else origin); [] when none. */
+function rawPushUrls(root: string): string[] {
   const cfg = (key: string) => git(root, ['config', '--get', key]).stdout.trim();
   const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
   const remote = (branch && cfg(`branch.${branch}.remote`)) || 'origin';
   const out = git(root, ['remote', 'get-url', '--push', '--all', remote]);
-  if (out.code !== 0) return [];
-  return [...new Set(out.stdout.split('\n').map(s => s.trim()).filter(Boolean).map(normalizePushUrl))].sort();
+  return out.code === 0 ? out.stdout.split('\n').map(s => s.trim()).filter(Boolean) : [];
+}
+
+/** Those push URLs normalized, deduplicated and sorted. */
+export function branchPushUrls(root: string): string[] {
+  return [...new Set(rawPushUrls(root).map(normalizePushUrl))].sort();
+}
+
+/**
+ * Why the push destination is not proven private, or null when it is. A path on this machine is as private as the
+ * checkout; any other URL needs a private verdict from the repo-visibility ladder (repo-visibility.ts, cached for an
+ * hour), so a public remote and one that cannot be checked (offline, an unknown host) both keep the pages out of Git.
+ */
+async function notPrivate(root: string): Promise<string | null> {
+  for (const url of rawPushUrls(root)) {
+    if (/^file:\/\//i.test(url) || isAbsolute(url) || url.startsWith('./') || url.startsWith('../')) continue;
+    if (readCachedPrivateVerdict(url)) continue;
+    const verdict = await verifyRepoVisibility({ originUrl: url, repoDir: root, timeoutMs: 10_000 }).catch((e: Error) => ({ verdict: 'unverifiable' as const, detail: e.message, rungs: [] }));
+    writeVisibilityCache(url, verdict);
+    if (verdict.verdict !== 'private') return `the checkout pushes to ${normalizePushUrl(url)}, which is ${verdict.verdict === 'public' ? 'public' : 'not proven private'} (${verdict.detail})`;
+  }
+  return null;
 }
 
 export const samePushUrls = (a: readonly string[], b: readonly string[]): boolean =>
@@ -108,5 +130,7 @@ export async function resolveOwnedDestination(engine: BrainEngine, sourceId: str
   if (recordedPushUrls && !samePushUrls(recordedPushUrls, pushUrls)) {
     return db('remote_changed', `the checkout now pushes to ${pushUrls.join(', ') || 'no remote'}, not ${recordedPushUrls.join(', ') || 'no remote'}`, root, pushUrls);
   }
+  const why = await notPrivate(root);
+  if (why) return db('not_private', why, root, pushUrls);
   return { record: 'folder', root, rel, folder: join(root, rel), pushUrls };
 }

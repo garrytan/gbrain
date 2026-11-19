@@ -18,12 +18,15 @@ import { git } from '../git/git-run.ts';
 import { onPushMode } from '../git/redact-unpushed.ts';
 import { OperationError } from '../ops/contract.ts';
 import { scanText } from '../secret-scan.ts';
+import type { BrainEngine } from '../engine.ts';
+import { readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
+import { connectorCheckpointKey, type ConnectorIdentity } from '../persistence/connector-identity.ts';
 import { OWNED_FOLDER_ROOT } from './paths.ts';
 
 export const OWNER_FILE = 'OWNER.json';
 export const README_FILE = 'README.md';
 
-/** What the writer remembers between runs, kept in the source's connector state (the database). */
+/** What the writer remembers between runs, kept in the database in one row per source incarnation (readOwnedState). */
 export interface OwnedFolderState {
   incarnation: string;
   /** The normalized push URLs recorded at the first write ([] for a checkout with no remote). */
@@ -35,6 +38,20 @@ export interface OwnedFolderState {
 }
 
 export interface OwnedHold { code: 'owned_folder_conflict' | 'owned_day_secret_held'; detail: string }
+
+type Exec = Pick<BrainEngine, 'executeRaw'>;
+type OwnedState = OwnedFolderState & { held?: Record<string, OwnedHold> };
+/** The row keeps no config digest, so changing the source's timezone or day counts keeps the record of what it wrote. */
+export const ownedStateKey = (sourceId: string, incarnation: string, kind: ConnectorIdentity['kind']) => connectorCheckpointKey(sourceId, incarnation, { kind, digest: 'owned-folder' });
+
+export async function readOwnedState(engine: Exec, sourceId: string, incarnation: string, kind: ConnectorIdentity['kind']): Promise<OwnedState | undefined> {
+  const owned = ((await readConnectorDbCursor(engine, ownedStateKey(sourceId, incarnation, kind))).state as { owned?: OwnedState } | null)?.owned;
+  return owned?.incarnation === incarnation ? owned : undefined;
+}
+
+export async function writeOwnedState(engine: Exec, sourceId: string, kind: ConnectorIdentity['kind'], owned: OwnedState): Promise<void> {
+  await writeConnectorDbCursor(engine, ownedStateKey(sourceId, owned.incarnation, kind), { owned });
+}
 
 export interface OwnedBatchInput {
   root: string;
@@ -160,6 +177,7 @@ export function commitOwnedBatch(input: OwnedBatchInput, state: OwnedFolderState
   assertNoOperationInProgress(root);
   const lock = acquireCommitLock(root, input.lockWaitMs ?? 30_000);
   const touched: string[] = [];
+  let at = `${rel}/`;
   try {
     if (symlinkOnPath(root, rel)) throw ownedConflict(`${rel}/`, 'is reached through a symlink', sourceId);
     const ownerPath = join(folder, OWNER_FILE);
@@ -199,9 +217,10 @@ export function commitOwnedBatch(input: OwnedBatchInput, state: OwnedFolderState
     const filtered = new Set<string>();
     for (let i = 0; i + 2 < attrs.length; i += 3) if (attrs[i + 2] !== 'unspecified' && attrs[i + 2] !== 'unset') filtered.add(attrs[i]!);
     for (const [p, content] of input.writes) {
+      at = `${rel}/${p}`;
       if (filtered.has(`${rel}/${p}`)) { result.held[p] = { code: 'owned_folder_conflict', detail: `${rel}/${p} has a Git filter` }; continue; }
       // A batch committed by a run that stopped before its record was saved: the same day, the same bytes, all committed.
-      if (!recorded[p] && existsSync(join(folder, p))) {
+      if (existsSync(join(folder, p))) {
         const blob = git(root, ['hash-object', '--stdin'], { input: content }).stdout.trim();
         const path = `${rel}/${p}`;
         if (!symlinkOnPath(root, path) && blobOf(root, path) === blob && indexBlob(root, path) === blob && headBlob(root, path) === blob) { result.written[p] = blob; continue; }
@@ -219,6 +238,9 @@ export function commitOwnedBatch(input: OwnedBatchInput, state: OwnedFolderState
       touched.push(`${rel}/${p}`);
     }
     for (const p of input.removes) {
+      at = `${rel}/${p}`;
+      // A removal committed by a run that stopped before its record was saved: gone from the worktree, the index and HEAD.
+      if (recorded[p] && !existsSync(join(folder, p)) && !indexBlob(root, at) && !headBlob(root, at)) { result.removed.push(p); continue; }
       const why = ours(p);
       if (why) { result.held[p] = { code: 'owned_folder_conflict', detail: `${rel}/${p} ${why}` }; continue; }
       if (!recorded[p]) continue;
@@ -243,6 +265,11 @@ export function commitOwnedBatch(input: OwnedBatchInput, state: OwnedFolderState
       else { const blob = headBlob(root, path); if (blob) result.written[p] = blob; }
     }
     return result;
+  } catch (error) {
+    if (error instanceof OperationError) throw error;
+    // A failed write, mkdir or removal (a file where a folder goes, a full disk): undo the batch so far, so the run goes to the database.
+    restore(root, touched);
+    throw ownedConflict(at, `could not be written (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})`, sourceId);
   } finally {
     lock.release();
   }

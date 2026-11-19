@@ -843,10 +843,9 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   // no FK ⇒ skip); the FK constraint itself is the backstop for a
   // registration committing between the re-check and the DELETE.
   // GST-3022: an owned-folder source's files leave its folder in one commit first (Git is the parent); a failure keeps the row.
-  await (await import('../core/owned-folder/remove.ts')).removeOwnedFolder(engine, id, { keep: keepStorage });
   class SourceReferencedError extends Error {}
   try {
-    await engine.transaction(async (tx) => {
+    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, { keep: keepStorage }, () => engine.transaction(async (tx) => {
       const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
       if (cols.has('source_id')) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
@@ -857,7 +856,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
         if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
       }
       await deleteSourceRow(tx, id);
-    });
+    }));
   } catch (e) {
     const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';
     if (e instanceof SourceReferencedError || code === '23503') {
@@ -1072,8 +1071,7 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
-    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolder(engine, id);
-    await deleteSourceRow(engine, id);
+    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, {}, () => deleteSourceRow(engine, id));
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;
   }
