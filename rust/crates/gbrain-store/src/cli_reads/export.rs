@@ -12,6 +12,7 @@
 use super::pg_text::{jsonb_text, timestamptz_text};
 use super::reads::pages_after;
 use crate::Store;
+use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::links::no_nul;
 use crate::page_body::segmented_reference;
@@ -49,6 +50,16 @@ pub struct ExportPageKey {
     pub source_path_bytes: Option<i64>,
     pub raw_count: i64,
     pub bytes: Option<i64>,
+}
+
+/// One row of `listExportWithdrawals`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ExportWithdrawal {
+    pub visibility: String,
+    pub fact_hash: String,
+    pub withdrawn_at: String,
+    pub subject: String,
+    pub purged: bool,
 }
 
 /// `left(text, n)`: the first `n` characters.
@@ -166,6 +177,37 @@ impl Store {
             })
             .sum::<i64>()
             + 2)
+    }
+
+    /// `listExportWithdrawals`: the source's withdrawals ordered by visibility, fact_hash and
+    /// subject (byte order), `withdrawn_at` as ISO text. The store keeps no purge tombstones, so
+    /// every row has `purged` false.
+    pub fn list_export_withdrawals(&self, source_id: &str) -> Result<Vec<ExportWithdrawal>> {
+        no_nul("listExportWithdrawals", &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        let mut rows: Vec<ExportWithdrawal> = source_withdrawals(&*read, source_id)?
+            .into_iter()
+            .map(|w| ExportWithdrawal {
+                visibility: w.visibility,
+                fact_hash: w.fact_hash,
+                withdrawn_at: iso(w.withdrawn_at_us),
+                subject: w.subject,
+                purged: false,
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            (
+                a.visibility.as_bytes(),
+                a.fact_hash.as_bytes(),
+                a.subject.as_bytes(),
+            )
+                .cmp(&(
+                    b.visibility.as_bytes(),
+                    b.fact_hash.as_bytes(),
+                    b.subject.as_bytes(),
+                ))
+        });
+        Ok(rows)
     }
 }
 

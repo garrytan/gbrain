@@ -45,3 +45,14 @@ export async function readExportWithdrawalLedgerBytes(tx: Raw, sourceId: string)
     FROM fact_withdrawals WHERE source_id=$1`, [sourceId]);
   return Number(size!.bytes);
 }
+
+/** One row of the export's withdrawal ledger: a withdrawal, or a purge tombstone (`purged`), which drops its fact row. */
+export interface ExportWithdrawalRow { visibility: string; fact_hash: string; withdrawn_at: Date; subject: string; purged: boolean }
+
+/** The source's withdrawals and purge tombstones, by visibility, fact hash and subject. */
+export async function listExportWithdrawals(tx: Raw, sourceId: string): Promise<ExportWithdrawalRow[]> {
+  return tx.executeRaw<ExportWithdrawalRow>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
+    FROM fact_withdrawals WHERE source_id=$1
+    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
+    ORDER BY visibility,fact_hash,subject`, [sourceId]);
+}

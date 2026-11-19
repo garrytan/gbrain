@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 731/731
+# covered: 732/732
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -39,7 +39,7 @@
 # minion_queue: 80/80
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_export: 3/3
+# cli_reads_export: 4/4
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
@@ -554,6 +554,7 @@ completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	serves
 readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
+listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
 setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
@@ -672,7 +673,7 @@ getRecentSalience	salience_enrich	yes	3	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	4	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	9	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	10	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves

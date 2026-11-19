@@ -13,9 +13,12 @@ of `src/core/access/policy-transfer.ts`). PGLite and Postgres run the same SQL a
 | --- | --- | --- |
 | `brain.listExportPageKeys({ afterId, sourceId, type, slugPrefix })` | the next 256 live pages after page id `afterId` (a decimal string), by id, within the source, type and slug prefix (`null`: any): `{ id, segmented, slug, source_id, source_path, source_path_bytes, raw_count, bytes }`. `slug` and `source_path` keep their first 4,097 characters; `bytes` is the body (a segmented page's `body_bytes`), frontmatter jsonb text, title, slug, source path, raw rows and tags in bytes, `null` when an inline body column is `null` | `listExportPageKeys` |
 | `brain.readExportWithdrawalLedgerBytes(sourceId)` | the source's withdrawal ledger in bytes: for each withdrawal, the jsonb text of `{ visibility, fact_hash, withdrawn_at, subject }` (keys in jsonb order, the time as `2026-01-03T00:00:00+00:00` in UTC) plus 1, then plus 2 | `readExportWithdrawalLedgerBytes` |
+| `brain.listExportWithdrawals(sourceId)` | the source's withdrawals by `visibility`, `fact_hash`, `subject` (byte order): `{ visibility, fact_hash, withdrawn_at, subject, purged }`, `withdrawn_at` an ISO string (the member makes it a `Date`), `purged` always `false` | `listExportWithdrawals` |
 
 ## What the store does not keep
 
 - **A statement timeout.** `setLocalStatementTimeout(ms)` does nothing on the Rust engine: the store has no statement
   timeout. It refuses an `ms` that is not a non-negative integer, and refuses on a transaction that has ended, as the
   other transaction members do. It runs only in TypeScript and has no store method.
+- **Purge tombstones.** The store keeps no `fact_purges` rows, so `listExportWithdrawals` lists withdrawals only, each
+  with `purged` false: what Postgres gives for a brain that never purged a fact.

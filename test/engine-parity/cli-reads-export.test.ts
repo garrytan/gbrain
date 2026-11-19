@@ -76,4 +76,19 @@ describe('engine parity: export reads', () => {
     await engine.insertFactWithdrawal('default', 'private', 'Bob likes tea', 'people/bob', '2026-02-04T05:06:07.250Z');
     return { empty, two: await engine.readExportWithdrawalLedgerBytes('default'), other: await engine.readExportWithdrawalLedgerBytes('nowhere') };
   });
+
+  // The ledger the export overlays fenced bodies with: same rows, same order, the time a Date on every arm.
+  parityTest('listExportWithdrawals lists the ledger by visibility, hash and subject', {
+    methods: ['listExportWithdrawals', 'insertFactWithdrawal'],
+  }, async (engine) => {
+    await engine.insertFactWithdrawal('default', 'world', 'Alice founded Acme', '*', '2026-01-03T00:00:00.000Z');
+    await engine.insertFactWithdrawal('default', 'private', 'Bob likes tea', 'people/bob', '2026-02-04T05:06:07.250Z');
+    await engine.insertFactWithdrawal('default', 'world', 'Alice founded Acme', 'people/alice', '2026-03-01T00:00:00.000Z');
+    const rows = await engine.listExportWithdrawals('default');
+    for (const row of rows) expect(row.withdrawn_at).toBeInstanceOf(Date);
+    return {
+      rows: rows.map(r => ({ ...r, withdrawn_at: r.withdrawn_at.toISOString() })),
+      other: await engine.listExportWithdrawals('nowhere'),
+    };
+  });
 });

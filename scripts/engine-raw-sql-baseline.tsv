@@ -395,7 +395,7 @@ src/core/entity-identity.ts	execute_raw	6
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
 src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
-src/core/export-snapshot.ts	execute_raw	3
+src/core/export-snapshot.ts	execute_raw	2
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1

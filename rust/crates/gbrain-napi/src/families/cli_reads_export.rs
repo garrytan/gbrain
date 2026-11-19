@@ -37,4 +37,14 @@ impl Brain {
             s.read_export_withdrawal_ledger_bytes(&source_id)
         })
     }
+
+    /// `listExportWithdrawals(sourceId)`: the source's withdrawals, each with `purged` false.
+    #[napi]
+    pub fn list_export_withdrawals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_export_withdrawals(&source_id))
+    }
 }
