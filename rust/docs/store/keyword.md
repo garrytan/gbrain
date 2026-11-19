@@ -418,6 +418,4 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `keyword-lexeme-index`: every member still scans every live page and its chunks (about 8-10 ms per 4,000 chunks),
   and the first query after a start, or after the text outgrows the 64 MiB cache, rebuilds every vector. Add a stored
   positional lexeme index when the scan or a cold cache becomes the bottleneck for the brains the store serves.
-- `keyword-bench-empty-tier`: `examples/keyword_scale.rs` `make_queries` panics (a remainder by zero) when the
-  common, mid or rare word set is empty; only a tiny or uniform corpus reaches it.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.

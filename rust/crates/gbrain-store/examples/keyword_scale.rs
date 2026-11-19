@@ -314,8 +314,9 @@ fn words(text: &str) -> Vec<String> {
 }
 
 /// 30 queries over `docs`: 10 single common words, 6 pairs and 4 triples of common words, 3
-/// mid-frequency words, 3 rare words, 4 quoted phrases of consecutive words of a real document
-/// (none when no document can give one).
+/// mid-frequency words, 3 rare words, 4 quoted phrases of consecutive words of a real document.
+/// A kind the corpus cannot give (no word of that frequency, no document long enough for a
+/// phrase) is left out with a note on stderr.
 fn make_queries(docs: &[String], seed: u64) -> Vec<Value> {
     let mut rng = Rng(seed);
     let mut df: HashMap<String, u32> = HashMap::new();
@@ -345,12 +346,29 @@ fn make_queries(docs: &[String], seed: u64) -> Vec<Value> {
         .filter(|r| r.1 <= 3 && r.0.len() >= 6)
         .map(|r| r.0)
         .collect();
+    // Each tier draws only when it has words, so a corpus with all of them gets the same queries
+    // as before; an empty tier would otherwise divide by zero in `rng.below`.
+    let rounds = |kind: &str, words: &[&String], n: usize| {
+        if words.is_empty() {
+            eprintln!(
+                "keyword_scale: the corpus has no word for the {kind} queries; they are left out"
+            );
+            0
+        } else {
+            n
+        }
+    };
+    let (n_common, n_mid, n_rare) = (
+        rounds("common", &common, 1),
+        rounds("mid1", &mid, 3),
+        rounds("rare1", &rare, 3),
+    );
     let mut out = Vec::new();
     let mut add = |kind: &str, text: String| out.push(json!({"kind": kind, "text": text}));
-    for _ in 0..10 {
+    for _ in 0..10 * n_common {
         add("common1", common[rng.below(common.len())].clone());
     }
-    for _ in 0..6 {
+    for _ in 0..6 * n_common {
         add(
             "common2",
             format!(
@@ -360,7 +378,7 @@ fn make_queries(docs: &[String], seed: u64) -> Vec<Value> {
             ),
         );
     }
-    for _ in 0..4 {
+    for _ in 0..4 * n_common {
         add(
             "common3",
             format!(
@@ -371,10 +389,10 @@ fn make_queries(docs: &[String], seed: u64) -> Vec<Value> {
             ),
         );
     }
-    for _ in 0..3 {
+    for _ in 0..n_mid {
         add("mid1", mid[rng.below(mid.len())].clone());
     }
-    for _ in 0..3 {
+    for _ in 0..n_rare {
         add("rare1", rare[rng.below(rare.len())].clone());
     }
     // A phrase comes from a document of 8 or more words with three consecutive words that are
@@ -1785,5 +1803,51 @@ mod tests {
         let found = phrases(docs(3, " alpha bravo charlie delta echo foxtrot"));
         assert_eq!(found.len(), 4);
         assert!(found.iter().all(|p| p.starts_with('"') && p.ends_with('"')));
+    }
+
+    /// How many queries of each kind `make_queries` returns for `docs`.
+    fn kinds(docs: &[String]) -> Vec<(String, usize)> {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for q in make_queries(docs, 2) {
+            let kind = q["kind"].as_str().unwrap().to_string();
+            match counts.iter_mut().find(|c| c.0 == kind) {
+                Some(c) => c.1 += 1,
+                None => counts.push((kind, 1)),
+            }
+        }
+        counts
+    }
+
+    #[test]
+    fn queries_leave_out_the_word_tiers_a_corpus_does_not_have() {
+        // 12 words in every one of 50 documents: common words, but none of mid or rare frequency.
+        let uniform: Vec<String> = (0..50)
+            .map(|_| {
+                "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima".into()
+            })
+            .collect();
+        assert_eq!(
+            kinds(&uniform),
+            [
+                ("common1".to_string(), 10),
+                ("common2".to_string(), 6),
+                ("common3".to_string(), 4),
+                ("phrase3".to_string(), 4),
+            ]
+        );
+        // Under 11 distinct words, all under 6 letters: no common word (the 10 most frequent are
+        // skipped) and no rare one.
+        let tiny = vec!["ant bee cat".to_string()];
+        assert_eq!(kinds(&tiny), Vec::<(String, usize)>::new());
+    }
+
+    #[test]
+    fn queries_keep_every_tier_of_a_full_corpus() {
+        let counts = kinds(&docs(3, " alpha bravo charlie delta echo foxtrot"));
+        let names: Vec<&str> = counts.iter().map(|c| c.0.as_str()).collect();
+        assert_eq!(
+            names,
+            ["common1", "common2", "common3", "mid1", "rare1", "phrase3"]
+        );
     }
 }
