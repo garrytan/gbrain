@@ -315,6 +315,28 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       });
     }, 120_000);
 
+    test('a backup names a place by the slug its page has now, so a page renamed before occurrences moved restores', async () => {
+      await brain(async b => {
+        const bucket = mkdtempSync(join(tmpdir(), 'gbrain-ss-old-rename-'));
+        try {
+          const storage = await createStorage({ backend: 'local', bucket: 'b', localPath: bucket });
+          const first = `notes/first-${randomUUID().slice(0, 6)}`, now = `notes/now-${randomUUID().slice(0, 6)}`, last = `notes/last-${randomUUID().slice(0, 6)}`;
+          await b.put(now, beliefPage({ prose: 'Renamed before occurrences moved.' }));
+          const [page] = await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [b.sourceId, now]);
+          await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE source_id = $1', [b.sourceId]);
+          await b.engine.executeRaw('DELETE FROM secret_store WHERE source_id = $1', [b.sourceId]);
+          const id = (await seal(b.engine, { sourceId: b.sourceId, rule: 'github_token', value: value(`or${randomUUID().slice(0, 6)}`) })).id;
+          await recordOccurrence(b.engine, { entryId: id, sourceId: b.sourceId, pageId: page!.id, slug: first, field: 'compiled_truth', origin: 'repair' });
+          await b.engine.updateSlug(now, last, { sourceId: b.sourceId });
+          const out = await backupStore(b.engine, storage);
+          await b.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE entry_id = $1', [id]);
+          await b.engine.executeRaw('DELETE FROM secret_store WHERE id = $1', [id]);
+          expect(await restoreBackup(b.engine, storage, out.object)).toMatchObject({ inserted: 1, skipped_no_page: 0, occurrences: 1 });
+          expect(await b.engine.executeRaw('SELECT slug, page_id FROM secret_store_occurrence WHERE entry_id = $1', [id])).toEqual([{ slug: last, page_id: page!.id }]);
+        } finally { rmSync(bucket, { recursive: true, force: true }); }
+      });
+    }, 120_000);
+
     test('a rename that fails partway leaves the page and its secret occurrences where they were', async () => {
       await brain(async b => {
         const foo = `notes/foo-${randomUUID().slice(0, 6)}`, bar = `notes/bar-${randomUUID().slice(0, 6)}`;

@@ -201,14 +201,18 @@ export interface BackupOccurrenceRow {
 /**
  * Every entry row as stored (ciphertext, never a value) and every occurrence row, for an encrypted backup (backup.ts).
  * One statement reads both, so they come from one snapshot: an entry sealed while the backup reads is in neither list.
+ * A place on a page carries the slug of the page its page_id names now (a rename before occurrences moved with their
+ * page left an older slug on the row), so a restore finds that page.
  */
 export async function storeSnapshot(engine: BrainEngine): Promise<{ entries: BackupEntryRow[]; occurrences: BackupOccurrenceRow[] }> {
   const ts = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
   const [row] = await engine.executeRaw<{ entries: string; occurrences: string }>(`SELECT
     (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]'::jsonb)::text FROM (SELECT id,source_id,rule,ciphertext,nonce,tag,key_id,key_host,value_mac,status,
       ${ts('created_at')} AS created_at, ${ts('updated_at')} AS updated_at FROM secret_store) e) AS entries,
-    (SELECT coalesce(jsonb_agg(to_jsonb(o) - 'ord' ORDER BY o.ord), '[]'::jsonb)::text FROM (SELECT id AS ord,entry_id,source_id,page_id,slug,field,origin,commit_sha,path,line,
-      pre_field_sha256,created_by,${ts('created_at')} AS created_at FROM secret_store_occurrence) o) AS occurrences`);
+    (SELECT coalesce(jsonb_agg(to_jsonb(o) - 'ord' ORDER BY o.ord), '[]'::jsonb)::text FROM (SELECT oc.id AS ord,oc.entry_id,oc.source_id,oc.page_id,
+      CASE WHEN oc.commit_sha IS NULL THEN coalesce(p.slug, oc.slug) ELSE oc.slug END AS slug,oc.field,oc.origin,oc.commit_sha,oc.path,oc.line,
+      oc.pre_field_sha256,oc.created_by,${ts('oc.created_at')} AS created_at FROM secret_store_occurrence oc
+      LEFT JOIN pages p ON p.id = oc.page_id AND p.source_id = oc.source_id) o) AS occurrences`);
   return { entries: JSON.parse(row!.entries) as BackupEntryRow[], occurrences: JSON.parse(row!.occurrences) as BackupOccurrenceRow[] };
 }
 

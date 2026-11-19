@@ -9,3 +9,4 @@
 ### Known limits
 - Backups uploaded to the storage bucket before a purge still hold that page's sealed original (encrypted, under the store key). Delete those objects from the bucket when it must be gone from there too.
 - A restore from a backup taken before a rename can tie an original to a different page that has since taken the renamed page's old slug, and that page's readers then pass the `reveal_secret` read check for it. It needs both: an older backup and another page now at that slug. After a restore, `gbrain secrets list` shows the pages each original is tied to. A backup taken after the rename names the new slug.
+- A backup taken before this release can name a place by a slug its page had before an older rename. A restore of that backup skips such an entry today (`skipped_no_page`); GST-3178 makes it restore the entry without a place instead. Backups from this release on name each place by its page's current slug.
