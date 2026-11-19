@@ -5,6 +5,8 @@
  * commit door treat the folder as reserved (isPathPruned, commit-push admission), whatever --include-hidden says.
  * Dependency-light: sync.ts and the commit door import it.
  */
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 
 /** The reserved top-level folder of the default source's checkout. Not `.gbrain/`, which holds access.yml. */
@@ -39,4 +41,11 @@ export function ownedPathRefused(paths: readonly string[], what: string): Operat
 export function assertNotOwnedPaths(paths: readonly string[], what: string): void {
   const hits = paths.filter(isOwnedRelPath);
   if (hits.length) throw ownedPathRefused(hits, what);
+}
+
+/** Refuses a sync root, import target or uploaded file whose real path is inside a reserved folder (symlinks resolved). */
+export function assertNotOwnedRoot(path: string, what: string): void {
+  let real: string;
+  try { real = realpathSync(resolve(path)); } catch { real = resolve(path); }
+  if (isOwnedRelPath(real)) throw ownedPathRefused([path], what);
 }

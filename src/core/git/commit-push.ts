@@ -587,7 +587,7 @@ export function commitPaths(root: string, rel: string[], message: string, scope:
   try {
     const sparse = stagePaths(root, rel, before, flagged);
     const paths = withRenamePartners(root, rel);
-    if (!scope.owned) assertNotOwnedPaths(paths, 'Refusing to commit the rename partner');
+    if (!scope.owned) assertNotOwnedPaths(gitOk(root, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', ...literalPathspecs(paths)], 'diff --cached').split('\0').filter(Boolean), 'Refusing to commit');
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
     // A file git did not index would fail `commit --only` for every path; it is left out here and reported as skipped.
