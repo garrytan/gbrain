@@ -33,6 +33,7 @@ import {
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
   privateFactFilterForCaller,
+  remoteProvenanceFloorSql,
 } from '../../search/private-visibility.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { refuseMember } from './common.ts';
@@ -47,6 +48,8 @@ export interface StorePrivacyPolicy {
   privateReadableSources?: string[];
   /** The fact policy's member-page case: the caller's own member page, the one provenance page judged by `identity`. */
   memberPage?: string;
+  /** The remote floor (`remoteProvenanceFloorSql`): the provenance page only, with no entity or holding-page gate. */
+  provenanceOnly?: boolean;
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -119,6 +122,18 @@ export function storePrivacyPolicy(
     }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
+}
+
+/**
+ * The store policy for the remote provenance floor, remoteProvenanceFloorSql('facts'): the provenance page judged by
+ * privatePagesFilterFragment('pp', true), which reads no caller identity, plus the owner-only conjunct. The store serves
+ * it when the text equals the no-caller rendering; a labelled-only caller (its own conjunct) or an owner read refuses.
+ */
+export function storeFloorPolicy(member: string): StorePrivacyPolicy {
+  const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
+  const baseline = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
+  if (text === normalizeConceptInputs(baseline)) return { ...factPolicyFlags(baseline), entityPrivacy: false, provenanceOnly: true };
+  refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant or owner read changes it');
 }
 
 /** The process-setting flags of a rendered fact policy. */
