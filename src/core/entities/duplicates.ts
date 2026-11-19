@@ -7,8 +7,8 @@
  * that are not archived, read through BrainEngine.listEntityKeyRows. Keys: email, phone, X handle, LinkedIn,
  * GitHub, a company's domain, and every frontmatter field the pack declares in a page type's `identity_keys`.
  * A placeholder (empty, zero, a placeholder word, too long) is never a key, and a value more than CROWDED_LIMIT
- * pages carry is only counted. Names fold with nameWords (strict: every word kept) and, for "likely" and
- * conflicts, with leading titles and company suffixes dropped (variant).
+ * pages carry is only counted. Names fold with nameWords, a run of single letters in a company name read as one word
+ * (strict: every word kept) and, for "likely" and conflicts, with leading titles and company suffixes dropped (variant).
  *
  * Matchers propose member sets; the finder merges proposals with the same kind and members, adds the key
  * evidence (every shared key type, with how many other pages carry a shared contact or handle value, and every
@@ -143,12 +143,29 @@ function rawValues(value: unknown): string[] {
   return list.filter(v => typeof v === 'string' || typeof v === 'number').map(v => String(v).trim()).filter(v => !isPlaceholder(v));
 }
 
-export function strictNameFold(text: string): string {
-  return nameWords(text).join(' ');
+/**
+ * nameWords; for a company, a run of single letters reads as one word, so "L.L.C.", "L L C" and "LLC" fold alike. A
+ * person's initials stay apart, so "D. R. Example" never folds into the title "Dr".
+ */
+function foldWords(text: string, kind: EntityKind): string[] {
+  if (kind !== 'company') return nameWords(text);
+  const out: string[] = [];
+  let run = '';
+  for (const w of [...nameWords(text), '']) {
+    if (w.length === 1 && /\p{L}/u.test(w)) { run += w; continue; }
+    if (run) out.push(run);
+    run = '';
+    if (w) out.push(w);
+  }
+  return out;
+}
+
+export function strictNameFold(text: string, kind: EntityKind = 'person'): string {
+  return foldWords(text, kind).join(' ');
 }
 
 export function variantNameFold(text: string, kind: EntityKind = 'person'): string {
-  const words = nameWords(text);
+  const words = foldWords(text, kind);
   let start = 0;
   while (start < words.length - 1 && NAME_TITLE_TOKENS.has(words[start]!)) start++;
   let end = words.length;
@@ -214,7 +231,7 @@ async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promi
     }
     for (const f of st.declared[type]) for (const raw of rawValues(row.keys[f])) add('declared_id', f, 'exclusive', raw.toLowerCase());
     const distinct = row.keys.distinct_from;
-    pages.push({ source_id: row.source_id, slug: row.slug, title, type, strict: strictNameFold(title), variant: variantNameFold(title, type), keys,
+    pages.push({ source_id: row.source_id, slug: row.slug, title, type, strict: strictNameFold(title, type), variant: variantNameFold(title, type), keys,
       distinctFrom: new Set((Array.isArray(distinct) ? distinct : [distinct]).filter((d): d is string => typeof d === 'string').map(d => d.trim())) });
   }
 
@@ -355,15 +372,16 @@ export interface CleanRuleInput {
 
 /**
  * The rule for `clean`, rule A as the owner chose it on the bench numbers (plan Decision F, narrowed): one type,
- * one strict name, one member per source, no vetoing key, and a shared **exclusive** key (LinkedIn, GitHub, a
- * declared id) whose value no page outside the group carries, or, for a union, clean parts. Contact and handle
- * keys (email, phone, X handle, domain) never make a group clean on their own.
+ * one strict name, one member per source, no vetoing key, no two different domains, and a shared **exclusive** key
+ * (LinkedIn, GitHub, a declared id) whose value no page outside the group carries, or, for a union, clean parts.
+ * Contact and handle keys (email, phone, X handle, domain) never make a group clean on their own. Two companies with
+ * one name on a group's shared LinkedIn page (a US firm and its UK namesake) differ by domain, so they stay likely.
  */
 export function isCleanGroup(input: CleanRuleInput): boolean {
   const { members } = input;
   if (new Set(members.map(m => m.type)).size !== 1 || new Set(members.map(m => m.strict)).size !== 1 || !members[0]?.strict) return false;
   if (new Set(members.map(m => m.source_id)).size !== members.length) return false;
-  if (input.differing_keys.some(k => k.veto)) return false;
+  if (input.differing_keys.some(k => k.veto || k.key === 'domain')) return false;
   if (input.union) return true;
   return input.shared_keys.some(k => k.key_class === 'exclusive' && k.values_only_in_group > 0);
 }
@@ -461,7 +479,13 @@ function groupId(kind: DuplicateKind, members: DuplicateMember[]): string {
 }
 
 export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplicatesOptions = {}): Promise<DuplicateResult> {
+  return (await findTypedDuplicateGroups(engine, opts)).result;
+}
+
+/** findDuplicateGroups plus each group's entity kind (person or company), which the finder's JSON contract leaves out. */
+export async function findTypedDuplicateGroups(engine: BrainEngine, opts: FindDuplicatesOptions = {}): Promise<{ result: DuplicateResult; kindOf: Map<string, EntityKind> }> {
   const { scan, byKey, crowded, carriers } = await loadScan(engine, opts);
+  const kindOf = new Map<string, EntityKind>();
   const matchers = opts.matchers ?? DEFAULT_MATCHERS;
   const { keptApart, confirmed } = decidedChecks(opts.decided);
   const drafts = new Map<string, Draft>();
@@ -522,7 +546,9 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
       .sort((a, b) => cmp(a.source_id, b.source_id) || cmp(a.slug, b.slug));
     const sorted = [...new Map(evidence.map(e => [evidenceKey(e), e])).values()]
       .sort((a, b) => cmp(a.matcher, b.matcher) || cmp(a.rule, b.rule) || cmp(a.key ?? '', b.key ?? '') || cmp(a.field ?? '', b.field ?? ''));
-    groups.push({ id: groupId(d.kind, members), kind: d.kind, class: cls, members, evidence: sorted });
+    const id = groupId(d.kind, members);
+    kindOf.set(id, d.members[0]!.type);
+    groups.push({ id, kind: d.kind, class: cls, members, evidence: sorted });
   }
   groups.sort((a, b) => DUPLICATE_KINDS.indexOf(a.kind) - DUPLICATE_KINDS.indexOf(b.kind) || cmp(a.id, b.id));
 
@@ -532,5 +558,5 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
     crowded_key_values: crowded,
   };
   for (const g of groups) { counts.by_kind[g.kind]++; counts.by_class[g.class]++; }
-  return { schema_version: DEDUPE_PREVIEW_SCHEMA_VERSION, groups, counts };
+  return { result: { schema_version: DEDUPE_PREVIEW_SCHEMA_VERSION, groups, counts }, kindOf };
 }

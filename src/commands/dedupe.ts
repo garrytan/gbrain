@@ -8,16 +8,16 @@
  *
  * confirm and reject record the owner's decisions (core/entities/identity-decisions.ts): in git first on a brain with a
  * repository, in the database otherwise. confirm links cross-source groups as one identity, which rank_entities and
- * enrichment then count once; a bulk confirm covers only clean groups and is bound to the hash it printed; a group whose
- * only shared keys are contact or handle keys is confirmed alone. reject records "different people" and undoes a confirm.
+ * enrichment then count once; a bulk confirm covers only clean company groups and is bound to the hash it printed; a person
+ * group that shares an account or registry id, and a group whose only shared keys are contact or handle keys, is confirmed
+ * alone. reject records "different people or companies" and undoes a confirm.
  * Nothing here merges, renames or deletes a page; nothing is linked without the owner.
  */
 import { createHash } from 'node:crypto';
-import { pageBodyBytes } from '../core/page-body/page-shape.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { DUPLICATE_KINDS, findDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult } from '../core/entities/duplicates.ts';
-import { decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
+import { DUPLICATE_KINDS, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind } from '../core/entities/duplicates.ts';
+import { canonicalOf, decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
 import { identityIdsForPages, listEntityIdentities, validateEntityId } from '../core/entity-identity.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
@@ -32,8 +32,8 @@ const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-so
 
 List groups of person and company pages that are likely the same person or company, with the evidence
 (shared keys by type, never their values) and a class: clean, likely, weak, thin or conflict.
-clean: the pages share an account or registry id (LinkedIn, GitHub or a declared id) and exactly the same name;
-it is a strong hint for review, not proof they are one person.
+clean: the pages share an account or registry id (LinkedIn, GitHub or a declared id) and exactly the same name,
+and no two of them list different domains; it is a strong hint for review, not proof they are one person or company.
 The preview is read-only; groups you confirmed or rejected are not listed again.
 
   --preview         list the groups (the default)
@@ -45,11 +45,12 @@ The preview is read-only; groups you confirmed or rejected are not listed again.
 
 confirm             the confirm list: cross-source groups you can confirm, each with a hint line; changes nothing
 confirm <id>...     record that each group is one person or company; rankings and enrichment count it once
-                    a group whose only shared keys are email, phone, X handle or domain is confirmed on its own
+                    a person group that shares an id, and a group whose only shared keys are email, phone,
+                    X handle or domain, is confirmed on its own
   --join <entity>   a page of the group is already in this identity group: add the other pages to it
-confirm --clean     list the clean groups a bulk confirm covers and print their hash; changes nothing
+confirm --clean     list the clean company groups a bulk confirm covers and print their hash; changes nothing
   --expect <hash>   confirm exactly those groups; refuses (preview_changed) if the list changed since
-reject <id>...      record that the pages are different people: the pair is never proposed again, and a
+reject <id>...      record that the pages are different people or companies: the pair is never proposed again, and a
                     confirmed group is unlinked; two pages in one source also get distinct_from
 reconcile           write decisions the database holds alone into git, re-read the committed decisions and
                     link pages that arrived since; run it after doctor reports a drift
@@ -71,15 +72,22 @@ function evidenceText(e: DuplicateEvidence): string {
 
 const memberText = (m: IdentityMemberRef) => `${m.source_id}:${m.slug}`;
 const contactOnly = (g: DuplicateGroup) => g.evidence.some(e => e.rule === 'contact_key_only');
+const sharesId = (g: DuplicateGroup) => g.evidence.some(e => e.matcher === 'shared_key' && e.key_class === 'exclusive');
+
+interface Scan { result: DuplicateResult; read: IdentityDecisionsRead; kindOf: Map<string, EntityKind> }
+
+/** Confirmed on its own, after reading its hint line: contact-only groups, and person groups that share an id (gate_rev 7). */
+const confirmAlone = (s: Scan, g: DuplicateGroup) => contactOnly(g) || (s.kindOf.get(g.id) === 'person' && sharesId(g));
 const otherNamePages = (g: DuplicateGroup) => g.evidence.reduce((n, e) => n + (e.other_pages_other_name ?? 0), 0);
 
 async function readDecisions(engine: BrainEngine): Promise<IdentityDecisionsRead> {
   return engine.listIdentityDecisions();
 }
 
-async function scan(engine: BrainEngine, opts: { kind?: DuplicateKind; sourceId?: string } = {}): Promise<{ result: DuplicateResult; read: IdentityDecisionsRead }> {
+async function scan(engine: BrainEngine, opts: { kind?: DuplicateKind; sourceId?: string } = {}): Promise<Scan> {
   const read = await readDecisions(engine);
-  return { result: await findDuplicateGroups(engine, { ...opts, decided: decidedSets(read) }), read };
+  const { result, kindOf } = await findTypedDuplicateGroups(engine, { ...opts, decided: decidedSets(read) });
+  return { result, read, kindOf };
 }
 
 export async function runDedupe(engine: BrainEngine, args: string[]): Promise<void> {
@@ -141,11 +149,13 @@ function parseFlags(cmd: string, args: string[], allowed: Set<string>): Flags | 
 }
 
 /**
- * Groups a bulk confirm covers: clean cross-source groups that are not contact-only, whose pages are in no identity group
- * and, on a brain whose decisions go to git, whose pages may all be named in its repository.
+ * Groups a bulk confirm covers: clean cross-source company groups that are not contact-only, whose pages are in no
+ * identity group and, on a brain whose decisions go to git, whose pages may all be named in its repository. Person
+ * groups are never in it (gate_rev 7): each is confirmed on its own.
  */
-async function bulkGroups(engine: BrainEngine, groups: DuplicateGroup[], inIdentity: Map<string, string>): Promise<DuplicateGroup[]> {
-  const candidates = groups.filter(g => g.kind === 'cross_source' && g.class === 'clean' && !contactOnly(g) && !g.members.some(m => inIdentity.has(memberText(m))));
+async function bulkGroups(engine: BrainEngine, s: Scan, groups: DuplicateGroup[], inIdentity: Map<string, string>): Promise<DuplicateGroup[]> {
+  const candidates = groups.filter(g => g.kind === 'cross_source' && g.class === 'clean' && s.kindOf.get(g.id) === 'company' && !confirmAlone(s, g)
+    && !g.members.some(m => inIdentity.has(memberText(m))));
   const home = await identityHome(engine);
   if (!home) return candidates;
   const blocked = await unpublishableMembers(engine, home.sourceId, candidates);
@@ -178,16 +188,17 @@ async function differingFields(engine: BrainEngine, g: DuplicateGroup): Promise<
 }
 
 function hintLine(g: DuplicateGroup): string {
-  const shared = g.evidence.filter(e => e.matcher === 'shared_key' && e.key_class !== 'exclusive')
-    .map(e => `${e.key}${e.role_address ? ' (role address)' : ''}, also on ${e.other_pages_same_name ?? 0} same-name and ${e.other_pages_other_name ?? 0} other-name page(s)`);
+  const shared = g.evidence.filter(e => e.matcher === 'shared_key')
+    .map(e => e.key_class === 'exclusive' ? `${e.key} (account or registry id)`
+      : `${e.key}${e.role_address ? ' (role address)' : ''}, also on ${e.other_pages_same_name ?? 0} same-name and ${e.other_pages_other_name ?? 0} other-name page(s)`);
   const differs = g.evidence.filter(e => e.rule === 'key_differs').map(e => e.key);
   return `shared ${shared.join('; ') || 'none'}; differing keys ${differs.join(', ') || 'none'}`;
 }
 
-async function confirmList(engine: BrainEngine, result: DuplicateResult, json: boolean): Promise<void> {
-  const entries = result.groups.filter(g => g.kind === 'cross_source' && CONFIRMABLE.has(g.class));
+async function confirmList(engine: BrainEngine, s: Scan, json: boolean): Promise<void> {
+  const entries = s.result.groups.filter(g => g.kind === 'cross_source' && CONFIRMABLE.has(g.class));
   const inIdentity = await identitiesOf(engine, entries);
-  const bulk = new Set((await bulkGroups(engine, entries, inIdentity)).map(g => g.id));
+  const bulk = new Set((await bulkGroups(engine, s, entries, inIdentity)).map(g => g.id));
   const rank = (g: DuplicateGroup) => (bulk.has(g.id) ? 0 : !contactOnly(g) ? (g.class === 'weak' ? 2 : 1) : otherNamePages(g) > 0 ? 4 : 3);
   entries.sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : 1));
   const rows = [];
@@ -200,7 +211,7 @@ async function confirmList(engine: BrainEngine, result: DuplicateResult, json: b
     console.log(JSON.stringify({
       schema_version: 1, clean_preview_hash: previewHash(entries.filter(g => bulk.has(g.id))),
       entries: rows.map(({ g, fields, identities }) => ({
-        id: g.id, class: g.class, members: g.members, bulk: bulk.has(g.id), contact_key_only: contactOnly(g),
+        id: g.id, class: g.class, members: g.members, bulk: bulk.has(g.id), contact_key_only: contactOnly(g), confirm_alone: confirmAlone(s, g),
         hints: g.evidence.filter(e => e.matcher === 'shared_key' && e.key_class !== 'exclusive')
           .map(e => ({ key: e.key, role_address: e.role_address ?? false, other_pages_same_name: e.other_pages_same_name ?? 0, other_pages_other_name: e.other_pages_other_name ?? 0 })),
         differing_keys: g.evidence.filter(e => e.rule === 'key_differs').map(e => e.key),
@@ -210,12 +221,12 @@ async function confirmList(engine: BrainEngine, result: DuplicateResult, json: b
     }, null, 2));
     return;
   }
-  console.log(`${rows.length} group(s) you can confirm (${bulk.size} clean, covered by gbrain dedupe confirm --clean). Nothing was changed.`);
+  console.log(`${rows.length} group(s) you can confirm (${bulk.size} clean company group(s), covered by gbrain dedupe confirm --clean; person groups are confirmed one at a time). Nothing was changed.`);
   for (const { g, fields, identities } of rows) {
-    const how = bulk.has(g.id) ? 'clean' : contactOnly(g) ? 'contact keys only: confirm on its own' : g.class;
+    const how = bulk.has(g.id) ? 'clean' : contactOnly(g) ? 'contact keys only: confirm on its own' : confirmAlone(s, g) ? `${g.class} person, shares an id: confirm on its own` : g.class;
     console.log(`\n${g.id}  ${how}`);
     console.log(`  members:  ${g.members.map(memberText).join(', ')}`);
-    if (contactOnly(g)) console.log(`  hint:     ${hintLine(g)}`);
+    if (confirmAlone(s, g)) console.log(`  hint:     ${hintLine(g)}`);
     for (const f of fields) console.log(`  differs:  ${f.field}: ${f.values.map(v => v ?? '(none)').join(' | ')}`);
     if (identities.length) console.log(`  already:  in identity ${[...new Set(identities)].join(', ')} (confirm with --join <entity_id>)`);
   }
@@ -233,20 +244,6 @@ function unknownGroup(id: string): OperationError {
     { fix: { argv: ['gbrain', 'dedupe', '--preview'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the current groups and their ids; changes nothing.' } });
 }
 
-/** The canonical member: the page in the brain's home source when one is, else the page with the most text, else the first. */
-async function canonicalOf(engine: BrainEngine, members: IdentityMemberRef[], homeSource: string | null): Promise<IdentityMemberRef> {
-  const home = members.find(m => m.source_id === homeSource);
-  if (home) return home;
-  let best = members[0]!;
-  let size = -1;
-  for (const m of members) {
-    const p = await engine.getPage(m.slug, { sourceId: m.source_id });
-    const n = p ? pageBodyBytes(p) : 0;
-    if (n > size) { best = m; size = n; }
-  }
-  return best;
-}
-
 function storedText(r: RecordResult): string {
   if (r.store === 'database') return 'Recorded in the database (this brain has no repository).';
   const commit = r.receipt?.commit ? `commit ${r.receipt.commit.slice(0, 12)}` : 'git';
@@ -257,18 +254,19 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
   const f = parseFlags('confirm', args, new Set(['--clean', '--expect', '--join']));
   if (!f) return;
   if (f.clean && f.ids.length) { console.error('gbrain dedupe confirm: --clean takes no group ids.'); setCliExitVerdict(2); return; }
-  const { result, read } = await scan(engine);
-  if (!f.clean && !f.ids.length) return confirmList(engine, result, f.json);
+  const s = await scan(engine);
+  const { result, read } = s;
+  if (!f.clean && !f.ids.length) return confirmList(engine, s, f.json);
   const home = await identityHome(engine);
   let chosen: DuplicateGroup[];
   let entityFor = (g: DuplicateGroup) => g.id;
   if (f.clean) {
     const eligible = result.groups.filter(g => g.kind === 'cross_source');
-    chosen = await bulkGroups(engine, eligible, await identitiesOf(engine, eligible));
+    chosen = await bulkGroups(engine, s, eligible, await identitiesOf(engine, eligible));
     const hash = previewHash(chosen);
     if (!f.expect) {
       if (f.json) { console.log(JSON.stringify({ preview_hash: hash, groups: chosen.map(g => ({ id: g.id, members: g.members })) }, null, 2)); return; }
-      console.log(`${chosen.length} clean group(s) a bulk confirm covers (hash ${hash}). Nothing was changed.`);
+      console.log(`${chosen.length} clean company group(s) a bulk confirm covers (hash ${hash}). Person groups are confirmed one at a time. Nothing was changed.`);
       for (const g of chosen) console.log(`  ${g.id}  ${g.members.map(memberText).join(', ')}`);
       if (chosen.length) console.log(`\nConfirm exactly these with: gbrain dedupe confirm --clean --expect ${hash}`);
       return;
@@ -291,6 +289,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
       if (g.kind !== 'cross_source') throw notConfirmable(g, 'in_source', 'has its pages in one source; same-source duplicates are collapsed, not linked');
       if (!CONFIRMABLE.has(g.class)) throw notConfirmable(g, 'conflict', 'is not a confirmable class');
       if (contactOnly(g) && f.ids.length > 1) throw notConfirmable(g, 'contact_key_only_batch', 'shares only contact or handle keys, so it is confirmed on its own, after reading its hint line');
+      if (confirmAlone(s, g) && f.ids.length > 1) throw notConfirmable(g, 'person_id_batch', 'is a person group that shares an account or registry id, so it is confirmed on its own, after reading its hint line');
       chosen.push(g);
     }
     const inIdentity = await identitiesOf(engine, chosen);
@@ -311,7 +310,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
       const rejected = read.decisions.find(d => d.verdict === 'different' && d.members.filter(m => joined.includes(memberText(m))).length > 1);
       if (rejected) {
         const pair = rejected.members.filter(m => joined.includes(memberText(m))).slice(0, 2).map(memberText);
-        throw notConfirmable(chosen[0]!, 'rejected_pair', `with --join ${f.join} would put ${pair.join(' and ')} in one identity, but they are recorded as different people (decision ${rejected.decision_id})`);
+        throw notConfirmable(chosen[0]!, 'rejected_pair', `with --join ${f.join} would put ${pair.join(' and ')} in one identity, but they are recorded as different people or companies (decision ${rejected.decision_id})`);
       }
       entityFor = () => f.join!;
     }
@@ -359,17 +358,17 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
       `gbrain dedupe reject: ${memberText(member)} of ${d.group_id} is in the group you confirmed as one person (${other.entity_id}); nothing was written.`,
       `To undo that confirm too, reject them together: gbrain dedupe reject ${both.join(' ')}.`,
       { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', ...both], consent: [], actor: 'user', requires_exclusive: false,
-        why: 'Records the groups as different people in one command and removes the confirmed links.',
+        why: 'Records the groups as different people or companies in one command and removes the confirmed links.',
         user_message: `${memberText(member)} is in the group you confirmed as one person (${other.entity_id}). Should I undo that confirm as well?`,
         verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
   }
-  const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people`);
+  const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people or companies`);
   const sameSource = await markDistinct(engine, decisions);
   if (f.json) {
     console.log(JSON.stringify({ rejected: decisions.map(d => ({ group_id: d.group_id, members: d.members })), store: r.store,
       ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), distinct_from: sameSource }, null, 2));
   } else {
-    for (const d of decisions) console.log(`Recorded ${d.group_id} as different people: ${d.members.map(memberText).join(', ')}. It will not be proposed again.`);
+    for (const d of decisions) console.log(`Recorded ${d.group_id} as different people or companies: ${d.members.map(memberText).join(', ')}. It will not be proposed again.`);
     console.log(storedText(r));
     for (const s of sameSource) console.log(`  ${s.source_id}:${s.slug} distinct_from: ${s.status}`);
   }

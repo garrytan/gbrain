@@ -20,7 +20,9 @@
  * dedupe_decision_store_mismatch instead of writing a decision only the database would hold.
  */
 import { createHash } from 'node:crypto';
+import { pageBodyBytes } from '../page-body/page-shape.ts';
 import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
+import { withEngineScope } from '../engine-scope.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
@@ -258,12 +260,13 @@ export interface UnpublishableMember { member: IdentityMemberRef; reason: 'owner
  * For each decision, the first member whose source and slug must stay out of the home source's repository, or null: a page
  * in an owner-only source (archived ones included), in a source that no longer exists, or a page outside the home source
  * that not every reader of it may read (readable_by, a folder rule or a private label). One check for record, reconcile,
- * drift and the bulk confirm list.
+ * drift and the bulk confirm list. The page test runs in the engine's scope, so it judges each page's own owner-only
+ * lineage instead of refusing every page while the brain holds any owner-only source.
  */
 export async function unpublishableMembers(engine: BrainEngine, homeSourceId: string, decisions: ReadonlyArray<{ members: IdentityMemberRef[] }>): Promise<Array<UnpublishableMember | null>> {
   const sources = new Map((await engine.listAllSources({ includeArchived: true })).map(s => [s.id, s]));
   const outside = decisions.flatMap(d => d.members).filter(m => m.source_id !== homeSourceId && sources.has(m.source_id));
-  const restricted = new Set((await engine.listRestrictedIdentityMembers(outside)).map(r => `${r.source_id}:${r.slug}`));
+  const restricted = new Set((await withEngineScope(engine, () => engine.listRestrictedIdentityMembers(outside))).map(r => `${r.source_id}:${r.slug}`));
   return decisions.map(d => {
     for (const member of d.members) {
       const source = sources.get(member.source_id);
@@ -393,6 +396,20 @@ export async function identityDrift(engine: BrainEngine, read?: IdentityDecision
     rows_without_file: [...rows.keys()].filter(id => !fileIds.has(id)).length,
     pending: r.pending,
   };
+}
+
+/** The canonical member: the page in the brain's home source when one is, else the page with the most text, else the first. */
+export async function canonicalOf(engine: BrainEngine, members: IdentityMemberRef[], homeSource: string | null): Promise<IdentityMemberRef> {
+  const home = members.find(m => m.source_id === homeSource);
+  if (home) return home;
+  let best = members[0]!;
+  let size = -1;
+  for (const m of members) {
+    const p = await engine.getPage(m.slug, { sourceId: m.source_id });
+    const n = p ? pageBodyBytes(p) : 0;
+    if (n > size) { best = m; size = n; }
+  }
+  return best;
 }
 
 /** The finder's view of the decisions: pairs kept apart, and member sets already decided as one. */
