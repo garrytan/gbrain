@@ -13,7 +13,7 @@ import type { ProgressOptions } from '../progress.ts';
 import { detectManifestScope, storedManifestScope, worktreeManifest, type StoredWorktreeManifest, type WorktreeManifest } from './worktree-manifest.ts';
 import { hostIdFor } from './identity.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
-import type { SqlEngine, WriteRequest } from './model.ts';
+import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
@@ -40,7 +40,7 @@ export function containsPath(root: string, path: string): boolean {
 }
 export { MANAGED_MODE_SQL, managedModeFromRows, readManagedMode, readManagedModeTyped, readPersistenceBrain, unknownManagedModeRefusal,
   type ManagedModeReadOptions, type ManagedModeRefusalContext, type PersistenceBrainRow } from './managed-mode.ts';
-export async function managedPersistenceEnabled(engine: SqlEngine): Promise<boolean> {
+export async function managedPersistenceEnabled(engine: RawSqlEngine): Promise<boolean> {
   return readManagedMode(engine);
 }
 /**

@@ -4,7 +4,7 @@
  * one without), and a confirmed group counts once.
  *
  * 1. Protects: gbrain dedupe confirm writes the decision and every identity row in one transaction (a failure on the
- *    second member writes nothing); a bulk confirm covers only clean groups and is bound to the hash it printed; a
+ *    second member writes nothing); a bulk confirm covers only clean company groups and is bound to the hash it printed; a
  *    contact-only group is confirmed alone, with a hint line; conflicts are never confirmed; a page already in another
  *    group refuses unless --join names it; reject keeps the pair out of every later preview and undoes a confirm; the
  *    hand-link ops never move a confirmed member; the preview of groups nobody decided is unchanged; rank_entities and
@@ -107,11 +107,11 @@ const opCtx = (overrides: Partial<OperationContext> = {}) => ({
 const op = (name: string) => operations.find(o => o.name === name)!;
 
 describe('without a repository', () => {
-  test('the confirm list writes nothing, puts clean groups first and gives a contact-only group its hint line', async () => {
+  test('the confirm list writes nothing, lists a person group that shares an id first, to confirm on its own, and gives it and a contact-only group a hint line', async () => {
     await seed();
     const list = await cliJson(['confirm']);
-    expect(list.entries.map((e: { id: string; bulk: boolean; contact_key_only: boolean }) => [e.bulk, e.contact_key_only]))
-      .toEqual([[true, false], [false, false], [false, true]]);
+    expect(list.entries.map((e: { id: string; bulk: boolean; contact_key_only: boolean; confirm_alone: boolean }) => [e.bulk, e.contact_key_only, e.confirm_alone]))
+      .toEqual([[false, false, true], [false, false, false], [false, true, true]]);
     const alice = list.entries[0];
     expect(alice.members.map((m: { source_id: string }) => m.source_id)).toEqual(['default', 'source-b']);
     expect(alice.differing_fields).toEqual(['city']);
@@ -120,6 +120,8 @@ describe('without a repository', () => {
     const text = await cli(['confirm']);
     expect(text).toContain('differs:  city: Springfield | Shelbyville');
     expect(text).toContain('hint:     shared email, also on 0 same-name and 0 other-name page(s); differing keys none');
+    expect(text).toContain('clean person, shares an id: confirm on its own');
+    expect(text).toContain('hint:     shared linkedin (account or registry id); differing keys none');
     expect(await rows()).toEqual({ decisions: [], identities: [] });
   });
 
@@ -154,14 +156,15 @@ describe('without a repository', () => {
     }
   });
 
-  test('refusals: unknown id, a conflict, a contact-only group with others, a page in another group (and --join)', async () => {
+  test('refusals: unknown id, a conflict, a contact-only or id-sharing person group with others, a page in another group (and --join)', async () => {
     await seed();
     const groups = await preview();
     const id = (slug: string) => groups.find(g => g.members.every(m => m.slug === slug))!;
     expect(id('people/carol-example').class).toBe('conflict');
     await expect(cli(['confirm', 'dedupe/0000000000000000'])).rejects.toMatchObject({ code: 'dedupe_group_unknown' });
     await expect(cli(['confirm', id('people/carol-example').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'conflict' });
-    await expect(cli(['confirm', id('people/alice-example').id, id('people/bob-sample').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'contact_key_only_batch' });
+    await expect(cli(['confirm', id('people/bob-sample').id, id('people/dan-sample').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'contact_key_only_batch' });
+    await expect(cli(['confirm', id('people/alice-example').id, id('people/dan-sample').id])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'person_id_batch' });
     await linkEntityIdentity(engine, { entityId: 'alice-by-hand', slug: 'people/alice-example', sourceId: 'default', canonical: true });
     await expect(cli(['confirm', id('people/alice-example').id])).rejects.toMatchObject({ code: 'identity_member_in_other_group' });
     expect((await rows()).decisions).toEqual([]);
@@ -174,14 +177,18 @@ describe('without a repository', () => {
     expect((await rows()).decisions.map(d => d.verdict)).toEqual(['same', 'same']);
   });
 
-  test('a bulk confirm covers only clean groups and is bound to the hash it printed', async () => {
+  test('a bulk confirm covers only clean company groups, never a person group, and is bound to the hash it printed', async () => {
     await seed();
+    const company = (sourceId: string) => engine.putPage('companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'Acme Example.', timeline: '',
+      frontmatter: { github: 'acme-example' } } as never, { sourceId });
+    await company('default');
+    await company('source-b');
     const listed = await cliJson(['confirm', '--clean']);
-    expect(listed.groups.map((g: { id: string }) => g.id)).toEqual([await groupOf('people/alice-example')]);
+    expect(listed.groups.map((g: { id: string }) => g.id)).toEqual([await groupOf('companies/acme-example')]);
     await expect(cli(['confirm', '--clean', '--expect', '0000000000000000'])).rejects.toMatchObject({ code: 'preview_changed' });
     expect((await rows()).decisions).toEqual([]);
     await cli(['confirm', '--clean', '--expect', listed.preview_hash]);
-    expect((await rows()).identities.map(r => r.slug)).toEqual(['people/alice-example', 'people/alice-example']);
+    expect((await rows()).identities.map(r => r.slug)).toEqual(['companies/acme-example', 'companies/acme-example']);
     expect((await cliJson(['confirm', '--clean'])).groups).toEqual([]);
   });
 

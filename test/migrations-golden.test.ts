@@ -28,13 +28,13 @@ describe('migrations full-record golden', () => {
     expectGolden('migrations/records', golden, normalizer);
   }, 60_000);
 
-  test('versions are unique and the runner applies them ascending; gaps 17-19, 100 and 327 stay gaps', () => {
+  test('versions are unique and the runner applies them ascending; gaps 17-19 and 100 stay gaps', () => {
     const versions = MIGRATIONS.map((m) => m.version);
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 327 is master's v327-access-handovers and 328 is master's v328-owner-only-reads-complete (#9704); this branch carries neither yet. Drop each from this list when master is merged.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 327, 328]);
+    // 328 is reserved for PR #9704 (v328-owner-only-reads-complete); drop it from this list when that lands.
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 328]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

@@ -333,15 +333,18 @@ export async function restorePage(exec: SqlExecutor, slug: string, opts?: { sour
 export async function purgeDeletedPages(
   exec: SqlExecutor,
   olderThanHours: number,
-  opts?: { dryRun?: boolean; excludeIds?: number[] },
+  opts?: { dryRun?: boolean; excludeIds?: number[]; onlyIds?: number[] },
 ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; source_id: string; deleted_at: Date }[] }> {
     // Clamp to non-negative integer; runaway purge protection. The DELETE
     // cascades through content_chunks, page_links, chunk_relations via FKs.
     const hours = Math.max(0, Math.floor(olderThanHours));
     // GBRA-130 A-49: tombstones the unmanaged belief-ledger expiry could not delete (or parked) stay for their own retry.
+    // #9653: `onlyIds` narrows the same statements to those pages (a concept rebuild's one tombstone).
+    const only = opts?.onlyIds ? sqlFragment` AND pages.id = ANY(${opts.onlyIds}::bigint[])` : sqlFragment``;
+    const onlyManifest = opts?.onlyIds ? sqlFragment` AND p.id = ANY(${opts.onlyIds}::bigint[])` : sqlFragment``;
     const excluded = opts?.excludeIds?.length ? sqlFragment`
-          AND NOT (pages.id = ANY(${opts.excludeIds}::bigint[]))` : sqlFragment``;
-    const excludedManifest = opts?.excludeIds?.length ? sqlFragment` AND NOT (p.id = ANY(${opts.excludeIds}::bigint[]))` : sqlFragment``;
+          AND NOT (pages.id = ANY(${opts.excludeIds}::bigint[]))${only}` : only;
+    const excludedManifest = opts?.excludeIds?.length ? sqlFragment` AND NOT (p.id = ANY(${opts.excludeIds}::bigint[]))${onlyManifest}` : onlyManifest;
     if (opts?.dryRun) {
       // SAME WHERE predicate as the DELETE below (same cutoff arithmetic,
       // same DB now() clock source) — only the verb differs, so preview and

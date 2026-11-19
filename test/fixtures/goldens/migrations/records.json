@@ -1,12 +1,11 @@
 {
   "golden": {
-    "count": 322,
+    "count": 323,
     "gaps": [
       17,
       18,
       19,
       100,
-      327,
       328
     ],
     "helpers": {
@@ -5348,6 +5347,19 @@
         "version": 326
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "access_handovers",
+        "sql": {
+          "length": 936,
+          "sha256": "6fabcd3509232e6cadf252a3b5797f72a3835f71b5cb7a68db8389b1deb52fe8"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 327
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5699,6 +5711,7 @@
       324,
       325,
       326,
+      327,
       329
     ]
   },

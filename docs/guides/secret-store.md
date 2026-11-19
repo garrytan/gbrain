@@ -131,10 +131,16 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   a host whose keyring holds the key the backup names (import the escrow copy first), and it skips, and lists, any row
   that does not authenticate under it. An entry already here is left as it is, even when the backup's copy differs;
   the places the backup recorded for it that this brain lacks are added, so a later purge of one page never removes an
-  original another page still holds. A restore only adds rows and never deletes one, and each restored place is tied
-  to the page that holds its slug in this brain now.
-  An original whose every recorded place was on a page this brain does not hold is skipped and counted as
-  `skipped_no_page` ("skipped because their page is not in this brain"): the page was purged, or is not synced yet,
+  original another page still holds. A restore only adds rows and never deletes one it did not write, and it ties a restored place to
+  the page at its backed-up slug only when that page holds the entry's marker (`<REDACTED:<rule>:<id>>`), so a page
+  that merely took an old slug, or quotes only the id, never gets the original. The marker counts when it sits in the page
+  itself or in a timeline entry or fact filed on or about that page, so a copy another page wrote into that page's
+  timeline counts too. A page whose body is stored in segments is read segment by segment. The restore ties the place
+  to the exact page it checked and holds that page until it commits, so a rename running at the same time cannot hand
+  the original to a page that takes the slug.
+  An original recorded only on pages, none of which at its backed-up slugs holds its marker, is skipped and counted as
+  `skipped_no_page` ("skipped because no page in this brain holds their marker"): the page was purged, is not synced
+  yet, or was renamed before the backup named it by its current slug (a backup from before 0.60.744.0),
   and a restore cannot tell which, so it never brings back what a page purge removed. Sync the pages, then run the
   same restore again; it adds what it skipped. When every entry is skipped that way (a rebuilt brain before sync), the
   restore refuses with `invalid_params` and writes nothing, so a script never reads it as finished.
@@ -169,8 +175,4 @@ store is backed up, and warns when:
 - It does not erase bytes physically: dead database rows and WAL can hold old text until the database reclaims them.
 - An original an older gbrain left an occurrence for after its page was purged stays: that occurrence still names it,
   so the cascade and doctor's count treat it as referenced.
-- A restore from a backup taken before a rename can tie an original to a different page that has since taken the
-  renamed page's old slug, and that page's readers then pass the `reveal_secret` read check for it. It needs both: an
-  older backup and another page now at that slug. After a restore, `gbrain secrets list` shows the pages each original
-  is tied to. A backup taken after the rename names the new slug.
 - Markers written before the store existed (`<REDACTED:rule>` with no id) stay unrecoverable.

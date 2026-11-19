@@ -5,6 +5,7 @@
  *   gbrain access member set <id> --email <addr>|none
  *   gbrain access member link <id>|--email <addr> --qm <canonical id> | unlink --qm <canonical id> | links [--member <id>]
  *   gbrain access member source add|remove|list <member> [<source>]
+ *   gbrain access member handover <member> [--set <group>=<choice>]... [--yes --expect <hash>] [--undo <id>] [--status <id>]
  *   gbrain access group add|rm|list <group> [--members a,b]
  *   gbrain access who-can-read <slug> [--source <id>]
  *   gbrain access check --token <name>|--client <id> [--as a,b]
@@ -70,6 +71,13 @@ Members and groups:
                                              Preview first; removing the last binding makes it readable
                                              again to every attested person whose credential grants it
   gbrain access member source list [<id>]
+  gbrain access member handover <id> [--set <group>=<choice>]... [--yes --expect <hash>]
+                                             After disable or rm: gives pages the member kept to itself to the
+                                             owner (kept=, folder=owner|<member>|everyone|keep; shared=keep|drop;
+                                             source=keep|<member>). Preview first
+  gbrain access member handover <id> --undo <handover id> [--yes --expect <hash>]
+                                             Once the member is enabled again: restores what the handover moved
+  gbrain access member handover --status <handover id>
   gbrain access group add <group> [--members a,b]
   gbrain access group rm <group> [--members a,b] [--yes]
                                              With --members, removes those members; otherwise previews
@@ -367,7 +375,8 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       const stranded = sub === 'disable' && !json ? await disableReadByNobodyLines(engine, m.id).catch((e: unknown) =>
         [`Could not check which pages naming it no enabled member reads (${e instanceof Error ? e.message : String(e)}); the disable stands. gbrain access who-can-read <slug> shows who reads a page.`]) : [];
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
-        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded]);
+        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded,
+        ...(sub === 'disable' ? [`Give the pages it kept to itself to the owner (preview first): gbrain access member handover ${m.id}`] : [])]);
     }
     case 'set': {
       const email = flagValue(args, '--email');
@@ -383,7 +392,7 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
         `  Bound credentials (${r.bound_credentials.length}): ${r.bound_credentials.map(c => `${c.kind} ${c.name}`).join(', ') || 'none'}`,
         `  Pages naming it (${r.pages.length}${r.pages_truncated ? '+' : ''}): ${r.pages.map(p => `${p.source_id}:${p.slug}`).join(', ') || 'none'}`,
         `  ${r.note}`,
-        ...(yes ? [] : [`Apply with: gbrain access member rm ${r.member.id} --yes`])]);
+        ...(yes ? [] : [`Hand its pages over first (removing drops its group memberships): gbrain access member handover ${r.member.id}`, `Apply with: gbrain access member rm ${r.member.id} --yes`])]);
     }
     case 'list': {
       const members = await listMembers(engine, { includeRemoved: args.includes('--all') });
@@ -395,8 +404,10 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       return memberLinksCmd(engine, sub, args, json, id);
     case 'source':
       return memberSourceCmd(engine, args, json);
+    case 'handover':
+      return (await import('./access-handover.ts')).handoverCmd(engine, args, json);
     default:
-      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, set, kind, labelled-only, disable, enable, rm, list, link, unlink, links or source (gbrain access --help).');
+      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, set, kind, labelled-only, disable, enable, rm, list, link, unlink, links, source or handover (gbrain access --help).');
   }
 }
 
