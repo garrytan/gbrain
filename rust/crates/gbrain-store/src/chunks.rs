@@ -17,6 +17,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const NEXT_CHUNK_ID: &str = "next_chunk_id";
 const STATS: &str = "chunk_stats";
+const STATS_CHUNKS: &str = "chunk_stats/chunks";
+const STATS_LENGTH: &str = "chunk_stats/total_length";
 /// The longest term the index keeps, in bytes.
 const MAX_TERM_BYTES: usize = 64;
 /// The size a chunk aims for, in characters.
@@ -144,8 +146,35 @@ pub(crate) struct ChunkStats {
     pub total_length: u64,
 }
 
+/// The chunk count and total length. Brains written before the per-counter layout keep a JSON
+/// `chunk_stats` record, read as a base and never written again; every write since adds to two
+/// counter records (`chunk_stats/chunks`, `chunk_stats/total_length`) without reading them, so
+/// concurrent chunk writes never conflict on the stats.
 pub(crate) fn read_stats(read: &dyn KvRead) -> Result<ChunkStats> {
-    Ok(get_json(read, &keys::meta(STATS))?.unwrap_or_default())
+    let legacy: ChunkStats = get_json(read, &keys::meta(STATS))?.unwrap_or_default();
+    let chunks = legacy.chunks as i64 + crate::kv::read_i64(read, &keys::meta(STATS_CHUNKS))?;
+    let total = legacy.total_length as i64 + crate::kv::read_i64(read, &keys::meta(STATS_LENGTH))?;
+    Ok(ChunkStats {
+        chunks: chunks.max(0) as u64,
+        total_length: total.max(0) as u64,
+    })
+}
+
+/// A change to the chunk stats, written with `add_stats`.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct StatsDelta {
+    pub chunks: i64,
+    pub total_length: i64,
+}
+
+fn add_stats(tx: &mut dyn KvWrite, delta: &StatsDelta) -> Result<()> {
+    if delta.chunks != 0 {
+        tx.add_i64(&keys::meta(STATS_CHUNKS), delta.chunks)?;
+    }
+    if delta.total_length != 0 {
+        tx.add_i64(&keys::meta(STATS_LENGTH), delta.total_length)?;
+    }
+    Ok(())
 }
 
 fn is_cjk(c: char) -> bool {
@@ -293,11 +322,11 @@ fn drop_chunk_records(tx: &mut dyn KvWrite, records: &[ChunkRecord]) -> Result<(
     if records.is_empty() {
         return Ok(());
     }
-    let mut stats = read_stats(&*tx)?;
+    let mut stats = StatsDelta::default();
     for chunk in records {
         remove_chunk_record(tx, chunk, &mut stats)?;
     }
-    put_json(tx, &keys::meta(STATS), &stats)
+    add_stats(tx, &stats)
 }
 
 /// `chunk_source` of a write, `compiled_truth` when absent; any other value than the four PGLite
@@ -337,14 +366,14 @@ fn write_chunk(
     tx: &mut dyn KvWrite,
     record: &ChunkRecord,
     view_generation: u64,
-    stats: &mut ChunkStats,
+    stats: &mut StatsDelta,
 ) -> Result<()> {
     put_json(tx, &keys::chunk(record.page_id, record.chunk_index), record)?;
     if record.visible_at(view_generation) {
         put_postings(tx, record)?;
     }
     stats.chunks += 1;
-    stats.total_length += u64::from(record.length);
+    stats.total_length += i64::from(record.length);
     Ok(())
 }
 
@@ -371,13 +400,13 @@ fn delete_postings(tx: &mut dyn KvWrite, record: &ChunkRecord) -> Result<()> {
 fn remove_chunk_record(
     tx: &mut dyn KvWrite,
     chunk: &ChunkRecord,
-    stats: &mut ChunkStats,
+    stats: &mut StatsDelta,
 ) -> Result<()> {
     delete_postings(tx, chunk)?;
     tx.delete(&keys::chunk(chunk.page_id, chunk.chunk_index))?;
     crate::embeddings::remove_chunk_vector(tx, chunk.page_id, chunk.chunk_index)?;
-    stats.chunks = stats.chunks.saturating_sub(1);
-    stats.total_length = stats.total_length.saturating_sub(u64::from(chunk.length));
+    stats.chunks -= 1;
+    stats.total_length -= i64::from(chunk.length);
     Ok(())
 }
 
@@ -491,7 +520,7 @@ pub(crate) fn replace_chunks_at(
     } else {
         0
     };
-    let mut stats = read_stats(&*tx)?;
+    let mut stats = StatsDelta::default();
     let view_generation = segment_view_generation(&*tx, page.id)?;
     for (index, input) in by_index {
         let source = checked_source(input)?;
@@ -605,7 +634,7 @@ pub(crate) fn replace_chunks_at(
             )?;
         }
     }
-    put_json(tx, &keys::meta(STATS), &stats)?;
+    add_stats(tx, &stats)?;
     if seal {
         // PGLite's seal (`upsertChunks` with `sealChunkerVersion`) stamps the safe fence version too.
         page.text_projection_revision = Some(page.knowledge_revision.clone());
@@ -616,14 +645,7 @@ pub(crate) fn replace_chunks_at(
 }
 
 fn next_chunk_id(tx: &mut dyn KvWrite) -> Result<u64> {
-    let key = keys::meta(NEXT_CHUNK_ID);
-    let current = match tx.get(&key)? {
-        Some(bytes) => keys::be8(&bytes)
-            .ok_or_else(|| StoreError::new(crate::error::STORE_CORRUPT, "bad chunk id counter"))?,
-        None => 1,
-    };
-    tx.put(&key, &(current + 1).to_be_bytes())?;
-    Ok(current)
+    tx.allocate(&keys::meta(NEXT_CHUNK_ID), 1)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -764,7 +786,7 @@ pub(crate) fn append_segment_chunks(
         .max()
         .unwrap_or(0);
     let view_generation = segment_view_generation(&*tx, page_id)?;
-    let mut stats = read_stats(&*tx)?;
+    let mut stats = StatsDelta::default();
     let mut indexes = Vec::with_capacity(chunks.len());
     for (offset, input) in chunks.iter().enumerate() {
         let index = u32::try_from(offset)
@@ -797,7 +819,7 @@ pub(crate) fn append_segment_chunks(
         write_chunk(tx, &record, view_generation, &mut stats)?;
         indexes.push(index);
     }
-    put_json(tx, &keys::meta(STATS), &stats)?;
+    add_stats(tx, &stats)?;
     Ok(indexes)
 }
 
@@ -868,11 +890,11 @@ pub(crate) fn delete_chunks_matching(
     if gone.is_empty() {
         return Ok(Vec::new());
     }
-    let mut stats = read_stats(&*tx)?;
+    let mut stats = StatsDelta::default();
     for chunk in &gone {
         remove_chunk_record(tx, chunk, &mut stats)?;
     }
-    put_json(tx, &keys::meta(STATS), &stats)?;
+    add_stats(tx, &stats)?;
     let mut ids: Vec<u64> = gone.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     crate::cascade::remove_chunk_rows(tx, page_id, &ids)?;

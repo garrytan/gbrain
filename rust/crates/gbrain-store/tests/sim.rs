@@ -22,7 +22,7 @@ use gbrain_sim::{
 use gbrain_store::chunks::{ChunkInput, tokenize};
 use gbrain_store::env::uuid_from_bytes;
 use gbrain_store::journal::{FinishWrite, PageMutation, Principal, WriteAdmission};
-use gbrain_store::kv::scan_prefix;
+use gbrain_store::kv::{read_i64, scan_prefix};
 use gbrain_store::links::{
     AddLinkOptions, LinkBatchInput, LinkScope, RemoveLinkOptions, TraverseGraphOptions,
 };
@@ -726,10 +726,19 @@ fn integrity(kv: &dyn Kv) -> Result<Vec<String>, StoreError> {
             expected_postings.len()
         ));
     }
-    let stats = read
+    // The legacy JSON record plus the per-counter records written since the concurrent store.
+    let mut stats = read
         .get(&keys::meta("chunk_stats"))?
         .map(|b| record(&b))
         .unwrap_or_else(|| json!({"chunks": 0, "total_length": 0}));
+    for (name, field) in [
+        ("chunk_stats/chunks", "chunks"),
+        ("chunk_stats/total_length", "total_length"),
+    ] {
+        let add = read_i64(read, &keys::meta(name))?;
+        let sum = stats[field].as_i64().unwrap_or(0) + add;
+        stats[field] = json!(sum);
+    }
     if stats["chunks"].as_u64() != Some(chunk_count)
         || stats["total_length"].as_u64() != Some(total_length)
     {
@@ -901,10 +910,41 @@ fn integrity(kv: &dyn Kv) -> Result<Vec<String>, StoreError> {
             ));
         }
     }
-    let counters = read
+    let mut counters = read
         .get(&keys::meta("journal_counters"))?
         .map(|b| record(&b))
         .unwrap_or_else(|| json!({"brain": 0, "principals": {}}));
+    // The legacy JSON record plus the per-counter records written since the concurrent store.
+    let brain = counters["brain"].as_i64().unwrap_or(0)
+        + read_i64(read, &keys::meta("journal_outstanding"))?;
+    counters["brain"] = json!(brain);
+    let mut outstanding = Vec::new();
+    scan_prefix(
+        read,
+        &keys::meta("journal_outstanding/"),
+        false,
+        &mut |k, v| {
+            outstanding.push((k.to_vec(), v.to_vec()));
+            true
+        },
+    )?;
+    for (key, value) in outstanding {
+        let name =
+            String::from_utf8_lossy(&key[keys::meta("journal_outstanding/").len()..]).into_owned();
+        let add = i64::from_le_bytes(value.as_slice().try_into().unwrap_or([0; 8]));
+        if !counters["principals"].is_object() {
+            counters["principals"] = json!({});
+        }
+        let sum = counters["principals"][&name].as_i64().unwrap_or(0) + add;
+        if sum == 0 {
+            counters["principals"]
+                .as_object_mut()
+                .unwrap()
+                .remove(&name);
+        } else {
+            counters["principals"][&name] = json!(sum);
+        }
+    }
     if counters["brain"].as_u64() != Some(open_total) {
         bad.push(format!(
             "the brain counter {} is not the {open_total} unfinished requests",
@@ -1287,13 +1327,13 @@ fn the_integrity_check_sees_damage() {
         ),
         (
             "the chunk totals",
-            keys::meta("chunk_stats"),
-            Some(br#"{"chunks":0,"total_length":0}"#.to_vec()),
+            keys::meta("chunk_stats/chunks"),
+            Some(0i64.to_le_bytes().to_vec()),
         ),
         (
             "the journal counters",
-            keys::meta("journal_counters"),
-            Some(br#"{"brain":99,"principals":{}}"#.to_vec()),
+            keys::meta("journal_outstanding"),
+            Some(99i64.to_le_bytes().to_vec()),
         ),
     ];
     for (what, key, replacement) in damages {

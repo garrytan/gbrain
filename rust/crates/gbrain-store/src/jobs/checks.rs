@@ -613,7 +613,7 @@ mod tests {
     }
 
     /// Rewrites a stored row in place, as a row from before the protocol trigger would look.
-    fn rewrite(store: &Store, id: i64, f: impl FnOnce(&mut JobRecord)) {
+    fn rewrite(store: &Store, id: i64, mut f: impl FnMut(&mut JobRecord)) {
         store
             .write(|tx| {
                 let mut row = load(tx, id)?.expect("the row exists");
