@@ -42,7 +42,7 @@ import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phas
 import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, COMPACTABLE_RECEIPTS_SQL, PROJECTION_RETRY_READY_TEXT, SEGMENTED_JOB_PROBES_SQL,
   SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, projectionWindowFragment } from '../src/core/engine-sql/persistence-housekeeping.ts';
 import { residentWindowCtes, type ProjectionScanCursor } from '../src/core/page-state/projection-window.ts';
-import { INSERT_TOPOLOGY_CHANGE_SQL, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { INSERT_TOPOLOGY_CHANGE_SQL, RELEASE_CLAIM_SQL, releaseUnpublishedClaim as releaseClaimStatement, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../src/core/persistence/journal.ts';
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
@@ -227,5 +227,23 @@ describe('the completion synchronous-commit statement copies the journal stateme
     const engine = { executeRaw: async (...args: unknown[]) => { sent.push(args); return []; } };
     await requireSynchronousCommit(engine as never);
     expect(sent).toEqual([[journalText]]);
+  });
+});
+
+describe('the unpublished-claim release copies the journal statement', () => {
+  // The statement journal.ts releaseUnpublishedClaim sent through executeRaw before it called the engine member.
+  const journalText = `UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
+    WHERE id=$1::uuid AND execution_token=$2::uuid
+    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`;
+
+  test('releaseUnpublishedClaim sends the journal text with id, token, reason and charge', async () => {
+    expect(RELEASE_CLAIM_SQL).toBe(journalText);
+    const sent: unknown[][] = [];
+    const engine = { executeRaw: async (...args: unknown[]) => { sent.push(args); return []; } };
+    await releaseClaimStatement(engine, { id: 'a', token: 'b', reason: 'database_contention', charge: true });
+    await releaseClaimStatement(engine, { id: 'a', token: null, reason: 'claim_lost', charge: false });
+    expect(sent).toEqual([[journalText, ['a', 'b', 'database_contention', true]], [journalText, ['a', null, 'claim_lost', false]]]);
   });
 });

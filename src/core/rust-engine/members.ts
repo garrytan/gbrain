@@ -537,6 +537,7 @@ export const RUST_ENGINE_MEMBERS = {
   readTopologyChange: 'persistence_journal',
   insertTopologyChange: 'persistence_journal',
   renewWriteClaim: 'persistence_journal',
+  releaseUnpublishedClaim: 'persistence_journal',
   expireStaleWriteClaims: 'persistence_journal',
   hasClaimableWrite: 'persistence_journal',
   selectClaimableWrite: 'persistence_journal',

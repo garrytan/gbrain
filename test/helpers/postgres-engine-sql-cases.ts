@@ -546,7 +546,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
-  'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
+  'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
@@ -1328,6 +1328,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('findTopologyChanges', [['default', (e) => e.transaction((tx: any) => tx.findTopologyChanges(JOURNAL_REQUEST, [JOURNAL_REQUEST]))]]),
   ...variants('renewWriteClaim', [['default', (e) => e.renewWriteClaim({ id: JOURNAL_REQUEST, token: JOURNAL_REQUEST, leaseMs: 30_000, phaseJson: null })]]),
+  ...variants('releaseUnpublishedClaim', [['default', (e) => e.releaseUnpublishedClaim({ id: JOURNAL_REQUEST, token: JOURNAL_REQUEST, reason: 'parity', charge: false })]]),
   ...variants('expireStaleWriteClaims', ([false, true] as const).map((direct) => [direct ? 'direct' : 'default',
     (e: any) => e.expireStaleWriteClaims({ hostId: JOURNAL_REQUEST, charge: true, deadOwners: [] }, { direct })])),
   ...variants('hasClaimableWrite', ([null, true] as const).map((priority) => [priority === null ? 'default' : 'priority',

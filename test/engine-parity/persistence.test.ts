@@ -24,7 +24,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
 import type { QueuedPublicationEffect } from '../../src/core/engine-sql/persistence-journal.ts';
-import { assertPageRequestIdentity, completeWrite } from '../../src/core/persistence/journal.ts';
+import { assertPageRequestIdentity, completeWrite, releaseUnpublishedClaim } from '../../src/core/persistence/journal.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -529,6 +529,32 @@ describe('engine parity: write journal', () => {
     const answers = { held, phase: renewed?.claim_phase, keptPhase, keptPhaseValue: kept?.claim_phase, stranger, unknown, extended };
     expect(answers).toMatchObject({ held: true, phase: { phase: 'publishing' }, keptPhase: true, keptPhaseValue: { phase: 'publishing' }, stranger: false, unknown: false, extended: true });
     return answers;
+  });
+
+  parityTest('releaseUnpublishedClaim returns a claim to queued under its token so the writer claims it again', { methods: ['releaseUnpublishedClaim', 'stampWriteClaim', 'readWriteRequestById'] }, async (engine) => {
+    const id = await admitDirect(engine);
+    const pick = (row: Record<string, unknown> | null) => row && ({ state: row.state, token: row.execution_token ?? null, lease: row.claim_expires_at ?? null,
+      blocked: row.blocked_reason ?? null, attempts: Number(row.preparation_attempts), phase: row.claim_phase ?? null });
+    const first = await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'preparing', token: TOKEN }));
+    // A release under another token changes nothing: the claim is still this writer's.
+    await releaseUnpublishedClaim(engine, { ...(first as WriteRequest), execution_token: OTHER_TOKEN }, 'claim_lost');
+    const strangerRow = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    const stranger = strangerRow && { state: strangerRow.state, token: strangerRow.token, leased: strangerRow.lease !== null };
+    // A transient failure (a lock timeout) releases the claim uncharged: queued, no token, no lease, no phase.
+    await releaseUnpublishedClaim(engine, first as WriteRequest, 'database_contention');
+    const released = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    // The writer retries it: a second claim takes it, and a charged release counts one attempt and keeps the phase.
+    const retry = await engine.stampWriteClaim(id, OTHER_TOKEN, 60_000, JSON.stringify({ phase: 'preparing', token: OTHER_TOKEN }));
+    await releaseUnpublishedClaim(engine, retry as WriteRequest, 'preparation_deadline', { charge: true });
+    const charged = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    const result = { stranger, released, retried: (retry as WriteRequest | null)?.state ?? null, charged };
+    expect(result).toEqual({
+      stranger: { state: 'running', token: TOKEN, leased: true },
+      released: { state: 'queued', token: null, lease: null, blocked: 'database_contention', attempts: 0, phase: null },
+      retried: 'running',
+      charged: { state: 'queued', token: null, lease: null, blocked: 'preparation_deadline', attempts: 1, phase: { phase: 'preparing', token: OTHER_TOKEN } },
+    });
+    return result;
   });
 
   parityTest('expireStaleWriteClaims returns an expired claim to queued, charges a preparing one when asked, and frees a dead owner\'s claim', {

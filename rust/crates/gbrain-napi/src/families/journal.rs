@@ -249,6 +249,18 @@ impl Brain {
         })
     }
 
+    /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
+    #[napi]
+    pub fn release_unpublished_claim<'env>(
+        &self,
+        env: &'env Env,
+        release: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.release_unpublished_claim(&required(release, "releaseUnpublishedClaim release")?)
+        })
+    }
+
     #[napi]
     pub fn expire_stale_write_claims<'env>(
         &self,
