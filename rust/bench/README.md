@@ -85,8 +85,10 @@ Needs a Rust toolchain (stable). From this directory:
 cargo build --release
 B=target/release/gbrain-bakeoff
 
-# Corpus: built by ../corpus (format gbrain-bench-corpus/1). Exact ground truth is computed once
-# and cached as <corpus>/truth_top10.json (shared with the TypeScript baseline):
+# Corpus: built by ../corpus (format gbrain-bench-corpus/1). Exact ground truth is cached as
+# <corpus>/truth_top10.json (shared with the TypeScript baseline). The file records the byte size and
+# sha256 of the corpus's vectors.f32 and queries.f32, and is reused only while both still match; after
+# a corpus is rebuilt (or for an older file without that record) the truth is recomputed and rewritten:
 $B truth --corpus /path/to/corpus-10k
 
 # One engine, one scale. `import` wipes and recreates --store, then every other metric runs.

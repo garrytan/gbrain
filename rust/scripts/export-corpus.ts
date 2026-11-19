@@ -9,13 +9,15 @@
  *
  * PRIVACY: the export holds the full text of your pages and chunks. It is private data. Never commit it, share it,
  * attach it to an issue or upload it. Only aggregate numbers from a benchmark run may be published. Files are written
- * 0600 (directory 0700), and the script refuses an output directory inside a git working tree.
+ * 0600 (directory 0700), and the script refuses an output directory inside a git working tree, or one it cannot rule
+ * out: only git's own not-a-repository answer (exit 128, in the C locale) counts as outside. `--allow-in-repo` skips
+ * that check. A segmented (over 1 MiB) page is skipped and counted.
  *
  * The brain is only read. Nothing calls an embedding or chat provider: the vectors are the ones already stored.
  * Queries are sampled from stored chunk vectors, so (unlike the dbpedia corpus) they are IN the corpus: their
  * nearest neighbor is themselves. The manifest says so (`queries_in_corpus: true`).
  */
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, writeSync, writeFileSync, chmodSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createEngine } from '../../src/core/engine-factory.ts';
@@ -91,7 +93,7 @@ if (!args.has('allow-in-repo')) {
     fail(`refusing to write private brain text: could not tell whether ${out} is inside a git working tree (${where.detail}); fix git, pick a directory outside any repo, or pass --allow-in-repo`);
   }
 }
-if (existsSync(out) && readdirSync(out).length > 0 && !args.has('overwrite')) fail(`${out} is not empty; pass --overwrite to replace the corpus files in it`);
+if (existsSync(out) && readdirSync(out).length > 0 && !args.has('overwrite')) fail(`${out} is not empty; pass --overwrite to replace the corpus files (and the cached ground truth) in it`);
 
 let config: EngineConfig;
 if (args.has('database-url')) config = { engine: 'postgres', database_url: args.get('database-url') as string, pool_max: 2 };
@@ -109,9 +111,21 @@ console.error([
   '',
 ].join('\n'));
 
+// The exact ground truth cached beside the old corpus files belongs to them, so a re-export starts without it.
+rmSync(join(out, 'truth_top10.json'), { force: true });
 mkdirSync(out, { recursive: true, mode: 0o700 });
 chmodSync(out, 0o700);
-const open = (name: string) => openSync(join(out, name), 'w', 0o600);
+// Each output file is written under a new temporary name (created exclusively, so nothing already there is opened)
+// and renamed over its final name only after the whole export succeeds. The rename replaces whatever --overwrite
+// finds at that name, a link included, without writing through it.
+const pending: { temp: string; final: string }[] = [];
+const open = (name: string) => {
+  const final = join(out, name);
+  const temp = join(out, `.${name}.${process.pid}.tmp`);
+  const fd = openSync(temp, 'wx', 0o600);
+  pending.push({ temp, final });
+  return fd;
+};
 const writeLine = (fd: number, value: unknown) => writeSync(fd, JSON.stringify(value) + '\n');
 
 const engine = await createEngine(config);
@@ -197,13 +211,21 @@ try {
     skipped_pages_segmented: skippedSegmented,
     max_abs_norm_deviation: Number(maxNormDeviation.toFixed(6)),
   };
-  const manifestPath = join(out, 'manifest.json');
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
-  chmodSync(manifestPath, 0o600);
+  const manifestFd = open('manifest.json');
+  writeSync(manifestFd, JSON.stringify(manifest, null, 2) + '\n');
+  closeSync(manifestFd);
+  // An entry leaves `pending` only once its rename succeeds, so a failed rename (a directory at the final name)
+  // still has the finally block remove that temporary file and every one after it.
+  while (pending.length > 0) {
+    renameSync(pending[0]!.temp, pending[0]!.final);
+    pending.shift();
+  }
   console.error(`exported ${pageIndex} pages, ${chunkRow} chunks (${dims} dims), ${queryReservoir.length} queries to ${out}`);
   if (skippedChunks || skippedPages || skippedSegmented) {
     console.error(`skipped ${skippedChunks} chunks without an embedding, ${skippedPages} unreadable pages and ${skippedSegmented} segmented pages`);
   }
 } finally {
+  // A failed export leaves no temporary file holding private text behind.
+  for (const { temp } of pending) rmSync(temp, { force: true });
   await engine.disconnect();
 }

@@ -5144,7 +5144,7 @@ More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The secret store key an entry was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here. | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
+| The secret store key an entry or a backup was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here; or this host has no store key at all, so gbrain secrets backup uploads nothing (a backup is sealed under an existing key and never makes one). | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
 

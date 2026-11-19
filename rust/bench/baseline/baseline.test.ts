@@ -6,9 +6,14 @@
  * and checks that the corpus script parses. It never opens a brain and never calls a provider.
  */
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from './lib/args.ts';
+import { loadCorpus } from './lib/corpus.ts';
 import { makeRng, median, percentile, summarize } from './lib/stats.ts';
+import { preparePostgresDatabase } from './lib/store.ts';
+import { loadOrComputeTruth } from './lib/truth.ts';
 
 const repo = resolve(import.meta.dir, '../../..');
 
@@ -58,9 +63,66 @@ describe('bake-off baseline', () => {
     expect(bad.out).toContain('--engine must be pglite or postgres');
   }, 60_000);
 
+  test('the Postgres prep loads the vendored driver before it checks the URL', async () => {
+    // The repo vendors postgres.js as '#postgres'; there is no 'postgres' package on a clean install.
+    // A bad database name is refused only after the driver import succeeds, and nothing connects.
+    await expect(preparePostgresDatabase('postgresql://u@127.0.0.1:1/not-plain', false)).rejects.toThrow(
+      /is not a plain identifier/,
+    );
+  });
+
   test('the corpus script parses', () => {
     const py = run(['python3', '-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', 'rust/bench/corpus/dbpedia.py']);
     if (py.code !== 0) console.error(py.out);
     expect(py.code).toBe(0);
   });
+});
+
+/**
+ * The cached ground truth must belong to the corpus beside it. Protects: recall numbers computed against the
+ * right neighbors when a corpus directory is rebuilt with the same shape. Regression: reusing
+ * truth_top10.json because it merely has the right number of rows. Not covered elsewhere: the other tests here
+ * never load a corpus. No production seam: it calls the same loader the runner's truth child calls.
+ */
+describe('exact truth cache', () => {
+  const DIMS = 8, CHUNKS = 12, QUERIES = 3;
+
+  function writeCorpus(dir: string, seed: number): void {
+    mkdirSync(dir, { recursive: true });
+    const rng = makeRng(seed);
+    const unit = (): number[] => {
+      const v = Array.from({ length: DIMS }, () => rng() - 0.5);
+      const norm = Math.hypot(...v);
+      return v.map(x => x / norm);
+    };
+    const vectors = Float32Array.from(Array.from({ length: CHUNKS }, unit).flat());
+    const queries = Float32Array.from(Array.from({ length: QUERIES }, unit).flat());
+    const pages = Array.from({ length: CHUNKS / 4 }, (_, i) => ({ i, source_id: 'default', slug: `p/${i}`, type: 'note', title: `P${i}`, frontmatter: {}, body: 'b', chunk_start: i * 4, chunk_count: 4 }));
+    const chunks = Array.from({ length: CHUNKS }, (_, c) => ({ page: Math.floor(c / 4), idx: c % 4, text: `c${c}` }));
+    writeFileSync(join(dir, 'pages.jsonl'), pages.map(p => JSON.stringify(p)).join('\n') + '\n');
+    writeFileSync(join(dir, 'chunks.jsonl'), chunks.map(c => JSON.stringify(c)).join('\n') + '\n');
+    writeFileSync(join(dir, 'vectors.f32'), vectors);
+    writeFileSync(join(dir, 'queries.f32'), queries);
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ format: 'gbrain-bench-corpus/1', dims: DIMS, pages: pages.length, chunks: CHUNKS, queries: QUERIES, sources: ['default'] }));
+  }
+
+  test('a rebuilt corpus of the same size gets its own truth, not the old cached one', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-truth-cache-'));
+    try {
+      writeCorpus(dir, 1);
+      const a = await loadOrComputeTruth(await loadCorpus(dir), QUERIES, true);
+      expect(a.source).toBe('computed');
+      expect((await loadOrComputeTruth(await loadCorpus(dir), QUERIES, true)).source).toBe('file');
+
+      writeCorpus(dir, 2); // same directory, same shape, different neighbors
+      const corpusB = await loadCorpus(dir);
+      const b = await loadOrComputeTruth(corpusB, QUERIES, true);
+      expect(b.source).toBe('computed');
+      expect(b.top10).not.toEqual(a.top10);
+      const dot = (r: number, q: number) => corpusB.vectors.slice(r * DIMS, (r + 1) * DIMS).reduce((s, x, d) => s + x * corpusB.queries[q * DIMS + d]!, 0);
+      const exact = (q: number) => Array.from({ length: CHUNKS }, (_, r) => r).sort((x, y) => dot(y, q) - dot(x, q)).slice(0, 10);
+      expect(b.top10).toEqual(Array.from({ length: QUERIES }, (_, q) => exact(q)));
+      expect((await loadOrComputeTruth(corpusB, QUERIES, true)).source).toBe('file');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 60_000);
 });

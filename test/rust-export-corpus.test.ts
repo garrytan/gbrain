@@ -16,9 +16,16 @@
  *  - Regression: every git probe error read as "outside a repository", so an inherited invalid GIT_DIR or a
  *    missing git let the export write private text into a working tree.
  *  - Seam: none. A real git repository, the script run as a subprocess with the environment changed.
+ *
+ * Replacing an old corpus (--overwrite):
+ *  - Contract: each output file is written to a new temporary name and renamed over the old name, so a link left at an
+ *    output name is replaced, and the file it points to is never opened.
+ *  - Regression: --overwrite opened each existing output name for truncation, following a link there and writing
+ *    private brain text to wherever it pointed.
+ *  - Seam: none. A real on-disk PGLite brain, real symbolic links, the script run as a subprocess.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEngine } from '../src/core/engine-factory.ts';
@@ -69,6 +76,77 @@ describe('export-corpus', () => {
       .toEqual({ pages: 1, segmented: 1, unreadable: 0 });
     const pages = readFileSync(join(out, 'pages.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     expect(pages.map((p) => p.slug)).toEqual(['notes/inline']);
+  }, 60_000);
+
+  test('--overwrite drops the cached ground truth of the corpus it replaces', async () => {
+    const dbPath = join(root, 'brain-overwrite');
+    const config = { engine: 'pglite' as const, database_path: dbPath };
+    const engine = await createEngine(config);
+    await engine.connect(config);
+    try {
+      await engine.initSchema();
+      await engine.putPage('notes/inline', { type: 'note', title: 'Inline', compiled_truth: 'an inline body', timeline: '' });
+    } finally {
+      await engine.disconnect();
+    }
+    const out = join(root, 'corpus-overwrite');
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, 'truth_top10.json'), '[[0,1,2,3,4,5,6,7,8,9]]');
+    const run = Bun.spawnSync(['bun', script, '--out', out, '--pglite-dir', dbPath, '--overwrite'], { stdout: 'pipe', stderr: 'pipe' });
+    expect({ exit: run.exitCode, stderr: run.exitCode === 0 ? '' : run.stderr.toString() }).toEqual({ exit: 0, stderr: '' });
+    expect(existsSync(join(out, 'manifest.json'))).toBe(true);
+    expect(existsSync(join(out, 'truth_top10.json'))).toBe(false);
+  }, 60_000);
+
+  test('--overwrite replaces a link left at an output name and never writes through it', async () => {
+    const dbPath = join(root, 'brain-link');
+    const config = { engine: 'pglite' as const, database_path: dbPath };
+    const engine = await createEngine(config);
+    await engine.connect(config);
+    try {
+      await engine.initSchema();
+      await engine.putPage('notes/inline', { type: 'note', title: 'Inline', compiled_truth: 'an inline body', timeline: '' });
+    } finally {
+      await engine.disconnect();
+    }
+    const out = join(root, 'corpus-link');
+    mkdirSync(out, { recursive: true });
+    const elsewhere = join(root, 'elsewhere');
+    mkdirSync(elsewhere, { recursive: true });
+    const names = ['pages.jsonl', 'chunks.jsonl', 'vectors.f32', 'queries.f32', 'queries.jsonl', 'manifest.json'];
+    for (const name of names) {
+      writeFileSync(join(elsewhere, name), 'not yours');
+      symlinkSync(join(elsewhere, name), join(out, name));
+    }
+    const run = Bun.spawnSync(['bun', script, '--out', out, '--pglite-dir', dbPath, '--overwrite'], { stdout: 'pipe', stderr: 'pipe' });
+    expect({ exit: run.exitCode, stderr: run.exitCode === 0 ? '' : run.stderr.toString() }).toEqual({ exit: 0, stderr: '' });
+    expect(names.map((name) => [name, readFileSync(join(elsewhere, name), 'utf8')]))
+      .toEqual(names.map((name) => [name, 'not yours']));
+    expect(names.map((name) => [name, lstatSync(join(out, name)).isFile()])).toEqual(names.map((name) => [name, true]));
+    expect(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')).pages).toBe(1);
+    expect(readdirSync(out).sort()).toEqual([...names].sort());
+  }, 60_000);
+
+  test('an --overwrite export whose rename fails leaves no temporary file behind', async () => {
+    const dbPath = join(root, 'brain-rename-fails');
+    const config = { engine: 'pglite' as const, database_path: dbPath };
+    const engine = await createEngine(config);
+    await engine.connect(config);
+    try {
+      await engine.initSchema();
+      await engine.putPage('notes/inline', { type: 'note', title: 'Inline', compiled_truth: 'an inline body', timeline: '' });
+    } finally {
+      await engine.disconnect();
+    }
+    const out = join(root, 'corpus-rename-fails');
+    // A non-empty directory at the first output name: renaming the finished file over it fails.
+    mkdirSync(join(out, 'pages.jsonl'), { recursive: true });
+    writeFileSync(join(out, 'pages.jsonl', 'keep'), 'not yours');
+    const run = Bun.spawnSync(['bun', script, '--out', out, '--pglite-dir', dbPath, '--overwrite'], { stdout: 'pipe', stderr: 'pipe' });
+    expect(run.exitCode).not.toBe(0);
+    // The temporary files hold private page text; none may outlive the failed export.
+    expect(readdirSync(out).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(readFileSync(join(out, 'pages.jsonl', 'keep'), 'utf8')).toBe('not yours');
   }, 60_000);
 
   describe('the in-repository guard', () => {

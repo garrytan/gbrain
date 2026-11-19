@@ -584,7 +584,34 @@ final class Harness {
         #expect(lines.count == 2)
         #expect(lines.allSatisfy { $0.text == nil && $0.to == nil && $0.ownerInstruction == nil })
         #expect(lines[1].outcome == "sent")
-        #expect(lines[0].toHash == Recipient.hash("+15550100"))
+        let key = try #require(h.store.state?.recipientKey)
+        #expect(lines[0].toHash == Recipient.hash("+15550100", key: key))
+    }
+
+    @Test func recipientHashIsKeyedPerInstall() throws {
+        let plain = String(SHA256.hash(data: Data("+15550100".utf8)).map { String(format: "%02x", $0) }.joined().prefix(12))
+        let first = Harness()
+        #expect(first.store.state?.recipientHashKey == nil)
+        #expect(first.send(first.request(first.body())).status == 200)
+        let key = try #require(first.store.state?.recipientKey)
+        #expect(first.send(first.request(first.body(text: "Second"), key: "owner-msg-0002")).status == 200)
+        #expect(first.store.state?.recipientKey == key)
+        let hashes = first.auditLines().compactMap(\.toHash)
+        #expect(hashes.count == 4)
+        #expect(Set(hashes) == [Recipient.hash("+15550100", key: key)])
+        #expect(!hashes.contains(plain))
+        let second = Harness()
+        #expect(second.send(second.request(second.body())).status == 200)
+        let other = try #require(second.auditLines().first?.toHash)
+        #expect(other != hashes[0] && other != plain)
+    }
+
+    @Test func malformedRecipientHashKeyRefuses() {
+        let h = Harness()
+        h.store.state?.recipientHashKey = "short"
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "send_keys_tampered")
+        #expect(h.messages.sent.isEmpty)
+        #expect(h.store.state?.recipientHashKey == "short")
     }
 }
 
@@ -671,6 +698,7 @@ final class Harness {
 
     @Test func aSendDuringAPendingTouchIDDoesNotWaitForIt() {
         let h = Harness()
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0000")).status == 200)
         let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
         h.presence.gate = DispatchSemaphore(value: 0)
         h.presence.entered = DispatchSemaphore(value: 0)
@@ -682,10 +710,37 @@ final class Harness {
         }.start()
         #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         #expect(h.send(h.request(h.body())).status == 200)
-        #expect(h.messages.count == 1)
+        #expect(h.messages.count == 2)
         h.presence.gate?.signal()
         #expect(group.wait(timeout: .now() + 10) == .success)
         #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+    }
+
+    @Test func aSendDuringAKeyReplacementDialogGoesOutUnderTheCurrentKeyOnly() {
+        let h = Harness()
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0000")).status == 200)
+        let replacement = Curve25519.Signing.PrivateKey()
+        let other = Base64URL.encode(Array(replacement.publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0002", signer: replacement)).status != 200)
+        #expect(h.messages.count == 1)
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0001")).status == 200)
+        #expect(h.messages.count == 2)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.0 == 200)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0003")).status != 200)
+        #expect(h.messages.count == 2)
     }
 
     @Test func anAdminChangeLandingDuringTouchIDIsRefused() {

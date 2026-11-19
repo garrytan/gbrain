@@ -8,7 +8,8 @@
  * every page whose file was redacted gets the same field redaction in the database (repair/secret-spans.ts
  * `redactPageForPublish`), so the database and the file agree and repair sees no file drift. Then it marks the entry done.
  *
- * `secretPublishMaintenance` (the bookkeeping_gc phase) moves spooled originals into the store, finishes pending
+ * `secretPublishMaintenance` (the bookkeeping_gc phase) moves spooled originals into the store, uploads an encrypted
+ * store backup after new entries when a storage backend is configured (secret-store/backup.ts), finishes pending
  * entries for every checkout a source uses, deletes `refs/gbrain/backup/redact-*` refs older than 7 days, and (with
  * `secrets.on_push` redact) retries the Git effects parked on `publish_secret_found`, which now go out redacted (D7a).
  */
@@ -159,6 +160,7 @@ export async function secretPublishMaintenance(engine: BrainEngine): Promise<Rec
   const out: Record<string, number> = {};
   const add = (key: string, n: number) => { if (n) out[key] = (out[key] ?? 0) + n; };
   try { const spool = await drainSpool(engine); add('secret_spool_moved', spool.moved); add('secret_spool_remaining', spool.remaining); } catch { /* a store migration not applied yet */ }
+  try { if (await (await import('../secret-store/backup.ts')).backupIfDue(engine)) add('secret_store_backups', 1); } catch { /* a store migration not applied yet */ }
   let roots: string[] = [];
   try {
     roots = [...new Set((await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE')).map(r => r.local_path))];
