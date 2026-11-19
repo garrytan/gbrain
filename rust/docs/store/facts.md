@@ -11,7 +11,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `insertFacts` | One write: the optional page delete, then each row in order. A row whose fence key (`source, source_markdown_slug, row_num`) is taken is skipped, but its id is still used up. Then each `superseded by #N` reference is linked, with PGLite's four warnings (references itself, absent from the fence, struck without being superseded, cycle). |
 | `deleteFactsForPage` | Deletes a page's rows, except rows whose `source` starts with an excluded prefix and, with `preserveExpiredLegacy`, expired rows with no fence key. |
 | `expireFact` | Expires an unexpired row; `supersededBy` must name an existing row (`facts_superseded_by_fkey`); `successorFrom` closes validity. |
-| `listFactsByEntity`, `listFactsSince`, `listFactsBySession` | Filtered lists, newest first, with `limit` and `offset`. `grep` is a pre-built ILIKE pattern, folded with Postgres `lower()` one code point at a time. A read eligibility applies as on `listSupersessions` (also on `listFactsKeyset`). |
+| `listFactsByEntity`, `listFactsSince`, `listFactsBySession` | Filtered lists, newest first, with `limit` and `offset`. A `visibility` list without `private` is widened for a member or a private-facts grant (see [Visibility widening](#visibility-widening-factswidenrs)). `grep` is a pre-built ILIKE pattern, folded with Postgres `lower()` one code point at a time. A read eligibility applies as on `listSupersessions` (also on `listFactsKeyset`). |
 | `listFactsKeyset` | Oldest first by `(created_at, id)` after a microsecond ISO cursor. |
 | `listSupersessions` | Superseded rows, newest supersession first. With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) it applies `projectionEligibleSql('facts')`: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row (`trust::TrustPolicy`). The store keeps no `needs_rederive` queue, so that clause hides nothing. |
 | `countUnconsolidatedFacts`, `getFactsHealth` | Counts of active rows (and the five entities with the most). |
@@ -76,8 +76,28 @@ lineage, labelled-only members) is refused with
 has no keyed-slug entity rule (an `entity_slug` with no `/`, judged at a name-key page directory by
 `privateEntityFilterForCaller`). An anonymous caller on a brain that never named readers (`restricted` false in its
 record, the MCP stdio caller) renders the short member-access form; the member judges a fact read for it under the
-restricted rendering, the full form above, which hides the same rows on such a brain (`judgeWidenedCaller`,
-`test/engine-parity/unrestricted-fact-list-reads.test.ts`). A caller with a member identity there still refuses.
+restricted rendering, the full form above, which hides the same rows on such a brain. A caller with a member identity
+there is judged the same way (`judgeWidenedFactCaller`): the identity reaches the policy only through a page's
+readers, and no page there names readers (`test/engine-parity/unrestricted-fact-list-reads.test.ts`). The page
+families keep `judgeWidenedCaller`, which retries only the anonymous caller.
+
+## Visibility widening (`facts/widen.rs`)
+
+The four list reads and `listSupersessions` take `visibility` as a plain list. A list without `private` is widened
+per row by `factVisibilitySql` (`src/core/access/member-facts.ts`), and the store applies the same two rules when the
+member sends `widen`:
+
+| Rule | Store test | PGLite text |
+|---|---|---|
+| Own member page | a private row on `memory/members/<member>`, whose live page names `member:<member>` among its readers (`access_readers`) and passes `memberPagePolicy` (`page_hidden`) | `memberFactAdmitSql` |
+| Private-facts grant | a private row of a source in `privateFactSources` that has a page to check (not `unpagedFactSql`: no holding page, or a conversation, hook, sweep, transcript or connector lane) and whose pages keep it private for no reason: no holding, entity or provenance slug under `memory/members/`; the holding and provenance pages (`provenance_slug`) not derivation-private in any row, missing, soft-deleted or quarantined; the entity page not derivation-private | `grantedPrivateFactSql`, `factPagesOpenSql`, `factPageReasons` (`src/core/facts/private-fact-pages.ts`) |
+
+The member (`src/core/rust-engine/store-members/fact-visibility.ts`) sends the list alone when PGLite renders the
+bare list. Otherwise it sends `widen` only when the caller's text equals the rendering for a record of just its reader
+identity, private-readable grant and private-facts grant (`judgeWidenedFactCaller`), with `member` the member that
+record reads as and `memberPagePolicy` its page policy. Any other caller (an audience, an attested actor whose text
+differs, folder rules, a relaxed read) refuses with `engine_capability_missing`. Covered by
+`test/engine-parity/fact-visibility-widening.test.ts`.
 
 A page read under `excludePrivate` sends the page policy (`storePagePolicy`). A page family that opts in with
 `callerReaders` also sends the caller's reader identity and private-readable grant, when the caller's text equals
