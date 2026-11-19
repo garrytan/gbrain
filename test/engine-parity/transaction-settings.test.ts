@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity — transaction-local settings (engine-sql/transaction-settings.ts `readTransactionSettings` and
- * `applyTransactionSettings`), the `current_setting(name, true)` / `set_config(name, value, true)` pair that carries a
+ * `applyTransactionSettings`, plus `beginSnapshotRead`), the `current_setting(name, true)` / `set_config(name, value, true)` pair that carries a
  * write's attribution and trust declaration to the database triggers (persistence/context.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -197,6 +197,32 @@ describe('engine parity: transaction-local settings', () => {
       later: ['', '', '', '', '', '', ''],
     });
     return answers;
+
+  // beginSnapshotRead starts the transaction as one snapshot. The store transaction is one snapshot already (it holds
+  // the one writer from its start), so the Rust member sets nothing; the reads after it answer the same on every arm.
+  parityTest('a snapshot read transaction answers its reads and keeps its settings', {
+    methods: ['transaction', 'beginSnapshotRead', 'applyTransactionSettings', 'readTransactionSettings', 'putPage', 'getPage'],
+  }, async (engine) => {
+    await engine.putPage('snap/one', { type: 'note', title: 'One', compiled_truth: 'body one' });
+    const read = (readOnly?: boolean) => engine.transaction(async (tx) => {
+      await tx.beginSnapshotRead(readOnly === undefined ? undefined : { readOnly });
+      const page = await tx.getPage('snap/one');
+      await tx.applyTransactionSettings([REQUEST], ['req-snap']);
+      return { title: page?.title ?? null, body: page?.compiled_truth ?? null, request: await tx.readTransactionSettings([REQUEST]) };
+    });
+    return { plain: await read(), readOnly: await read(true), readWrite: await read(false) };
+  });
+
+  // READ ONLY refuses a write in the transaction on every engine with Postgres's read_only_sql_transaction error
+  // (SQLSTATE 25006), and the refused write leaves nothing behind.
+  parityTest('a write in a READ ONLY snapshot refuses with read_only_sql_transaction and leaves nothing', {
+    methods: ['transaction', 'beginSnapshotRead', 'putPage', 'getPage'],
+  }, async (engine) => {
+    const refusal = await engine.transaction(async (tx) => {
+      await tx.beginSnapshotRead({ readOnly: true });
+      await tx.putPage('snap/ro', { type: 'note', title: 'RO', compiled_truth: 'body' });
+    }).then(() => null, (error: unknown) => error as { code?: unknown; message?: unknown; constructor?: { name?: string } });
+    return { code: refusal?.code ?? null, message: String(refusal?.message ?? '').replace(/^cannot execute .+ in a read-only transaction$/, 'cannot execute <statement> in a read-only transaction'), page: await engine.getPage('snap/ro') };
   });
 
   // The Rust engine keeps only the settings its writers read (the six trust settings in the store, the attribution

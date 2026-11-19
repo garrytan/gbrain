@@ -33,6 +33,7 @@ export const RUST_ENGINE_MEMBERS = {
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
   readCurrentWriteTrust: 'transactions',
+  beginSnapshotRead: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
@@ -141,6 +142,8 @@ export const RUST_ENGINE_MEMBERS = {
   // page_versions
   createVersion: 'page_versions',
   getVersions: 'page_versions',
+  readLatestVersionId: 'page_versions',
+  stampVersionChangeReason: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body
   refreshPageBody: 'page_body',
@@ -743,6 +746,20 @@ export const RUST_ENGINE_MEMBERS = {
   listDecideCalibrations: 'eval_capture',
   getDecideCalibration: 'eval_capture',
   setDecideCalibrationRetired: 'eval_capture',
+  // Group D (trust tier reads)
+  listCorePageRows: 'pages',
+  listTrustScanRows: 'facts',
+  countUnscannedTrustRows: 'facts',
+  readBeliefHistoryRows: 'belief_ledger',
+  listVisibleBeliefLifetimes: 'belief_ledger',
+  listVersionTrustTiers: 'page_versions',
+  listVersionReasonWriters: 'page_versions',
+  listValidTimeIdentities: 'pages',
+  pickValidTimeEdition: 'page_versions',
+  listAmendmentsNotApplied: 'links',
+  readPageVersionEdition: 'page_versions',
+  readCursorEdition: 'page_versions',
+  pageAwaitsRederive: 'pages',
   // jobs-tables group D
   getCodeTraversalCache: 'code_edges',
   putCodeTraversalCache: 'code_edges',

@@ -65,7 +65,7 @@ import type {
 import type { McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
-  ValidTimeIdentitySpec, ValidTimePickSpec,
+  ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow,
 } from './engine-sql/trust-tier-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
@@ -2895,6 +2895,10 @@ export interface BrainEngine {
    * (pre-v0.31.8 behavior; preserved via two-branch query).
    */
   getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>>;
+  /** The page's newest version id (`max(page_versions.id)`), or null when it keeps none (engine-sql/version-reasons.ts). */
+  readLatestVersionId(pageId: number): Promise<number | null>;
+  /** Sets `change_reason` on the page's versions with an id over `afterVersionId`; answers how many took it. */
+  stampVersionChangeReason(spec: { pageId: number; afterVersionId: number; reason: string }): Promise<number>;
   /**
    * v0.31.8 (D12): `opts.sourceId` source-scopes both the version lookup
    * and the page revert. Without it, multi-source brains can revert the
@@ -3425,6 +3429,8 @@ export interface BrainEngine {
 
   /** Sets each named setting to the value at its index for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
+  /** Starts the current transaction as one snapshot (`REPEATABLE READ`, and `READ ONLY` with `readOnly`); call it first. */
+  beginSnapshotRead(opts?: { readOnly?: boolean }): Promise<void>;
 
   /**
    * The writer's trust declaration in force on this transaction: the raw `gbrain.write_trust_tier` and
@@ -3904,6 +3910,14 @@ export interface BrainEngine {
   listValidTimeIdentities(spec: ValidTimeIdentitySpec): Promise<ValidTimeIdentityRow[]>;
   /** The valid-time pick over one page and its retained versions; null when the page is gone. */
   pickValidTimeEdition(spec: ValidTimePickSpec): Promise<Record<string, unknown> | null>;
+  /** The amendment records dated after an edition took effect and on or before the date, by slug then source. */
+  listAmendmentsNotApplied(spec: AmendmentsNotAppliedSpec): Promise<AmendmentNotAppliedRow[]>;
+  /** A retained version of the page as an as-of read loads it; null when the page keeps no such version. */
+  readPageVersionEdition(spec: { pageId: number; versionId: number }): Promise<PageVersionEditionRow | null>;
+  /** Whether the page is still at the revision, and its newest version recorded at it; null when the page is gone. */
+  readCursorEdition(spec: { pageId: number; revision: string }): Promise<CursorEditionRow | null>;
+  /** Whether a purge hid the page until it is derived again (a `needs_rederive` row names it). */
+  pageAwaitsRederive(pageId: number): Promise<boolean>;
 
   // Decide family, group B: calibration profiles (engine-sql/calibration-profiles.ts).
   /** The newest calibration profile (`generated_at DESC`, then `id DESC`) of `holder` (any holder when unset) in `sourceIds` (an empty list matches nothing) or else `sourceId`; null when none. `id` is the BIGSERIAL as text. */

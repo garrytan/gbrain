@@ -170,15 +170,25 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals and the history counts, plus `history_unpruned` | the `WITH rows AS (…)` pick |
+| `listAmendmentsNotApplied` | `list_amendments_not_applied` (`link_queries/link_temporal.rs`): the live pages with an `amends` link to the page whose relationship start in the scope is after the edition and on or before the date, or absent; under the source and page-policy filters, by slug then source, bytewise | `SELECT f.slug, … min(lr.first_start) … GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C" …` |
+| `readPageVersionEdition` | `read_page_version_edition` (`trust/valid_time.rs`): the page's `V` version record with the fields an edition reads, `body_storage` `inline` unless the snapshot is segmented; null for another page or an unknown id | `SELECT id, title, … FROM page_versions WHERE id = $1 AND page_id = $2` |
+| `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
+| `pageAwaitsRederive` | none: the store keeps no `needs_rederive` queue (only a raw-SQL purge writes one, and `executeRaw` refuses), so the member answers false | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
 
+- `beginSnapshotRead` sets no isolation level: a store transaction holds the one writer from its start, so its reads
+  see one state. With `readOnly` it calls `setTransactionReadOnly` (`transactions.md`), so every later write in the
+  transaction refuses with Postgres's SQLSTATE `25006` and leaves nothing.
 - The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
   members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
   one (TODOS.md `rust-belief-ledger`).
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller page
+  policy other than the no-caller one. A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
   (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
-  kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
-  `introduced_because` read null (TODOS.md `rust-version-change-reason`), and no gap or pruned successor.
+  kept count; TODOS.md `rust-version-prune`). `reason` is a version's stored change reason and
+  `introduced_because` the reason of the edition before; under `excludePrivate` a reason reads only when the version
+  that replaced it is visible, as on PGLite. The store records no gap or pruned successor.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.

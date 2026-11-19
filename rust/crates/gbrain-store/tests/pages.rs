@@ -5,7 +5,9 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::error::*;
-use gbrain_store::pages::{PageFilters, PageInput, PutPageOptions, ReadScope, VersionsOptions};
+use gbrain_store::pages::{
+    PageFilters, PageInput, PutPageOptions, ReadScope, VersionReasonStamp, VersionsOptions,
+};
 use gbrain_store::{Store, sources::SourceInput};
 use serde_json::{Value, json};
 
@@ -742,6 +744,41 @@ fn versions_are_snapshots_listed_newest_first() {
         )
         .unwrap();
     assert!(none.is_empty());
+}
+
+#[test]
+fn change_reasons_stamp_the_versions_after_a_mark() {
+    let dir = TempDir::new("pages-version-reasons");
+    let store = open(&dir);
+    let page_id = put(&store, "a", "one")["id"].as_i64().unwrap();
+    assert_eq!(store.read_latest_version_id(page_id).unwrap(), None);
+    let v1 = store.create_version("a", None).unwrap();
+    assert_eq!(
+        store.read_latest_version_id(page_id).unwrap(),
+        v1["id"].as_u64()
+    );
+    let stamp = |after: i64, reason: &str| {
+        store.stamp_version_change_reason(&VersionReasonStamp {
+            page_id,
+            after_version_id: after,
+            reason: reason.into(),
+        })
+    };
+    assert_eq!(stamp(0, "first").unwrap(), 1);
+    put(&store, "a", "two");
+    let v2 = store
+        .create_version_with("a", None, Some("imported"))
+        .unwrap();
+    assert_eq!(v2["change_reason"], "imported");
+    assert_eq!(stamp(v2["id"].as_i64().unwrap(), "late").unwrap(), 0);
+    assert_eq!(stamp(-1, "bad\0reason").unwrap_err().code, INVALID_ARGUMENT);
+    let reasons: Vec<Value> = store
+        .get_versions("a", &VersionsOptions::default())
+        .unwrap()
+        .iter()
+        .map(|v| v["replaced_because"].clone())
+        .collect();
+    assert_eq!(reasons, [json!("imported"), json!("first")]);
 }
 
 #[test]
