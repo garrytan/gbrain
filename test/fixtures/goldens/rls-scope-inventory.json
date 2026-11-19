@@ -100,6 +100,17 @@
         ],
         "flagOnScopes": []
       },
+      "advanceEffectRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "applyTransactionSettings#default": {
         "flagOffLanes": [
           "tx"
@@ -167,6 +178,17 @@
         "flagOnScopes": []
       },
       "clearCodeTraversalCache#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "completeEffectRow#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -593,6 +615,17 @@
         "flagOnScopes": []
       },
       "expireStaleWriteClaims#direct": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "failEffectRow#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -1914,6 +1947,17 @@
         ],
         "flagOnScopes": []
       },
+      "hasRearmableTargets#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "insertFact#default": {
         "flagOffLanes": [
           "pool",
@@ -2930,6 +2974,28 @@
         ],
         "flagOnScopes": []
       },
+      "lockEffectGuard#brain": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "lockEffectGuard#worktree": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "lockPageKeys#default": {
         "flagOffLanes": [
           "tx"
@@ -3030,6 +3096,17 @@
         "flagOnScopes": []
       },
       "migrateFactsToCanonical#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "parkEffectRow#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3371,6 +3448,17 @@
         ],
         "flagOnScopes": []
       },
+      "readMirrorGateRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -3652,6 +3740,17 @@
         ],
         "flagOnScopes": []
       },
+      "renewEffectClaim#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "renewWriteClaim#default": {
         "flagOffLanes": [
           "pool"
@@ -3692,6 +3791,17 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "requeueEffectRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "requireSynchronousCommit#default": {
         "flagOffLanes": [
@@ -3833,6 +3943,28 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "retryBusyEffectRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "retryEffectRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -4278,6 +4410,17 @@
         ],
         "flagOnScopes": []
       },
+      "stampEffectClaim#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "stampWriteClaim#default": {
         "flagOffLanes": [
           "tx"
@@ -4698,6 +4841,7 @@
         "addTimelineEntry": "none",
         "addWakeCron": "none",
         "admitJob": "none",
+        "advanceEffectRow": "none",
         "aliasCanonicalRefs": "none",
         "aliasFanoutRead": "none",
         "allocateBodyOccurrenceIds": "none",
@@ -4722,6 +4866,7 @@
         "closeOpenLoop": "none",
         "closedLoopWithActiveFact": "none",
         "codeChunksExist": "none",
+        "completeEffectRow": "none",
         "completeHousekeepingTurn": "none",
         "completeJob": "none",
         "completeSubagentToolExecution": "none",
@@ -4829,6 +4974,7 @@
         "expireSpendReservations": "none",
         "expireStaleWriteClaims": "none",
         "explainVectorSearch": "via:runVectorAttempt",
+        "failEffectRow": "none",
         "failJob": "none",
         "failParentJob": "none",
         "failSubagentToolExecution": "none",
@@ -4915,6 +5061,7 @@
         "hasGuestSource": "none",
         "hasOverdueWatchdogSuspect": "none",
         "hasPersistenceTable": "none",
+        "hasRearmableTargets": "none",
         "hasSegmentStorage": "none",
         "hasSubagentToolExecution": "none",
         "hasSupersedeEdges": "none",
@@ -5092,6 +5239,7 @@
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "loadPurgeTarget": "none",
+        "lockEffectGuard": "none",
         "lockOAuthClient": "none",
         "lockPageKeys": "none",
         "lockPersistenceCounters": "none",
@@ -5122,6 +5270,7 @@
         "ownsSchemaTables": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
+        "parkEffectRow": "none",
         "pauseJob": "none",
         "pendingTrustProposalsFor": "none",
         "pickValidTimeEdition": "none",
@@ -5191,6 +5340,7 @@
         "readMcpLogPruneCutoff": "none",
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
+        "readMirrorGateRows": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
         "readPageOrigin": "none",
@@ -5253,6 +5403,7 @@
         "removeTimelineRows": "none",
         "removeWakeCron": "none",
         "renewConsumerRow": "none",
+        "renewEffectClaim": "none",
         "renewJobLease": "none",
         "renewPrivateQueueLease": "none",
         "renewWriteClaim": "none",
@@ -5261,6 +5412,7 @@
         "replaceDerivedLinksBatch": "none",
         "replaceSearchVectorTriggerFunction": "none",
         "replaceWantedLinkRows": "none",
+        "requeueEffectRow": "none",
         "requireSynchronousCommit": "none",
         "resolveAliases": "none",
         "resolveCaseSensitiveAliases": "none",
@@ -5276,6 +5428,8 @@
         "restorePage": "none",
         "resumeJob": "none",
         "retireSegmentDerivations": "none",
+        "retryBusyEffectRow": "none",
+        "retryEffectRow": "none",
         "retryJob": "none",
         "revertToVersion": "none",
         "rewriteLinks": "none",
@@ -5320,6 +5474,7 @@
         "stageSegmentChunks": "none",
         "stageSegmentTexts": "none",
         "staleLinkRelationshipKeys": "none",
+        "stampEffectClaim": "none",
         "stampPageIngest": "none",
         "stampWorktreeHeartbeats": "none",
         "stampWriteClaim": "none",

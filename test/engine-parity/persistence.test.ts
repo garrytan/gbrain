@@ -520,6 +520,99 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the effect worker claims the due effect and settles each claim under its token, a stale token changing nothing', {
+    methods: ['selectClaimableEffect', 'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow',
+      'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'readRequestEffects', 'insertPublicationEffects', 'transactionDirect',
+      'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'lockEffectGuard'],
+  }, async (engine) => {
+    type Row = { id: string | number; kind: string; state: string; attempts: number; error_code: string | null; data: Record<string, unknown>; outcome: unknown; execution_token: string | null };
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b3');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: 1, target_failures: 1 } }, { kind: 'git', data: { relative_path: 'notes/parity.md', target_failures: 2 } },
+          { kind: 'links', data: { slug: 'notes/parity', page_id: 1 } }] });
+    });
+    const owner = { pid: 1, nonce: 'n', start: 's' };
+    let n = 0;
+    const claim = (dead: string[] = []) => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const candidate = await tx.selectClaimableEffect<Row>(HOST, dead);
+      if (!candidate) return null;
+      const token = `f0000000-0000-4000-8000-00000000000${++n}`;
+      return tx.stampEffectClaim<Row>({ id: candidate.id, token, ownerJson: JSON.stringify({ token, owner }) });
+    });
+    const shape = (row: Row | null) => row && { kind: row.kind, state: row.state, attempts: Number(row.attempts), error_code: row.error_code, data: row.data, outcome: row.outcome };
+    const ref = (row: Row | null) => ({ id: row!.id, token: row!.execution_token });
+    const claims: unknown[] = [];
+    const a = await claim(); claims.push(shape(a));
+    const renewed = { stale: await engine.renewEffectClaim({ id: a!.id, token: OTHER_TOKEN }, { direct: true }), nullToken: await engine.renewEffectClaim({ id: a!.id, token: null }),
+      held: await engine.renewEffectClaim(ref(a), { direct: true }) };
+    const b = await claim(); claims.push(shape(b));
+    const c = await claim(); claims.push(shape(c));
+    const none = await claim();
+    const deadOwner = shape(await engine.transactionDirect(async tx => { await tx.declarePersistence(); return tx.selectClaimableEffect<Row>(HOST, ['1:n:s']); }));
+    await engine.completeEffectRow({ ...ref(a), outcomeJson: JSON.stringify({ embedding: 'skipped', reason: 'parity' }) });
+    await engine.completeEffectRow({ ...ref(a), outcomeJson: JSON.stringify({ embedding: 'again' }) });
+    await engine.retryEffectRow({ ...ref(b), reason: 'parity_retry', delayMs: 0 });
+    await engine.failEffectRow({ ...ref(c), reason: 'parity_failed' });
+    const b2 = await claim(); claims.push(shape(b2));
+    await engine.advanceEffectRow({ ...ref(b2), slug: 'notes/a' });
+    const b3 = await claim(); claims.push(shape(b3));
+    await engine.requeueEffectRow({ ...ref(b3), dataJson: JSON.stringify({ relative_path: 'notes/parity.md', after_slug: 'notes/b' }), reason: 'parity_requeue', delayMs: 0 });
+    const b4 = await claim(); claims.push(shape(b4));
+    await engine.retryBusyEffectRow({ ...ref(b4), dataJson: JSON.stringify({ busy_retries: 1 }), delayMs: 0 });
+    const b5 = await claim(); claims.push(shape(b5));
+    await engine.parkEffectRow({ ...ref(b5), dataJson: JSON.stringify({ relative_path: 'notes/parity.md', parked: [{ slug: 'notes/a' }] }) });
+    await engine.advanceEffectRow({ ...ref(b5), slug: 'notes/stale' });
+    const refusals: string[] = [];
+    for (const run of [() => engine.selectClaimableEffect('not-a-uuid', []), () => engine.readMirrorGateRows(['not-a-uuid']),
+      () => engine.lockEffectGuard('not-a-uuid')]) {
+      try { await run(); refusals.push('ok'); } catch (e) { refusals.push(/invalid input syntax for type uuid/.exec(String((e as Error).message))?.[0] ?? String(e)); }
+    }
+    const answers = { claims, renewed, none, deadOwner, gates: await engine.readMirrorGateRows([id]), effects: await engine.readRequestEffects(id), refusals,
+      guard: [await engine.lockEffectGuard(null), await engine.lockEffectGuard('f0000000-0000-4000-8000-0000000000ff')] };
+    expect(answers.none).toBeNull();
+    expect(answers.renewed).toEqual({ stale: false, nullToken: false, held: true });
+    expect(answers.effects).toEqual([
+      { kind: 'embedding', state: 'committed', error_code: null, outcome: { embedding: 'skipped', reason: 'parity' }, recovering: false },
+      { kind: 'git', state: 'failed', error_code: 'targets_parked', outcome: null, recovering: false },
+      { kind: 'links', state: 'failed', error_code: 'parity_failed', outcome: null, recovering: false }]);
+    expect(answers.refusals).toEqual(['invalid input syntax for type uuid', 'invalid input syntax for type uuid', 'invalid input syntax for type uuid']);
+    expect(answers.guard).toEqual([null, null]);
+    return answers;
+  });
+
+  parityTest('a target parked behind the withdrawal mirror is re-armable once that mirror commits, and only then', {
+    methods: ['hasRearmableTargets', 'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow', 'insertPublicationEffects', 'transactionDirect',
+      'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b4');
+    const parked = (code: string) => [{ slug: 'notes/parity', error_code: code }];
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'withdrawal-mirror', data: { slugs: ['notes/parity'] } }, { kind: 'git', data: { relative_path: 'notes/parity.md', parked: parked('withdrawal_mirror_failed') } },
+          { kind: 'links', data: { slug: 'notes/parity', parked: parked('withdrawal_mirror_failed') } }] });
+    });
+    const probe = () => engine.hasRearmableTargets([id], 'withdrawal_mirror_failed');
+    const before = await probe();
+    const mirror = await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const candidate = await tx.selectClaimableEffect<{ id: string | number; kind: string }>(HOST, []);
+      return tx.stampEffectClaim<{ id: string | number; kind: string; execution_token: string }>({ id: candidate!.id, token: 'f0000000-0000-4000-8000-0000000000c1', ownerJson: '{}' });
+    });
+    await engine.completeEffectRow({ id: mirror!.id, token: mirror!.execution_token, outcomeJson: '{}' });
+    const refusals: string[] = [];
+    try { await engine.hasRearmableTargets(['not-a-uuid'], 'x'); refusals.push('ok'); } catch (e) { refusals.push(/invalid input syntax for type uuid/.exec(String((e as Error).message))?.[0] ?? String(e)); }
+    const answers = { mirrorKind: mirror!.kind, before, after: await probe(), otherCode: await engine.hasRearmableTargets([id], 'some_other_code'),
+      otherRequest: await engine.hasRearmableTargets(['b0000000-0000-4000-8000-0000000000ff'], 'withdrawal_mirror_failed'), refusals };
+    expect(answers).toEqual({ mirrorKind: 'withdrawal-mirror', before: false, after: true, otherCode: false, otherRequest: false, refusals: ['invalid input syntax for type uuid'] });
+    return answers;
+  });
+
   parityTest('completeWrite with no lock held asks for synchronous commit, declares, locks and ends the claimed request', {
     methods: ['requireSynchronousCommit', 'declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest',
       'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readWriteRequestById'],

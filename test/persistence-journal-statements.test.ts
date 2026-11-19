@@ -36,6 +36,8 @@ import { claimableWriteFragment, EXPIRE_CLAIMS_SQL, foregroundPriorityText, hasC
   RENEW_CLAIM_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { renderFragment } from '../src/core/engine-sql/fragment.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { defineNormalizer, expectGolden } from './helpers/golden.ts';
+import { overdueDeferredWorkSql } from '../src/core/persistence/refresh-barrier.ts';
 import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
@@ -245,5 +247,48 @@ describe('the unpublished-claim release copies the journal statement', () => {
     await releaseClaimStatement(engine, { id: 'a', token: 'b', reason: 'database_contention', charge: true });
     await releaseClaimStatement(engine, { id: 'a', token: null, reason: 'claim_lost', charge: false });
     expect(sent).toEqual([[journalText, ['a', 'b', 'database_contention', true]], [journalText, ['a', null, 'claim_lost', false]]]);
+  });
+});
+
+describe('the effect worker statements are one text on both engines', () => {
+  // The claim, settle, gate, guard and re-arm statements effect-journal.ts and effect-recovery.ts sent through executeRaw
+  // before they called the engine members. Both engines delegate to engine-sql/persistence-effect-worker.ts; this pins
+  // the text and bound values each engine sends, through its own prototype, in one golden.
+  const T = 'f0000000-0000-4000-8000-0000000000e1';
+  const ref = { id: '7', token: T };
+  const calls: [string, (e: any) => Promise<unknown>][] = [
+    ['stampEffectClaim', e => e.stampEffectClaim({ id: '7', token: T, ownerJson: '{}' })],
+    ['renewEffectClaim', e => e.renewEffectClaim(ref)],
+    ['renewEffectClaim#direct', e => e.renewEffectClaim(ref, { direct: true })],
+    ['advanceEffectRow', e => e.advanceEffectRow({ ...ref, slug: 'notes/a' })],
+    ['completeEffectRow', e => e.completeEffectRow({ ...ref, outcomeJson: '{}' })],
+    ['retryEffectRow', e => e.retryEffectRow({ ...ref, reason: 'r', delayMs: 1000 })],
+    ['retryBusyEffectRow', e => e.retryBusyEffectRow({ ...ref, dataJson: '{}', delayMs: 1000 })],
+    ['requeueEffectRow', e => e.requeueEffectRow({ ...ref, dataJson: '{}', reason: null, delayMs: 1000 })],
+    ['parkEffectRow', e => e.parkEffectRow({ ...ref, dataJson: '{}' })],
+    ['failEffectRow', e => e.failEffectRow({ ...ref, reason: 'r' })],
+    ['readMirrorGateRows', e => e.readMirrorGateRows(['b0000000-0000-4000-8000-0000000000b1'])],
+    ['lockEffectGuard#brain', e => e.lockEffectGuard(null)],
+    ['lockEffectGuard#worktree', e => e.lockEffectGuard('b0000000-0000-4000-8000-0000000000b1')],
+    ['hasRearmableTargets', e => e.hasRearmableTargets(['b0000000-0000-4000-8000-0000000000b1'], 'withdrawal_mirror_failed')],
+  ];
+  async function record(proto: object): Promise<Record<string, unknown[][]>> {
+    const out: Record<string, unknown[][]> = {};
+    for (const [name, run] of calls) {
+      const sent: unknown[][] = [];
+      const send = async (sql: string, params?: unknown[]) => { sent.push([sql, params ?? []]); return []; };
+      const engine = Object.create(proto, { executeRaw: { value: send }, executeRawDirect: { value: send }, engineSql: { value: { executeRaw: send } } });
+      await run(engine);
+      out[name] = sent;
+    }
+    return out;
+  }
+
+  test('PGLite and Postgres send the pinned statements with the same bound values', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    const pglite = await record(PGLiteEngine.prototype);
+    expect(await record(PostgresEngine.prototype)).toEqual(pglite);
+    expectGolden('sql-text-extra/persistence-effect-worker', pglite, defineNormalizer<Record<string, unknown[][]>>('effect-worker-statements-v1', m => m));
   });
 });

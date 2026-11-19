@@ -127,8 +127,8 @@ request is bound to a worktree here, so an unstamped consumer has no owner host 
 ## Effect scans
 
 The effect worker's reads before and when it claims effects (`persistence-effect-scans.ts`). Each one joins
-`persistence_effects` to the worktrees the host owns. This engine keeps no worktree and claims no
-effect yet (see "Publication effects"), so each scan answers no row. The arguments are checked as the Postgres casts check them: a host
+`persistence_effects` to the worktrees the host owns. This engine keeps no worktree, so the two
+recovery scans answer no row; the claim read answers the next effect (see "Effect worker"). The arguments are checked as the Postgres casts check them: a host
 id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`, an `after` that is
 not a bigint with `invalid input syntax for type bigint: "<after>"` (or `value "<after>" is out of range
 for type bigint`), a fractional limit with the same bigint syntax message and a negative limit with
@@ -138,7 +138,7 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 | --- | --- | --- |
 | `brain.listGatedMirrorRequests(hostId)` | `[]`: no withdrawal mirror is parked on a worktree here. The gate and allowed codes change nothing, so they are not sent | `listGatedMirrorRequests` |
 | `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: no effect carries a recovery on a worktree here | `listEffectRecoveries` |
-| `brain.selectClaimableEffect(hostId)` | `null`: a stored effect waits `queued`, because this engine runs no effect yet. The dead owner keys change nothing, so they are not sent | `selectClaimableEffect` |
+| `brain.selectClaimableEffect(hostId, deadOwners)` | the effect row the worker claims next, or `null` (see "Effect worker") | `selectClaimableEffect` |
 
 ## Publication effects
 
@@ -156,9 +156,43 @@ foreign key), and so does an effect with no kind or no data. Nothing is stored o
 each stored effect of the request in kind order, or only its `kind` effect when one is named (`readRequestEffects`,
 the reads a write receipt makes). A request id that is not a uuid refuses with the uuid syntax message.
 
-No effect is claimed or run on this engine yet: `selectClaimableEffect` answers `null` (see "Effect
-scans"), so every stored kind, embedding included, waits `queued` and nothing is lost. The receipt
-names a row that exists, and the write's reservation stays charged until the effect ends.
+The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
+exists, and the write's reservation stays charged until the effect ends.
+
+## Effect worker
+
+The statements the effect worker sends to claim one effect and to settle its claim
+(`persistence-effect-worker.ts`), with the PostgreSQL rules. The store is single-writer, so a read
+takes no row lock, and a Rust brain has no worktrees.
+
+`brain.selectClaimableEffect(hostId, deadOwners)` resolves the effect row with the lowest
+(`next_attempt_at`, id) that is `queued`, `running` with an expired claim, or `running` under a dead
+owner (`deadOwners` holds `pid:nonce:start` keys; the claim's `host_id` must be `hostId`), that is due
+now, on no worktree and not recovering, and that is a withdrawal mirror or belongs to a request with no
+`queued` or `running` withdrawal mirror. It resolves `null` when no effect is claimable.
+
+`brain.stampEffectClaim({ id, token, ownerJson })` marks the effect `running` under `token` for two
+minutes, adds one attempt and stores the claim owner; it resolves the claimed row, or `null` when no
+effect has the id. `brain.settleEffect(action, { id, token, slug, outcomeJson, dataJson, reason, delayMs })`
+runs one settle statement and resolves `true` when it matched the claim (`id`, `token`, not recovering).
+A `null` token matches no row.
+
+| `action` | Sets | Mirrors |
+| --- | --- | --- |
+| `renewEffectClaim` | the claim's expiry to two minutes from now | `renewEffectClaim` |
+| `advanceEffectRow` | `queued`, `after_slug`; an embedding stores `embedding_attempt_base`, another kind drops `target_failures` and `failing_target` | `advanceEffectRow` |
+| `completeEffectRow` | `committed` with the outcome, the retry keys dropped; `failed` with `targets_parked` when a target is parked | `completeEffectRow` |
+| `retryEffectRow`, `retryBusyEffectRow` | `queued` after `delayMs` with the reason (`writer_busy` and the new data for the busy retry) | `retryEffectRow`, `retryBusyEffectRow` |
+| `requeueEffectRow` | `queued` after `delayMs` with the new data and reason | `requeueEffectRow` |
+| `parkEffectRow`, `failEffectRow` | `failed` with the new data (`targets_parked`) or the reason | `parkEffectRow`, `failEffectRow` |
+
+`brain.readMirrorGateRows(requestIds)` resolves `{ request_id, state, data }` for each withdrawal mirror
+of the requests that is not committed or that has published. `brain.hasRearmableTargets(requestIds, code)`
+resolves whether a Git or embedding effect of the requests, `queued` or `failed`, unclaimed, not
+recovering and not settled, has a target parked under `code` while its request's withdrawal mirror has
+committed. A request id or host id that is not a uuid refuses with
+`invalid input syntax for type uuid: "<id>"`, and an effect id that is not a bigint with the bigint
+syntax message.
 
 ## Projection queue
 
@@ -180,4 +214,5 @@ brain predates the queue, so no such store exists outside development.
 | `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible: false }`; a batch adds `managedRows: [{ enabled: false }]` and `planModePrev: 'auto'` | Belief events and fact, take and page purges are written only through `executeRaw`, which this engine refuses. |
 | `listHostConsumerRows(hostId, opts?)`, `probeLiveConsumerRows(probe, opts?)` | `[]` | One process owns this engine's brain, so it keeps no consumer heartbeat rows. PGLite, which also admits one process, answers the same in its callers (`listHostConsumers`, `probeLiveFullConsumer`) without a read. |
 | `renewConsumerRow(renewal, opts?)`, `deleteConsumerRow(key, opts?)`, `stampWorktreeHeartbeats(hostId, opts?)` | resolve with no effect | The heartbeat has no row to renew or delete, and this engine has no worktrees to stamp. |
+| `lockEffectGuard(worktreeId)` | resolves `null` | The store is single-writer, so the brain-row share lock has nothing to wait on, and this engine has no worktree to read. A worktree id that is not a uuid refuses with the uuid syntax message. |
 | `requireSynchronousCommit()` | resolves with no effect | A store commit makes every write durable before it returns (`kv.rs` `commit`), so there is no asynchronous commit to turn off. |

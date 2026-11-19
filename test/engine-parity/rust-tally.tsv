@@ -42,7 +42,7 @@ test/engine-parity/links.test.ts	30	0
 test/engine-parity/open-loops.test.ts	4	0
 test/engine-parity/pages.test.ts	24	1
 test/engine-parity/persistence-declaration.test.ts	6	0
-test/engine-parity/persistence.test.ts	34	0
+test/engine-parity/persistence.test.ts	36	0
 test/engine-parity/private-page-reads.test.ts	7	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/retrieval-coverage.test.ts	11	1

@@ -9,6 +9,8 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
+use gbrain_store::persistence::Settle;
+
 use crate::store_binding::{Brain, required};
 
 #[napi]
@@ -452,15 +454,81 @@ impl Brain {
         })
     }
 
-    /// `selectClaimableEffect(hostId)`: the next effect to claim; `null` (this engine claims no
-    /// effect yet, so a stored effect waits).
+    /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or `null`.
     #[napi]
     pub fn select_claimable_effect<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        dead_owners: Vec<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.select_claimable_effect(&host_id))
+        self.run(env, move |s| {
+            s.select_claimable_effect(&host_id, &dead_owners)
+        })
+    }
+
+    /// `stampEffectClaim({ id, token, ownerJson })`: the claimed row, or `null`.
+    #[napi]
+    pub fn stamp_effect_claim<'env>(
+        &self,
+        env: &'env Env,
+        claim: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_effect_claim(&required(claim, "stampEffectClaim claim")?)
+        })
+    }
+
+    /// `readMirrorGateRows(requestIds)`: the withdrawal mirrors that gate these requests.
+    #[napi]
+    pub fn read_mirror_gate_rows<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_mirror_gate_rows(&request_ids))
+    }
+
+    /// `hasRearmableTargets(requestIds, code)`: whether a target parked under `code` waits on a
+    /// committed withdrawal mirror.
+    #[napi]
+    pub fn has_rearmable_targets<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+        code: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_rearmable_targets(&request_ids, &code))
+    }
+
+    /// One effect settle statement, `action` naming the member (`renewEffectClaim`,
+    /// `advanceEffectRow`, `completeEffectRow`, `retryEffectRow`, `retryBusyEffectRow`,
+    /// `requeueEffectRow`, `parkEffectRow`, `failEffectRow`): `true` when it matched the claim.
+    #[napi]
+    pub fn settle_effect<'env>(
+        &self,
+        env: &'env Env,
+        action: String,
+        settle: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let action = match action.as_str() {
+                "renewEffectClaim" => Settle::Renew,
+                "advanceEffectRow" => Settle::Advance,
+                "completeEffectRow" => Settle::Complete,
+                "retryEffectRow" => Settle::Retry,
+                "retryBusyEffectRow" => Settle::RetryBusy,
+                "requeueEffectRow" => Settle::Requeue,
+                "parkEffectRow" => Settle::Park,
+                "failEffectRow" => Settle::Fail,
+                other => {
+                    return Err(gbrain_store::error::StoreError::invalid(format!(
+                        "unknown effect settle member {other}"
+                    )));
+                }
+            };
+            s.settle_effect(action, &required(settle, "effect settle")?)
+        })
     }
 
     #[napi]

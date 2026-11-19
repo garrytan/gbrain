@@ -52,6 +52,7 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
+const EFFECT_PASS = join(ROOT, 'test', 'helpers', 'effect-pass-process.ts');
 const FIXTURE = join(ROOT, 'test', 'fixtures', 'rust-cli-parity-brain');
 const TARGET = detectAddonTarget();
 const ADDON = TARGET ? join(ROOT, 'rust', 'target', 'addon', `gbrain_engine.${TARGET}.node`) : '';
@@ -89,10 +90,14 @@ function childEnv(brain: Brain): Record<string, string> {
   };
 }
 
-async function cli(brain: Brain, args: string[]): Promise<Run> {
-  const proc = Bun.spawn(['bun', 'run', CLI, ...args], { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+async function run(argv: string[], brain: Brain): Promise<Run> {
+  const proc = Bun.spawn(argv, { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+async function cli(brain: Brain, args: string[]): Promise<Run> {
+  return run(['bun', 'run', CLI, ...args], brain);
 }
 
 function makeBrain(backend: Backend, name: BrainName = backend): Brain {
@@ -364,20 +369,21 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         const equal = got.exitCode === want.exitCode && got.member === null && same(got.json, want.json);
         table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: equal ? 'written' : member ?? `exit ${rust.exitCode}` });
         if (!equal) expect(got).toEqual(want);
-        // The write's receipt reads the same on both brains, but for its effects: PGLite ran its effect pass and
-        // settled each one; the Rust brain stores every effect and runs none yet, so each one waits queued with
-        // nothing recorded against it (rust/docs/store/persistence.md, "Publication effects").
+        // The write's receipt reads the same on both brains, its effects included: each brain ran its effect pass and
+        // settled each effect the same way (rust/docs/store/persistence.md, "Effect worker"). The put's own process stops
+        // its effect drain once it has replied (GBRA-156), so each brain runs one effect pass first, in its own
+        // environment; otherwise the receipt reads whichever side of that race the put landed on.
+        const passes = await Promise.all([brains.pglite, brains.rust].map((brain) => run(['bun', 'run', EFFECT_PASS], brain)));
+        expect(passes.map((pass) => pass.exitCode)).toEqual([0, 0]);
         const requestOf = (run: Run) => String((parseJson(run.stdout) as { request_id?: unknown } | undefined)?.request_id ?? '');
         const [pgReceipt, rustReceipt] = await Promise.all([cli(brains.pglite, ['write-request', requestOf(pg), '--json']),
           cli(brains.rust, ['write-request', requestOf(rust), '--json'])]);
         type Receipt = { effects?: Array<Record<string, unknown>> } & Record<string, unknown>;
         const pgBody = parseJson(pgReceipt.stdout) as Receipt | undefined;
         const rustBody = parseJson(rustReceipt.stdout) as Receipt | undefined;
-        const without = (body: Receipt | undefined) => body && normalize({ ...body, effects: undefined }, []);
-        expect({ exitCode: rustReceipt.exitCode, receipt: without(rustBody), member: refusedMember(rustReceipt) })
-          .toEqual({ exitCode: pgReceipt.exitCode, receipt: without(pgBody), member: null });
+        expect({ exitCode: rustReceipt.exitCode, receipt: normalize(rustBody, []), member: refusedMember(rustReceipt) })
+          .toEqual({ exitCode: pgReceipt.exitCode, receipt: normalize(pgBody, []), member: null });
         expect(pgBody?.effects?.some((e) => e.kind === 'embedding' && e.state === 'skipped')).toBe(true);
-        expect(rustBody?.effects).toEqual([{ kind: 'embedding', state: 'queued' }]);
         return;
       }
       if (outcome === 'queued') {

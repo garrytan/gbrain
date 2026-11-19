@@ -37,6 +37,7 @@ import type { DurablePersistenceSettings } from './engine-sql/persistence-declar
 import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
+import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
@@ -3424,6 +3425,40 @@ export interface BrainEngine {
    * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
    */
   readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
+
+  // Effect worker (engine-sql/persistence-effect-worker.ts): the claim stamp and the statements that settle a claim,
+  // which effect-journal.ts sent through executeRaw. Each settle statement matches only effect `id` still claimed under
+  // `token` (a null token matches none), so a claim that moved changes nothing.
+  /** Claims effect `id` under `token` (running, a 2-minute lease, one more attempt): the claimed row, or null when no effect has the id. */
+  stampEffectClaim<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
+  /**
+   * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
+   * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.
+   */
+  renewEffectClaim(claim: EffectClaimRef, opts?: { direct?: boolean }): Promise<boolean>;
+  /** Requeues a claimed effect (no recovery) due now with its scan cursor at `slug` (`advanceEffectCursor`). */
+  advanceEffectRow(claim: EffectClaimRef & { slug: string }): Promise<void>;
+  /** Finishes a claimed effect (no recovery) with `outcomeJson`: committed, or failed `targets_parked` when it parked targets. */
+  completeEffectRow(claim: EffectClaimRef & { outcomeJson: string }): Promise<void>;
+  /** Requeues a claimed effect after `delayMs` with error code `reason`, a claim under recovery included. */
+  retryEffectRow(claim: EffectClaimRef & { reason: string; delayMs: number }): Promise<void>;
+  /** Requeues a claimed effect as `writer_busy` after `delayMs`, merging `dataJson` (the busy streak) into its data. */
+  retryBusyEffectRow(claim: EffectClaimRef & { dataJson: string; delayMs: number }): Promise<void>;
+  /** Requeues a claimed effect (no recovery) with data `dataJson`, error code `reason`, after `delayMs`. */
+  requeueEffectRow(claim: EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }): Promise<void>;
+  /** Fails a claimed effect (no recovery) as `targets_parked` with data `dataJson`. */
+  parkEffectRow(claim: EffectClaimRef & { dataJson: string }): Promise<void>;
+  /** Fails a claimed effect (no recovery) with error code `reason`. */
+  failEffectRow(claim: EffectClaimRef & { reason: string }): Promise<void>;
+  /** The withdrawal mirrors that gate these requests (`mirrorGates`): each not committed, or committed with its publications. */
+  readMirrorGateRows(requestIds: readonly string[]): Promise<MirrorGateRow[]>;
+  /**
+   * The effect guard's locks (`guardEffectSource`): share-locks the brain row, then the effect's worktree row, and
+   * returns that worktree's owner and state; null without a worktree id or when the worktree row is gone.
+   */
+  lockEffectGuard(worktreeId: string | null): Promise<EffectWorktreeOwner | null>;
+  /** Whether one of these requests has a target parked under `code` that its committed withdrawal mirror re-arms (`hasRearmableTargets`). */
+  hasRearmableTargets(requestIds: readonly string[], code: string): Promise<boolean>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

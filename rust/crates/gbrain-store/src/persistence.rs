@@ -47,11 +47,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod effect_scans;
+mod effect_worker;
 mod effects;
 mod housekeeping;
 mod projection_queue;
 mod topology;
 mod writer_versions;
+pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{

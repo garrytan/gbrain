@@ -174,6 +174,45 @@ pub(crate) fn request_effects(read: &dyn KvRead, request_id: &str) -> Result<Vec
     Ok(out)
 }
 
+/// Every stored effect, in id order (the claim-order index).
+pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
+    let mut entries = Vec::new();
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, EFFECT_ORDER],
+        false,
+        &mut |_, value| {
+            entries.push(serde_json::from_slice::<OrderEntry>(value));
+            true
+        },
+    )?;
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
+        })?;
+        if let Some(record) =
+            get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))?
+        {
+            out.push(record);
+        }
+    }
+    Ok(out)
+}
+
+/// Effect `id`, or none.
+pub(crate) fn effect_by_id(read: &dyn KvRead, id: i64) -> Result<Option<EffectRecord>> {
+    let Some(entry) = get_json::<OrderEntry>(read, &order_key(id))? else {
+        return Ok(None);
+    };
+    get_json(read, &effect_key(&entry.request_id, &entry.kind))
+}
+
+/// Stores an updated effect row under its key (its id and kind never change).
+pub(crate) fn write_effect(tx: &mut dyn KvWrite, record: &EffectRecord) -> Result<()> {
+    put_json(tx, &effect_key(&record.request_id, &record.kind), record)
+}
+
 /// `SUM(EFFECT_BYTES_SQL)` and `bool_or(state<>'committed')` over a request's effects.
 pub(crate) fn effect_totals(read: &dyn KvRead, request_id: &str) -> Result<(i64, bool)> {
     let effects = request_effects(read, request_id)?;
