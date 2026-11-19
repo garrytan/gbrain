@@ -255,6 +255,25 @@ export async function restrictFolder(engine: BrainEngine, backend: ParityBackend
   }
 }
 
+/**
+ * Fixture: a `page_purges` tombstone, as the page purge sweep (`persistence/page-purge.ts`) and the restore replay
+ * (`belief/purge-mirror.ts`) write it inside the write journal's transaction. Neither has a typed writer, so this is
+ * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`.
+ */
+export async function recordPagePurge(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string, purgedAt?: string): Promise<void> {
+  switch (backend) {
+    // The Rust store reads the ledger but has no writer for it: the same SQL stops on the engine's typed raw_sql refusal.
+    case 'rust':
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw('INSERT INTO page_purges (source_id, content_hash, slug, purged_at) VALUES ($1, $2, $3, COALESCE($4::timestamptz, now()))',
+        [sourceId, contentHash, slug, purgedAt ?? null]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Wrap an engine so every direct method call on the handle is recorded. */
 function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
   return new Proxy(engine, {
