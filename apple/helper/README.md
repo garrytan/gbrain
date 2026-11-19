@@ -20,7 +20,7 @@ The helper runs on macOS 13 or newer. Building it needs the Xcode Command Line T
 apple/helper/scripts/install.sh
 ```
 
-It builds the helper, signs it with a certificate made on this Mac, installs `~/Applications/GBrain Helper.app` and registers its background agent. It shows no dialog. The first run makes the signing keychain `~/Library/Keychains/gbrain-helper-signing.keychain-db`, with its random password in a 0600 file in `~/Library/Application Support/GBrain Helper/`. Every later run signs with that same certificate, so macOS keeps the helper's Full Disk Access, Automation and keychain access across rebuilds. If the app is installed but its signing keychain is gone, the script stops and changes nothing, because a new certificate would make macOS treat the helper as a different app. `install.sh --repair` re-signs the installed app with the same certificate and registers it again, without rebuilding.
+It builds the helper, signs it with a certificate made on this Mac, installs `~/Applications/GBrain Helper.app` and registers its background agent. It shows no dialog. The first run makes the signing keychain `~/Library/Keychains/gbrain-helper-signing.keychain-db`, with its random password in a 0600 file in `~/Library/Application Support/GBrain Helper/`. Every later run signs with that same certificate, so macOS keeps the helper's Full Disk Access, Automation and keychain access across rebuilds. If the app is installed but its signing keychain is gone, the script stops and changes nothing, because a new certificate would make macOS treat the helper as a different app. An interrupted run leaves the installed app in place, and one install runs at a time. `install.sh --repair` re-signs the installed app with the same certificate and registers it again, without rebuilding.
 
 After it runs:
 
@@ -28,7 +28,7 @@ After it runs:
 - Until a config exists, the helper restarts every 10 seconds. Write one with `"$HOME/Applications/GBrain Helper.app/Contents/MacOS/gbrain-apple-helper" init --port <port>`, then run the helper's other commands from that same path.
 - Turn on GBrain Helper in System Settings > Privacy & Security > Full Disk Access.
 
-Any program already running as you can read the signing keychain's password and sign itself as the helper, inheriting its grants. That is the cost of signing on the Mac with no Apple developer account.
+Any program already running as you can read the signing keychain's password, or see it in the `security` command's arguments while the script runs, and sign itself as the helper, inheriting its grants. That is the cost of signing on the Mac with no Apple developer account.
 
 ## Layout
 

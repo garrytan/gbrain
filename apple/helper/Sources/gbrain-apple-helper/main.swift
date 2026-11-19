@@ -177,12 +177,12 @@ case "send-audit":
 
 case "register":
     let agent = SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist")
-    if agent.status != .enabled {
+    if agent.status != .enabled, agent.status != .requiresApproval {
         do {
             try agent.register()
-        } catch {
+        } catch where agent.status != .requiresApproval {
             fail("macOS didn't register the background agent: \(error.localizedDescription)", code: 1)
-        }
+        } catch {}
     }
     switch agent.status {
     case .enabled:
