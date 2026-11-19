@@ -78,18 +78,34 @@ export async function classifyBrainAudience(
   try {
     const usage = await readClientOpUsage(engine, { days: 30 });
     const humans = usage.filter((u) => !u.likely_automation);
-    if (humans.length >= SHARED_CLIENT_THRESHOLD) {
+    const names = humans.map((u) => u.token_name);
+    const bindings = names.length === 0 ? [] : await engine.executeRaw<{ name: string; member_id: string | null }>(
+      `SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[])
+       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[])`, [names],
+    ).catch(() => []);
+    const membersOf = new Map<string, Set<string | null>>();
+    for (const b of bindings) membersOf.set(b.name, (membersOf.get(b.name) ?? new Set()).add(b.member_id ?? null));
+    const members = new Set<string>();
+    let unbound = 0;
+    for (const name of names) {
+      const found = [...(membersOf.get(name) ?? [])];
+      if (found.length === 1 && found[0] !== null) members.add(found[0]);
+      else unbound++;
+    }
+    const people = members.size + unbound;
+    const counted = `${people} ${people === 1 ? 'person' : 'people'} (${members.size} member(s), ${unbound} unbound client(s))`;
+    if (members.size >= 2 || people >= SHARED_CLIENT_THRESHOLD) {
       return {
         audience: 'shared',
         reasons: [
           ...reasons,
-          `heuristic: ${humans.length} distinct non-automation MCP clients active in 30d (threshold ${SHARED_CLIENT_THRESHOLD}) — declare the truth with: gbrain config set brain.audience personal|shared`,
+          `heuristic: ${humans.length} distinct non-automation MCP clients active in 30d, ${counted} (shared at 2 members or ${SHARED_CLIENT_THRESHOLD} people) — declare the truth with: gbrain config set brain.audience personal|shared`,
         ],
       };
     }
     return {
       audience: 'personal',
-      reasons: [...reasons, `no shared declaration; ${humans.length} non-automation client(s) active in 30d`],
+      reasons: [...reasons, `no shared declaration; ${humans.length} non-automation client(s) active in 30d, ${counted}`],
     };
   } catch {
     // The declaration read above already proved the DB reachable — a failed
