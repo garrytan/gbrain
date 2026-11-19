@@ -10,6 +10,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { OWNER_TIER_FLOOR, TRUST_TIER_RANK, isTrustTier } from '../trust/tier.ts';
 import { CARRYING_FIELDS, REDACTION_MARKER, canonicalJson, eventKeyHex, fieldHash, valueHash } from './keys.ts';
+import { mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
+import { factFingerprintV2Sql } from '../facts/withdrawal-schema.ts';
 
 export type BeliefOrigin = 'live' | 'unmanaged' | 'baseline' | 'backfill' | 'reconcile';
 export interface BeliefEventDraft {
@@ -81,7 +83,20 @@ async function tombstoned(tx: BrainEngine, sourceId: string, drafts: BeliefEvent
   const rows = await tx.executeRaw<{ fp: string }>(`SELECT fact_hash AS fp FROM fact_purges WHERE source_id = $1 AND fact_hash = ANY($2::text[])
     UNION SELECT claim_hash AS fp FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($3::text[])`,
   [sourceId, facts.map(d => d.claimFp!), takes.map(d => d.claimFp!)]);
-  return new Set(rows.map(r => r.fp));
+  const out = new Set(rows.map(r => r.fp));
+  // A claim whose fingerprint form differs from its tombstone's (a purge recorded before v330, or a draft keyed by the claim's
+  // pre-v330 fingerprint after it) matches by its text, by the rule gbrain_refuse_purged_fact applies (current or v2 fingerprint).
+  const text = (d: BeliefEventDraft) => { const v = d.value as Record<string, unknown> | null | undefined; const c = v?.[d.subjectKind === 'fact' ? 'fact' : 'claim'];
+    return typeof c === 'string' && mayHaveLegacyFingerprint(c) ? c : null; };
+  const forms = [...facts, ...takes].flatMap(d => { const c = text(d); return c && !out.has(d.claimFp!) ? [[d.subjectKind, d.claimFp!, c] as const] : []; });
+  if (!forms.length) return out;
+  const legacy = await tx.executeRaw<{ fp: string }>(`SELECT d.fp FROM unnest($2::text[], $3::text[], $4::text[]) AS d(kind, fp, claim)
+    WHERE CASE WHEN d.kind = 'fact'
+      THEN EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id = $1 AND p.fact_hash IN (gbrain_fact_fingerprint(d.claim), ${factFingerprintV2Sql('d.claim')}))
+      ELSE EXISTS (SELECT 1 FROM take_purges p WHERE p.source_id = $1 AND p.claim_hash IN (gbrain_fact_fingerprint(d.claim), ${factFingerprintV2Sql('d.claim')})) END`,
+  [sourceId, forms.map(f => f[0]), forms.map(f => f[1]), forms.map(f => f[2])]);
+  for (const r of legacy) out.add(r.fp);
+  return out;
 }
 
 interface Suppression { id: number; subject_key: string; field: string; purge_request: string; field_hash: string; released_hash: string | null }

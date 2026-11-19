@@ -12,6 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
+import { legacyClaimFingerprints, mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
 
 export interface RawPage {
   id: number; slug: string; deleted: boolean; revision: string; content_hash: string | null; tier: string;
@@ -162,6 +163,15 @@ SELECT p.id, p.slug, p.source_id, s.incarnation::text AS incarnation FROM pages 
   const entityPageOf = new Map(((entityPages ?? []) as unknown as Array<[string, number]>).map(([slug, id]) => [slug, Number(id)]));
   const factRows = facts ? facts.map(toFact) : null;
   const takeRows = takes ? takes.map(toTake) : null;
+  // Fingerprints computed here (not known or cached, which already are) take a claim's pre-v330 fingerprint where its history has it.
+  const fresh = <T extends { th?: string }>(rows: T[] | null, text: (r: T) => string) => (rows ?? []).filter(r => r.th === undefined || !knownFp.has(r.th))
+    .filter(r => mayHaveLegacyFingerprint(text(r)));
+  const freshFacts = fresh(factRows, f => f.fact), freshTakes = fresh(takeRows, k => k.claim);
+  if (freshFacts.length || freshTakes.length) {
+    const legacy = await legacyClaimFingerprints(tx, sourceId, [...freshFacts.map(f => f.fact), ...freshTakes.map(k => k.claim)]);
+    for (const f of freshFacts) f.fp = legacy.get(f.fact) ?? f.fp;
+    for (const k of freshTakes) k.claim_fp = legacy.get(k.claim) ?? k.claim_fp;
+  }
   const slugOfPage = new Map(pages.map(p => [p.id, p.slug]));
   const seen = new Map<string, string[]>();
   for (const [slug, th, fp] of [...(factRows ?? known!.facts).map(f => [f.sms ?? f.entity_slug ?? '', f.th, f.fp] as const),
@@ -193,14 +203,17 @@ SELECT p.id, p.slug, p.source_id, s.incarnation::text AS incarnation FROM pages 
 }
 
 /** Rows by id, for a guard event whose row lives outside the batch's streams. */
-export async function readFactsById(tx: BrainEngine, ids: readonly number[]): Promise<RawFact[]> {
+export async function readFactsById(tx: BrainEngine, sourceId: string, ids: readonly number[]): Promise<RawFact[]> {
   if (!ids.length) return [];
   const rows = await tx.executeRaw<Record<string, unknown>>(`SELECT f.id, f.entity_slug, f.source_markdown_slug AS sms, pe.id AS entity_page_id, f.fact,
       gbrain_fact_fingerprint(f.fact) AS fp, ${TEXT_HASH('f.fact')} AS th, f.kind, f.visibility, f.notability, f.context, f.confidence::text AS confidence,
       f.valid_from, f.valid_until, f.claim_metric, f.claim_value::text AS claim_value, f.claim_unit, f.claim_period, f.event_type,
       f.dimension, f.value, f.value_hash, f.row_num, f.trust_tier
     FROM facts f LEFT JOIN pages pe ON pe.source_id = f.source_id AND pe.slug = f.entity_slug WHERE f.id = ANY($1::bigint[])`, [[...ids]]);
-  return rows.map(toFact);
+  const facts = rows.map(toFact);
+  const legacy = await legacyClaimFingerprints(tx, sourceId, facts.map(f => f.fact));
+  for (const f of facts) f.fp = legacy.get(f.fact) ?? f.fp;
+  return facts;
 }
 
 function toFact(r: Record<string, unknown>): RawFact {

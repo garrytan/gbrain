@@ -41,6 +41,12 @@ export function factFingerprintV2Sql(claim: string): string {
   return fingerprintBody('[[:space:]]').replace(/\bclaim\b/g, () => claim);
 }
 
+/** Every character either fold (the current class, any locale's `[[:space:]]`) may treat as space outside ASCII; a claim with none has one fingerprint. */
+const FOLDS_MAY_DIFFER = /[\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]/;
+
+/** Whether `claim`'s v2 fingerprint may differ from its current one (no query is needed for any other claim). */
+export const mayHaveLegacyFingerprint = (claim: string): boolean => FOLDS_MAY_DIFFER.test(claim);
+
 /** The fingerprint SQL functions, also re-created on their own by the search_path migration. */
 export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v1(claim TEXT) RETURNS TEXT
