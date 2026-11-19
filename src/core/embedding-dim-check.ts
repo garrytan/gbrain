@@ -127,46 +127,17 @@ export interface ColumnDimResult {
  * verify probe compares the runtime embedder against the registry-ACTIVE
  * column, which need not be the legacy one).
  *
- * Uses information_schema + a vector-specific catalog query, with the column
- * name bound as a parameter. Returns { exists: false, dims: null } when the
- * column doesn't exist. Returns { exists: true, dims: null } on a column
- * whose type isn't a pgvector type (defensive).
+ * Engine member `readChunkVectorColumn` (engine-sql/embedding-catalog.ts on
+ * Postgres and PGLite; the per-vector records on Rust). Returns
+ * { exists: false, dims: null } when the column doesn't exist. Returns
+ * { exists: true, dims: null } on a column whose type isn't a pgvector type
+ * (defensive).
  */
 export async function readContentChunksColumnDim(
-  engine: BrainEngine,
+  engine: Pick<BrainEngine, 'readChunkVectorColumn'>,
   columnName: string,
 ): Promise<ColumnDimResult> {
-  // Probe column existence first to avoid noisy errors on fresh brains.
-  const existsRows = await engine.executeRaw<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name = 'content_chunks'
-         AND column_name = $1
-     ) AS exists`,
-    [columnName],
-  );
-  const exists = !!existsRows?.[0]?.exists;
-  if (!exists) return { exists: false, dims: null };
-
-  // pgvector stores dim in pg_type.typmod when atttypmod is set; format_type
-  // returns the human-readable `vector(N)` / `halfvec(N)`. We parse N out.
-  const formatRows = await engine.executeRaw<{ formatted: string | null }>(
-    `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
-       FROM pg_attribute a
-       JOIN pg_class c ON c.oid = a.attrelid
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public'
-        AND c.relname = 'content_chunks'
-        AND a.attname = $1
-        AND NOT a.attisdropped`,
-    [columnName],
-  );
-  const formatted = formatRows?.[0]?.formatted ?? null;
-  if (!formatted) return { exists: true, dims: null };
-
-  const m = formatted.match(/(?:vector|halfvec)\((\d+)\)/i);
-  return { exists: true, dims: m ? parseInt(m[1], 10) : null };
+  return engine.readChunkVectorColumn(columnName);
 }
 
 /**
@@ -174,7 +145,7 @@ export async function readContentChunksColumnDim(
  * default `embedding` column specifically. Thin wrapper over
  * readContentChunksColumnDim so both share one catalog query shape.
  */
-export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promise<ColumnDimResult> {
+export async function readContentChunksEmbeddingDim(engine: Pick<BrainEngine, 'readChunkVectorColumn'>): Promise<ColumnDimResult> {
   return readContentChunksColumnDim(engine, 'embedding');
 }
 

@@ -358,6 +358,13 @@ export const RUST_ENGINE_MEMBERS = {
   countFactRelinkOutcomes: 'facts',
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
+  countStaleFactEmbeddings: 'facts',
+
+  // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
+  readChunkVectorColumn: 'embeddings',
+  readEmbeddingIdentity: 'embeddings',
+  listEmbeddingStores: 'embeddings',
+  hasStoredVectors: 'embeddings',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
@@ -609,6 +616,12 @@ export const RUST_ENGINE_MEMBERS = {
   // access_control
   isFolderRestricted: 'access_control',
   listAppliedPolicyRevisions: 'access_control',
+  readMayActFor: 'access_control',
+  readAudiencePrincipals: 'access_control',
+  readAccessMembers: 'access_control',
+  readAccessCredentials: 'access_control',
+  listAudienceAccessMembers: 'access_control',
+  readLiveMember: 'access_control',
   listActiveAccessMembers: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',

@@ -14,8 +14,10 @@
  */
 import type { FenceFactRow, PageTrustRestore } from '../../engine-sql/trust-fence.ts';
 import type { FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
-import { grantedPrivateFactSql, memberFactAdmitSql } from '../../access/member-facts.ts';
+import { callerMember, grantedPrivateFactSql, memberFactAdmitSql, memberPageSlug } from '../../access/member-facts.ts';
+import { privateFactSources, privatePagesFilterForCaller } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storePageTextPolicy } from './private-provenance.ts';
 
 export const listFenceFactRows: StoreMember<[target: { sourceId: string; slug: string; incoming: string }], FenceFactRow[]> = async (brain, target) => {
   const rows = await storeCall({ member: 'listFenceFactRows', slug: target.slug, sourceId: target.sourceId },
@@ -33,17 +35,27 @@ export const restorePageTrust: StoreMember<[spec: PageTrustRestore], void> = asy
 
 /**
  * GST-2891: the fence cells held from a world-only fact reader (BrainEngine listHeldFenceCells; heldRowSql on the SQL
- * engines). The store answers the caller with no member page and no private-facts grant, where heldRowSql renders both
- * admissions as FALSE: a cell is held when the page's live fact at its row number is not world, or when a live fact of
- * the page that is not world states its claim (contains it, for a cut claim) and no live world fact of the page does.
- * A member caller or a private-facts grant renders the admissions for itself and refuses here; heldFenceLines then holds
- * every fence row line (fail closed), as it does for any failed lookup. rust/docs/store/facts.md, "Held fence cells".
+ * engines): a cell is held when the page's live fact at its row number is narrower than world, or when a live narrower
+ * fact of the page states its claim (contains it, for a cut claim) and no live world fact of the page does. For a member
+ * caller the member passes its page, principal and page policy (`privatePagesFilterForCaller`, which memberFactAdmitSql
+ * applies to the member page), and the store does not count the private facts of that page as narrower while the caller
+ * may read the live page. For a caller with a private-facts grant (GBRA-575) the member passes the granted sources
+ * (`privateFactSources`, `grantSources`), and the store does not count the private facts grantedPrivateFactSql admits,
+ * with heldRowSql's visibility-proposal clause. A member caller whose page policy is not one the store renders refuses
+ * here; heldFenceLines then holds every fence row line (fail closed), as it does for any failed lookup.
+ * rust/docs/store/facts.md, "Held fence cells".
  */
 export const listHeldFenceCells: StoreMember<[keys: readonly HeldFenceCellKey[]], HeldFenceCellRow[]> = async (brain, keys) => {
   if (!keys.length) return [];
-  if (memberFactAdmitSql('hr') !== 'FALSE') refuseMember('listHeldFenceCells', "a member caller's own page facts");
-  if (grantedPrivateFactSql('hr') !== 'FALSE') refuseMember('listHeldFenceCells', 'a private-facts grant');
-  const rows = await storeCall({ member: 'listHeldFenceCells' }, () => brain.listHeldFenceCells({ keys })) as HeldFenceCellRow[];
+  const own = callerMember();
+  const member = own === null ? undefined : {
+    slug: memberPageSlug(own),
+    principal: `member:${own}`,
+    policy: storePageTextPolicy('listHeldFenceCells', () => privatePagesFilterForCaller('p'), { callerReaders: true }),
+  };
+  const grantSources = [...privateFactSources()];
+  const input = { keys, ...(member ? { member } : {}), ...(grantSources.length ? { grantSources } : {}) };
+  const rows = await storeCall({ member: 'listHeldFenceCells' }, () => brain.listHeldFenceCells(input)) as HeldFenceCellRow[];
   return rows.map((row) => ({ ...row, row_num: Number(row.row_num) }));
 };
 

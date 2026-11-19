@@ -45,6 +45,7 @@ pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
+pub mod embedding_catalog;
 pub mod embeddings;
 pub mod eval_capture;
 pub mod extraction;
@@ -157,6 +158,9 @@ pub struct Store {
     builder: Mutex<Option<keyword::Builder>>,
     /// `OpenOptions::keyword_index_builder` as this store was opened (false on the stores above).
     runs_builder: bool,
+    /// True when the open-time scan could not store the member-access flag and this process reads
+    /// it as `'1'` (`access_flag::scan_at_open`).
+    pub(crate) flag_assumed: bool,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -284,6 +288,7 @@ impl Store {
             }
         };
         let index = keyword::open_index(&*kv)?;
+        let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
@@ -303,6 +308,7 @@ impl Store {
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
+            flag_assumed,
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -322,6 +328,7 @@ impl Store {
             bound: None,
             builder: Mutex::new(None),
             runs_builder: false,
+            flag_assumed: self.flag_assumed,
         }
     }
 
@@ -387,6 +394,7 @@ impl Store {
             bound: Some(tx),
             builder: Mutex::new(None),
             runs_builder: false,
+            flag_assumed: self.flag_assumed,
         }
     }
 
@@ -434,7 +442,8 @@ impl Store {
     /// holds the store's exclusive writer, so nothing can conflict with it.
     ///
     /// Either way `f` writes through the store's write handle chain ([`write_chain`]), made fresh
-    /// for each run.
+    /// for each run: a put of a page record that names readers sets the member-access flag in the
+    /// same write (`access_flag::FlaggingWriter`).
     pub(crate) fn write<T>(&self, mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
@@ -490,14 +499,15 @@ impl Store {
 
 /// Runs `f` on the store's write handle chain over `inner`: every `Store::write` run (one OCC
 /// attempt, or one bound statement) goes through it, and it ends the run's handle work before
-/// the run is kept. Today the chain is `keyword::IndexingWriter(inner)`; a wrapper added later
-/// goes inside it (`IndexingWriter(OtherWriter(inner))`), and each wrapper forwards the special
+/// the run is kept. Today the chain is `keyword::IndexingWriter(access_flag::FlaggingWriter(inner))`; a
+/// wrapper added later goes inside it (`IndexingWriter(FlaggingWriter(OtherWriter(inner)))`), and each wrapper forwards the special
 /// `KvWrite` primitives (`allocate`, `raise_counter`, `add_i64`, `counter_below`).
 fn write_chain<T>(
     inner: &mut dyn KvWrite,
     f: &mut impl FnMut(&mut dyn KvWrite) -> Result<T>,
 ) -> Result<T> {
-    let mut indexing = keyword::IndexingWriter::new(inner);
+    let mut flagging = access_flag::FlaggingWriter(inner);
+    let mut indexing = keyword::IndexingWriter::new(&mut flagging);
     let value = f(&mut indexing)?;
     indexing.flush()?;
     Ok(value)
@@ -548,6 +558,7 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
     )?;
+    access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)?;
     // No documents yet, so the keyword index is complete.
     keyword::seed_complete_index(tx)

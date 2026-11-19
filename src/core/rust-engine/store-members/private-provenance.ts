@@ -26,14 +26,12 @@
  *
  * A remote read on a brain that holds no member restriction (config access.restrictions_present unset, so
  * `CallerAccess.restricted` is false) renders the short member-access form `page_readers IS NULL AND
- * folder_rule_ids IS NULL`, which is the full form under its premise: no page names readers and no member exists (the
- * flag is sticky and set by a trigger the moment either happens). The store implements the full form, so both
- * policies judge the caller as the same record with `restricted` true. That is no wider than the short form on any
- * brain the premise holds for, and on a brain it does not (a store that keeps no such trigger) it is the policy the
- * short form stands in for: readers named by `readable_by` still apply and a page derived from one stays hidden.
- * The Rust page write sets the flag too (access_flag.rs), so a Rust brain that once held a `readable_by` page renders
- * the full form and never reaches this mapping; a brain that never held one still renders the short form, so the
- * mapping stays (test/engine-parity/restriction-flag-reads.test.ts stops on that brain without it).
+ * folder_rule_ids IS NULL`: no page that names readers, no origin walk. The member compares such a caller's text with
+ * the forms rendered under `restricted: false` and sends `open` (privacy.rs `readers_allowed`). The store's own flag
+ * then decides: unset, it applies the short form as written; set (the caller's flag read was stale, or an operator
+ * cleared the config row), it applies the short form and the full form's origin walk too, so the read is never wider
+ * than either form. The Rust page write sets the flag (access_flag.rs), so a Rust brain that once held a `readable_by`
+ * page renders the full form unless the caller's read was stale.
  *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.
@@ -70,6 +68,8 @@ export interface StorePrivacyPolicy {
   provenanceOnly?: boolean;
   /** The owner-only test the text ends with (ownerOnlyAllowedSql / ownerOnlyFactAllowedSql), by form; 'off' when it has none. */
   ownerOnly: StoreOwnerOnlyForm;
+  /** The caller renders the short member-access form (`CallerAccess.restricted` false); the store's flag decides. */
+  open?: boolean;
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
@@ -83,6 +83,11 @@ export type StoreOwnerOnlyForm = 'fn' | 'closed' | 'off';
 export function ownerOnlyFormIn(sql: string, table: 'pages' | 'facts', alias: string): StoreOwnerOnlyForm {
   if (sql.includes(table === 'pages' ? ownerOnlyPageSql(alias, 'fn') : ownerOnlyFactSql(alias, 'fn'))) return 'fn';
   return sql.includes(ANY_OWNER_ONLY_SQL) ? 'closed' : 'off';
+}
+
+/** Renders `fn` under the caller's member-access form: the short form for a `restricted: false` caller. */
+function underForm<T>(open: boolean, fn: () => T): T {
+  return open ? withCallerAccess({ restricted: false }, fn) : fn();
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -136,13 +141,12 @@ export function storePrivacyPolicy(
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy | undefined {
   if (excludePrivate !== true) return undefined;
-  if (currentCallerAccess().restricted === false) {
-    return withCallerAccess({ restricted: true }, () => storePrivacyPolicy(member, excludePrivate, rendered, opts));
-  }
+  const open = currentCallerAccess().restricted === false;
+  const openFlag = open ? { open: true } : {};
   const text = normalizeConceptInputs(rendered());
   for (const form of FACT_FORMS) {
-    const baseline = withoutCallerAccess(() => form.sql('facts'));
-    if (text === normalizeConceptInputs(baseline)) return factPolicyFlags(baseline);
+    const baseline = withoutCallerAccess(() => underForm(open, () => form.sql('facts')));
+    if (text === normalizeConceptInputs(baseline)) return { ...factPolicyFlags(baseline), ...openFlag };
   }
   if (opts.callerReaders) {
     const access = currentCallerAccess();
@@ -150,11 +154,11 @@ export function storePrivacyPolicy(
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
     for (const form of FACT_FORMS) {
       const canonical = withoutCallerAccess(() =>
-        withCallerAccess({ ...readers, hidePrivate: true }, () => form.sql('facts')));
+        withCallerAccess({ ...readers, hidePrivate: true, restricted: !open }, () => form.sql('facts')));
       if (text !== normalizeConceptInputs(canonical)) continue;
       const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
       const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
-      return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}) };
+      return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}), ...openFlag };
     }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
@@ -199,40 +203,25 @@ export function storePagePolicy(
  * The store page policy for a read whose page fragment over `p` is `rendered` in the current context: the caller's
  * page policy, or the remote read floor (`remoteReadFloorSql('p')`, which with no labelled-only caller is the
  * no-caller page policy). A family that opts in with `callerReaders` also serves the caller's reader identities and
- * private-readable sources when the fragment is the canonical one for them. The caller is judged by
- * judgeWidenedCaller; any other fragment refuses.
+ * private-readable sources when the fragment is the canonical one for them. Any other fragment refuses. A
+ * `restricted: false` caller is judged under the short form and sent as `open` (see the head of this file).
  */
 export function storePageTextPolicy(
   member: string,
   rendered: () => string,
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy {
-  const outer = currentCallerAccess();
-  if (outer.restricted === false) {
-    // A remote read on a brain with no access restrictions (CallerAccess.restricted false) renders the open form: a
-    // page passes when it names no readers and no folder rule, whoever the caller is. A family that serves caller
-    // readers sends that form as the empty identity, which hides every page that names readers, as the open form does
-    // even where the premise of the flag fails. Any other read is judged as the same caller with `restricted` true.
-    if (opts.callerReaders) {
-      const privateReadableSources = [...outer.privateReadableSources];
-      const open = renderForStoreCaller(
-        { identity: [], privateReadableSources, hidePrivate: true, restricted: false },
-        () => privatePagesFilterForCaller('p'));
-      if (normalizeConceptInputs(rendered()) === normalizeConceptInputs(open)) {
-        return { ...pagePolicyFlags(open), identity: [], privateReadableSources };
-      }
-    }
-    return withCallerAccess({ restricted: true }, () => storePageTextPolicy(member, rendered, opts));
+  const open = currentCallerAccess().restricted === false;
+  const openFlag = open ? { open: true } : {};
+  const text = normalizeConceptInputs(rendered());
+  const baseline = renderForStoreCaller(open ? { restricted: false } : {}, () => privatePagesFilterForCaller('p'));
+  if (text === normalizeConceptInputs(baseline)) return { ...pagePolicyFlags(baseline), ...openFlag };
+  if (opts.callerReaders) {
+    const access = currentCallerAccess();
+    const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+    const canonical = renderForStoreCaller({ ...readers, hidePrivate: true, restricted: !open }, () => privatePagesFilterForCaller('p'));
+    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers, ...openFlag };
   }
-  const policy = judgeWidenedCaller(readers => {
-    const text = normalizeConceptInputs(rendered());
-    const baseline = renderForStoreCaller({}, () => privatePagesFilterForCaller('p'));
-    if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
-    if (!opts.callerReaders) return undefined;
-    const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
-    return text === normalizeConceptInputs(canonical) ? { ...pagePolicyFlags(canonical), ...readers } : undefined;
-  });
-  if (policy) return policy;
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
 
@@ -243,7 +232,8 @@ export interface StoreCallerReaders {
 }
 
 /**
- * The widened-caller step every store privacy policy shares (page, member-access and fact policies). `judge` compares
+ * The widened-caller step of the member-access policy (page-visibility.ts), which the page and fact policies above do
+ * without: they send the short form as `open` and the store's flag decides. `judge` compares
  * the caller's rendered text with reference renderings (renderForStoreCaller) and returns the store policy for the
  * one it equals, or undefined. It runs with the caller's reader record (its reader identities and private-readable
  * sources), in the caller's context.
