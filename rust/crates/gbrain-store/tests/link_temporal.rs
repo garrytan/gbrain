@@ -453,8 +453,7 @@ fn record_metadata_and_page_status() {
         json!([{"from_id": a, "slug": "decision-c", "link_type": "amends", "since": "2024-03-01"}])
     );
     assert_eq!(trusted["status"][0], json!({"id": a, "status": "accepted"}));
-    let remote =
-        meta(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"}));
+    let remote = meta(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"}));
     assert_eq!(remote["links"], json!([]));
     let status: PageStatusInput = de(json!({
         "refs": [{"slug": "decision-a", "source_id": "default"}, {"slug": "decision-c", "source_id": "default"},

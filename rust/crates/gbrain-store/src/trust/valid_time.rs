@@ -353,9 +353,9 @@ impl Store {
                 // A reader held to world-visible pages sees the reason only when the next version
                 // (over every version, never only the visible ones) is visible too; the last
                 // version's successor is the page, which the caller's own page check covers.
-                let successor_visible = versions
-                    .get(i + 1)
-                    .is_none_or(|n| !version_hidden(&page, &n.page_type, &n.frontmatter, &q.policy));
+                let successor_visible = versions.get(i + 1).is_none_or(|n| {
+                    !version_hidden(&page, &n.page_type, &n.frontmatter, &q.policy)
+                });
                 // A pruned successor's visibility can no longer be checked: that reason is withheld.
                 let reason = v
                     .change_reason

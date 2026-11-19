@@ -10,9 +10,9 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
 use gbrain_store::facts::contest::LexicalContestQuery;
 use gbrain_store::facts::quote::{OwnerTierQuery, QuotedPagesQuery};
+use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 
 #[napi]

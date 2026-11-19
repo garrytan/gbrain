@@ -805,8 +805,7 @@ fn marker_reads_under_exclude_private_hide_the_pages_the_policy_hides() {
         vec![ids[0], ids[3]]
     );
     // Without the alias keys (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         read(json!({ "live": true, "excludePrivate": visibility_only })),
         vec![ids[0], ids[2], ids[3]]

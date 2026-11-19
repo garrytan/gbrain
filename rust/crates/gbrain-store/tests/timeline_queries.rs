@@ -852,8 +852,7 @@ fn exclude_private_drops_rows_whose_depth_or_event_page_the_policy_hides() {
     );
     // The policy without the privacy part judges readers only: the readers event still hides. The
     // foreign event has no effective date, so it orders at midnight.
-    let readers_only =
-        json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn"});
+    let readers_only = json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn"});
     assert_eq!(
         field(&day(json!({"excludePrivate": readers_only})), "summary"),
         vec![

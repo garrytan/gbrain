@@ -497,8 +497,7 @@ fn salience_scores_under_exclude_private_skip_the_pages_the_policy_hides() {
         slugs(json!({"exclude_private": policy})),
         ["default::notes/open"]
     );
-    let visibility_only =
-        json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
+    let visibility_only = json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         slugs(json!({"exclude_private": visibility_only})),
         ["default::notes/open", "default::notes/alias"],

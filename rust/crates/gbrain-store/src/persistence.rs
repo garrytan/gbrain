@@ -837,7 +837,10 @@ pub(crate) fn complete_write_row_in(
     record.updated_at_us = now;
     let extra = &mut record.extra;
     if !c.error_detail.is_null() {
-        extra.insert("error_detail".into(), crate::jsonb::ordered(&c.error_detail));
+        extra.insert(
+            "error_detail".into(),
+            crate::jsonb::ordered(&c.error_detail),
+        );
     }
     extra.insert("claim_expires_at".into(), Value::Null);
     if committed {

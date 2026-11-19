@@ -47,5 +47,4 @@ impl Brain {
             s.list_standing_preferences(&a)
         })
     }
-
 }

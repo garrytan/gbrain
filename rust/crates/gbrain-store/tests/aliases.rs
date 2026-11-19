@@ -226,8 +226,7 @@ fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
         ]
     );
     // Without the alias-key test (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": visibility_only })),
         vec![
@@ -745,8 +744,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("open", &["default/c/open"]),
         ]
     );
-    let no_aliases =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
+    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": no_aliases })),
         vec![

@@ -339,8 +339,7 @@ mod tests {
             ["notes/a-open", "notes/n-access", "notes/o-public"]
         );
         // With the privacy part relaxed only the member-access part applies: nothing here is hidden.
-        let relaxed =
-            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
+        let relaxed = json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
         assert_eq!(sorted(top(json!({ "excludePrivate": relaxed }))), every);
         // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
         assert_eq!(sorted(top(json!({ "excludePrivate": null }))), every);
@@ -415,8 +414,7 @@ mod tests {
         );
         assert!(top("closed").is_empty());
         // The part belongs to the member-access test: a relaxed privacy part keeps it.
-        let relaxed =
-            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
+        let relaxed = json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
         let mut found = slugs(
             &store
                 .search_keyword_arm(
@@ -432,7 +430,8 @@ mod tests {
             ["concepts/from-open", "notes/flagged-off", "notes/open"]
         );
         // A policy that names no owner-only form takes `closed`, the form that hides the most (owner_only.rs).
-        let named = opts(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }));
+        let named =
+            opts(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }));
         assert_eq!(
             named.exclude_private.as_ref().map(|p| p.owner_only),
             Some(crate::owner_only::OwnerOnlyForm::Closed)
