@@ -16,12 +16,19 @@ import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { derivationAfterSql, type DerivationKey } from '../page-body/segment-derive.ts';
 import { derivationClaimCandidateSql, derivationHoldsClaimSql, derivationSweepScopeSql, liveStagingSql } from '../page-body/schema.ts';
-import { carriesClaimSql } from '../facts/purge-verify.ts';
 import { escapeFenceCell } from '../fence-shared.ts';
 import type { IntentRedactionTarget } from '../persistence/intent-redaction.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
+
+/**
+ * A page or page-version row (alias `a`) still states the claim: in its body,
+ * timeline, title or frontmatter. `$n` is the lowercased claim, `$n+1` its
+ * JSON-escaped form (frontmatter is matched as JSON text).
+ */
+export const carriesClaimSql = (a: string, n: number) => `(strpos(lower(${a}.compiled_truth),$${n})>0 OR strpos(lower(COALESCE(${a}.timeline,'')),$${n})>0
+  OR strpos(lower(COALESCE(${a}.title,'')),$${n})>0 OR strpos(lower(COALESCE(${a}.frontmatter::text,'')),$${n + 1})>0)`;
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 export type { UnfencedFactRow } from '../facts/unfenced-facts.ts';

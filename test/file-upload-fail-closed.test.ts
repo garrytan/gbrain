@@ -148,6 +148,7 @@ describe('file_upload fail-closed (#4302)', () => {
       expect(src).not.toMatch(/ON CONFLICT \(storage_path\)/);
       expect(src).not.toMatch(/files\.metadata\s*\|\|\s*EXCLUDED\.metadata/);
     }
+    // test-reads-source-ok[structural]: the five upserts are SQL text in files-ops.ts; the pin is that each one carries the shared merge fragment.
     const home = readFileSync(join(import.meta.dir, '..', 'src/core/engine-sql/files-ops.ts'), 'utf8');
     expect(home).not.toMatch(/files\.metadata\s*\|\|\s*EXCLUDED\.metadata/);
     const statements = home.split('INSERT INTO files ').slice(1);
