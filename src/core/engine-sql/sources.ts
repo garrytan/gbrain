@@ -19,7 +19,8 @@ export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
     // v0.38: lean per-source enumeration for autopilot dispatch + doctor.
     // Filters at SQL so the autopilot tick stays one query regardless of
     // how many archived rows exist. ORDER BY (id='default') DESC, id
-    // matches sources-ops.listSources for operator-output stability.
+    // matches sources-ops.listSources for operator-output stability. COLLATE "C" on the id tie-break keeps a Postgres
+    // server with a linguistic locale (en_US.utf8) in the byte order PGLite and the Rust engine give.
     // localPathOnly skips pure-DB sources so autopilot fan-out doesn't
     // dispatch jobs that would fall back to the global sync.repo_path, and
     // the storage shelf, whose cycle is always skipped (GST-1943).
@@ -30,7 +31,7 @@ export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
         FROM sources
        WHERE (${includeArchived} OR archived IS NOT TRUE)
          AND (${!localPathOnly} OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest'))
-       ORDER BY (id = 'default') DESC, id
+       ORDER BY (id = 'default') DESC, id COLLATE "C"
     `);
     return rows.map((r) => ({
       id: r.id as string,

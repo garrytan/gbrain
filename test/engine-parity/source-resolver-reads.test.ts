@@ -30,7 +30,8 @@
  *    page count that leaks across sources with a shared id prefix or ignores the soft-delete filter (`sources list` and
  *    `sources remove` then report the wrong count); an insert that overwrites a taken id or name, or double-encodes
  *    the config into a JSON string (every config key then reads as absent); a source-id list or first-source read in
- *    the server locale (an en_US.utf8 Postgres then orders `a-c` after `ab` and `B` after `a_b`, unlike PGLite).
+ *    the server locale, or a default-first source list with a locale id tie-break (an en_US.utf8 Postgres then orders
+ *    `a-c` after `ab` and `B` after `a_b`, unlike PGLite).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
@@ -349,6 +350,15 @@ describe('engine parity: source-resolution reads', () => {
     });
     expect(seen).toEqual(['a-c', 'default']);
     return seen;
+  });
+  parityTest('listAllSources and listSourceRecords put default first, then ids in byte order whatever the server locale', { methods: ['listAllSources', 'listSourceRecords'] }, async (engine, backend) => {
+    // en_US.utf8 skips the hyphen (a0 < ab < a-c); byte order puts '-' before '0' before 'b'.
+    for (const id of ['ab', 'a0', 'a-c']) await createSource(engine, backend, id);
+    const all = (await engine.listAllSources()).map(r => r.id);
+    const records = (await engine.listSourceRecords()).map(r => r.id);
+    expect(all).toEqual(['default', 'a-c', 'a0', 'ab']);
+    expect(records).toEqual(['default', 'a-c', 'a0', 'ab']);
+    return { all, records };
   });
 });
 

@@ -81,8 +81,8 @@
               "boolean",
               "boolean"
             ],
-            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id",
-            "textSha256": "7a9f40530ae88bb9c1d059fb6b47a75e864c4e3a9579d0145dfdff0bfdae61ce"
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id COLLATE \"C\"",
+            "textSha256": "87281a18015b9e6ed5383f0ff34f52672f724b758d7959871901d48b77de749a"
           }
         ]
       },

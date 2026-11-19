@@ -97,7 +97,7 @@ countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	2	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
-listAllSources	pages	yes	3	no	yes	yes	serves
+listAllSources	pages	yes	4	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
 getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -661,7 +661,7 @@ upsertOpenLoop	open_loops	yes	8	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	4	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
