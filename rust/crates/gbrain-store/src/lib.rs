@@ -186,12 +186,28 @@ impl Store {
     /// Errors: `store_locked` when another handle or process owns it, `format_unknown` for a
     /// `FORMAT` or format record this build does not read, `store_io` and `store_corrupt`.
     pub fn open_dir(dir: &Path, options: OpenOptions) -> Result<Store> {
+        Store::open_dir_in(dir, options, FORMAT_VERSIONS)
+    }
+
+    /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
+    /// tests use (`format::check_version_in`).
+    pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
         fs::create_dir_all(dir)
             .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
-        let existing = format::read(dir)?;
+        let existing = format::read_in(dir, known)?;
+        if existing.is_none() {
+            // Without FORMAT the record file says which format it is. Read that without
+            // opening the file for writing, so a newer brain is refused with every byte as it was.
+            let peeked = redb_kv::peek(&dir.join(format::RECORDS_FILE), &keys::meta("format"));
+            if let Some(stored) =
+                peeked.and_then(|b| serde_json::from_slice::<StoredFormat>(&b).ok())
+            {
+                format::check_version_in(stored.format_version, known)?;
+            }
+        }
         let kv = open_records(dir, options.concurrent_writes)?;
-        let store = Store::open_kv(kv, Arc::new(SystemEnv), options.clone())?;
+        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
@@ -211,12 +227,21 @@ impl Store {
     /// Opens a brain on any `Kv`: the entry point for the simulation and for tests that run the
     /// store on a fault-injecting disk. Creates the brain's records when the store is empty.
     pub fn open_kv(kv: Arc<dyn Kv>, env: Arc<dyn Env>, options: OpenOptions) -> Result<Store> {
+        Store::open_kv_in(kv, env, options, FORMAT_VERSIONS)
+    }
+
+    fn open_kv_in(
+        kv: Arc<dyn Kv>,
+        env: Arc<dyn Env>,
+        options: OpenOptions,
+        known: &[u32],
+    ) -> Result<Store> {
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
         let (stored, created) = match stored {
             Some(stored) => {
-                format::check_version(stored.format_version)?;
+                format::check_version_in(stored.format_version, known)?;
                 let stored = if stored.format_version < FORMAT_VERSION {
                     upgrade_format(&*kv)?
                 } else {
@@ -233,7 +258,7 @@ impl Store {
                 let mut tx = kv.begin_write()?;
                 // Another handle may have created the brain between the read and this write.
                 if let Some(raced) = get_json::<StoredFormat>(&*tx, &keys::meta("format"))? {
-                    format::check_version(raced.format_version)?;
+                    format::check_version_in(raced.format_version, known)?;
                     drop(tx);
                     (raced, false)
                 } else {
@@ -624,5 +649,134 @@ mod concurrency_tests {
         drop(read);
         drop(store);
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// What an older build does with a newer brain (rust/docs/store/format.md, "Older builds"): it
+/// refuses before it writes anything, with `format_unknown`, and leaves every file as it was.
+/// `Store::open_dir_in` opens with the format list an older build was shipped with.
+#[cfg(test)]
+mod older_build_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-tmp")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// Every file under `dir`, by path, with its bytes.
+    fn files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        let mut out = BTreeMap::new();
+        let mut todo = vec![dir.to_path_buf()];
+        while let Some(at) = todo.pop() {
+            for entry in fs::read_dir(&at).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    todo.push(path);
+                } else {
+                    out.insert(path.clone(), fs::read(&path).unwrap());
+                }
+            }
+        }
+        out
+    }
+
+    /// A closed brain with one committed record, stamped `version` in `FORMAT` and in its format
+    /// record. At `FORMAT_VERSION` it is this build's own format; above it, the stamp is all an
+    /// older build looks at before it refuses.
+    fn brain_at(name: &str, version: u32) -> PathBuf {
+        let dir = fresh_dir(name).join("brain");
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        store
+            .write(|tx| {
+                tx.put(&keys::meta("test/older-build"), b"kept")?;
+                let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?.unwrap();
+                stored.format_version = version;
+                put_json(tx, &keys::meta("format"), &stored)
+            })
+            .unwrap();
+        drop(store);
+        let mut record = format::read(&dir).unwrap().unwrap();
+        record.format_version = version;
+        format::write(&dir, &record).unwrap();
+        dir
+    }
+
+    fn assert_refused(dir: &Path, known: &[u32], version: u32) {
+        let before = files(dir);
+        let err = Store::open_dir_in(dir, OpenOptions::default(), known)
+            .err()
+            .expect("an older build must refuse a newer brain");
+        assert_eq!(err.code, crate::error::FORMAT_UNKNOWN);
+        assert_eq!(
+            err.message,
+            format!(
+                "this brain has store format {version}, newer than the formats this build opens ({known:?}); nothing was changed"
+            )
+        );
+        let after = files(dir);
+        let changed: Vec<String> = before
+            .keys()
+            .chain(after.keys())
+            .filter(|path| before.get(*path) != after.get(*path))
+            .map(|path| {
+                let (a, b) = (before.get(path), after.get(path));
+                let first = match (a, b) {
+                    (Some(a), Some(b)) => a
+                        .iter()
+                        .zip(b.iter())
+                        .position(|(x, y)| x != y)
+                        .map(|i| (i, a[i], b[i])),
+                    _ => None,
+                };
+                format!(
+                    "{} ({:?} -> {:?} bytes, first differing byte {first:?})",
+                    path.strip_prefix(dir).unwrap_or(path).display(),
+                    a.map(Vec::len),
+                    b.map(Vec::len)
+                )
+            })
+            .collect();
+        assert!(
+            changed.is_empty(),
+            "a refused open changed files: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn a_format_2_build_refuses_a_format_3_brain_and_changes_no_byte() {
+        let dir = brain_at("older-2-vs-3", 3);
+        assert_refused(&dir, &[1, 2], 3);
+        // Without FORMAT the format record decides, still before any write.
+        fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+        assert_refused(&dir, &[1, 2], 3);
+        // The brain is whole: this build opens it, rebuilds FORMAT and reads the record.
+        let store = Store::open_dir(&dir, OpenOptions::default()).unwrap();
+        let kept = store.read().unwrap().get(&keys::meta("test/older-build"));
+        assert_eq!(kept.unwrap().as_deref(), Some(&b"kept"[..]));
+        drop(store);
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    #[test]
+    fn every_build_refuses_the_next_format_and_changes_no_byte() {
+        for n in 1..=FORMAT_VERSION {
+            let known: Vec<u32> = (1..=n).collect();
+            let dir = brain_at(&format!("older-{n}-vs-next"), n + 1);
+            assert_refused(&dir, &known, n + 1);
+            fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+            assert_refused(&dir, &known, n + 1);
+            let _ = fs::remove_dir_all(dir.parent().unwrap());
+        }
+        // This build's own list is the case above with n = FORMAT_VERSION.
+        assert_eq!(
+            FORMAT_VERSIONS,
+            (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
+        );
     }
 }
