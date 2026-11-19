@@ -18,10 +18,9 @@
 //!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
 //!   (`trust::TrustPolicy`).
 //!
-//! Refused (no store member): `matchSavedFacts`, `readFactForOwnerAction`,
-//! `listStandingPreferences`, `listLexicalContestCandidates` and `countDerivedFactTaint`
-//! (`listRestatedPrivateCopies` is served by `facts/trust_reads.rs`). The store keeps the columns they read (`trust_tier`, `write_origin`,
-//! the write-gate receipts), but no store read for them is built yet. The `entity_ended` history
+//! `matchSavedFacts` is served by `facts/saved_match.rs`. `listRestatedPrivateCopies` is served by
+//! `facts/trust_reads.rs`; `readFactForOwnerAction`, `listStandingPreferences`,
+//! `listLexicalContestCandidates` and `countDerivedFactTaint` by `facts/trust_owner.rs`. The `entity_ended` history
 //! arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
 //!
 //! `similarity` is `1 - (embedding <=> query)` for a row whose embedding is comparable (a vector
