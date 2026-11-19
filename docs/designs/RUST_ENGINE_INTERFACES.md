@@ -1129,9 +1129,9 @@ Chunk vectors and vector search.
 - **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`).
 - **Postgres tables:** Chunk and take vectors (`embedding` columns), the vector index.
 - **Keys:** `X` (core sub-layout).
-- **Depends on:** The coming vector store work (HNSW or exact scan choice, design phase 2).
-- **Estimate:** core.
-- **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector.
+- **Depends on:** Nothing. The store serves both members with an exact scan over the stored vectors (`rust/docs/store/vectors.md`).
+- **Estimate:** built.
+- **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector. A query value outside the float4 range refuses with `invalid_argument`. A safe reader (`requireSafeChunks` or `excludePrivate`) sees a page only when its `chunker_version` is 4 or more.
 - **Store field:** `Store` holds one `pub(crate) vectors: crate::vectors::VectorCache`, made with `Default` in
   `open_kv`, so a search passes `Some(&self.vectors)` to `load_index` and reuses the decoded vectors across reads.
   Core defines `VectorCache` as an empty struct at the end of `vectors.rs`. Git merges it into the family's file with
@@ -1154,9 +1154,9 @@ Embedding state of chunks and pages.
 - **Store and binding:** `getEmbeddingsByChunkIds` (`get_embeddings_by_chunk_ids`), `countStaleChunks` (`count_stale_chunks`), `sumStaleChunkChars` (`sum_stale_chunk_chars`), `setPageEmbeddingSignature` (`set_page_embedding_signature`), `invalidateStaleSignatureEmbeddings` (`invalidate_stale_signature_embeddings`), `invalidateContentDriftEmbeddings` (`invalidate_content_drift_embeddings`), `listStaleChunks` (`list_stale_chunks`), `readEmbeddingStateCounts` (`read_embedding_state_counts`), `listEmbeddingStateRows` (`list_embedding_state_rows`), `getChunksWithEmbeddings` (`get_chunks_with_embeddings`), `updateTakeEmbeddings` (`update_take_embeddings`), `getTakeEmbeddings` (`get_take_embeddings`), `countStaleTakes` (`count_stale_takes`), `listStaleTakes` (`list_stale_takes`).
 - **Postgres tables:** Embedding columns and state on `content_chunks`, `pages.embedding_signature`, take embeddings.
 - **Keys:** `B` (core sub-layout).
-- **Depends on:** vectors.
-- **Estimate:** core.
-- **Notes:** Reports the active embedding column the way the registry does.
+- **Depends on:** vectors (built).
+- **Estimate:** built (`rust/docs/store/embeddings.md`).
+- **Notes:** Reports the active embedding column the way the registry does. A brain whose config names a vector column other than `embedding`, and a chunk that carries an image vector, still refuse with `engine_capability_missing`.
 - **Parity cases (9, in `chunks.test.ts`, `search.test.ts`, `takes.test.ts`):**
   - `chunks.test.ts`: getChunks includeEmbedding returns stored vectors; getChunksWithEmbeddings reads the full rows
   - `chunks.test.ts`: countStaleChunks, sumStaleChunkChars and listStaleChunks agree on which chunks lack a vector
@@ -1283,8 +1283,8 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Page projection hook (`page_projection::queue_page_projection`, called by `write_page` and `remove_page`) | built; the family fills in the body | persistence (`page_projection_jobs`) |
 | Tags `d`, `m`, `t` (`PERSISTENCE`, `JOBS`, `TRUST`) and the empty `persistence.rs`, `jobs.rs` and `trust.rs` | built | persistence, jobs, trust |
 | Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
-| vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
-| embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
+| vectors (`X`): chunk and take vectors, vector search | built (exact scan) | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
+| embeddings (`B`): stale counts, signatures, embedding state | built | stats `getHealth`, chunk_queries shared cases, takes capability |
 | transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction |
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
