@@ -10,7 +10,7 @@ import type { IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, Retirement
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { ownerOnlyFormIn, storePagePolicy, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 export const readMentionLastPass: StoreMember<[sourceId?: string | null], string | null> = (brain, sourceId) =>
   storeCall({ member: 'readMentionLastPass', sourceId: sourceId ?? undefined }, () => brain.readMentionLastPass(sourceId ?? null));
@@ -44,7 +44,7 @@ function retirementHopPolicy(privacy: RetirementPrivacy): StorePrivacyPolicy | u
   if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
   if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
   const text = callerAccessAllowedSql('p');
-  const off = { honorAliases: false, entityPrivacy: false };
+  const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
   if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;
   const access = currentCallerAccess();
   const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
