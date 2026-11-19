@@ -168,6 +168,34 @@ describe('engine parity: chunk reads of a segmented page', () => {
     },
   );
 
+  // Review finding specialist-batched#3: includeUnsealed and the embedding maintenance reads use chunkGenerationFilter,
+  // which also needs a live manifest row. A flip that defers its retire (retireMaxRows) leaves the closed occurrence's
+  // chunk at an old generation; it is no longer part of the body, so these reads must not serve, count or embed it.
+  parityTest(
+    'a chunk whose occurrence a deferred retire closed stays out of includeUnsealed reads and embedding maintenance',
+    { methods: ['getChunks', 'getChunksWithEmbeddings', 'countStaleChunks', 'sumStaleChunkChars', 'listStaleChunks', 'readEmbeddingStateCounts', 'listEmbeddingStateRows', 'flipBodyGeneration'] },
+    async (engine) => {
+      const { pageId, occ } = await publish(engine);
+      const staging = await stageReplace(engine, pageId, occ);
+      await engine.flipBodyGeneration(flipInput(pageId, 1, staging.id, [ONE, FOUR, TWO],
+        { closeOccurrences: [occ[1]!, occ[2]!], retireChunkOccurrences: [occ[2]!], retireMaxRows: 0 }));
+      await engine.setBodyStagingState(staging.id, 'committed');
+      const unsealed = words((await engine.getChunks('notes/big', { includeUnsealed: true })).map((c) => c.chunk_text));
+      const withVectors = words((await engine.getChunksWithEmbeddings('notes/big', { includeUnsealed: true })).map((c) => c.chunk_text));
+      const stale = words((await engine.listStaleChunks({ batchSize: 50 })).map((r) => r.chunk_text)).sort();
+      const counts = await engine.readEmbeddingStateCounts({ mode: 'full', purgeWindowHours: 24 });
+      const rows = (await engine.listEmbeddingStateRows({ states: ['pending'], limit: 10, purgeWindowHours: 24 }))
+        .map((r) => ({ slug: r.slug, state: r.state, chunks: r.chunks, bytes: r.bytes }));
+      return {
+        unsealed, withVectors, stale,
+        staleCount: await engine.countStaleChunks(),
+        staleChars: await engine.sumStaleChunkChars(),
+        counts: counts.counts,
+        rows,
+      };
+    },
+  );
+
   parityTest(
     'getChunkPage pages a segmented page by position in document order, not by insertion chunk_index',
     { methods: ['getChunkPage', 'stageSegmentChunks', 'flipBodyGeneration'] },

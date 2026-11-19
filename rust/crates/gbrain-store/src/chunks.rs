@@ -879,12 +879,44 @@ impl ChunkRecord {
     }
 }
 
+/// True for a segmented shell page: its body columns are NULL (PGLite's `body_storage = 'segmented'`).
+pub(crate) fn segmented(page: &PageRecord) -> bool {
+    page.compiled_truth.is_null() && page.timeline.is_null()
+}
+
+/// `chunkGenerationFilter`: a chunk of the page's live body. An inline chunk belongs to a page that is not segmented; a
+/// segmented chunk is at or below the page's generation and its occurrence has a live manifest row (the segment view
+/// keeps one offset per live occurrence). A staged chunk, one of a retired occurrence and an inline chunk left on a
+/// segmented page are not. `visible_at` is the looser `chunkVisibleFilter` (generation only) of the sealed reads.
+pub(crate) fn in_live_body(chunk: &ChunkRecord, segmented_page: bool, view: &SegmentView) -> bool {
+    match chunk.segment {
+        None => !segmented_page,
+        Some(place) => {
+            place.body_generation <= view.generation
+                && view.offsets.contains_key(&place.occurrence_id)
+        }
+    }
+}
+
 /// The page's visible chunks in document order (see the contract above).
 pub(crate) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>> {
+    ordered_chunks(read, page_id, None)
+}
+
+/// The page's chunks in document order, filtered by `chunkVisibleFilter` (`live_body` None) or by
+/// `chunkGenerationFilter` (`live_body` Some(page is segmented)).
+fn ordered_chunks(
+    read: &dyn KvRead,
+    page_id: u64,
+    live_body: Option<bool>,
+) -> Result<Vec<ChunkRecord>> {
     let view = read_segment_view(read, page_id)?;
     let mut chunks: Vec<ChunkRecord> = read_chunks(read, page_id)?
         .into_iter()
-        .filter(|c| c.visible_at(view.generation))
+        .filter(|c| match live_body {
+            None => c.visible_at(view.generation),
+            Some(segmented_page) => in_live_body(c, segmented_page, &view),
+        })
         .collect();
     // ORDER BY m.byte_start, cc.local_ordinal, cc.chunk_index, NULLs last.
     chunks.sort_by_key(|c| {
@@ -1104,14 +1136,17 @@ pub struct GetChunksOptions {
     pub include_unsealed: bool,
 }
 
-/// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`.
+/// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`. A sealed read takes
+/// `chunkVisibleFilter`'s chunks; an `includeUnsealed` read (`unsealed`) takes `chunkGenerationFilter`'s, the live
+/// body's only.
 pub(crate) fn chunk_rows(
     read: &dyn KvRead,
     page: &PageRecord,
     with_vectors: bool,
+    unsealed: bool,
 ) -> Result<Vec<Value>> {
     let mut out = Vec::new();
-    for chunk in visible_chunks(read, page.id)? {
+    for chunk in ordered_chunks(read, page.id, unsealed.then(|| segmented(page)))? {
         let stored = if with_vectors && chunk.embed.has_vector() {
             crate::embeddings::read_chunk_vector(read, page.id, chunk.chunk_index)?
         } else {
@@ -1253,7 +1288,12 @@ impl Store {
         {
             return Ok(Vec::new());
         }
-        chunk_rows(&*read, &page, options.include_embedding)
+        chunk_rows(
+            &*read,
+            &page,
+            options.include_embedding,
+            options.include_unsealed,
+        )
     }
 
     /// `deleteChunks(slug, {sourceId})`: removes the page's chunks. The page stays. When it removed

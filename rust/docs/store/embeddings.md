@@ -75,9 +75,11 @@ stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 ## Known edges
 
 - The page-embedding budget (`budgetLimited`) is not kept: no page leaves the stale queue for it.
-- PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
-  (`visible_at`).
+- The stale reads (`countStaleChunks`, `sumStaleChunkChars`, `listStaleChunks`), `readEmbeddingStateCounts`,
+  `listEmbeddingStateRows` and the `includeUnsealed` reads take PGLite's `chunkGenerationFilter`: an inline chunk only
+  on a page that is not segmented, and a segmented chunk only at or below the page's generation with a live manifest
+  row. A chunk whose occurrence a deferred retire closed is not read. The served reads (`getEmbeddingsByChunkIds`,
+  `cosinesByChunkIds`, sealed `getChunksWithEmbeddings`) keep `chunkVisibleFilter`, the generation alone.
 - A segmented page counts as having no chunkless content.
 - Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
-- `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
