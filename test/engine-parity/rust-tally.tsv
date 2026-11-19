@@ -60,7 +60,7 @@ test/engine-parity/timeline.test.ts	29	0
 test/engine-parity/transaction-settings.test.ts	7	1
 test/engine-parity/traversal-cache.test.ts	5	2
 test/engine-parity/trust-fence.test.ts	4	0
-test/engine-parity/trust-proposals.test.ts	3	0
+test/engine-parity/trust-proposals.test.ts	4	1
 test/engine-parity/trust-reads.test.ts	11	0
 test/engine-parity/trust-tier-reads.test.ts	11	4
 test/engine-parity/trust-withdrawals.test.ts	4	0

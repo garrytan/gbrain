@@ -498,6 +498,7 @@ export const RUST_ENGINE_MEMBERS = {
   pendingTrustProposalsFor: 'facts',
   updatePendingTrustProposalAfter: 'facts',
   transitionTrustProposal: 'facts',
+  listPendingContradictions: 'facts',
   // open loops (engine-sql/open-loops.ts)
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',

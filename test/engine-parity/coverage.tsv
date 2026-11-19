@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 644/644
+# covered: 645/645
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -62,7 +62,7 @@
 # alias_fanout_reads: 4/4
 # write_guards: 7/7
 # trust_fence: 1/1
-# trust_proposals: 6/6
+# trust_proposals: 7/7
 # connect_gate: 4/4
 # jobs_wake: 19/19
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
@@ -290,7 +290,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	41	yes	yes	yes	serves
-insertFacts	facts	yes	37	no	yes	yes	serves
+insertFacts	facts	yes	39	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	23	no	yes	yes	serves
 listFactsByEntity	facts	yes	18	yes	yes	yes	serves
@@ -687,6 +687,7 @@ listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves
 updatePendingTrustProposalAfter	trust_proposals	yes	1	no	yes	yes	serves
 transitionTrustProposal	trust_proposals	yes	1	no	yes	yes	serves
+listPendingContradictions	trust_proposals	yes	2	no	yes	yes	serves
 hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves

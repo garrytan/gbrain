@@ -44,7 +44,7 @@ import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCache
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
 import type { TrustTable } from './trust/schema.ts';
-import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
+import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
@@ -3052,6 +3052,8 @@ export interface BrainEngine {
   updatePendingTrustProposalAfter(id: number, after: Record<string, unknown>): Promise<void>;
   /** Compare-and-set on a trust proposal's status, recording an after state and the decider; false when it was not in `from`. */
   transitionTrustProposal(id: number, from: TrustProposalStatus, to: TrustProposalStatus, opts?: TrustProposalTransition): Promise<boolean>;
+  /** The contradictions `trust review` lists: pending decide proposals whose two facts are both active, by source and creation time, oldest first (at most 1000). */
+  listPendingContradictions(filter?: PendingContradictionFilter): Promise<PendingContradictionRow[]>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
