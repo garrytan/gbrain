@@ -199,7 +199,8 @@ fn member_access_allows(
     identity: &[String],
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    Ok(readers_allowed(read, page, identity, policy.open)? && !policy.page_owner_only(read, page)?)
+    Ok(readers_allowed(read, page, identity, policy.open)?
+        && !policy.page_owner_only(read, page)?)
 }
 
 /// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
