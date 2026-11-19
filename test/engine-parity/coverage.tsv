@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 614/614
+# covered: 655/655
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -49,6 +49,7 @@
 # raw_sql: 4/4
 # code_edges: 9/9
 # eval_capture: 5/5
+# calibration_profiles: 5/5
 # salience_enrich: 6/6
 # trust: 15/15
 # open_loops: 3/3
@@ -62,6 +63,8 @@
 # trust_fence: 1/1
 # trust_proposals: 6/6
 # connect_gate: 4/4
+# decide_proposals: 16/16
+# decide_store: 20/20
 # jobs_wake: 19/19
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -287,7 +290,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	34	yes	yes	yes	serves
+insertFact	facts	yes	35	yes	yes	yes	serves
 insertFacts	facts	yes	27	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	19	no	yes	yes	serves
@@ -578,6 +581,11 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
+getLatestCalibrationProfile	calibration_profiles	yes	3	no	yes	yes	serves
+isCalibrationProfileUnchanged	calibration_profiles	yes	1	no	yes	yes	serves
+insertCalibrationProfile	calibration_profiles	yes	5	no	yes	yes	serves
+readVoiceGateHealth	calibration_profiles	yes	1	no	yes	yes	serves
+purgeCalibrationProfilesByWave	calibration_profiles	yes	1	no	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
 setEmotionalWeightBatch	salience_enrich	yes	6	yes	yes	yes	serves
@@ -659,6 +667,42 @@ hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves
 listRetiredDeactivations	connect_gate	yes	2	no	yes	yes	serves
+insertDecideProposal	decide_proposals	yes	5	no	yes	yes	serves
+getDecideProposal	decide_proposals	yes	2	no	yes	yes	serves
+listDecideProposalIds	decide_proposals	yes	1	no	yes	yes	serves
+listDecideProposals	decide_proposals	yes	1	no	yes	yes	serves
+transitionDecideProposal	decide_proposals	yes	4	no	yes	yes	serves
+listDecideProposedPairs	decide_proposals	yes	1	no	yes	yes	serves
+insertDecideReviewProposal	decide_proposals	yes	2	no	yes	yes	serves
+listDecideReviewProposals	decide_proposals	yes	1	no	yes	yes	serves
+getDecideReviewProposal	decide_proposals	yes	1	no	yes	yes	serves
+transitionDecideReviewProposal	decide_proposals	yes	2	no	yes	yes	serves
+listDecideReviewProposalIds	decide_proposals	yes	1	no	yes	yes	serves
+readProposalReviewRates	decide_proposals	yes	1	no	yes	yes	serves
+listDueDecideReviewQueue	decide_proposals	yes	1	no	yes	yes	serves
+applyDecideReviewQueue	decide_proposals	yes	1	no	yes	yes	serves
+listDueDecideSweepDeferred	decide_proposals	yes	1	no	yes	yes	serves
+applyDecideSweepDeferred	decide_proposals	yes	1	no	yes	yes	serves
+readDecideState	decide_store	yes	4	no	yes	yes	serves
+upsertDecideState	decide_store	yes	4	no	yes	yes	serves
+deleteDecideState	decide_store	yes	2	no	yes	yes	serves
+ensureDecideState	decide_store	yes	2	no	yes	yes	serves
+insertDecideSpend	decide_store	yes	9	no	yes	yes	serves
+dailyDecideSpend	decide_store	yes	8	no	yes	yes	serves
+listDecideSpendBySlot	decide_store	yes	7	no	yes	yes	serves
+insertDecideReceipts	decide_store	yes	14	no	yes	yes	serves
+pruneDecideReceipts	decide_store	yes	3	no	yes	yes	serves
+listDecideReceiptStats	decide_store	yes	7	no	yes	yes	serves
+decideSlotUsage	decide_store	yes	7	no	yes	yes	serves
+decideConflictNoEntityCounts	decide_store	yes	3	no	yes	yes	serves
+listDecideReplayReceipts	decide_store	yes	5	no	yes	yes	serves
+listDecideResolvedModels	decide_store	yes	3	no	yes	yes	serves
+listDecideMixedModelDecisions	decide_store	yes	3	no	yes	yes	serves
+insertDecideCalibration	decide_store	yes	7	no	yes	yes	serves
+storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
+listDecideCalibrations	decide_store	yes	7	no	yes	yes	serves
+getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
+setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
 openWakeWatch	jobs_wake	yes	11	no	yes	yes	serves
 listWakeWatches	jobs_wake	yes	6	no	yes	yes	serves
 endWakeWatches	jobs_wake	yes	6	no	yes	yes	serves

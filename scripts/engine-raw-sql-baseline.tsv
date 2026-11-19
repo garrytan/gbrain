@@ -23,7 +23,6 @@ src/commands/autopilot-health.ts	execute_raw	1
 src/commands/autopilot-retry-global.ts	execute_raw	1
 src/commands/autopilot.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
-src/commands/calibration.ts	execute_raw	1
 src/commands/code-scope.ts	execute_raw	1
 src/commands/config.ts	execute_raw	1
 src/commands/core.ts	execute_raw	6
@@ -35,7 +34,7 @@ src/commands/doctor/checks/access-lineage.ts	execute_raw	2
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/atom-retirements.ts	execute_raw	2
 src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
-src/commands/doctor/checks/calibration.ts	execute_raw	8
+src/commands/doctor/checks/calibration.ts	execute_raw	6
 src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
 src/commands/doctor/checks/content-quality.ts	execute_raw	8
@@ -68,7 +67,7 @@ src/commands/doctor/checks/git-index-lag.ts	execute_raw	1
 src/commands/doctor/checks/google-api-access.ts	execute_raw	1
 src/commands/doctor/checks/google-calendar.ts	execute_raw	1
 src/commands/doctor/checks/grant-new-ops.ts	execute_raw	2
-src/commands/doctor/checks/graph-embedding.ts	execute_raw	2
+src/commands/doctor/checks/graph-embedding.ts	execute_raw	1
 src/commands/doctor/checks/guest-source.ts	execute_raw	4
 src/commands/doctor/checks/image-embedding-coverage.ts	execute_raw	1
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
@@ -251,9 +250,8 @@ src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
 src/core/ai/decide/egress.ts	execute_raw	1
-src/core/ai/decide/proposals-store.ts	execute_raw	16
-src/core/ai/decide/review-lane.ts	execute_raw	17
-src/core/ai/decide/store.ts	execute_raw	19
+src/core/ai/decide/proposals-store.ts	execute_raw	6
+src/core/ai/decide/review-lane.ts	execute_raw	6
 src/core/analyze-lock.ts	execute_raw	1
 src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
@@ -283,12 +281,11 @@ src/core/bootstrap/harness-skills.ts	execute_raw	1
 src/core/bootstrap/verify.ts	execute_raw	6
 src/core/brain-writer.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
-src/core/brainstorm/orchestrator.ts	execute_raw	1
 src/core/budget/daily-ledger.ts	execute_raw	6
 src/core/by-mention.ts	execute_raw	6
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
-src/core/calibration/undo-wave.ts	execute_raw	9
+src/core/calibration/undo-wave.ts	execute_raw	7
 src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
 src/core/chronicle/event-identity.ts	execute_raw	1
@@ -326,7 +323,6 @@ src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
 src/core/core-memory.ts	execute_raw	2
 src/core/cycle.ts	execute_raw	2
-src/core/cycle/calibration-profile.ts	execute_raw	2
 src/core/cycle/chronicle.ts	execute_raw	3
 src/core/cycle/concept-publication.ts	execute_raw	3
 src/core/cycle/concept-redirects.ts	execute_raw	2
@@ -1111,7 +1107,6 @@ src/eval/brainbench/metrics/write-back.ts	execute_raw	1
 src/eval/brainbench/seed.ts	execute_raw	1
 src/eval/brainbench/trust-scenario.ts	execute_raw	13
 src/eval/brainbench/trust-suites.ts	execute_raw	1
-src/eval/decide-eval-flags.ts	execute_raw	1
 src/eval/longmemeval/harness.ts	execute_raw	2
 src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4

@@ -991,6 +991,7 @@ Captured eval candidates and capture failures.
 - **Tag:** `Z` (`EVAL_CAPTURE`). Cascade on page delete: no.
 - **Members (5), capability:** `eval_capture` (5).
 - **Store and binding:** `logEvalCandidate` (`log_eval_candidate`), `listEvalCandidates` (`list_eval_candidates`), `deleteEvalCandidatesBefore` (`delete_eval_candidates_before`), `logEvalCaptureFailure` (`log_eval_capture_failure`), `listEvalCaptureFailures` (`list_eval_capture_failures`).
+- **Decide store (inside this family):** 20 more members serve the decide tables `decide_state`, `decide_spend`, `decision_receipts` and `decide_calibrations` under sub-tags `Z 0x10..=0x15` (record in rust/docs/store/decide-store.md): `readDecideState`, `upsertDecideState`, `deleteDecideState`, `ensureDecideState`, `insertDecideSpend`, `dailyDecideSpend`, `listDecideSpendBySlot`, `insertDecideReceipts`, `pruneDecideReceipts`, `listDecideReceiptStats`, `decideSlotUsage`, `decideConflictNoEntityCounts`, `listDecideReplayReceipts`, `listDecideResolvedModels`, `listDecideMixedModelDecisions`, `insertDecideCalibration`, `storeDecideQualification`, `listDecideCalibrations`, `getDecideCalibration`, `setDecideCalibrationRetired`. Parity: `test/engine-parity/decide-store.test.ts`.
 - **Postgres tables:** `eval_candidates`, `eval_capture_failures`.
 - **Keys:** `Z 0x01 <id>` candidate; `Z 0x02 <id>` failure; `M next_eval_candidate_id`, `M next_eval_failure_id`. Expose `pub(crate) fn remove_retrieved_slugs(tx, source_id, slugs)` for page_ops.
 - **Depends on:** None.
@@ -1000,6 +1001,28 @@ Captured eval candidates and capture failures.
   - `code-eval-salience.test.ts`: logEvalCandidate round-trips every field through listEvalCandidates, with tool filter and limit
   - `code-eval-salience.test.ts`: listEvalCandidates since-window and deleteEvalCandidatesBefore split old from new rows
   - `code-eval-salience.test.ts`: logEvalCaptureFailure records reasons; listEvalCaptureFailures filters by since
+
+### calibration_profiles
+
+Generated calibration profiles per holder and source (decide family, group B). Shares the eval_capture tag and capability.
+
+- **Files:** `gbrain-store/src/eval_capture/calibration_profiles.rs`, `gbrain-napi/src/families/calibration_profiles.rs`, `store-members/calibration-profiles.ts`; the SQL is `src/core/engine-sql/calibration-profiles.ts`. Detail: `rust/docs/store/calibration-profiles.md`.
+- **Tag:** `Z` (`EVAL_CAPTURE`), sub-tags `0x20` (record) and `0x21` (newest-first index). Cascade on source delete: the store removes the source's rows (`remove_source_rows`, unit-tested only: the Rust store serves no source delete yet).
+- **Members (5), capability:** `eval_capture` (5): `getLatestCalibrationProfile`, `isCalibrationProfileUnchanged`, `insertCalibrationProfile`, `readVoiceGateHealth`, `purgeCalibrationProfilesByWave`.
+- **Postgres tables:** `calibration_profiles`.
+- **Parity cases (5, in `calibration-profiles.test.ts`):** newest profile with filters and id tie-break; unchanged check (REAL-rounded, NULL-safe); insert defaults and refusals that write nothing; voice-gate health over the 7-day window; wave purge dry run and delete.
+- **Notes:** The other undo-wave statements (takes, take_grade_cache, take_nudge_log) stay raw SQL and refuse on a Rust brain.
+
+### decide_proposals
+
+The decide loop's four proposal tables (group C). All members use the `eval_capture` capability and its key tag.
+
+- **Files:** `gbrain-store/src/eval_capture/decide_proposals.rs`, `gbrain-napi/src/families/decide_proposals.rs`, `store-members/decide-proposals.ts`, `src/core/engine-sql/decide-proposals.ts`.
+- **Tag:** `Z` (`EVAL_CAPTURE`), sub-tags `0x30..=0x3D`. Cascade on page delete: no.
+- **Members (16), capability:** `eval_capture` (16): `insertDecideProposal`, `getDecideProposal`, `listDecideProposalIds`, `listDecideProposals`, `transitionDecideProposal`, `listDecideProposedPairs`, `insertDecideReviewProposal`, `listDecideReviewProposals`, `getDecideReviewProposal`, `transitionDecideReviewProposal`, `listDecideReviewProposalIds`, `readProposalReviewRates`, `listDueDecideReviewQueue`, `applyDecideReviewQueue`, `listDueDecideSweepDeferred`, `applyDecideSweepDeferred`.
+- **Postgres tables:** `decide_proposals`, `decide_review_proposals`, `decide_review_queue`, `decide_sweep_deferred`.
+- **Keys and contract:** [rust/docs/store/decide-proposals.md](../../rust/docs/store/decide-proposals.md). `lock` on the two `get` members is ignored (one writer); `engine.transaction` is served.
+- **Parity cases (8, in `decide-proposals.test.ts`).**
 
 ### code_edges
 

@@ -176,6 +176,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache'],
   eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
     'listEvalCaptureFailures'],
+  // decide family, group B (calibration-profiles.test.ts)
+  calibration_profiles: ['getLatestCalibrationProfile', 'isCalibrationProfileUnchanged', 'insertCalibrationProfile', 'readVoiceGateHealth',
+    'purgeCalibrationProfilesByWave'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies',
     // group D (salience read)
     'countZeroWeightWithTakes'],
@@ -206,6 +209,20 @@ export const FAMILIES: Record<string, readonly string[]> = {
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
     'updatePendingTrustProposalAfter', 'transitionTrustProposal'],
   connect_gate: ['hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations'],
+  // group C: the decide proposal tables (engine-sql/decide-proposals.ts)
+  decide_proposals: [
+    'insertDecideProposal', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals',
+    'transitionDecideProposal', 'listDecideProposedPairs', 'insertDecideReviewProposal', 'listDecideReviewProposals',
+    'getDecideReviewProposal', 'transitionDecideReviewProposal', 'listDecideReviewProposalIds', 'readProposalReviewRates',
+    'listDueDecideReviewQueue', 'applyDecideReviewQueue', 'listDueDecideSweepDeferred', 'applyDecideSweepDeferred'],
+  // decide_store: the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
+  decide_store: [
+    'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
+    'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
+    'insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts',
+    'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
+    'insertDecideCalibration', 'storeDecideQualification', 'listDecideCalibrations', 'getDecideCalibration', 'setDecideCalibrationRetired',
+  ],
 
   // jobs_wake: the Wakeshift report-back tables (engine-sql/jobs-wake.ts), group A of the jobs-tables slice
   jobs_wake: [

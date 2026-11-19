@@ -125,6 +125,7 @@ test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
+test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-capabilities.test.ts
@@ -134,6 +135,8 @@ test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/decide-proposals.test.ts
+test/engine-parity/decide-store.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts

@@ -1,6 +1,7 @@
 file	equal	stopped
 test/engine-parity/alias-fanout-reads.test.ts	8	1
 test/engine-parity/alias-trust.test.ts	4	1
+test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chunk-reads.test.ts	8	0
 test/engine-parity/chunks.test.ts	13	1
 test/engine-parity/cli-capabilities.test.ts	2	0
@@ -10,6 +11,8 @@ test/engine-parity/code-eval-salience.test.ts	12	0
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	10	0
+test/engine-parity/decide-proposals.test.ts	8	0
+test/engine-parity/decide-store.test.ts	35	0
 test/engine-parity/effect-scans.test.ts	2	0
 test/engine-parity/entity-reads.test.ts	7	0
 test/engine-parity/extraction.test.ts	6	0

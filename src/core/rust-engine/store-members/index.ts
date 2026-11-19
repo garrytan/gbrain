@@ -67,7 +67,11 @@ import * as factRelinkAttempts from './fact-relink-attempts.ts';
 import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
+import * as calibrationProfiles from './calibration-profiles.ts';
+// Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
+import * as decideProposals from './decide-proposals.ts';
 import * as fieldUsage from './field-usage.ts';
+import * as decideStore from './decide-store.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -106,8 +110,14 @@ export const STORE_MEMBERS = {
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
+  // Decide family, group B: calibration profiles (rust/docs/store/calibration-profiles.md).
+  ...calibrationProfiles,
+  // Group C: the decide proposal tables (rust/docs/store/decide-proposals.md).
+  ...decideProposals,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
+  // Group A: the decide store (rust/docs/store/decide-store.md).
+  ...decideStore,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
