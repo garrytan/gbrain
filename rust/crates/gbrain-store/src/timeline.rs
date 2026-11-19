@@ -189,7 +189,7 @@ pub(crate) fn parse_date(text: &str) -> Result<String> {
 /// The id is taken before the dedup check, as `INSERT .. ON CONFLICT DO NOTHING` takes the
 /// serial's next value before it finds the conflict: a deduped add leaves the same gap in
 /// the ids PGLite leaves, so the ids `getTimeline` returns match.
-fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
+pub(crate) fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
     let dedup = record.dedup_key();
     record.id = next_id(tx, NEXT_TIMELINE_ID)?;
     if tx.get(&dedup)?.is_some() {

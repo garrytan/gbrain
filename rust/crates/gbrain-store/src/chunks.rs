@@ -1875,6 +1875,55 @@ mod chunker_version_tests {
         err.code
     }
 
+    /// The chunk texts of "a" a `requireSafeChunks` read returns.
+    fn safe_rows(store: &Store) -> Vec<String> {
+        let options = GetChunksOptions {
+            require_safe_chunks: true,
+            ..GetChunksOptions::default()
+        };
+        store
+            .get_chunks_with("a", &options)
+            .unwrap()
+            .iter()
+            .map(|c| c["chunk_text"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_safe_chunk_read_serves_only_a_page_cut_at_the_safe_chunker_version() {
+        let store = crate::test_support::store();
+        page(&store);
+        store
+            .upsert_chunks("a", &[chunk(0, "safe")], &sealed_at("4"))
+            .unwrap();
+        assert_eq!(safe_rows(&store), vec!["safe"]);
+        store.set_chunker_version("a", "3", None).unwrap();
+        assert!(safe_rows(&store).is_empty());
+        // Without the option the same page still reads its chunks.
+        assert_eq!(rows(&store), vec!["0:safe"]);
+        store.set_chunker_version("a", "4", None).unwrap();
+        assert_eq!(safe_rows(&store), vec!["safe"]);
+        // An unsealed fragment write marks the page unsafe (-1).
+        store
+            .upsert_chunks(
+                "a",
+                &[chunk(0, "fragment")],
+                &UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        let unsealed_safe = GetChunksOptions {
+            include_unsealed: true,
+            require_safe_chunks: true,
+            ..GetChunksOptions::default()
+        };
+        assert!(
+            store
+                .get_chunks_with("a", &unsealed_safe)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[test]
     fn a_sealed_write_keeps_unnamed_rows_and_the_seal_and_stamps_the_version() {
         let store = crate::test_support::store();
