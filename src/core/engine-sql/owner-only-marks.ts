@@ -40,9 +40,11 @@ const TRIGGERS = {
 const TABLES = Object.keys(TRIGGERS) as OwnerOnlyTriggerTable[];
 
 /**
- * The logins that read `sources` but cannot both read and add owner_only_marks (no grant, or row-level security with no
- * permissive policy for them): on a brain that has held owner-only data they read owner-only lineage closed and their
- * permanent deletes are refused. Superusers, BYPASSRLS logins and the table's owner (without FORCE) need nothing.
+ * The logins that read `sources` but cannot both read and add every owner_only_marks row (no grant, or row-level security
+ * without a permissive policy for them that reads and adds every row, USING (true) and WITH CHECK (true), or with a
+ * restrictive policy that applies to them; v328): on a brain that has held owner-only data they read owner-only lineage
+ * closed and their permanent deletes are refused. Superusers, BYPASSRLS logins and the table's owner (without FORCE)
+ * need nothing.
  */
 const DENIED_LOGINS_SQL = `
   SELECT pg_catalog.quote_ident(r.rolname) AS login, pg_catalog.quote_ident('owner_only_marks_read_' || r.rolname) AS read_policy,
@@ -52,10 +54,34 @@ const DENIED_LOGINS_SQL = `
      AND (NOT pg_catalog.pg_has_role(r.oid, c.relowner, 'USAGE') OR c.relforcerowsecurity)
      AND (NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'SELECT') OR NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'INSERT')
           OR (c.relrowsecurity AND (NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN ('*', 'r')
+                 AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) = 'true'
                  AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE')))
             OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN ('*', 'a')
+                 AND pg_catalog.pg_get_expr(coalesce(p.polwithcheck, p.polqual), p.polrelid) = 'true'
+                 AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE')))
+            OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND NOT p.polpermissive AND p.polcmd::text IN ('*', 'r', 'a')
                  AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE'))))))
    ORDER BY 1`;
+
+/**
+ * The logins that read `sources` but not every row of one of the owner-only lineage tables (no SELECT grant, or row-level
+ * security without a permissive USING (true) policy for them, or with a restrictive one): on a brain that has held
+ * owner-only data they read owner-only lineage closed (v328). Superusers, BYPASSRLS logins and each table's owner (without
+ * FORCE) read it all.
+ */
+const CLOSED_LOGINS_SQL = `
+  SELECT pg_catalog.quote_ident(r.rolname) AS login, pg_catalog.quote_ident('gbrain_lineage_read_' || r.rolname) AS policy,
+         pg_catalog.array_agg(c.relname::text ORDER BY c.relname) AS tables FROM pg_catalog.pg_roles r, pg_catalog.pg_class c
+   WHERE c.relnamespace = 'public'::pg_catalog.regnamespace AND c.relname IN ('sources', 'facts', 'derivation_inputs', 'links', 'pages', 'takes', 'timeline_entries')
+     AND r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND pg_catalog.has_table_privilege(r.oid, 'public.sources', 'SELECT')
+     AND (NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'SELECT')
+          OR (c.relrowsecurity AND (NOT pg_catalog.pg_has_role(r.oid, c.relowner, 'USAGE') OR c.relforcerowsecurity)
+            AND (NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN ('*', 'r')
+                   AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) = 'true'
+                   AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE')))
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND NOT p.polpermissive AND p.polcmd::text IN ('*', 'r')
+                   AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS pr(id) WHERE pr.id = 0::oid OR pg_catalog.pg_has_role(r.oid, pr.id, 'USAGE'))))))
+   GROUP BY r.rolname ORDER BY 1`;
 
 async function readState(exec: SqlExecutor): Promise<OwnerOnlyTriggerState> {
   const { rows } = await exec.run<{ tbl: OwnerOnlyTriggerTable; owner: string; owned: boolean }>(sqlFragment`
@@ -72,8 +98,9 @@ async function readState(exec: SqlExecutor): Promise<OwnerOnlyTriggerState> {
             NOT gbrain_owner_only_held() AND EXISTS (SELECT 1 FROM owner_only_marks) AS unflagged`);
   const logins = state!.held ? (await exec.query<{ login: string; read_policy: string; add_policy: string }>(DENIED_LOGINS_SQL)).rows
     .map(r => ({ login: r.login, readPolicy: r.read_policy, addPolicy: r.add_policy })) : [];
+  const closedLogins = state!.held ? (await exec.query<{ login: string; policy: string; tables: string[] }>(CLOSED_LOGINS_SQL)).rows : [];
   return { missing: rows.map(r => ({ table: r.tbl, owner: r.owner, owned: r.owned })), role: state!.role, closed: state!.closed, rowSecurity: state!.row_security,
-    held: state!.held, unflagged: state!.unflagged, deniedLogins: logins };
+    held: state!.held, unflagged: state!.unflagged, deniedLogins: logins, closedLogins };
 }
 
 /**

@@ -20,6 +20,7 @@
  * dedupe_decision_store_mismatch instead of writing a decision only the database would hold.
  */
 import { createHash } from 'node:crypto';
+import { pageBodyBytes } from '../page-body/page-shape.ts';
 import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
@@ -393,6 +394,20 @@ export async function identityDrift(engine: BrainEngine, read?: IdentityDecision
     rows_without_file: [...rows.keys()].filter(id => !fileIds.has(id)).length,
     pending: r.pending,
   };
+}
+
+/** The canonical member: the page in the brain's home source when one is, else the page with the most text, else the first. */
+export async function canonicalOf(engine: BrainEngine, members: IdentityMemberRef[], homeSource: string | null): Promise<IdentityMemberRef> {
+  const home = members.find(m => m.source_id === homeSource);
+  if (home) return home;
+  let best = members[0]!;
+  let size = -1;
+  for (const m of members) {
+    const p = await engine.getPage(m.slug, { sourceId: m.source_id });
+    const n = p ? pageBodyBytes(p) : 0;
+    if (n > size) { best = m; size = n; }
+  }
+  return best;
 }
 
 /** The finder's view of the decisions: pairs kept apart, and member sets already decided as one. */

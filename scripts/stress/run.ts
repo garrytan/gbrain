@@ -361,6 +361,22 @@ export function skipReason(file: string): string | null {
   if (external.length) return `every test skipped without ${external.join(', ')} (a credentialed external service no CI job holds); not stressed`;
   const owner = OWNING_WORKFLOWS.find(w => { const p = join(ROOT, '.github/workflows', w); return existsSync(p) && readFileSync(p, 'utf8').includes(file); });
   if (owner) return `every test skipped here: its prerequisite (agent binary or native target) comes from its owning job in .github/workflows/${owner}; not stressed`;
+  const required = [...new Set([...text.matchAll(/process\.env\.(GBRAIN_TEST_REQUIRE_[A-Z0-9_]+)/g)].map(m => m[1]!))];
+  const claims = (job: string) => {
+    const lines = job.split('\n').filter(l => !l.trim().startsWith('#'));
+    const stepsAt = lines.findIndex(l => l.trim() === 'steps:');
+    if (stepsAt < 0) return false;
+    const steps = lines.slice(stepsAt + 1).reduce<string[][]>((acc, l) => { if (/^\s*- /.test(l)) acc.push([]); acc.at(-1)?.push(l); return acc; }, []);
+    const step = steps.find(s => s.some(l => l.includes('scripts/run-with-receipt.sh') && l.includes(file)));
+    if (!step) return false;
+    const runLine = step.find(l => l.includes('scripts/run-with-receipt.sh') && l.includes(file))!;
+    const lane = runLine.slice(runLine.indexOf('scripts/run-with-receipt.sh') + 'scripts/run-with-receipt.sh'.length).trim().split(/\s+/)[0];
+    const scope = [...lines.slice(0, stepsAt), ...step];
+    const setsAll = required.every(v => scope.some(l => l.trim().startsWith(v + ':') && /^['"]?1['"]?$/.test(l.trim().slice(v.length + 1).trim())));
+    return !!lane && setsAll && lines.some(l => l.includes('scripts/require-executed-tests.ts') && l.trim().split(/\s+/).includes(lane));
+  };
+  const requiring = required.length ? readdirSync(join(ROOT, '.github/workflows')).find(w => workflowJobs(readFileSync(join(ROOT, '.github/workflows', w), 'utf8').split('\n')).some(claims)) : undefined;
+  if (requiring) return `every test skipped here: its owning job in .github/workflows/${requiring} supplies the prerequisite, runs it through run-with-receipt.sh with ${required.join(', ')} set, and fails that lane on zero executed tests; not stressed`;
   if (/process\.env\.GBRAIN_PGBOUNCER_URL/.test(text) && !process.env.GBRAIN_PGBOUNCER_URL) {
     const workflow = readdirSync(join(ROOT, '.github/workflows')).map(w => `.github/workflows/${w}`).find(p => requiresPooler(file, p, workflowJobs));
     if (workflow) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in ${workflow} requires it; not stressed`;

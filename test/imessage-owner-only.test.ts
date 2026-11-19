@@ -77,7 +77,10 @@ const OPEN = { slug: 'notes/open-plan', canary: 'canaryooopen' };
 const FACT_IN_SOURCE = 'canaryoofact';
 const FACT_DERIVED = 'canaryoofactderived';
 const TIMELINE = 'canaryootimeline';
-const ALL_CANARIES = [...Object.values(HIDDEN).map(h => h.canary), FACT_IN_SOURCE, FACT_DERIVED, TIMELINE];
+/** Rows on the open page whose own recorded inputs reach the chat: a meeting-style timeline fan-out and a consolidated take (GST-3032). */
+const TIMELINE_FANNED = 'canaryoofanned';
+const TAKE_DERIVED = 'canaryootake';
+const ALL_CANARIES = [...Object.values(HIDDEN).map(h => h.canary), FACT_IN_SOURCE, FACT_DERIVED, TIMELINE, TIMELINE_FANNED, TAKE_DERIVED];
 
 const pageText = (title: string, canary: string, fm: readonly string[] = []) =>
   ['---', ...(fm.some(l => l.startsWith('type:')) ? [] : ['type: note']), `title: ${title}`, ...fm, '---', `# ${title}`, '', `Harbor ledger planning notes ${canary} for the roadmap.`].join('\n');
@@ -87,6 +90,10 @@ function reads(): Array<[string, string, Record<string, unknown>]> {
   return [
     ...Object.entries(HIDDEN).map(([key, h]) => [`get_page ${key}`, 'get_page', { slug: h.slug }] as [string, string, Record<string, unknown>]),
     ['get_timeline', 'get_timeline', { slug: CHAT_SLUG }],
+    ['get_page open', 'get_page', { slug: OPEN.slug }],
+    ['get_timeline open', 'get_timeline', { slug: OPEN.slug }],
+    ['takes_list', 'takes_list', { page_slug: OPEN.slug }],
+    ['takes_search', 'takes_search', { query: `Harbor ledger planning notes ${TAKE_DERIVED}` }],
     ['search', 'search', { query: PHRASE, fields: 'full', limit: 50 }],
     ['search keyword', 'search', { query: 'planning notes', match: 'keyword', fields: 'full', limit: 50 }],
     ['query', 'query', { query: PHRASE, expand: false, fields: 'full', limit: 50 }],
@@ -118,7 +125,7 @@ for (const kind of testBackends()) {
       const sourceId = auth.sourceId ?? OPEN_SRC;
       const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
       const out = await dispatchToolCall(engine, op, { ...params }, {
-        remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'],
+        remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: who === 'owner-client' ? auth.takesHoldersAllowList : auth.takesHoldersAllowList ?? ['world'],
         ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), ...(ch.header ? { onBehalfOf: { header: ch.header } } : {}),
         ...(ch.actor ? { actor: { header: ch.actor } } : {}),
       });
@@ -170,8 +177,17 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source) VALUES ($1, $2, 'synthesized_from', 'concept-provenance')`,
         [Number(await id(HIDDEN.concept.slug, OPEN_SRC)), Number(chatId)]);
       await engine.executeRaw(`INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-06-14', $2)`, [Number(chatId), `Harbor ledger planning notes ${TIMELINE}`]);
-      await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ($1, $2, $3, 'fact', 'world', 'fixture')`,
+      const [factInSource] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ($1, $2, $3, 'fact', 'world', 'fixture') RETURNING id`,
         [IMSG, OPEN.slug, `Harbor ledger planning notes ${FACT_IN_SOURCE}`]);
+      // Rows on the open page derived from owner-only rows, seeded the way older extractors wrote them: a meeting's
+      // timeline row fanned onto an attendee page in another source, and a take consolidated from an owner-only fact.
+      const openId = Number(await id(OPEN.slug, OPEN_SRC));
+      const [fanned] = await engine.executeRaw<{ id: number }>(`INSERT INTO timeline_entries (page_id, date, summary, source) VALUES ($1, '2026-06-14', $2, 'extract-timeline-from-meetings:fixture') RETURNING id`,
+        [openId, `Harbor ledger planning notes ${TIMELINE_FANNED}`]);
+      const [take] = await engine.executeRaw<{ id: number }>(`INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, 1, $2, 'take', 'world') RETURNING id`,
+        [openId, `Harbor ledger planning notes ${TAKE_DERIVED}`]);
+      await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES
+        ('timeline_entries', $1, 'pages', $2, $4), ('takes', $3, 'facts', $5, $4)`, [String(fanned!.id), chatId, String(take!.id), OPEN_SRC, String(factInSource!.id)]);
       const [fact] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ($1, $2, $3, 'fact', 'world', 'fixture') RETURNING id`,
         [OPEN_SRC, OPEN.slug, `Harbor ledger planning notes ${FACT_DERIVED}`]);
       await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES ('facts', $1, 'pages', $2, $3)`, [String(fact!.id), chatId, OPEN_SRC]);
@@ -186,6 +202,10 @@ for (const kind of testBackends()) {
       };
       await mint('owner', { member: OWNER, mayActFor: [`member:${OWNER}`, 'member:bob-example', 'guest'] }, ['read', 'write']);
       await mint('delegate', { member: OWNER });
+      // The owner's own OAuth client (client_credentials, no holders list), bound to the owner like a remote agent of theirs.
+      const registered = await provider().registerClientManual('owner-agent-example', ['client_credentials'], 'read', [], OPEN_SRC, grant);
+      await bindCredential(engine, { kind: 'client', id: registered.clientId }, { member: OWNER });
+      tokens['owner-client'] = (await provider().exchangeClientCredentials(registered.clientId, registered.clientSecret!, 'read')).access_token;
       await mint('bob', { member: 'bob-example' }, ['read', 'write']);
       await mint('unbound', null);
       // Writers whose write floor (the grant's first source) is an owner-only source.
@@ -277,5 +297,88 @@ for (const kind of testBackends()) {
       expect(v320.sql).toContain(`IN (${OWNER_ONLY_KINDS.map(k => `'${k}'`).join(', ')})`);
       expect(v320.sql).toContain(`config->>'${OWNER_ONLY_FLAG}' = 'true'`);
     }, 120_000);
+
+    /** Runs `fn` while the brain's schema version cannot be read (the config row is unparseable), so reads take the closed form. */
+    async function withoutSchemaVersion<T>(fn: () => Promise<T>): Promise<T> {
+      const [{ v }] = await engine.executeRaw<{ v: string }>(`SELECT value AS v FROM config WHERE key = 'version'`);
+      await engine.executeRaw(`UPDATE config SET value = 'unreadable' WHERE key = 'version'`);
+      __resetPrivateVisibilityCacheForTests();
+      try { return await fn(); } finally {
+        await engine.executeRaw(`UPDATE config SET value = $1 WHERE key = 'version'`, [v]);
+        __resetPrivateVisibilityCacheForTests();
+      }
+    }
+    /** The derived take and timeline canaries `who` reads on any path. */
+    const derivedSeenBy = async (who: string) => { const seen = new Set(Object.values(await seenBy(who)).flat()); return [TIMELINE_FANNED, TAKE_DERIVED].filter(c => seen.has(c)); };
+
+    test('scorecard, calibration, the MCP-resolved count and write attribution leave out the derived take and timeline row for another member, and keep them for the owner', async () => {
+      await engine.executeRaw(`UPDATE takes SET weight = 0.85, resolved_at = now(), resolved_quality = 'correct', resolved_outcome = true, resolved_by = 'mcp:fixture' WHERE claim LIKE $1`, [`%${TAKE_DERIVED}%`]);
+      for (const [name, member] of [['owner-admin', OWNER], ['bob-admin', 'bob-example']] as const) {
+        const minted = await mintLegacyToken(engine, { name, scopes: ['read', 'admin'], takesHolders: ['world'], sourceGrant: [OPEN_SRC, IMSG, FLAGGED] });
+        tokens[name] = minted.token;
+        await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+      }
+      await engine.executeRaw(`UPDATE access_tokens SET private_pages = 'granted_sources', private_facts = 'granted_sources'`);
+      const fanned = Number((await engine.executeRaw<{ id: number }>('SELECT id FROM timeline_entries WHERE summary LIKE $1', [`%${TIMELINE_FANNED}%`]))[0]!.id);
+      const json = async (who: string, op: string, params: Record<string, unknown>) => {
+        const out = await call(who, op, { source_id: OPEN_SRC, ...params });
+        expect({ who, op, isError: out.isError }).toEqual({ who, op, isError: false });
+        return JSON.parse(out.text) as Record<string, unknown>;
+      };
+      const numbers = async (who: string) => {
+        const card = await json(who, 'takes_scorecard', {});
+        const curve = await json(who, 'takes_calibration', {}) as unknown as Array<{ n: number }>;
+        return { resolved: card.resolved, mcp_resolved: card.mcp_resolved, calibrated: curve.reduce((n, b) => n + Number(b.n ?? 0), 0) };
+      };
+      expect(await numbers('owner')).toEqual({ resolved: 1, mcp_resolved: 1, calibrated: 1 });
+      expect(await numbers('bob')).toEqual({ resolved: 0, mcp_resolved: 0, calibrated: 0 });
+
+      const attribute = (who: string, params: Record<string, unknown>) => call(who, 'get_write_attribution', { slug: OPEN.slug, ...params });
+      for (const who of ['owner-admin', 'bob-admin']) expect({ who, isError: (await attribute(who, {})).isError }).toEqual({ who, isError: false });
+      for (const params of [{ take: 1 }, { timeline: fanned }]) {
+        expect({ params, isError: (await attribute('owner-admin', params)).isError }).toEqual({ params, isError: false });
+        expect({ params, isError: (await attribute('bob-admin', params)).isError }).toEqual({ params, isError: true });
+      }
+    }, 120_000);
+
+    test('find_contradictions leaves out the derived take for another member, and keeps it for the owner', async () => {
+      const [take] = await engine.executeRaw<{ id: number; row_num: number }>('SELECT id, row_num FROM takes WHERE claim LIKE $1', [`%${TAKE_DERIVED}%`]);
+      const [chunk] = await engine.executeRaw<{ id: number; chunk_text: string }>(`SELECT cc.id, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = $1 AND p.source_id = $2 ORDER BY cc.chunk_index LIMIT 1`, [OPEN.slug, OPEN_SRC]);
+      const side = (o: Record<string, unknown>) => ({ slug: OPEN.slug, chunk_id: null, take_id: null, take_row_num: null, source_tier: 'curated', holder: null,
+        effective_date: null, effective_date_source: null, ...o });
+      const contradiction = { kind: 'intra_page_chunk_take', combined_score: 1, verdict: 'contradiction', severity: 'high', axis: 'harbor ledger', confidence: 0.9,
+        resolution_kind: 'manual_review', resolution_command: 'gbrain get notes/open-plan',
+        a: side({ chunk_id: Number(chunk!.id), text: chunk!.chunk_text }),
+        b: side({ take_id: Number(take!.id), take_row_num: Number(take!.row_num), holder: 'world', text: `Harbor ledger planning notes ${TAKE_DERIVED}` }) };
+      await engine.writeContradictionsRun({ run_id: 'owner-only-run', judge_model: 'fixture', prompt_version: 'fixture', queries_evaluated: 1, queries_with_contradiction: 1,
+        total_contradictions_flagged: 1, wilson_ci_lower: 0, wilson_ci_upper: 1, judge_errors_total: 0, cost_usd_total: 0, duration_ms: 1, source_tier_breakdown: {},
+        report_json: { per_query: [{ query: 'harbor ledger', contradictions: [contradiction] }] } } as never);
+      const seen = async (who: string) => (await call(who, 'find_contradictions', { source_id: OPEN_SRC, limit: 100 })).text.includes(TAKE_DERIVED);
+      expect({ owner: await seen('owner'), bob: await seen('bob') }).toEqual({ owner: true, bob: false });
+    }, 120_000);
+
+    test('the owner\'s own remote callers (a bound legacy token, a bound client_credentials client with no holders list) read the derived take and timeline row, also with no readable schema version', async () => {
+      for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+      await withoutSchemaVersion(async () => {
+        for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+        expect(await seenBy('bob')).toEqual({});
+        // The closed form is in effect: even the open page is owner-only for another member, and the owner still reads it.
+        expect((await call('bob', 'get_page', { slug: OPEN.slug })).text).not.toContain(OPEN.canary);
+        expect((await call('owner-client', 'get_page', { slug: OPEN.slug })).text).toContain(OPEN.canary);
+      });
+    }, 240_000);
+
+    test('rows on an open page derived from owner-only data stay hidden from other callers after their origin is deleted, and the owner\'s remote callers keep them', async () => {
+      await engine.deletePage(CHAT_SLUG, { sourceId: IMSG });
+      await engine.executeRaw('DELETE FROM facts WHERE source_id = $1', [IMSG]);
+      expect(await seenBy('bob')).toEqual({});
+      for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+      await withoutSchemaVersion(async () => {
+        expect(await seenBy('bob')).toEqual({});
+        expect((await call('bob', 'get_page', { slug: OPEN.slug })).text).not.toContain(OPEN.canary);
+        for (const who of ['owner', 'owner-client']) expect({ who, seen: await derivedSeenBy(who) }).toEqual({ who, seen: [TIMELINE_FANNED, TAKE_DERIVED] });
+      });
+    }, 240_000);
   });
 }
