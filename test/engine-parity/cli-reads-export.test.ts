@@ -147,11 +147,12 @@ describe('engine parity: export reads', () => {
   });
 
   // The overlay compares fact rows in Postgres' normalized form, so every arm must lower-case and fold whitespace alike,
-  // including the classes JavaScript's \s disagrees on (U+0085 is space to Postgres, U+00A0 is not).
+  // including a class JavaScript's \s disagrees on (U+00A0 is space to JavaScript, not to Postgres). U+0085 is left out:
+  // the two SQL engines disagree on it (PGLite folds it, a glibc Postgres on C.UTF-8 or en_US.utf8 keeps it).
   parityTest('normalizeFenceLines lower-cases and folds whitespace line by line', {
     methods: ['normalizeFenceLines'],
   }, async (engine) => {
-    const bodies = ['MiXeD\t  Claim\r\nSecond   LINE\n', '', 'Ünïcode\u0085x\u00a0y\u2003z', 'one'];
+    const bodies = ['MiXeD\t  Claim\r\nSecond   LINE\n', '', 'Ünïcode x\u00a0y\u2003z', 'one'];
     const timelines = ['', 'A\n\nB', 'x', ''];
     const rows = await engine.normalizeFenceLines(bodies, timelines);
     return [...rows].map(r => ({ ...r, i: Number(r.i) })).sort((a, b) => a.i - b.i);
