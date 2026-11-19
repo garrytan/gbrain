@@ -222,6 +222,7 @@ import * as versionReasons from './engine-sql/version-reasons.ts';
 import * as versionPrune from './engine-sql/version-prune.ts';
 import * as memoryMutationReads from './engine-sql/memory-mutation-reads.ts';
 import * as withdrawalDiscoveryReads from './engine-sql/withdrawal-discovery.ts';
+import * as withdrawalPages from './engine-sql/withdrawal-pages.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobTokenCounts, PruneJobsSpec, RetryJobPolicy,
   SynthesisCompletionPrefix,
@@ -3846,6 +3847,8 @@ export class PostgresEngine implements BrainEngine {
   async ownerReachesFact(spec: import('./engine.ts').OwnerReachSpec) { return memoryMutationReads.ownerReachesFact(this, spec); }
   async readFactWithdrawalClaim(spec: import('./engine.ts').FactWithdrawalClaimSpec) { return memoryMutationReads.readFactWithdrawalClaim(this, spec); }
   async readWithdrawalDiscovery<K extends withdrawalDiscoveryReads.WithdrawalDiscoveryKind>(read: Extract<withdrawalDiscoveryReads.WithdrawalDiscoveryRead, { kind: K }>) { return withdrawalDiscoveryReads.readWithdrawalDiscovery<K>(this, read); }
+  async listSegmentedPages(sourceId: string, slugs: readonly string[]) { return withdrawalPages.listSegmentedPages(this, sourceId, slugs); }
+  async invalidateWithdrawnPages(sourceId: string, slugs: readonly string[]) { return withdrawalPages.invalidateWithdrawnPages(this, sourceId, slugs); }
 
   // Decide family, group B: calibration profiles (engine-sql/calibration-profiles.ts).
   async getLatestCalibrationProfile(spec: CalibrationProfilesSql.LatestCalibrationProfileSpec) { return calibrationProfiles.getLatestCalibrationProfile(this, spec); }

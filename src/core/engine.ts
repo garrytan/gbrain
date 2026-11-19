@@ -4207,6 +4207,10 @@ export interface BrainEngine {
   readFactWithdrawalClaim(spec: FactWithdrawalClaimSpec): Promise<FactWithdrawalClaim | null>;
   /** One read withdrawal discovery makes (WithdrawalDiscoveryRead: claim keys, provenance pages, fence and chunk matches, targets). */
   readWithdrawalDiscovery<K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K }>): Promise<WithdrawalDiscoveryRows[K]>;
+  /** The id and slug of the segmented pages among `slugs` in the source (engine-sql/withdrawal-pages.ts). */
+  listSegmentedPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>>;
+  /** A fact withdrawal's page invalidation: a new knowledge revision, no text projection or embedding signature, for the inline pages among `slugs`. */
+  invalidateWithdrawnPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string; knowledge_revision: string }>>;
 
   // Decide family, group B: calibration profiles (engine-sql/calibration-profiles.ts).
   /** The newest calibration profile (`generated_at DESC`, then `id DESC`) of `holder` (any holder when unset) in `sourceIds` (an empty list matches nothing) or else `sourceId`; null when none. `id` is the BIGSERIAL as text. */

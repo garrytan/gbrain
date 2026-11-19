@@ -144,6 +144,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'isFactEntityUnbacked', 'readLinkedFactCopies', 'hasHiddenFactCopy', 'ownerReachesFact', 'readFactWithdrawalClaim',
   // Withdrawal discovery reads (engine-sql/withdrawal-discovery.ts; covered by test/engine-parity/withdrawal-discovery-reads.test.ts)
   'readWithdrawalDiscovery',
+  // Withdrawal page statements (engine-sql/withdrawal-pages.ts; covered by test/engine-parity/withdrawal-forget.test.ts)
+  'listSegmentedPages', 'invalidateWithdrawnPages',
   // Timeline site reads (engine-sql/timeline-reads.ts)
   'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered',
   'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows',
