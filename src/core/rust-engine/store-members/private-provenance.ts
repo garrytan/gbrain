@@ -147,8 +147,9 @@ export function storePrivacyPolicy(
 
 /**
  * The store policy for the remote provenance floor, remoteProvenanceFloorSql('facts'): the provenance page judged by
- * privatePagesFilterFragment('pp', true), which reads no caller identity, plus the owner-only conjunct. The store serves
- * it when the text equals the no-caller rendering; a labelled-only caller (its own conjunct) or an owner read refuses.
+ * the plain page fragment (alias pp, world flag on), which reads no caller identity, plus the owner-only conjunct. The
+ * store serves it when the text equals the no-caller rendering; a labelled-only caller (its own conjunct) or an owner
+ * read refuses.
  */
 export function storeFloorPolicy(member: string): StorePrivacyPolicy {
   const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
