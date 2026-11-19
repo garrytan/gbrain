@@ -43,6 +43,43 @@ export interface MemberLookupRead {
   executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
 }
 
+/** An applied folder rule whose readers name one of the caller's principals. */
+export interface FolderRuleRow {
+  source_id: string;
+  rule_id: string;
+  readable_by: string[];
+}
+
+/** A pending or invalid folder prefix (`''` for the whole source); `'!unreadable'` when this role cannot read them. */
+export interface FolderCoverageRow {
+  source_id: string;
+  prefix: string;
+}
+
+/** The rows a caller's folder access is built from (access/caller.ts folderAccessForAll). */
+export interface FolderAccessRows {
+  rules: FolderRuleRow[];
+  coverage: FolderCoverageRow[];
+}
+
+/** The statements access/caller.ts folderAccessForAll ran through executeRaw: the rules, then the coverage. */
+export const FOLDER_RULES_FOR_READERS_SQL = 'SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]';
+export const FOLDER_COVERAGE_SQL = `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`;
+
+/**
+ * The applied rules whose readers name any of `readers` (none read when `readers` is empty) and every pending or invalid
+ * prefix by source and prefix. A failure is thrown unchanged; the caller reads it as satisfying nothing and covering everything.
+ */
+export async function readFolderAccess(exec: MemberLookupRead, readers: readonly string[]): Promise<FolderAccessRows> {
+  const rules = readers.length ? await exec.executeRaw<FolderRuleRow>(FOLDER_RULES_FOR_READERS_SQL, [[...readers]]) : [];
+  const coverage = await exec.executeRaw<FolderCoverageRow>(FOLDER_COVERAGE_SQL);
+  return {
+    rules: rules.map(r => ({ source_id: r.source_id, rule_id: r.rule_id, readable_by: r.readable_by ?? [] })),
+    coverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+  };
+}
+
 /**
  * Where a caller's may_act_for list is stored: a live legacy token row (id), a live OAuth client row (client id), or the
  * config value a stdio server reads (config key, mcp.stdio_may_act_for).
@@ -67,6 +104,24 @@ export async function readMayActFor(exec: MemberLookupRead, via: MayActForVia, k
   }
   const [row] = await exec.executeRaw<{ may_act_for: unknown }>(MAY_ACT_FOR_SQL[via], [key]);
   return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+}
+
+/** Which credential a queued remote job's principal names: an OAuth client or a legacy access token. */
+export type JobPrincipalKind = 'oauth_client' | 'legacy_token';
+
+/**
+ * The statements minions/submission-authority.ts assertCurrentRemoteJobPrincipal ran through executeRaw, by principal
+ * kind. Neither filters on revocation: the caller reads deleted_at or revoked_at itself and names which one denied the job.
+ */
+export const JOB_PRINCIPAL_SQL: Record<JobPrincipalKind, string> = {
+  oauth_client: 'SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1',
+  legacy_token: 'SELECT * FROM access_tokens WHERE id = $1',
+};
+
+/** The stored row of a remote job's principal (revoked and deleted rows included), or null when there is none. */
+export async function readJobPrincipal(exec: MemberLookupRead, principal: { kind: JobPrincipalKind; id: string }): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(JOB_PRINCIPAL_SQL[principal.kind], [principal.id]);
+  return row ?? null;
 }
 
 /** A live (enabled, not tombstoned) access member and its groups, by group id. */
@@ -98,46 +153,6 @@ export async function readLiveMember(exec: MemberLookupRead, via: MemberBindingV
   const { text, params } = liveMemberStatement(via, key);
   const [row] = await exec.executeRaw<LiveMemberRow>(text, params);
   return row ?? null;
-}
-
-/** An applied folder rule and the readers it names. */
-export interface FolderRuleRow {
-  source_id: string;
-  rule_id: string;
-  readable_by: string[];
-}
-
-/** A folder prefix that reads as nobody: a narrowing being stamped, an invalid policy file, or `!unreadable`. */
-export interface FolderCoverageRow {
-  source_id: string;
-  prefix: string;
-}
-
-/** The applied folder rules whose readers meet `readers`, and every prefix that reads as nobody. */
-export interface FolderAccessRows {
-  rules: FolderRuleRow[];
-  coverage: FolderCoverageRow[];
-}
-
-/** The statement access/caller.ts folderAccessForAll ran for the rules any of `readers` ($1) meets; pinned byte for byte. */
-export const FOLDER_RULES_READABLE_BY_SQL = 'SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]';
-
-/**
- * The statement access/caller.ts folderAccessForAll ran for the folder coverage; a database role that cannot read the
- * folder access tables adds `!unreadable` (covers everything). Pinned byte for byte.
- */
-export const FOLDER_COVERAGE_SQL = `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`;
-
-/**
- * The folder access rows a caller's record is built from (access/caller.ts folderAccessForAll): the applied rules any
- * of `readers` meets (none read when `readers` is empty) and the folder coverage. A failure is thrown unchanged: the
- * caller counts it as nothing satisfied and everything covered.
- */
-export async function readFolderAccess(exec: MemberLookupRead, readers: readonly string[]): Promise<FolderAccessRows> {
-  const rules = readers.length ? await exec.executeRaw<FolderRuleRow>(FOLDER_RULES_READABLE_BY_SQL, [[...readers]]) : [];
-  const coverage = await exec.executeRaw<FolderCoverageRow>(FOLDER_COVERAGE_SQL);
-  return { rules, coverage };
 }
 
 /** The enabled members and the existing groups an asserted audience names. */

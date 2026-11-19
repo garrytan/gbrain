@@ -33,7 +33,7 @@ import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
-import { readConfigRows, type ConfigReader } from '../config-values.ts';
+import { readConfigRows, readKeyedConfig, type ConfigReader } from '../config-values.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 

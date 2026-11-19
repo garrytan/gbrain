@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 874/874
+# covered: 893/899
 # lifecycle: 9/9
-# pages: 44/44
+# pages: 45/45
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
@@ -28,17 +28,17 @@
 # facts: 15/15
 # segmented_body: 16/16
 # versions: 3/3
-# stats_ingest: 5/5
+# stats_ingest: 7/7
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
 # access_grants: 6/6
 # access_members: 11/11
-# persistence_journal: 92/92
+# persistence_journal: 94/94
 # entity_reads: 19/19
 # cycle_locks: 10/10
 # minion_jobs: 8/8
-# minion_queue: 101/101
+# minion_queue: 102/102
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
@@ -60,7 +60,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 13/13
 # wanted_links: 2/2
-# write_misc: 38/38
+# write_misc: 51/57
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -84,17 +84,17 @@ transaction	lifecycle	yes	93	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	107	yes	yes	yes	serves
+getPage	pages	yes	108	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	496	yes	yes	yes	serves
+putPage	pages	yes	499	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	150	yes	yes	yes	serves
+softDeletePage	pages	yes	152	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -108,6 +108,7 @@ listAllSources	pages	yes	6	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
 getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
+countRepoBoundSources	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 readPlainSyncSource	pages	yes	1	no	yes	yes	serves
 readOwnerOnlySourcesPresent	pages	yes	1	no	yes	yes	serves
@@ -330,10 +331,10 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	51	yes	yes	yes	serves
+insertFact	facts	yes	52	yes	yes	yes	serves
 insertFacts	facts	yes	72	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	28	no	yes	yes	serves
+expireFact	facts	yes	29	no	yes	yes	serves
 listFactsByEntity	facts	yes	31	yes	yes	yes	serves
 listFactsSince	facts	yes	21	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
@@ -365,6 +366,8 @@ createVersion	versions	yes	21	no	yes	yes	serves
 getVersions	versions	yes	10	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
+countBrainLivePages	stats_ingest	yes	1	no	yes	yes	serves
+readBrainMaturity	stats_ingest	yes	1	no	yes	yes	serves
 getStats	stats_ingest	yes	5	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
@@ -380,11 +383,11 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	19	no	yes	yes	serves
-setConfig	config	yes	30	no	yes	yes	serves
+setConfig	config	yes	31	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
-getConfigValues	config	yes	6	no	yes	yes	serves
+getConfigValues	config	yes	7	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	7	no	yes	yes	serves
@@ -430,6 +433,8 @@ recordHeldGenerationRow	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldReportInputs	persistence_journal	yes	1	no	yes	yes	serves
+readReasonPurgeTombstones	persistence_journal	yes	2	no	yes	yes	serves
+readSourcePurgeEpoch	persistence_journal	yes	2	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
@@ -535,7 +540,7 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	102	no	yes	yes	serves
+admitJob	minion_jobs	yes	103	no	yes	yes	serves
 getJob	minion_jobs	yes	35	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
 claimNextJob	minion_jobs	yes	74	no	yes	yes	serves
@@ -608,6 +613,7 @@ listQueueWedgeCounts	minion_queue	yes	1	no	yes	yes	serves
 listPrivateQueueHealth	minion_queue	yes	1	no	yes	yes	serves
 readWedgeSignals	minion_queue	yes	1	no	yes	yes	serves
 readOldestWaitingAge	minion_queue	yes	1	no	yes	yes	serves
+countWaitingJobs	minion_queue	yes	1	no	yes	yes	serves
 listStuckActiveJobsByName	minion_queue	yes	1	no	yes	yes	serves
 listStalledEmbedBackfillSources	minion_queue	yes	1	no	yes	yes	serves
 readGlobalMaintenanceDeaths	minion_queue	yes	1	no	yes	yes	serves
@@ -817,7 +823,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	4	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
@@ -857,11 +863,30 @@ readPendingProposalSummary	write_misc	yes	1	no	yes	yes	serves
 listMemoryProposalRows	write_misc	yes	1	no	yes	yes	serves
 listOwnerProposalRows	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
-listAppliedPolicyRevisions	write_misc	yes	2	no	yes	yes	serves
+listAppliedPolicyRevisions	write_misc	yes	3	no	yes	yes	serves
 readLiveMember	write_misc	yes	7	no	yes	yes	serves
-readFolderAccess	write_misc	yes	4	no	yes	yes	serves
+readFolderAccess	write_misc	yes	7	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
+readJobPrincipal	write_misc	yes	2	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	3	no	yes	yes	serves
+readAccessStoreConfig	write_misc	no	0	no	-	-	-
+writeAccessStoreConfig	write_misc	no	0	no	-	-	-
+ensureAccessPolicyState	write_misc	no	0	no	-	-	-
+lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
+listAccessRules	write_misc	yes	1	no	yes	yes	serves
+readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
+listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
+readAccessStateUnreadable	write_misc	no	0	no	-	-	-
+applyAccessRuleChanges	write_misc	yes	4	no	yes	yes	serves
+restampAccessWindow	write_misc	yes	1	no	yes	yes	serves
+finishAccessRestamp	write_misc	yes	1	no	yes	yes	serves
+insertAccessPolicyRevision	write_misc	yes	3	no	yes	yes	serves
+markAccessRevisionsApplied	write_misc	yes	1	no	yes	yes	serves
+approveAccessPolicyRevision	write_misc	yes	1	no	yes	yes	serves
+hasAccessPolicyState	write_misc	no	0	no	-	-	-
+listAccessPrefixSlugs	write_misc	yes	1	no	yes	yes	serves
+readAccessPolicyMarks	write_misc	yes	1	no	yes	yes	serves
+replaceAccessInvalidCoverage	write_misc	no	0	no	-	-	-
 readAccessMembers	write_misc	yes	8	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	3	no	yes	yes	serves
@@ -893,7 +918,7 @@ readCheckpointManifestRow	session_state	yes	3	no	yes	yes	serves
 writeCheckpointManifest	session_state	yes	3	no	yes	yes	serves
 ageOutSessionState	session_state	yes	2	no	yes	yes	serves
 capSessionStatePerClient	session_state	yes	4	no	yes	yes	serves
-findPagesByTitles	alias_fanout_reads	yes	5	no	yes	yes	serves
+findPagesByTitles	alias_fanout_reads	yes	6	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves

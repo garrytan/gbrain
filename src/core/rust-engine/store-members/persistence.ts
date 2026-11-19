@@ -20,6 +20,7 @@ import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWr
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from '../../engine-sql/sync-hold-reads.ts';
+import type { ReasonPurgeTombstone } from '../../engine-sql/sync-reason-reads.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
 import type { SourceDetailRow } from '../../engine.ts';
@@ -92,6 +93,13 @@ export const readGitHoldReportInputs: StoreMember<[sourceId: string, fingerprint
   return { summary: null, mirror: flag === undefined || flag === null ? null : typeof flag === 'string' ? flag : JSON.stringify(flag) };
 };
 
+
+/** The store keeps no change reasons and purges none, so no (commit, path) is tombstoned. */
+export const readReasonPurgeTombstones: StoreMember<[sourceId: string], ReasonPurgeTombstone[]> = async () => [];
+
+/** The store purges no facts, so a known source's purge epoch stays 0; an unknown source has none (null). */
+export const readSourcePurgeEpoch: StoreMember<[sourceId: string], string | number | null> = async (brain, sourceId) =>
+  (await storeCall({ member: 'readSourcePurgeEpoch', sourceId }, () => brain.getSource(sourceId))) ? 0 : null;
 
 /** The source row's sync point (getSource) and the journal's outstanding requests of its current incarnation. */
 export const readWriteWatermarkRow: StoreMember<[sourceId: string], WriteWatermarkRow> = async (brain, sourceId) => {

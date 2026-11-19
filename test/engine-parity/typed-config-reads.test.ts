@@ -3,8 +3,9 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the DB-plane config merge (`applyDbPlaneReadSideMerge`) and the
- *    transcript-archive ledger read (`readArchiveLedger`) return the same
- *    result on every engine arm, the Rust arm included.
+ *    transcript-archive ledger read (`readArchiveLedger`) and the remote read
+ *    policy (`readRemotePolicyNow`) return the same result on every engine
+ *    arm, the Rust arm included.
  *  - Regression: an engine whose typed config reads drop a prefixed key,
  *    read a LIKE wildcard where the old statement matched a literal, or read a
  *    neighbouring source's ledger rows.
@@ -19,6 +20,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { _resetDbPlaneMergeMemoForTests, applyDbPlaneReadSideMerge } from '../../src/core/config-db-merge.ts';
 import { readArchiveLedger } from '../../src/core/transcripts/archive.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
+import { readRemotePolicyNow } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -63,5 +65,28 @@ describe('engine parity: typed config reads', () => {
       return { ledger, empty: await readArchiveLedger(engine, 'nothing-here') };
     },
   );
-});
 
+  parityTest(
+    'readRemotePolicyNow reads the remote policy keys from the config table, not a fail-closed fallback',
+    { methods: ['setConfig', 'getConfigValues'] },
+    async (engine) => {
+      const fresh = await readRemotePolicyNow(engine);
+      expect(fresh.servesUnknown).toBeUndefined();
+      await engine.setConfig('search.remote_private_pages', 'expose');
+      await engine.setConfig('access.owner_member', 'owner-example');
+      await engine.setConfig('access.serves', 'several');
+      await engine.setConfig('access.serves_since', '2026-01-02T03:04:05.000Z');
+      await engine.setConfig('access.requester_scope_enforce', 'false');
+      await engine.setConfig('access.restrictions_present', '1');
+      const set = await readRemotePolicyNow(engine);
+      expect(set.restricted).toBe(true);
+      expect(set.serves).toEqual({ several: true, from: 'config', since: 1767323045, enforce: false });
+      // The keyed read the policy runs: the stored rows of the named keys, by key, a key with no row absent.
+      const rows = await engine.getConfigValues(['access.serves', 'access.owner_member', 'no.such.key']);
+      expect(rows).toEqual([{ key: 'access.owner_member', value: 'owner-example' }, { key: 'access.serves', value: 'several' }]);
+      const { schemaVersion: _fv, ...freshRest } = fresh;
+      const { schemaVersion: _sv, ...setRest } = set;
+      return { fresh: freshRest, set: setRest };
+    },
+  );
+});

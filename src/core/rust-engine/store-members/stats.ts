@@ -1,5 +1,6 @@
 /**
- * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, countOnboardSignal, logIngest,
+ * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, countOnboardSignal, countBrainLivePages,
+ * readBrainMaturity, logIngest,
  * getIngestLog, listEnrichCandidates, findAnomalies).
  *
  * The store counts; these members resolve what PGLite resolves in TypeScript and finish the same arithmetic:
@@ -16,7 +17,7 @@ import type {
   AnomaliesOpts, AnomalyResult, BrainHealth, BrainStats, EnrichCandidate, EnrichCandidatesOpts, IngestLogEntry, IngestLogInput,
 } from '../../types.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../types.ts';
-import type { OnboardSignal } from '../../engine-sql/health.ts';
+import type { BrainMaturityRow, OnboardSignal } from '../../engine-sql/health.ts';
 import { throwIfAborted as throwIfQueryAborted } from '../../engine-sql/executor.ts';
 import { computeAnomaliesFromBuckets, type CohortDayRow, type CohortTodayRow } from '../../cycle/anomaly.ts';
 import { effectiveLinkExtractorWatermark } from '../../link-extraction-watermark.ts';
@@ -160,6 +161,14 @@ export const countOnboardSignal: StoreMember<[signal: OnboardSignal, entityTypes
     const input = { signal, entityTypes: { types: [...entityTypes.types], per_source: entityTypes.per_source.map((b) => ({ source_id: b.source_id, types: [...b.types] })) } };
     return storeCall({ member: 'countOnboardSignal' }, () => brain.countOnboardSignal(input));
   };
+
+/** Backup coverage's page count (engine-sql/health.ts countBrainLivePages): live pages in every source. */
+export const countBrainLivePages: StoreMember<[], number | null> = async (brain) =>
+  Number(await storeCall({ member: 'countBrainLivePages' }, () => brain.countBrainLivePages()));
+
+/** Backup coverage's young-brain row (engine-sql/health.ts readBrainMaturity); `since` as a Date, as Postgres returns it. */
+export const readBrainMaturity: StoreMember<[], BrainMaturityRow | null> = async (brain) =>
+  withDates(await storeCall({ member: 'readBrainMaturity' }, () => brain.readBrainMaturity()) as BrainMaturityRow, ['since']);
 
 /** The text node-postgres binds for a non-null parameter; null and undefined bind SQL NULL. */
 function boundText(value: unknown): string | null {

@@ -13,9 +13,10 @@ import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, Leg
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia } from './engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, MayActForVia } from './engine-sql/access-control.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
+import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -26,6 +27,7 @@ import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
+import type { ReasonPurgeTombstone } from './engine-sql/sync-reason-reads.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from './engine-sql/applied-watermark-reads.ts';
 import type { SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -38,7 +40,7 @@ import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOpt
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import type { GeneratedPageRow, PageCollapseFactRow } from './engine-sql/search-reads.ts';
-import type { OnboardSignal } from './engine-sql/health.ts';
+import type { BrainMaturityRow, OnboardSignal } from './engine-sql/health.ts';
 import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
@@ -1379,6 +1381,9 @@ export interface BrainEngine {
    */
   listSourceLocalPaths(): Promise<string[]>;
 
+  /** How many sources that are not archived have a non-empty local path (the readiness sync probe). */
+  countRepoBoundSources(): Promise<number>;
+
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
   /** The registered path, last commit and config of a source that is not archived, or null (plain-directory sync). */
@@ -1617,6 +1622,10 @@ export interface BrainEngine {
   pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
   /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** Live pages brain-wide, or null when unreadable (backup coverage; SQL in engine-sql/health.ts). */
+  countBrainLivePages(): Promise<number | null>;
+  /** Live pages, active facts and the earliest source or page timestamp, brain-wide (backup coverage; engine-sql/health.ts). */
+  readBrainMaturity(): Promise<BrainMaturityRow | null>;
   /** Graph counts and endpoint reads of doctor, orphans, graph-query, the entity card, link preparation and search (SQL and contracts in engine-sql/link-reads.ts). */
   inboundLinkCoverage(opts?: { sourceIds?: string[] }): Promise<{ livePages: number; linkedPages: number }>;
   listJunkEntityHubs(opts: { edgeThreshold: number; maxChunks: number; limit: number }): Promise<JunkEntityHubRow[]>;
@@ -3582,6 +3591,10 @@ export interface BrainEngine {
   readGitHoldRetryRequest(fingerprint: string): Promise<Array<{ paths?: unknown }> | null>;
   /** A sync hold report's summary counters (null when none) and the source's `mirror_read_only` text (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldReportInputs(sourceId: string, fingerprint: string): Promise<GitHoldReportInputs>;
+  /** Every purged change reason's (commit, path) of one source; a sync import never stamps them again (SQL in engine-sql/sync-reason-reads.ts). */
+  readReasonPurgeTombstones(sourceId: string): Promise<ReasonPurgeTombstone[]>;
+  /** The source's purge epoch as stored, which every fact purge bumps, or null for an unknown source (SQL in engine-sql/sync-reason-reads.ts). */
+  readSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */
@@ -3870,8 +3883,37 @@ export interface BrainEngine {
    */
   readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null>;
 
+  /**
+   * The stored row of a queued remote job's principal (an OAuth client's grant columns, or the whole legacy token row),
+   * revoked and deleted rows included; null when there is none. minions/submission-authority.ts decides what it permits.
+   */
+  readJobPrincipal(principal: { kind: JobPrincipalKind; id: string }): Promise<Record<string, unknown> | null>;
+
   /** Which of `memberIds` are enabled members (with their groups) and which of `groupIds` exist; an empty list reads nothing. */
   readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows>;
+
+  /**
+   * The folder-rule policy members access/policy.ts runs (engine-sql/access-policy.ts says what each reads or writes).
+   * lockAccessPolicy, applyAccessRuleChanges, finishAccessRestamp and the revision writes belong inside one transaction.
+   */
+  readAccessStoreConfig(sourceId: string): Promise<{ store: string | null } | null>;
+  writeAccessStoreConfig(sourceId: string, store: string): Promise<void>;
+  ensureAccessPolicyState(sourceId: string): Promise<void>;
+  lockAccessPolicy(sourceId: string): Promise<void>;
+  listAccessRules(sourceId: string): Promise<AccessRuleRow[]>;
+  readAccessPolicyRevisions(query: AccessRevisionQuery): Promise<AccessRevisionRow[]>;
+  listAccessCoverage(sourceId: string): Promise<AccessCoverageRow[]>;
+  readAccessStateUnreadable(): Promise<boolean>;
+  applyAccessRuleChanges(sourceId: string, changes: AccessRuleChanges): Promise<void>;
+  restampAccessWindow(sourceId: string, after: number, batch: number): Promise<AccessRestampWindow>;
+  finishAccessRestamp(sourceId: string): Promise<number>;
+  insertAccessPolicyRevision(row: AccessRevisionInsert): Promise<void>;
+  markAccessRevisionsApplied(sourceId: string, upTo?: number): Promise<void>;
+  approveAccessPolicyRevision(sourceId: string, revision: number, actor: string): Promise<void>;
+  hasAccessPolicyState(sourceId: string): Promise<boolean>;
+  listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]): Promise<string[]>;
+  readAccessPolicyMarks(sourceId: string, operationId?: string): Promise<AccessPolicyMarks>;
+  replaceAccessInvalidCoverage(sourceId: string, prefixes: readonly string[], detail: unknown): Promise<void>;
 
   /** Access member rows with their groups: one by exact id or by declared email (any status), or all by id, removed ones only when asked. */
   readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]>;
@@ -4262,6 +4304,8 @@ export interface BrainEngine {
   readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
   /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
   readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** How many jobs wait; `excludeFactsAbsorb` leaves out the `facts-absorb` jobs PGLite's facts drain owns. */
+  countWaitingJobs(excludeFactsAbsorb: boolean): Promise<number>;
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 

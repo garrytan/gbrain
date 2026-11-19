@@ -184,6 +184,15 @@ export async function listSourceLocalPaths(exec: LegacyUnscopedRead): Promise<st
   return rows.map(r => r.local_path);
 }
 
+/**
+ * How many live (not archived) sources are bound to a local repository, unscoped (the readiness sync probe read it
+ * through `executeRaw`). An empty path counts as unbound, as NULL does.
+ */
+export async function countRepoBoundSources(exec: LegacyUnscopedRead): Promise<number> {
+  const rows = await exec.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''`);
+  return Number(rows[0]?.n ?? 0);
+}
+
 /** A source with a local path and its archived flag (`listLocalPathSources`). */
 export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }
 

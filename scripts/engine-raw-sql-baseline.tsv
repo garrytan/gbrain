@@ -205,7 +205,7 @@ src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	13
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	1
-src/commands/sync/full.ts	execute_raw	2
+src/commands/sync/full.ts	execute_raw	1
 src/commands/sync/holds.ts	execute_raw	4
 src/commands/sync/plain-directory.ts	execute_raw	1
 src/commands/sync/preflight.ts	execute_raw	3
@@ -229,7 +229,6 @@ src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
-src/core/access/policy.ts	execute_raw	31
 src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	1
@@ -247,7 +246,6 @@ src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
 src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
-src/core/backup/coverage.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
 src/core/belief/append.ts	execute_raw	7
@@ -524,7 +522,7 @@ src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
-src/core/minions/submission-authority.ts	execute_raw	2
+src/core/minions/submission-authority.ts	execute_raw	1
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
@@ -822,8 +820,6 @@ src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
 src/core/questions/store.ts	execute_raw	7
-src/core/readiness.ts	execute_raw	2
-src/core/reason-trailers.ts	execute_raw	2
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/accepted-takes.ts	execute_raw	4
