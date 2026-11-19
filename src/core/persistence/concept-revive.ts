@@ -248,6 +248,8 @@ export async function finishConceptRevive(tx: Sql, revive: ConceptRevive, before
   await refreshRelationships(tx, await relationshipKeysForPages(tx, [revive.page_id]));
   const widened = reviveWidens(before, typeof closed.access === 'string' ? JSON.parse(closed.access) as ReviveAccess : closed.access);
   if (widened) {
-    throw Object.assign(new Error(`The rebuilt concept would be readable more widely than the hidden one (${widened}), so the rebuild published nothing and the concept stays held.`), { code: 'revision_conflict' });
+    const error: Error & { code?: string } = new Error(`The rebuilt concept would be readable more widely than the hidden one (${widened}), so the rebuild published nothing and the concept stays held.`);
+    error.code = 'revision_conflict';
+    throw error;
   }
 }
