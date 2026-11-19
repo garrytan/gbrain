@@ -980,7 +980,7 @@ src/core/sync-rename-identity.ts	execute_raw	4
 src/core/sync-status-report.ts	execute_raw	1
 src/core/sync-upstream.ts	execute_raw	2
 src/core/sync.ts	execute_raw	1
-src/core/synopsis-sweep.ts	execute_raw	4
+src/core/synopsis-sweep.ts	execute_raw	3
 src/core/take-proposals.ts	execute_raw	8
 src/core/takes-horizon.ts	execute_raw	5
 src/core/takes-quality-eval/receipt-write.ts	execute_raw	1
@@ -1004,7 +1004,7 @@ src/core/transcripts/secret-audit.ts	execute_raw	1
 src/core/trust/allow-rules.ts	execute_raw	6
 src/core/trust/backfill.ts	execute_raw	15
 src/core/trust/channel.ts	execute_raw	1
-src/core/trust/claim.ts	execute_raw	9
+src/core/trust/claim.ts	execute_raw	8
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/fence-append.ts	execute_raw	3
 src/core/trust/fence-guard.ts	execute_raw	8

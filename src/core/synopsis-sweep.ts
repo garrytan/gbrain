@@ -49,8 +49,7 @@ export interface SynopsisTierConfig {
 
 export async function readSynopsisTierConfig(engine: BrainEngine): Promise<SynopsisTierConfig> {
   const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
-  const rows = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
+  const rows = await engine.readDoctorSources('synopsis_ids');
   const synopsisSources = rows.map(r => r.id);
   const killSwitch = knobs.contextual_retrieval_disabled === true;
   return {
