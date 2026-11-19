@@ -308,3 +308,57 @@ fn the_unified_stamp_leaves_a_row_with_no_source_grant_and_the_legacy_stamp_does
     b.touch_access_token_last_used("00000000-0000-0000-0000-00000000dead", true)
         .unwrap();
 }
+
+#[test]
+fn a_legacy_token_converts_once_with_one_more_revision_and_a_bad_kind_leaves_it() {
+    use gbrain_store::jobs::TokenGrantColumns;
+    let b = brain("tokens-legacy-convert");
+    let id = insert(&b, token("old", "hash-l", json!({ "source_grant": null }))).unwrap();
+    let columns = |kind: &str| -> TokenGrantColumns {
+        serde_json::from_value(json!({
+            "source_grant": kind, "source_id": "wiki", "federated_read": null,
+            "allowed_operations": ["query"], "takes_holders": ["world"],
+        }))
+        .unwrap()
+    };
+    assert!(
+        b.convert_legacy_access_token_grant(&id, &columns("sideways"))
+            .is_err()
+    );
+    let row = b
+        .read_active_access_token_by_hash("hash-l")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["source_grant"], Value::Null);
+    let before = row["grant_revision"].as_i64().unwrap();
+    let converted = b
+        .convert_legacy_access_token_grant(&id.to_ascii_uppercase(), &columns("default"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(converted["id"], json!(id));
+    assert_eq!(converted["source_grant"], json!("default"));
+    assert_eq!(converted["source_id"], json!("wiki"));
+    assert_eq!(converted["allowed_operations"], json!(["query"]));
+    assert_eq!(converted["takes_holders"], json!(["world"]));
+    assert_eq!(converted["grant_revision"], json!(before + 1));
+    assert!(converted["last_used_at"].is_string());
+    assert!(converted.get("token_hash").is_none());
+    let row = b
+        .read_active_access_token_by_hash("hash-l")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row, converted);
+    assert_eq!(
+        b.convert_legacy_access_token_grant(&id, &columns("default"))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        b.convert_legacy_access_token_grant(
+            "00000000-0000-0000-0000-00000000dead",
+            &columns("default")
+        )
+        .unwrap(),
+        None
+    );
+}

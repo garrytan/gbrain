@@ -57,6 +57,14 @@ token stamped in the last 60 seconds, a token that is not there, and (when `unif
 which is the legacy-shape row `resolveTokenGrant` converts first. With `unified` false it stamps any row. The id is
 compared lower-cased. A caller does not wait for it (`touchTokenLastUsed` ignores the result).
 
+`brain.convertLegacyAccessTokenGrant(id, columns)` is the first-read conversion `resolveTokenGrant`
+(`src/core/grants/legacy-token.ts`, given the engine by both bearer checks and `gbrain access`) runs on a token with no
+`source_grant`: it writes the five grant columns (`source_grant`, `source_id`, `federated_read`, `allowed_operations`,
+`takes_holders`, arrays as arrays), one more `grant_revision` and `last_used_at` at the store clock, in one write, and
+returns the whole row without the hash. It returns null for an id no token has and for a token that already has a
+`source_grant`, so a second conversion changes nothing. Like the statement, it has no revoked filter. A `source_grant`
+outside the list is `constraint_violation` and the row is unchanged. The id is compared lower-cased.
+
 Keys: `m 0x2B id -> record` (the kept columns as JSON; times in microseconds). The unique token hash is checked by scanning
 the table.
 

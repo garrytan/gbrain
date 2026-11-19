@@ -78,7 +78,7 @@ mod sweeps;
 mod synthesis_completions;
 mod wake;
 
-pub use access_tokens::TokenInsert;
+pub use access_tokens::{TokenGrantColumns, TokenInsert};
 pub use attachments::AttachmentInput;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,

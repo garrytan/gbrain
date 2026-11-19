@@ -2,7 +2,7 @@
 //! `oauth_clients` (the token list and revokes, the client delete, the liveness checks, the token lifetime write)
 //! and the OAuth token insert and bearer read (rust/docs/store/access-tokens.md, oauth-clients.md, oauth-tokens.md).
 
-use gbrain_store::jobs::OauthTokenInsert;
+use gbrain_store::jobs::{OauthTokenInsert, TokenGrantColumns};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -137,6 +137,21 @@ impl Brain {
         unified: bool,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.touch_access_token_last_used(&id, unified))
+    }
+
+    /// `convertLegacyAccessTokenGrant(id, columns)`: the converted token's whole row, or null.
+    #[napi]
+    pub fn convert_legacy_access_token_grant<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        columns: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let columns: TokenGrantColumns =
+                required(columns, "convertLegacyAccessTokenGrant columns")?;
+            s.convert_legacy_access_token_grant(&id, &columns)
+        })
     }
 
     /// `delete_expired_oauth_tokens(now)`: how many tokens with `expires_at` before `now` (epoch seconds) it deleted.

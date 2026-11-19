@@ -23,7 +23,7 @@ import { CREDENTIAL_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
-import { touchTokenLastUsed } from '../src/core/grants/legacy-token.ts';
+import { resolveTokenGrant, touchTokenLastUsed } from '../src/core/grants/legacy-token.ts';
 import { OAuthGrants } from '../src/core/oauth-grants.ts';
 import { OAUTH_TOKEN_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { hashToken } from '../src/core/utils.ts';
@@ -664,6 +664,18 @@ const PINS: Pin[] = [
           AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`],
   },
   {
+    from: 'src/core/grants/legacy-token.ts:390 resolveTokenGrant legacy-shape conversion (at afc2094edd)',
+    case: { method: 'convertLegacyAccessTokenGrant', variant: 'default', run: e => e.convertLegacyAccessTokenGrant('00000000-0000-4000-8000-0000000000b1',
+      { source_grant: 'federated', source_id: 'default', federated_read: ['default', 'wiki'], allowed_operations: null, takes_holders: ['world'] }) },
+    texts: [`
+      UPDATE access_tokens SET source_grant = $1, source_id = $2, federated_read = $3::text[],
+        allowed_operations = $4::text[], takes_holders = $5::text[], grant_revision = grant_revision + 1,
+        last_used_at = now()
+      WHERE id IN (SELECT id FROM access_tokens WHERE id = $6::uuid AND source_grant IS NULL FOR UPDATE SKIP LOCKED)
+      RETURNING *
+    `],
+  },
+  {
     from: 'src/core/oauth-provider.ts:1144 sweepExpiredTokens (at afc2094edd)',
     case: { method: 'deleteExpiredOauthCredentials', variant: 'default', run: e => e.deleteExpiredOauthCredentials(1_700_000_000) },
     texts: [`
@@ -777,6 +789,33 @@ describe('the bearer check sends the same statements through an engine as throug
       const template = await sent([], 0, e => touchTokenLastUsed(sqlQueryForEngine(e), row));
       const member = await sent([], 0, e => touchTokenLastUsed(e, row));
       expect(template.length).toBe(1);
+      expect(member).toEqual(template);
+    });
+  }
+});
+
+describe('a legacy-shape token converts with the same statement through an engine as through a SqlQuery', () => {
+  // serve --http and the legacy transport pass their engine, so resolveTokenGrant runs convertLegacyAccessTokenGrant;
+  // without an engine it keeps the template. Both send the same text and params and authorize the same grant.
+  const LEGACY_ROW = { id: '00000000-0000-4000-8000-0000000000b2', name: 'legacy', scopes: null, source_grant: null, source_id: null,
+    federated_read: null, allowed_operations: null, takes_holders: null, grant_revision: 0, created_at: new Date(0),
+    permissions: { source_id: 'default', federated_read: ['default', 'wiki'], takes_holders: ['world', 'garry'] } };
+  const converted = { ...LEGACY_ROW, source_grant: 'federated', source_id: 'default', federated_read: ['default', 'wiki'],
+    takes_holders: ['garry', 'world'], grant_revision: 1 };
+  const resolved = async (run: (e: any) => Promise<unknown>, returned: unknown[]) => {
+    let grant: unknown;
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({
+      method: 'resolveTokenGrant', variant: 'legacy', run: async e => { grant = await run(e); },
+      rows: [[/UPDATE access_tokens SET source_grant/, returned]],
+    }));
+    expect(capture.error).toBeUndefined();
+    return { grant, sent: capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params })) };
+  };
+  for (const [label, returned] of [['the row converts', [converted]], ['another reader converted it first', []]] as const) {
+    test(label, async () => {
+      const template = await resolved(e => resolveTokenGrant(sqlQueryForEngine(e), LEGACY_ROW), [...returned]);
+      const member = await resolved(e => resolveTokenGrant(sqlQueryForEngine(e), LEGACY_ROW, e), [...returned]);
+      expect(template.sent.length).toBe(1);
       expect(member).toEqual(template);
     });
   }

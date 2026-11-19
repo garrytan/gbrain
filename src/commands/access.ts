@@ -259,7 +259,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   if (target.token) {
     const ref = await legacyTokenByName(engine, target.token);
     [row] = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id::text = $1', [ref.id]) as [Record<string, unknown>];
-    grant = await resolveTokenGrant(sqlQueryForEngine(engine), row);
+    grant = await resolveTokenGrant(sqlQueryForEngine(engine), row, engine);
     credential = ref;
   } else {
     const client = await readClientGrant(engine, target.client!);

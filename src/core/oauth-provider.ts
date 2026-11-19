@@ -999,7 +999,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
-        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at), currentGrant, row.token_grant),
+        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine), currentGrant, row.token_grant),
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -1063,12 +1063,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // #4043) is grandfathered full access; an array is honored as-is,
       // including [] as deny. Takes holders null → the /mcp dispatch site
       // defaults to the fail-closed ['world'].
-      const grant = await resolveTokenGrant(this.sql, legacyRows[0]);
+      const grant = await resolveTokenGrant(this.sql, legacyRows[0], this.engine);
       return {
         token,
         clientId: name,
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
-        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at), legacyRows[0], 'legacy'),
+        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine), legacyRows[0], 'legacy'),
         clientName: name,
         scopes: grant.scopes,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),

@@ -16,7 +16,9 @@
  *    same AuthInfo (grant, sources, surface, floor), an expired one, a refresh token, a token of a deleted client and a
  *    token of a soft-deleted client are refused the same way, and a repeated hash (23505) or an unknown client (23503) is
  *    refused on insert. The bearer check stamps `last_used_at` (null before, set after, unchanged by a second check inside
- *    60 seconds), and the stamp leaves a row with no `source_grant` alone when it is the unified one.
+ *    60 seconds), and the stamp leaves a row with no `source_grant` alone when it is the unified one. A token still on the
+ *    legacy shape (no `source_grant`) authenticates with its permissions grant and its first check converts the row once,
+ *    one more grant revision; a second conversion finds nothing.
  *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
  *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
  *    wrong credential, which widens or narrows what an agent can read.
@@ -330,6 +332,43 @@ describe('engine parity: access_tokens members', () => {
       return out;
     });
 
+  parityTest('bearer check on a legacy-shape token: serve --http authenticates it with its permissions grant and converts the row once, one more grant revision',
+    { methods: ['insertAccessToken', 'readActiveAccessTokenByHash', 'convertLegacyAccessTokenGrant'] }, async (engine) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      const plain = await insert(engine, 'plain-old', 'tok-plain-old', { source_grant: null, permissions: { source_id: 'default' } });
+      const wide = await insert(engine, 'wide-old', 'tok-wide-old', { source_grant: null, scopes: ['read', 'write'],
+        permissions: { source_id: 'default', federated_read: ['default', 'wiki'], takes_holders: ['world', 'alice-example'] } });
+      const names = new Map([[plain.id, 'plain'], [wide.id, 'wide']]);
+      const row = async (token: string) => {
+        const r = (await engine.readActiveAccessTokenByHash(hashToken(token), 'provider'))!;
+        return { source_grant: r.source_grant, source_id: r.source_id, federated_read: r.federated_read, allowed_operations: r.allowed_operations,
+          takes_holders: r.takes_holders, grant_revision: Number(r.grant_revision), lastUsed: r.last_used_at ? 'set' : 'null' };
+      };
+      const verify = async (token: string) => {
+        const { expiresAt, createdAt, principal, ...rest } = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+        const p = principal as { kind: string; id: string };
+        return { ...rest, principal: { kind: p.kind, id: names.get(p.id) ?? p.id }, hasExpiry: expiresAt != null, hasCreatedAt: createdAt != null };
+      };
+      const out: Record<string, unknown> = {};
+      out.before = { plain: await row('tok-plain-old'), wide: await row('tok-wide-old') };
+      out.firstPlain = await verify('tok-plain-old');
+      out.firstWide = await verify('tok-wide-old');
+      out.converted = { plain: await row('tok-plain-old'), wide: await row('tok-wide-old') };
+      out.secondPlain = await verify('tok-plain-old');
+      out.again = { plain: await row('tok-plain-old'), wide: await row('tok-wide-old') };
+      out.convertsOnce = await engine.convertLegacyAccessTokenGrant(plain.id,
+        { source_grant: 'all', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+      // Not vacuous: each row starts on the legacy shape and the first check converts it with one more revision.
+      const before = out.before as Record<string, { source_grant: unknown; grant_revision: number }>;
+      const converted = out.converted as Record<string, { source_grant: unknown; grant_revision: number }>;
+      for (const k of ['plain', 'wide']) {
+        if (before[k].source_grant !== null || converted[k].source_grant === null || converted[k].grant_revision !== before[k].grant_revision + 1) {
+          throw new Error(`${k} not converted: ${JSON.stringify(out)}`);
+        }
+      }
+      if (JSON.stringify(out.firstPlain) !== JSON.stringify(out.secondPlain)) throw new Error('the converted row authorizes differently');
+      return out;
+    });
   parityTest('bearer check stamps last_used_at: null before, set after, unchanged by a second check inside 60 seconds; the unified stamp leaves a row with no source_grant alone',
     { methods: ['insertAccessToken', 'listAccessTokens', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed'] }, async (engine) => {
       const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });

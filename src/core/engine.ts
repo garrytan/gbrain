@@ -9,7 +9,7 @@ import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
-import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
+import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -3864,6 +3864,8 @@ export interface BrainEngine {
   touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
   /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both (a store that keeps none deletes none). */
   deleteExpiredOauthCredentials(nowEpochSeconds: number): Promise<number>;
+  /** Convert an access token still on the legacy shape to its grant columns on first read; the converted row, or null when none converted. */
+  convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns): Promise<Record<string, unknown> | null>;
   /** Insert one OAuth token (the INSERTs of `OAuthGrants.issue`); a repeated hash is 23505, a client with no row 23503. */
   insertOauthToken(row: OauthTokenInsert): Promise<void>;
 

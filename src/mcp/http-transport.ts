@@ -305,8 +305,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       // behind `serve --http`, so the two transports cannot drift; a row still
       // on the legacy shape is converted on this read. Takes holders fail safe
       // to ['world']; #1336 honors the stored source grant.
-      const grant = await resolveTokenGrant(sql, row);
-      const binding = await tokenMemberBinding(sql, row, row.created_at).catch(() => null); // GBRA-218 verify join
+      const grant = await resolveTokenGrant(sql, row, engine);
+      const binding = await tokenMemberBinding(sql, row, row.created_at, engine).catch(() => null); // GBRA-218 verify join
       if (!binding) return { ok: false, code: 'access_member_disabled' };
       const allowList = grant.takesHolders ?? ['world'];
       const { sourceId, allowedSources, hasSourceGrant } = authSourcesFromGrant(grant);

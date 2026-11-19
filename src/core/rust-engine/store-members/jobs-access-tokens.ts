@@ -7,7 +7,7 @@
  * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
  */
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
-import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller } from '../../engine-sql/access-credentials.ts';
+import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 
@@ -70,3 +70,14 @@ export const insertOauthToken: StoreMember<[row: OauthTokenInsert], void> = asyn
  */
 export const deleteExpiredOauthCredentials: StoreMember<[nowEpochSeconds: number], number> = async (brain, now) =>
   Number(await storeCall({ member: 'deleteExpiredOauthCredentials' }, () => brain.deleteExpiredOauthTokens(now)));
+
+/**
+ * The first-read conversion of a token still on the legacy shape: its grant columns, one more grant revision and its
+ * first use, or null when no token has the id or it already has a grant. The row leaves out `token_hash`, as every
+ * store token row does.
+ */
+export const convertLegacyAccessTokenGrant: StoreMember<[id: string, columns: LegacyTokenGrantColumns], Record<string, unknown> | null> =
+  async (brain, id, columns) => {
+    const raw = await storeCall({ member: 'convertLegacyAccessTokenGrant' }, () => brain.convertLegacyAccessTokenGrant(id, columns)) as Record<string, unknown> | null;
+    return raw ? { ...raw, created_at: new Date(String(raw.created_at)) } : null;
+  };

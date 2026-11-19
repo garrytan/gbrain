@@ -236,7 +236,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'writeCheckpointManifest',
   'ageOutSessionState',
   'capSessionStatePerClient',
-  'listAccessTokens', 'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns', 'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs', 'readOauthAccessTokenRows', 'insertOauthToken', 'deleteExpiredOauthCredentials', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed',
+  'listAccessTokens', 'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns', 'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs', 'readOauthAccessTokenRows', 'insertOauthToken', 'deleteExpiredOauthCredentials', 'convertLegacyAccessTokenGrant', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',

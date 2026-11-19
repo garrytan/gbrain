@@ -6013,6 +6013,7 @@
         "connect": "none",
         "connectedDatabaseUrl": "none",
         "consolidateFact": "none",
+        "convertLegacyAccessTokenGrant": "none",
         "cosinesByChunkIds": "none",
         "countAtomFacts": "none",
         "countChunkVectorCoverage": "none",

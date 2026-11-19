@@ -11,6 +11,7 @@
  * `SELECT *` row on PGLite and Postgres, which holds the hash the caller passed.
  */
 import type { BrainEngine } from '../engine.ts';
+import { pgArray } from '../grants/encoding.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -420,4 +421,37 @@ export async function insertOauthToken(tx: Raw, row: OauthTokenInsert): Promise<
   const common = [row.token_hash, row.token_type, row.client_id, oauthPgArray(row.scopes), row.expires_at, row.resource, row.created_at];
   if (row.grant_type === undefined) await tx.executeRaw(OAUTH_TOKEN_SQL.insert_plain, common);
   else await tx.executeRaw(OAUTH_TOKEN_SQL.insert_grant, [...common, row.grant_type]);
+}
+
+/**
+ * The first-read conversion of an access token still on the legacy shape (grants/legacy-token.ts resolveTokenGrant),
+ * byte for byte as the SqlQuery tag sent it at afc2094edd. The guard (`source_grant IS NULL`) makes concurrent first
+ * reads a no-op for the loser, and SKIP LOCKED keeps a row lock held elsewhere from parking the request (#5730).
+ */
+export const LEGACY_TOKEN_CONVERT_SQL = `
+      UPDATE access_tokens SET source_grant = $1, source_id = $2, federated_read = $3::text[],
+        allowed_operations = $4::text[], takes_holders = $5::text[], grant_revision = grant_revision + 1,
+        last_used_at = now()
+      WHERE id IN (SELECT id FROM access_tokens WHERE id = $6::uuid AND source_grant IS NULL FOR UPDATE SKIP LOCKED)
+      RETURNING *
+    `;
+
+/** The grant columns a legacy token converts to (grants/model.ts tokenGrantColumnArrays); null is NULL. */
+export interface LegacyTokenGrantColumns {
+  source_grant: string;
+  source_id: string | null;
+  federated_read: string[] | null;
+  allowed_operations: string[] | null;
+  takes_holders: string[] | null;
+}
+
+/**
+ * Write the grant columns of the legacy-shape token `id` and stamp its first use; the converted row, or null when none
+ * converted. The arrays bind as the TEXT[] literals the template bound (grants/model.ts tokenGrantColumnValues).
+ */
+export async function convertLegacyAccessTokenGrant(tx: Raw, id: string, columns: LegacyTokenGrantColumns): Promise<Record<string, unknown> | null> {
+  const lit = (v: string[] | null) => (v === null ? null : pgArray(v));
+  const [row] = await tx.executeRaw<Record<string, unknown>>(LEGACY_TOKEN_CONVERT_SQL,
+    [columns.source_grant, columns.source_id, lit(columns.federated_read), lit(columns.allowed_operations), lit(columns.takes_holders), id]);
+  return row ?? null;
 }

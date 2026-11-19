@@ -130,6 +130,20 @@ pub struct TokenInsert {
     pub revoked_at: Option<String>,
 }
 
+/// The five grant columns a legacy-shape token converts to (`convertLegacyAccessTokenGrant`); `None` is NULL.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenGrantColumns {
+    pub source_grant: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub federated_read: Option<Vec<String>>,
+    #[serde(default)]
+    pub allowed_operations: Option<Vec<String>>,
+    #[serde(default)]
+    pub takes_holders: Option<Vec<String>>,
+}
+
 impl Store {
     /// `insertAccessToken(row)`: the generated id. `constraint_violation` for a token hash already taken, a
     /// `source_grant` outside the list, or a `min_trust` outside the six tiers; `invalid_argument` for a time that is not
@@ -213,6 +227,22 @@ impl Store {
 }
 
 impl TokenRecord {
+    /// The whole row (`SELECT *` or `RETURNING *`) less `token_hash`: the columns not kept read as the table's defaults
+    /// (NULL, and `'none'` for the two private grants).
+    fn whole_row(&self) -> Value {
+        let t = self;
+        json!({
+            "id": t.id, "name": t.name, "scopes": t.scopes, "created_at": iso(t.created_at),
+            "last_used_at": t.last_used_at.map(iso), "revoked_at": t.revoked_at.map(iso), "permissions": t.permissions,
+            "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
+            "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
+            "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
+            "member_id": Value::Null, "may_act_for": Value::Null, "attest_actor": Value::Null,
+            "attest_ops": Value::Null, "attest_sources": Value::Null, "attest_read": Value::Null,
+            "reads_unscoped": Value::Null, "private_facts": "none",
+        })
+    }
+
     /// The row `listAccessTokens` returns: the columns `gbrain auth list` prints, the ones not kept at their defaults.
     fn listed(&self) -> Value {
         json!({
@@ -262,18 +292,38 @@ impl Store {
         Ok(all_tokens(&*read)?
             .into_iter()
             .find(|t| t.revoked_at.is_none() && t.token_hash == hash)
-            .map(|t| {
-                json!({
-                    "id": t.id, "name": t.name, "scopes": t.scopes, "created_at": iso(t.created_at),
-                    "last_used_at": t.last_used_at.map(iso), "revoked_at": Value::Null, "permissions": t.permissions,
-                    "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
-                    "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
-                    "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
-                    "member_id": Value::Null, "may_act_for": Value::Null, "attest_actor": Value::Null,
-                    "attest_ops": Value::Null, "attest_sources": Value::Null, "attest_read": Value::Null,
-                    "reads_unscoped": Value::Null, "private_facts": "none",
-                })
-            }))
+            .map(|t| t.whole_row()))
+    }
+
+    /// `convertLegacyAccessTokenGrant(id, columns)`: the first-read conversion of a token still on the legacy shape. A
+    /// token with this id (a UUID, so any case) whose `source_grant` is NULL gets the five grant columns, one more grant
+    /// revision and `last_used_at` at the store clock, in one write; its whole row comes back. None when no token has
+    /// the id or it already has a `source_grant` (the statement's guard). It has no revoked filter, as the statement has
+    /// none. `constraint_violation` for a `source_grant` outside the list, and then the row is untouched.
+    pub fn convert_legacy_access_token_grant(
+        &self,
+        id: &str,
+        columns: &TokenGrantColumns,
+    ) -> Result<Option<Value>> {
+        let id = id.to_ascii_lowercase();
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(&id))? else {
+                return Ok(None);
+            };
+            if t.source_grant.is_some() {
+                return Ok(None);
+            }
+            t.source_grant = Some(columns.source_grant.clone());
+            t.source_id = columns.source_id.clone();
+            t.federated_read = columns.federated_read.clone();
+            t.allowed_operations = columns.allowed_operations.clone();
+            t.takes_holders = columns.takes_holders.clone();
+            t.grant_revision += 1;
+            t.last_used_at = Some(self.env.now_micros());
+            t.check()?;
+            put_json(tx, &token_key(&id), &t)?;
+            Ok(Some(t.whole_row()))
+        })
     }
 
     /// `touchAccessTokenLastUsed(id, unified)`: stamps the token's `last_used_at` with the store clock, once per token per
