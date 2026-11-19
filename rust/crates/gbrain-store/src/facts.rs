@@ -49,6 +49,7 @@ pub mod purge;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
+pub mod repair_gone;
 pub mod trust;
 pub mod trust_reads;
 
