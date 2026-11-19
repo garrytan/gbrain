@@ -791,6 +791,70 @@ The parity cases seed facts, pages, versions, chunks, timeline entries, write re
 typed writers. `belief_events`, `page_segment_derivations` and `takes` have no typed fixture, so their members
 are compared on empty data only.
 
+## Fact purge plan, transaction and segment-storage statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
+
+The statements `facts/purge.ts` ran through `executeRaw` are 35 typed members, so the Rust arm answers each with the
+typed `raw_sql` refusal until the store holds what it reads. None has a Rust implementation yet; the parity file
+`test/engine-parity/fact-purge-sites.test.ts` stops on that refusal for every case, and the Postgres text of each
+statement is pinned byte for byte by `test/fact-purge-sites-sql-pin.test.ts`. One statement of `purge.ts` stays a raw
+read: the version-body SELECT of `rewriteVersionBodies` builds its WHERE, column list and lock clause from its two callers
+(the purge and the held-fact move), so it has no constant text to type.
+
+| Member | What it does |
+|---|---|
+| `listStagingPartEdges` | The next 1000 upload parts of the source's live stagings after the (staging, part) cursor, in order, each with its first and last `keep` bytes. Reads page_body_staging_parts and page_body_stagings. |
+| `listStagingsHoldingClaim` | The ids of the source's live stagings whose staged segment texts or upload parts hold the claim, plain or as a fence cell stores it, in id order. Reads page_body_stagings, page_body_manifest, page_segment_texts, page_body_staging_parts, page_body_staging_texts and persistence_requests. |
+| `purgeSubjectPageLive` | Whether a live page of the source holds the slug (the one-row read that tells a purge the subject is an unbacked name key). Reads pages. |
+| `listPurgePagesById` | The slug, id and knowledge revision of the source's pages with these ids. Reads pages. |
+| `countPurgeVersionsCarryingClaim` | How many saved versions of the source's pages carry the claim in their text, title, metadata or segments, or quote it in their change reason (`needle` lowered, `escaped` its JSON form, `reason` the folded reason form). Reads page_versions, pages, page_body_manifest and page_segment_texts. |
+| `countPurgeReviewRows` | How many review queue, review proposal and decide proposal rows of the source name the facts (`refs` are the ids as text). Reads decide_review_queue, decide_review_proposals and decide_proposals. |
+| `listPurgeStreamSlugs` | The distinct belief stream slugs (holding page, else entity) of the facts. Reads facts; run it in the purge transaction. |
+| `findPurgeBlockedPublication` | One unfinished write or withdrawal mirror (not the request `ownRequest`) on one of the pages, null for none. Reads persistence_requests and persistence_effects. |
+| `listPagesForPurgeRewrite` | The source's pages with these ids, whole rows, each with its tags as `purge_tags`, in slug order. Reads pages and tags. |
+| `updatePageBodyForPurge` | Stores a page's body with the purged fence rows dropped, its content hash, and voids its text projection and embedding signature. Writes pages; run it in the purge transaction. |
+| `setPurgeVersionBody` | Stores a saved version's two body parts after the purge edit (a null timeline stays null). Writes page_versions; run it in the purge transaction. |
+| `redactVersionChangeReasons` | Overwrites the change reason of every saved version of the source's pages that quotes the claim (lowered plain form or folded reason form) with `[purged]`; the ids redacted. Writes page_versions. |
+| `listSegmentedVersionsForPurge` | The next 5000 segmented saved versions of the source after id `after` that belong to one of the pages or whose generation holds the lowered claim, in id order. Reads page_versions, pages, page_body_manifest and page_segment_texts. |
+| `abortPurgedStagings` | Aborts the uncommitted stagings with these ids; the page ids they belonged to (none for a staging with no page). Writes page_body_stagings; run it in the purge transaction. |
+| `deletePurgedStagingParts` | Deletes the upload parts of these stagings; how many. Writes page_body_staging_parts; run it in the purge transaction. |
+| `deletePageViewDigests` | Deletes the cached read-view digests of these pages. Writes page_view_digests; run it in the purge transaction. |
+| `deleteUnreferencedPurgedTexts` | Deletes the source's segment texts that no manifest row references and that were replaced by the purge (`replaced` are their sha256 digests) or hold the claim, plain or as a fence cell stores it; how many. Writes page_segment_texts; run it in the purge transaction. |
+| `listPurgeMatchCandidates` | The first 25 facts of the source whose text contains `text` (case folded), in id order, each cut to 160 characters. Reads facts. |
+| `lockPurgeSource` | Locks the source row for the purge transaction and returns its incarnation and archived flag, null for no such source. Reads sources; run it in the purge transaction. |
+| `insertHoldingPagePurges` | Stores a purge tombstone for each holding page that holds one of the facts about an entity with no page of its own, none twice. Writes fact_purges; run it in the purge transaction. |
+| `insertTakePurge` | Stores the text-free take purge tombstone for the claim fingerprint under the subject, none twice. Writes take_purges; run it in the purge transaction. |
+| `deletePurgedTakes` | Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. |
+| `deletePurgeReviewQueue` | Deletes the source's review queue rows naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_queue; run it in the purge transaction. |
+| `deletePurgeReviewProposals` | Deletes the source's review proposals naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_proposals; run it in the purge transaction. |
+| `deletePurgeDecideProposals` | Deletes the source's decide proposals that supersede or are superseded by one of the facts; how many. Writes decide_proposals; run it in the purge transaction. |
+| `deletePurgeTrustProposals` | Deletes the source's trust proposals whose target or related row is one of the facts or takes; how many. Writes trust_proposals; run it in the purge transaction. |
+| `deletePurgeOpenLoops` | Deletes the source's open loops on one of the facts; how many. Writes open_loops; run it in the purge transaction. |
+| `deletePurgeWriteGateHolds` | Deletes the source's held writes whose fact or claim text has the fingerprint; the ids deleted. Writes write_gate_holds; run it in the purge transaction. |
+| `deletePurgeWriteGateReceipts` | Deletes the gate receipts that name one of the facts, takes or held writes (ids as text); how many. Writes write_gate_receipts; run it in the purge transaction. |
+| `deletePurgeTakeProposals` | Deletes the source's take proposals whose claim text has the fingerprint; how many. Writes take_proposals; run it in the purge transaction. |
+| `blankPurgeCoreEditNotices` | Blanks the base text of the source's core edit notices that quote the lowered fact; how many. Writes core_edit_notices; run it in the purge transaction. |
+| `deletePurgedFacts` | Deletes the facts with these ids from the source; how many. Writes facts; run it in the purge transaction. |
+| `deletePurgedChunks` | Deletes the chunks of these pages and voids the text projection that certified them; how many pages had chunks deleted. Writes content_chunks and pages; run it in the purge transaction. |
+| `listPurgedPageRevisions` | The id, slug and knowledge revision of the source's pages with these ids, in slug order. Reads pages. |
+| `insertPurgeEffects` | Queues the withdrawal-mirror, git and embedding effects of the purge request under the source's current incarnation and worktree binding, none twice; `data` is the effect payload. Writes persistence_effects; run it in the purge transaction. |
+
+What the store would need to hold to answer them, by family:
+
+- Plan (`listStagingPartEdges` to `countPurgeReviewRows`, `listPurgeMatchCandidates`): pages and their knowledge
+  revisions, saved versions with change reasons and segment manifests, page body stagings with their upload parts and
+  staged texts, segment texts, the decide review queue, review proposals and decide proposals, and facts for the text match.
+- Purge transaction (`listPurgeStreamSlugs` to `deletePurgeTakeProposals`, `blankPurgeCoreEditNotices`,
+  `deletePurgedFacts` to `insertPurgeEffects`): the write journal's requests and effects, the source row lock, page and
+  version body writes, fact, take, chunk and tombstone writes (`fact_purges`, `take_purges`), trust and take proposals,
+  open loops, write gate holds and receipts, core edit notices, and `gbrain_fact_fingerprint` for the fingerprint matches.
+- Segment storage (`abortPurgedStagings` to `deleteUnreferencedPurgedTexts`): stagings and their parts, view digests,
+  segment texts and the manifest that references them.
+
+The parity cases seed pages, tags, versions, facts, chunks and write requests through the typed writers. Stagings, takes,
+review and proposal rows, gate holds and receipts, open loops, core edit notices and view digests have no typed fixture, so
+those members are compared on empty tables only; `insertHoldingPagePurges` and `insertTakePurge` return nothing and have no
+typed reader, so they are compared by running without error.
+
 ## Not modeled
 
 The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
