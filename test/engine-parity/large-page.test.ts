@@ -48,4 +48,37 @@ describe('engine parity: large-page write guard', () => {
     expect(otherSource).toBeNull();
     return { sizes, otherSource };
   });
+
+  parityTest('listPageSizeRows selects embed_skip, over-limit and segmented live pages in slug byte order', {
+    methods: ['putPage', 'softDeletePage', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging',
+      'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'listPageSizeRows'],
+  }, async (engine) => {
+    await engine.putPage('notes/sz-small', { ...NOTE, compiled_truth: 'tiny', timeline: '' });
+    await engine.putPage('notes/sz-big', { ...NOTE, compiled_truth: 'café body over the limit', timeline: '- € event' });
+    await engine.putPage('notes/sz-b-skip', { ...NOTE, compiled_truth: 'tiny', timeline: '', frontmatter: { embed_skip: true } });
+    await engine.putPage('notes/sz-gone', { ...NOTE, compiled_truth: 'gone body over the limit', timeline: '' });
+    await engine.softDeletePage('notes/sz-gone');
+    await publishSegmentedPage(engine, 'notes/sz-segmented', [ONE, TWO]);
+    const opts = { inlineMaxBytes: 12 };
+    const view = (rows: Awaited<ReturnType<typeof engine.listPageSizeRows>>) =>
+      rows.map(r => ({ slug: r.slug, bytes: r.bytes, segmented: r.segmented, skip: r.frontmatter?.embed_skip ?? null, state: r.state, reason: r.reason }));
+    const seen = {
+      all: view(await engine.listPageSizeRows('default', { ...opts, slugs: null })),
+      some: view(await engine.listPageSizeRows('default', { ...opts, slugs: ['notes/sz-big', 'notes/sz-small', 'notes/sz-gone', 'notes/sz-missing'] })),
+      none: await engine.listPageSizeRows('default', { ...opts, slugs: [] }),
+      otherSource: await engine.listPageSizeRows('parity-missing', { ...opts, slugs: null }),
+    };
+    const big = Buffer.byteLength('café body over the limit') + Buffer.byteLength('- € event');
+    expect(seen).toEqual({
+      all: [
+        { slug: 'notes/sz-b-skip', bytes: 4, segmented: false, skip: true, state: null, reason: null },
+        { slug: 'notes/sz-big', bytes: big, segmented: false, skip: null, state: null, reason: null },
+        { slug: 'notes/sz-segmented', bytes: ONE.body.byteLength + TWO.body.byteLength, segmented: true, skip: null, state: null, reason: null },
+      ],
+      some: [{ slug: 'notes/sz-big', bytes: big, segmented: false, skip: null, state: null, reason: null }],
+      none: [],
+      otherSource: [],
+    });
+    return seen;
+  });
 });

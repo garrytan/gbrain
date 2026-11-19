@@ -1,7 +1,7 @@
 /**
- * The large-page write guard's read (engine-sql/large-page.ts) sends Postgres the statement
- * persistence/large-page-guard.ts sent through `executeRaw` before it became a typed member: the same text and the
- * same bound values.
+ * The large-page reads (engine-sql/large-page.ts) send Postgres the statements their callers
+ * (persistence/large-page-guard.ts, page-embedding-budget.ts) sent through `executeRaw` before they became typed
+ * members: the same text and the same bound values.
  *
  * Protects: assertLargePageAdmission keeps its exact Postgres statement for a remote put_page.
  * Fails when the member's text or parameter order drifts from the statement the guard wrote by hand.
@@ -29,4 +29,23 @@ describe('the large-page write guard sends the hand-written Postgres statement',
     expect(old).toHaveLength(1);
     expect(typed).toEqual(old);
   });
+
+  // page-embedding-budget.ts readPageSizeStates (the sync receipt's size states) built this text by hand; the member
+  // adds COLLATE "C" to its ORDER BY, so the rows come in slug byte order, the one order the Rust store gives too.
+  // The member builds it as a fragment, which numbers the parameters in text order: with named slugs the slug list
+  // is $2 and the inline size $3 (the hand-written text had them the other way round).
+  for (const slugs of [null, ['notes/a', 'notes/b']] as const) {
+    test(`listPageSizeRows (${slugs ? 'named slugs' : 'whole source'})`, async () => {
+      const bytes = `(CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)`;
+      const old = await sent(e => e.executeRaw(
+        `SELECT p.slug, ${bytes}::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL${slugs ? ' AND p.slug = ANY($2::text[])' : ''}
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR ${bytes} > ${slugs ? '$3' : '$2'} OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`,
+        slugs ? ['default', [...slugs], 1048576] : ['default', 1048576]));
+      const typed = await sent(e => e.listPageSizeRows('default', { inlineMaxBytes: 1048576, slugs }));
+      expect(old).toHaveLength(1);
+      expect(typed).toEqual(old);
+    });
+  }
 });

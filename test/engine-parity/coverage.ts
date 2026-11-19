@@ -50,7 +50,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   pages: ['getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
     'deletePage', 'deletePages', 'resolveSlugsByPaths', 'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages',
     'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs', 'listAllPageRefs', 'listAllSources', 'listSourceLocalPaths', 'countRepoBoundSources', 'listLocalPathSources', 'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig', 'listSourceRoutingRows',
-    'countDefaultSourceSplit', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'countSourcePages', 'insertSource', 'updateSourceConfig', 'getSource',
+    'countDefaultSourceSplit', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'countSourcePages', 'listSourcePagePaths', 'readRenameStoredTitles', 'readLiveIdentityHolders', 'readPageIdentity', 'writeSourceCommitAnchor', 'writeSourceLocalPath', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation', 'insertSource', 'updateSourceConfig', 'getSource',
     'listPrefixSampledPages', 'listCorpusSample', 'bumpPageRetrievals', 'getPageSealState', 'refreshPageOrigin'],
   search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
     'searchKeywordChunks'],
@@ -111,6 +111,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
     'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange',
     'claimHousekeepingTurn', 'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter',
+    'readOpCheckpoint', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint',
     'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs', 'declarePersistence', 'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect'],
   entity_reads: ['readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readLiveSlugs', 'readLivePageTypes', 'readTrigramCandidates', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readNamedEntitySlugs', 'readRetirementHop', 'readEntityCardRows',
     'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],
@@ -219,7 +220,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // page_visibility: the remote page-write visibility guards (engine-sql/page-visibility.ts)
   page_visibility: ['readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence'],
   // large_page: the remote put_page large-page guard's stored body size read (engine-sql/large-page.ts)
-  large_page: ['readStoredBodyBytes'],
+  large_page: ['readStoredBodyBytes', 'listPageSizeRows'],
   // relational_reads: the relational recall arm's page reads (engine-sql/relational-reads.ts)
   relational_reads: ['readAdmittedPageRefs', 'readPageSynopses', 'readSeedTitleSlugs'],
   trust_fence: ['listFenceFactRows'],

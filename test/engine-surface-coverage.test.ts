@@ -87,7 +87,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Pages CRUD
   'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs',
-  'listAllPageRefs', 'listAllSources', 'listSourceLocalPaths', 'countRepoBoundSources', 'listLocalPathSources', 'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'updateSourceConfig', 'getSource', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'countSourcePages', 'insertSource', 'listPrefixSampledPages', 'listCorpusSample',
+  'listAllPageRefs', 'listAllSources', 'listSourceLocalPaths', 'countRepoBoundSources', 'listLocalPathSources', 'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'updateSourceConfig', 'getSource', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'countSourcePages', 'listSourcePagePaths', 'readRenameStoredTitles', 'readLiveIdentityHolders', 'readPageIdentity', 'writeSourceCommitAnchor', 'writeSourceLocalPath', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation', 'readOpCheckpoint', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'insertSource', 'listPrefixSampledPages', 'listCorpusSample',
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
   'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal', 'countBrainLivePages', 'readBrainMaturity',
@@ -155,6 +155,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence',
   // The large-page write guard's stored body size read (engine-sql/large-page.ts).
   'readStoredBodyBytes',
+  'listPageSizeRows',
   // The relational recall arm's page reads (engine-sql/relational-reads.ts).
   'readAdmittedPageRefs',
   'readPageSynopses',

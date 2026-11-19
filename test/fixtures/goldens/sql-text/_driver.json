@@ -5097,6 +5097,19 @@
           }
         ]
       },
+      "listSourcePagePaths": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listSourceRoutingRows": {
         "default": [
           {
@@ -5127,6 +5140,45 @@
         "default": [
           {
             "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readLiveIdentityHolders": {
+        "default": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readPageIdentity": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readRenameStoredTitles": {
+        "default": [
+          {
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5179,6 +5231,69 @@
         "default": [
           {
             "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceCommitAnchor": {
+        "keepNewest": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "stampNewest": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceLocalPath": {
+        "default": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceSyncHeartbeat": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceUpstreamObservation": {
+        "default": [
+          {
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

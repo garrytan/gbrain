@@ -403,6 +403,94 @@ const PINS: Pin[] = [
     texts: ['SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
   },
   {
+    from: 'src/core/sync-anchor.ts:271 writeSyncAnchor (last_commit with the newest content time)',
+    case: { method: 'writeSourceCommitAnchor', variant: 'stampNewest', run: e => e.writeSourceCommitAnchor('default', 'c0ffee', { newestContentAt: '2026-01-02T03:04:05.000Z' }) },
+    texts: ['UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2'],
+  },
+  {
+    from: 'src/core/sync-anchor.ts:276 writeSyncAnchor (last_commit only)',
+    case: { method: 'writeSourceCommitAnchor', variant: 'keepNewest', run: e => e.writeSourceCommitAnchor('default', 'c0ffee') },
+    texts: ['UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2'],
+  },
+  {
+    from: 'src/core/sync-anchor.ts:298 writeSyncAnchor (repo_path, ${col} = local_path)',
+    case: { method: 'writeSourceLocalPath', variant: 'default', run: e => e.writeSourceLocalPath('default', '/srv/brain') },
+    texts: ['UPDATE sources SET local_path = $1 WHERE id = $2'],
+  },
+  {
+    from: 'src/commands/sync/preflight.ts:195 the 0-change sync heartbeat',
+    case: { method: 'writeSourceSyncHeartbeat', variant: 'default', run: e => e.writeSourceSyncHeartbeat('default') },
+    texts: ['UPDATE sources SET last_sync_at = now() WHERE id = $1'],
+  },
+  {
+    from: 'src/core/sync-upstream.ts:71 recordUpstreamObservation',
+    case: { method: 'writeSourceUpstreamObservation', variant: 'default', run: e => e.writeSourceUpstreamObservation('default', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'c1', behind: 2 }) },
+    texts: ['UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
+  },
+  {
+    from: 'src/core/op-checkpoint.ts:139 loadOpCheckpoint',
+    case: { method: 'readOpCheckpoint', variant: 'default', run: e => e.readOpCheckpoint('sync', 'f1') },
+    texts: [`SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
+         WHERE op = $1 AND fingerprint = $2
+       UNION ALL
+       SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
+         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
+       UNION ALL
+       SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
+         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`],
+  },
+  {
+    from: 'src/core/op-checkpoint.ts:200 recordCompleted',
+    case: { method: 'writeOpCheckpointKeys', variant: 'default', run: e => e.writeOpCheckpointKeys('sync', 'f1', ['a.md']) },
+    texts: [`INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ($1, $2, $3::text::jsonb, now())
+       ON CONFLICT (op, fingerprint) DO UPDATE
+         SET completed_keys = EXCLUDED.completed_keys,
+             updated_at     = now()`],
+  },
+  {
+    from: 'src/core/op-checkpoint.ts:230 appendCompleted (APPEND_PATHS_SQL)',
+    case: { method: 'appendOpCheckpointPaths', variant: 'default', run: e => e.appendOpCheckpointPaths('sync', 'f1', ['a.md']) },
+    texts: [`WITH parent AS (
+  INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+  VALUES ($1, $2, '[]'::jsonb, now())
+  ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at = now()
+)
+INSERT INTO op_checkpoint_paths (op, fingerprint, path)
+SELECT $1, $2, unnest($3::text[])
+ON CONFLICT (op, fingerprint, path) DO NOTHING`],
+  },
+  {
+    from: 'src/core/op-checkpoint.ts:276 clearOpCheckpoint (both deletes)',
+    case: { method: 'deleteOpCheckpoint', variant: 'default', run: e => e.deleteOpCheckpoint('sync', 'f1') },
+    texts: ['DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2', 'DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2'],
+  },
+  // The caller's text plus ORDER BY slug COLLATE "C": the first stored row per path decides, and byte order is the one
+  // order the Rust store gives too.
+  {
+    from: 'src/core/sync-rename-identity.ts:316 confirmRenameIdentities (stored titles)',
+    case: { method: 'readRenameStoredTitles', variant: 'default', run: e => e.readRenameStoredTitles('default', ['notes/a.md'], ['notes/a']) },
+    texts: ['SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[])) ORDER BY slug COLLATE "C"'],
+  },
+  {
+    from: 'src/core/sync-rename-identity.ts:328 confirmRenameIdentities (live identities; :375 redecideHeldRename runs the same text)',
+    case: { method: 'readLiveIdentityHolders', variant: 'default', run: e => e.readLiveIdentityHolders('default', ['doc-1'], ['A title']) },
+    texts: [`SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[])) ORDER BY slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/sync-rename-identity.ts:365 redecideHeldRename',
+    case: { method: 'readPageIdentity', variant: 'default', run: e => e.readPageIdentity(1) },
+    texts: [`SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`],
+  },
+  // The caller's text plus ORDER BY slug COLLATE "C": the reconcile plan follows row order, and byte order is the one
+  // order the Rust store gives too.
+  {
+    from: 'src/commands/sync/full.ts:460 performFullSync (stale-page reconcile)',
+    case: { method: 'listSourcePagePaths', variant: 'default', run: e => e.listSourcePagePaths('default') },
+    texts: ['SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL ORDER BY slug COLLATE "C"'],
+  },
+  {
     from: 'src/core/reason-trailers.ts:151 scanSyncReasons',
     case: { method: 'readReasonPurgeTombstones', variant: 'default', run: e => e.readReasonPurgeTombstones('default') },
     texts: ['SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1'],

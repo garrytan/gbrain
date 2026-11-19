@@ -272,6 +272,150 @@ describe('engine parity: source-resolution reads', () => {
     return { before, first, after };
   });
 
+  parityTest('writeSourceCommitAnchor advances one source\'s last commit, and its newest content time only when given', {
+    methods: ['writeSourceCommitAnchor', 'writeSourceLocalPath', 'getSource', 'readPlainSyncSource', 'listSourceRecords'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'wiki');
+    await createSource(engine, backend, 'other');
+    const view = async (id: string) => {
+      const detail = await engine.getSource(id);
+      const record = (await engine.listSourceRecords()).find(r => r.id === id);
+      const newest = record?.newest_content_at == null ? null : new Date(record.newest_content_at).toISOString();
+      return detail === null ? null : {
+        last_commit: detail.last_commit, synced: detail.last_sync_at != null, local_path: detail.local_path,
+        plain: (await engine.readPlainSyncSource(id))?.last_commit ?? null, newest,
+      };
+    };
+    const before = await view('wiki');
+    await engine.writeSourceCommitAnchor('wiki', 'c1', { newestContentAt: '2026-01-02T03:04:05.000Z' });
+    const stamped = await view('wiki');
+    await engine.writeSourceCommitAnchor('wiki', 'c2');
+    const kept = await view('wiki');
+    await engine.writeSourceCommitAnchor('wiki', 'c3', { newestContentAt: null });
+    const cleared = await view('wiki');
+    await engine.writeSourceLocalPath('wiki', '/srv/wiki');
+    await engine.writeSourceCommitAnchor('missing', 'c9');
+    await engine.writeSourceLocalPath('missing', '/srv/missing');
+    const seen = { before, stamped, kept, cleared, repointed: await view('wiki'), other: await view('other'), missing: await view('missing') };
+    expect(seen).toEqual({
+      before: { last_commit: null, synced: false, local_path: null, plain: null, newest: null },
+      stamped: { last_commit: 'c1', synced: true, local_path: null, plain: 'c1', newest: '2026-01-02T03:04:05.000Z' },
+      kept: { last_commit: 'c2', synced: true, local_path: null, plain: 'c2', newest: '2026-01-02T03:04:05.000Z' },
+      cleared: { last_commit: 'c3', synced: true, local_path: null, plain: 'c3', newest: null },
+      repointed: { last_commit: 'c3', synced: true, local_path: '/srv/wiki', plain: 'c3', newest: null },
+      other: { last_commit: null, synced: false, local_path: null, plain: null, newest: null },
+      missing: null,
+    });
+    return seen;
+  });
+
+  parityTest('writeSourceSyncHeartbeat stamps one source\'s last sync and leaves its commit anchor alone', {
+    methods: ['writeSourceSyncHeartbeat', 'writeSourceCommitAnchor', 'getSource'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'wiki');
+    await createSource(engine, backend, 'other');
+    const view = async (id: string) => {
+      const detail = await engine.getSource(id);
+      return detail === null ? null : { last_commit: detail.last_commit, synced: detail.last_sync_at != null };
+    };
+    const before = await view('wiki');
+    await engine.writeSourceSyncHeartbeat('wiki');
+    const beat = await view('wiki');
+    await engine.writeSourceCommitAnchor('wiki', 'c1');
+    await engine.writeSourceSyncHeartbeat('wiki');
+    await engine.writeSourceSyncHeartbeat('missing');
+    const seen = { before, beat, anchored: await view('wiki'), other: await view('other'), missing: await view('missing') };
+    expect(seen).toEqual({
+      before: { last_commit: null, synced: false },
+      beat: { last_commit: null, synced: true },
+      anchored: { last_commit: 'c1', synced: true },
+      other: { last_commit: null, synced: false },
+      missing: null,
+    });
+    return seen;
+  });
+
+  parityTest('writeSourceUpstreamObservation records one source\'s upstream and leaves its sync anchor alone', {
+    methods: ['writeSourceUpstreamObservation', 'writeSourceCommitAnchor', 'getSource'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'wiki');
+    await createSource(engine, backend, 'other');
+    await engine.writeSourceCommitAnchor('wiki', 'c1');
+    await engine.writeSourceUpstreamObservation('wiki', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'u1', behind: 2 });
+    await engine.writeSourceUpstreamObservation('wiki', { checkedAt: '2026-01-03T03:04:05.000Z', commit: 'u2', behind: null });
+    await engine.writeSourceUpstreamObservation('missing', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'u9', behind: 0 });
+    const badTime = await engine.writeSourceUpstreamObservation('wiki', { checkedAt: 'not a time', commit: 'u3', behind: 1 }).then(() => 'resolved', () => 'rejected');
+    if (backend !== 'rust') {
+      // The store has no SQL; its record is checked in rust/crates/gbrain-store/src/sources.rs.
+      const rows = await engine.executeRaw<{ id: string; upstream_checked_at: Date | string | null; upstream_commit: string | null; upstream_behind: number | null }>(
+        'SELECT id, upstream_checked_at, upstream_commit, upstream_behind FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [['other', 'wiki']]);
+      expect(rows.map(r => ({ ...r, upstream_checked_at: r.upstream_checked_at == null ? null : new Date(r.upstream_checked_at).toISOString() }))).toEqual([
+        { id: 'other', upstream_checked_at: null, upstream_commit: null, upstream_behind: null },
+        { id: 'wiki', upstream_checked_at: '2026-01-03T03:04:05.000Z', upstream_commit: 'u2', upstream_behind: null },
+      ]);
+    }
+    const wiki = await engine.getSource('wiki');
+    const seen = { anchor: wiki?.last_commit ?? null, badTime, missing: await engine.getSource('missing') };
+    expect(seen).toEqual({ anchor: 'c1', badTime: 'rejected', missing: null });
+    return seen;
+  });
+
+  parityTest('listSourcePagePaths lists one source\'s live file-backed pages in slug byte order', { methods: ['listSourcePagePaths', 'refreshPageOrigin'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    await createSource(engine, backend, 'ab');
+    await seed(engine, 'a', ['notes/b', 'notes/ab', 'notes/a-c', 'notes/no-file', 'notes/gone']);
+    await seed(engine, 'ab', ['notes/z']);
+    for (const [sourceId, slug, sourcePath] of [['a', 'notes/b', 'notes/b.md'], ['a', 'notes/ab', 'notes/ab.md'], ['a', 'notes/a-c', 'notes/a-c.md'], ['a', 'notes/gone', 'notes/gone.md'], ['ab', 'notes/z', 'notes/z.md']] as const) {
+      await engine.refreshPageOrigin(slug, { sourceId, sourcePath });
+    }
+    await engine.softDeletePage('notes/gone', { sourceId: 'a' });
+    const seen = { a: await engine.listSourcePagePaths('a'), ab: await engine.listSourcePagePaths('ab'), missing: await engine.listSourcePagePaths('missing') };
+    expect(seen).toEqual({
+      a: [{ slug: 'notes/a-c', source_path: 'notes/a-c.md' }, { slug: 'notes/ab', source_path: 'notes/ab.md' }, { slug: 'notes/b', source_path: 'notes/b.md' }],
+      ab: [{ slug: 'notes/z', source_path: 'notes/z.md' }],
+      missing: [],
+    });
+    return seen;
+  });
+
+  parityTest('the rename confirmation reads match live pages by path, slug, frontmatter id and title in slug byte order', {
+    methods: ['putPage', 'refreshPageOrigin', 'softDeletePage', 'readRenameStoredTitles', 'readLiveIdentityHolders', 'readPageIdentity'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    await createSource(engine, backend, 'b');
+    const put = (sourceId: string, slug: string, title: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { ...NOTE, title, frontmatter }, { sourceId });
+    const spec = await put('a', 'notes/spec', 'Spec', { id: 'doc-1' });
+    await put('a', 'notes/num', 'Numbered', { id: 7 });
+    await put('a', 'notes/plain', 'Spec', {});
+    await put('a', 'notes/é-accent', 'Accent', { id: 'doc-é' });
+    const gone = await put('a', 'notes/gone', 'Gone', { id: 'doc-1' });
+    await put('b', 'notes/spec', 'Spec', { id: 'doc-1' });
+    await engine.refreshPageOrigin('notes/spec', { sourceId: 'a', sourcePath: 'notes/spec.md' });
+    await engine.softDeletePage('notes/gone', { sourceId: 'a' });
+    const seen = {
+      titles: await engine.readRenameStoredTitles('a', ['notes/spec.md'], ['notes/plain', 'notes/gone', 'notes/missing']),
+      holders: await engine.readLiveIdentityHolders('a', ['doc-1', '7', 'doc-é'], ['Spec']),
+      none: await engine.readLiveIdentityHolders('a', [], []),
+      otherSource: await engine.readLiveIdentityHolders('missing', ['doc-1'], ['Spec']),
+      spec: await engine.readPageIdentity(spec.id),
+      gone: await engine.readPageIdentity(gone.id),
+      missing: await engine.readPageIdentity(999_999),
+    };
+    expect(seen).toEqual({
+      titles: [{ slug: 'notes/plain', source_path: null, title: 'Spec' }, { slug: 'notes/spec', source_path: 'notes/spec.md', title: 'Spec' }],
+      holders: [
+        { slug: 'notes/num', source_path: null, fm_id: '7', title: 'Numbered' },
+        { slug: 'notes/plain', source_path: null, fm_id: null, title: 'Spec' },
+        { slug: 'notes/spec', source_path: 'notes/spec.md', fm_id: 'doc-1', title: 'Spec' },
+        { slug: 'notes/é-accent', source_path: null, fm_id: 'doc-é', title: 'Accent' },
+      ],
+      none: [], otherSource: [],
+      spec: { fm_id: 'doc-1', title: 'Spec' }, gone: null, missing: null,
+    });
+    return seen;
+  });
+
   parityTest('countSourcePages counts one source\'s pages, soft-deleted pages only when asked', { methods: ['countSourcePages'] }, async (engine, backend) => {
     await createSource(engine, backend, 'a');
     await createSource(engine, backend, 'ab');

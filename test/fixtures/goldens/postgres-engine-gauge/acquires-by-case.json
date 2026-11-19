@@ -278,6 +278,9 @@
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
     "listSourceLocalPaths#default": {},
+    "listSourcePagePaths#default": {
+      "raw": 1
+    },
     "listSourceRoutingRows#default": {
       "raw": 1
     },
@@ -354,9 +357,18 @@
     "readEmbeddingStateCounts#ops": {
       "raw": 1
     },
+    "readLiveIdentityHolders#default": {
+      "raw": 1
+    },
+    "readPageIdentity#default": {
+      "raw": 1
+    },
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
+    "readRenameStoredTitles#default": {
+      "raw": 1
+    },
     "readSourceChunkerVersion#default": {
       "raw": 1
     },
@@ -507,7 +519,22 @@
     },
     "upsertEventProjection#default": {},
     "upsertFile#default": {},
-    "writeContradictionsRun#default": {}
+    "writeContradictionsRun#default": {},
+    "writeSourceCommitAnchor#keepNewest": {
+      "raw": 1
+    },
+    "writeSourceCommitAnchor#stampNewest": {
+      "raw": 1
+    },
+    "writeSourceLocalPath#default": {
+      "raw": 1
+    },
+    "writeSourceSyncHeartbeat#default": {
+      "raw": 1
+    },
+    "writeSourceUpstreamObservation#default": {
+      "raw": 1
+    }
   },
   "normalizer": "gauge-acquires-by-case-v1"
 }

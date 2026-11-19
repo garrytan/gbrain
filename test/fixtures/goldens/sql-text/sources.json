@@ -116,6 +116,18 @@
           }
         ]
       },
+      "listSourcePagePaths": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL ORDER BY slug COLLATE \"C\"",
+            "textSha256": "c9bb528f59e3f7b4657e1915706b085d376dad592dc07f2bbe453111f45132cd"
+          }
+        ]
+      },
       "listSourceRoutingRows": {
         "default": [
           {
@@ -145,6 +157,46 @@
             ],
             "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE",
             "textSha256": "c96279eec5f617f9eee6412cb97ea5799f1b30d4c826b2eaf5be7c7456bf2c08"
+          }
+        ]
+      },
+      "readLiveIdentityHolders": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[])) ORDER BY slug COLLATE \"C\"",
+            "textSha256": "55c811fd650462c2a88f44e27988740f666788df3b50ea71ba2722b2377dd416"
+          }
+        ]
+      },
+      "readPageIdentity": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL",
+            "textSha256": "a1f8f456f2ecc89509b160fe011762a794cb4ade0a7a4e03f19ac496229637be"
+          }
+        ]
+      },
+      "readRenameStoredTitles": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[])) ORDER BY slug COLLATE \"C\"",
+            "textSha256": "610c1f3c5f7c7a23afa1298b7ed98893f323473f93eaf26ba0212c0653de60ff"
           }
         ]
       },
@@ -195,6 +247,71 @@
             ],
             "sql": "UPDATE sources SET config = ( WITH RECURSIVE root_layers(value, depth) AS ( SELECT COALESCE(config, '{}'::jsonb), 0 UNION ALL SELECT gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM root_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), root(value) AS ( SELECT value FROM root_layers ORDER BY depth DESC LIMIT 1 ), fragment_seeds(ordinality, value) AS ( SELECT 0::bigint, value FROM root WHERE jsonb_typeof(value) = 'object' UNION ALL SELECT item.ordinality, item.value FROM root, LATERAL jsonb_array_elements( CASE WHEN jsonb_typeof(root.value) = 'array' THEN root.value ELSE '[]'::jsonb END ) WITH ORDINALITY AS item(value, ordinality) ), fragment_layers(ordinality, value, depth) AS ( SELECT ordinality, value, 0 FROM fragment_seeds UNION ALL SELECT ordinality, gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM fragment_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), fragments AS ( SELECT DISTINCT ON (ordinality) ordinality, value FROM fragment_layers ORDER BY ordinality, depth DESC ) SELECT COALESCE( jsonb_object_agg(entry.key, entry.value ORDER BY fragments.ordinality), '{}'::jsonb ) FROM fragments CROSS JOIN LATERAL jsonb_each( CASE WHEN jsonb_typeof(fragments.value) = 'object' THEN fragments.value ELSE '{}'::jsonb END ) AS entry(key, value) ) || $1 WHERE id = $2",
             "textSha256": "f60452bce6db5db7619b76b5f03ed2843641c13d35708bfbca459d0bf3468b8d"
+          }
+        ]
+      },
+      "writeSourceCommitAnchor": {
+        "keepNewest": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2",
+            "textSha256": "e08954b8645774987704b5860cd2d5d760ed91d5d41ade4de5c89ebf6b72e498"
+          }
+        ],
+        "stampNewest": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $2 WHERE id = $3",
+            "textSha256": "9402e122e8f0e545238e2fbbd0f193041b349d67b1f031d7d85a79b7f1e27602"
+          }
+        ]
+      },
+      "writeSourceLocalPath": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET local_path = $1 WHERE id = $2",
+            "textSha256": "ad174967d230ed4a3a701b5acc9da1b5c4ff0f6ffd2f0878584fe0bcc7524065"
+          }
+        ]
+      },
+      "writeSourceSyncHeartbeat": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_sync_at = now() WHERE id = $1",
+            "textSha256": "85b867a0c243b7fd9544f0ac401151155a5aa4c2dab1b36d98cafec96a6953ba"
+          }
+        ]
+      },
+      "writeSourceUpstreamObservation": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE sources SET upstream_checked_at=$1::timestamptz,upstream_commit=$2,upstream_behind=$3 WHERE id=$4",
+            "textSha256": "701c47b7784e866510f5478ccf327f8c3c7dc75a9f74cfd08ad51a96a0cea95b"
           }
         ]
       }
