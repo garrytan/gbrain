@@ -341,6 +341,11 @@ for (const backend of testBackends()) {
           ['facts', async engine => raw(engine, "INSERT INTO facts (source_id, fact, source, entity_slug) VALUES ('default', 'A stated fact about storage.', 'mcp:remember', $1)", [CONCEPT])],
           ['tags', async (engine, _ctx, id) => raw(engine, "INSERT INTO tags (page_id, tag) VALUES ($1, 'hand-tag')", [id])],
           ['timeline_entries', async (engine, _ctx, id) => raw(engine, "INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-01-01', 'a stated event')", [id])],
+          ['raw_data', async (engine, _ctx, id) => raw(engine, "INSERT INTO raw_data (page_id, source, data) VALUES ($1, 'agent-example', '{\"note\": 1}'::jsonb)", [id])],
+          ['link_edge_proposals', async (engine, _ctx, id) => raw(engine, "INSERT INTO link_edge_proposals (source_id, from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash, status) SELECT 'default', n.id, $1, n.id, 'works_at', 'evidence-example', 'rejected' FROM pages n WHERE n.slug = 'notes/storage-ref'", [id])],
+          ['entity_identities', async (engine, _ctx, id) => raw(engine, "INSERT INTO entity_identities (entity_id, source_id, page_id) VALUES ('entity-example', 'default', $1)", [id])],
+          ['guest_marks', async (engine, _ctx, id) => raw(engine, "INSERT INTO guest_marks (page_id, source_id, slug_at_write, audience_member, group_slug, sender_label, saved_at, writer_kind, writer_id) VALUES ($1, 'default', $2, 'alice-example', 'group-example', 'Alice', now(), 'member', 'alice-example')", [id, CONCEPT])],
+          ['guest_promotions', async (engine, _ctx, id) => raw(engine, "INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id) VALUES ($1, 'default', 'notes/promoted-example', 'member', 'alice-example')", [id])],
         ];
         for (const [kind, add] of stated) await managedBrain(async ({ engine, ctx, root }) => {
           const id = await heldConcept(engine, ctx, root);
@@ -449,7 +454,7 @@ for (const backend of testBackends()) {
       }, { databaseUrl });
     }, 300_000);
 
-    test('every column of links and of the rewritten page is carried, regenerated or held on by the rebuild', async () => {
+    test('every column of links and of the rewritten page, and every table keyed to a page, is carried, regenerated or held on by the rebuild', async () => {
       const PAGE_COLUMNS: Record<string, 'held' | 'regenerated'> = Object.fromEntries([
         ...['title', 'compiled_truth', 'timeline', 'frontmatter', 'source_path', 'source_uri', 'withheld_source_path', 'page_readers', 'folder_rule_ids',
           'body_storage', 'truth_lead', 'timeline_lead'].map(c => [c, 'held'] as const),
@@ -461,10 +466,19 @@ for (const backend of testBackends()) {
           'revision_principal_id', 'trust_tier', 'write_origin', 'body_bytes', 'truth_bytes', 'body_lines', 'body_generation', 'segment_count',
           'segmenter_version', 'body_flags', 'links_extract_failure', 'version_history_gap_at'].map(c => [c, 'regenerated'] as const),
       ]);
+      const PAGE_TABLES: Record<string, 'held' | 'regenerated'> = Object.fromEntries([
+        ...['files', 'link_edge_proposals', 'link_transitions', 'links', 'page_label_guards', 'raw_data', 'tags', 'takes', 'timeline_entries',
+          'entity_identities', 'guest_marks', 'guest_promotions'].map(t => [t, 'held'] as const),
+        ...['chronicle_page_state', 'content_chunks', 'extract_atoms_page_state', 'link_relationships', 'page_body_manifest', 'page_body_stagings',
+          'page_derivation_spend', 'page_embedding_budget', 'page_extraction_state', 'page_facts_reconcile', 'page_mention_state',
+          'page_segment_derivations', 'page_versions', 'page_view_digests', 'secret_store_occurrence', 'synthesis_evidence', 'wanted_links'].map(t => [t, 'regenerated'] as const),
+      ]);
       await managedBrain(async ({ engine }) => {
         const columns = async (table: string) => (await engine.executeRaw<{ c: string }>("SELECT column_name AS c FROM information_schema.columns WHERE table_name = $1 AND table_schema = current_schema()", [table])).map(r => r.c).sort();
         expect(await columns('links')).toEqual(Object.keys(REBUILD_LINK_COLUMNS).sort());
         expect(await columns('pages')).toEqual(Object.keys(PAGE_COLUMNS).sort());
+        const tables = (await engine.executeRaw<{ t: string }>("SELECT DISTINCT conrelid::regclass::text AS t FROM pg_constraint WHERE confrelid = 'pages'::regclass AND contype = 'f'")).map(r => r.t).sort();
+        expect(tables).toEqual(Object.keys(PAGE_TABLES).sort());
       }, { databaseUrl });
     }, 120_000);
 
