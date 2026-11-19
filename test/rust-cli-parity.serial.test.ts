@@ -428,7 +428,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       fail: [],
       // default_source_local_path, frontmatter_repairable and image_assets are gone from this list: the sources reads
       // are typed members Rust serves, so those checks run on a Rust brain too.
-      onlyPglite: ['pglite_scale'],
+      // pglite_scale is gone from this list: a Rust brain is one local file too, so it reports the same page threshold.
+      onlyPglite: [],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
       // The git and managed-sync checks (canonical_content_writes, checkout_lagging, commits_outside_source_root,
