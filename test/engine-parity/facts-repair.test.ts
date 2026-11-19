@@ -23,6 +23,7 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { METADATA_LABELS } from '../../src/core/conversation-parser/builtins.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -256,6 +257,77 @@ describe('engine parity: group 5 facts repair statements', () => {
     expect(capped).toEqual({ count: 0, capped: true });
     expect(none).toEqual({ count: 0, capped: false });
     return { counted, capped, none };
+  });
+
+  parityTest('countLabelFacts folds case, allows spaces before the colon, needs the label at a line start and skips covered facts', {
+    methods: ['putPage', 'softDeletePage', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'upsertOpenLoop', 'countLabelFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const page = (slug: string, body: string, timeline = '', sourceId = 'default') =>
+      engine.putPage(slug, { ...note(slug, body), timeline }, { sourceId });
+    await page('chats/fold', 'intro\n**DATE\u2003\t :** today');
+    await page('chats/first', '**Action Items:** call back');
+    await page('chats/timeline', 'no label in the body', '- 2026-01-01 a call\n**Organiser:** someone');
+    await page('chats/crlf', 'intro\r\n**notes:**\r\nmore');
+    await page('chats/mid', 'see **Date:** inline');
+    await page('chats/near', '**Dates:** soon\n**Dat:** x');
+    await page('chats/audited', '**Date:** done');
+    await page('chats/audit-open', '**Date:** not done');
+    await page('chats/gone', '**Date:** gone');
+    await page('chats/away', '**Date:** elsewhere', '', 'other');
+    await engine.softDeletePage('chats/gone');
+    const ctx = 'segment 1970-01-01 x';
+    const label = (slug: string, text: string, extra: Record<string, unknown> = {}, sourceId = 'default') =>
+      fenced(engine, text, { source: EXTRACTOR, visibility: 'private', source_markdown_slug: slug, context: ctx, ...extra }, sourceId);
+    await label('chats/fold', 'fold counted');
+    await label('chats/first', 'first counted');
+    await label('chats/timeline', 'timeline counted');
+    await label('chats/crlf', 'crlf counted');
+    await label('chats/mid', 'mid not counted');
+    await label('chats/near', 'near not counted');
+    await label('chats/audited', 'audited not counted');
+    await label('chats/audit-open', 'audit-open counted');
+    await label('chats/gone', 'gone not counted');
+    await label('chats/missing', 'missing page not counted');
+    await label('chats/away', 'away counted in other', {}, 'other');
+    await label('chats/fold', 'wrong context', { context: 'segment 2020-01-01' });
+    await label('chats/fold', 'no context', { context: null });
+    await label('chats/fold', 'versioned source', { source: `${EXTRACTOR}:v1` });
+    const expired = await label('chats/fold', 'expired');
+    expect(await engine.expireFact(expired)).toBe(true);
+    await label('chats/fold', 'withdrawn for all');
+    await label('chats/fold', 'withdrawn for its entity', { entity_slug: 'people/a' });
+    await label('chats/fold', 'withdrawn for another entity', { entity_slug: 'people/b' });
+    await label('chats/fold', 'withdrawn in world only');
+    const looped = await label('chats/fold', 'held by a loop');
+    const [r1, r2] = [nextRow(engine), nextRow(engine)];
+    await engine.insertFacts([
+      { row_num: r1, source_markdown_slug: 'chats/first', fact: 'superseded', entity_slug: null, kind: 'fact', visibility: 'private', source: EXTRACTOR, context: ctx, superseded_by_row: r2 },
+      { row_num: r2, source_markdown_slug: 'chats/first', fact: 'the successor', entity_slug: null, kind: 'fact', visibility: 'private', source: EXTRACTOR, context: ctx },
+    ] as never, { source_id: 'default' });
+    const audit = (slug: string, source: string, context: string) => fenced(engine, `audit ${slug} ${context}`, { source, visibility: 'private', source_markdown_slug: slug, context });
+    await audit('chats/audited', 'audit:terminal', 'decided extractor_version=3');
+    await audit('chats/audit-open', 'audit:terminal', 'extractor_version=3 later');
+    await audit('chats/audit-open', 'audit:other', 'decided extractor_version=3');
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for all', '*', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for its entity', 'people/a', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn for another entity', 'people/c', null)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'world', 'withdrawn in world only', '*', null)).toBe(true);
+    const at = '2026-03-01T10:00:00.000Z';
+    await engine.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop', loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com',
+      summary: 'loop', evidence: [], detector: 'manual', factId: looped, lastActivityAt: at, openedAt: at });
+    const labelLine = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
+    const args = { segmentSource: EXTRACTOR, contextLike: '%segment 1970-01-01%', labelLine, terminalSource: 'audit:terminal', nonExtractableSource: 'audit:non-extractable' };
+    const counted = await engine.countLabelFacts(['default'], 100, args);
+    const both = await engine.countLabelFacts(['other', 'default', 'other'], 100, args);
+    const atCap = await engine.countLabelFacts(['default'], 7, args);
+    const under = await engine.countLabelFacts(['default'], 6, args);
+    const other = await engine.countLabelFacts(['other'], 100, args);
+    expect({ counted, both, atCap, under, other }).toEqual({
+      counted: { count: 7, capped: false }, both: { count: 8, capped: false }, atCap: { count: 7, capped: false },
+      under: { count: 6, capped: true }, other: { count: 1, capped: false },
+    });
+    return { counted, both, atCap, under, other };
   });
 
   parityTest('listExtractorFactsForClassification lists the expired fenceless extractor facts with their evidence', {
