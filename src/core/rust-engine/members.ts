@@ -361,6 +361,8 @@ export const RUST_ENGINE_MEMBERS = {
   loadPurgeTarget: 'facts',
   planFactPurgeIds: 'facts',
   listFactsReconcileBacklog: 'facts',
+  settleFactsReconcile: 'facts',
+  selectFactsReconcileDrain: 'facts',
   listRelinkCandidateRows: 'facts',
   countRelinkCandidates: 'facts',
   listSimilarActiveFacts: 'facts',

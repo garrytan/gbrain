@@ -15,7 +15,7 @@ use gbrain_store::facts::purge::{
     FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery, SingleFactQuery,
     SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
-use gbrain_store::facts::reconcile::BacklogArgs;
+use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, SettleArgs};
 
 #[napi]
 impl Brain {
@@ -172,6 +172,32 @@ impl Brain {
         self.run(env, move |s| {
             let a: BacklogArgs = required(args, "listFactsReconcileBacklog args")?;
             s.list_facts_reconcile_backlog(&a)
+        })
+    }
+
+    /// `settleFactsReconcile(args)`: records one page's reconcile outcome; resolves null.
+    #[napi]
+    pub fn settle_facts_reconcile<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SettleArgs = required(args, "settleFactsReconcile args")?;
+            s.settle_facts_reconcile(&a)
+        })
+    }
+
+    /// `selectFactsReconcileDrain(args)`: settles the fenceless due pages; resolves the slugs to drain.
+    #[napi]
+    pub fn select_facts_reconcile_drain<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DrainArgs = required(args, "selectFactsReconcileDrain args")?;
+            s.select_facts_reconcile_drain(&a)
         })
     }
 }

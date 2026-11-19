@@ -265,9 +265,18 @@ the columns the store has not got: `source_window`, `last_written_at` and the `w
 it; a plain substring match, as the SQL's `LIKE` is for that marker) or that own a fence row of their source
 (`row_num` set, expired or not), with `invalid` when the latest attempt was `invalid` at the current revision, in
 (source, slug) byte order (the SQL pins `COLLATE "C"`). `segmented` counts the other due pages with a NULL body.
-No member writes the watermark on Rust: the extract_facts phase writes it with raw SQL (`settleFactsReconcile` and
-`selectFactsReconcileDrain` in `facts/reconcile-watermark.ts`), so it stops on the typed `raw_sql` refusal and every
-live page stays due. A writer that binds the watermark must also delete a page's row with the page row.
+
+`settleFactsReconcile` and `selectFactsReconcileDrain` write the watermark (`facts/reconcile.rs`).
+`settleFactsReconcile` records one live page's outcome when `anyRevision` is set or `revision` is the page's
+`knowledge_revision`, and records nothing otherwise (a moved-on, soft-deleted or missing page). `complete` sets the
+reconciled revision and time; any other outcome keeps them. The attempted revision is the page's current one, and the
+attempt time is now. An outcome outside `complete`, `deferred`, `invalid` and `cancelled` refuses with
+`invalid_input`, as the table's CHECK does. `selectFactsReconcileDrain` runs in one write: it settles as `complete`,
+in page-id order and at most `settleLimit`, the source's due live pages whose body and timeline are present and lack
+the marker and that own no fence row; then it answers at most `pageLimit` slugs of the source's other due live pages
+that are not `invalid` at their current revision, never-attempted first, then oldest attempt, then page id. The extract_facts phase's commit step locks the page with
+`lockReconcileRevision` (raw SQL) before its in-transaction settle, so on Rust that step stops on the typed `raw_sql`
+refusal; the settle itself runs in a Rust transaction.
 `listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)

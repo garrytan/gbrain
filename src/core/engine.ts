@@ -3251,6 +3251,10 @@ export interface BrainEngine {
   loadPurgeTarget(id: number, sourceId: string): Promise<FactsPurgeSql.PurgeTargetRow | null>;
   planFactPurgeIds(sourceId: string, visibility: string, factHash: string, subject: string): Promise<Array<{ id: number }>>;
   listFactsReconcileBacklog(): Promise<FactsPurgeSql.FactsReconcileBacklogRows>;
+  /** extract_facts: record one live page's reconcile outcome at `revision` (`undefined`: the current revision); a page that moved on records nothing. */
+  settleFactsReconcile(sourceId: string, slug: string, outcome: FactsPurgeSql.FactsReconcileOutcome, revision?: string | null): Promise<void>;
+  /** extract_facts: settle the source's due fenceless pages as complete, then return up to `pageLimit` due retryable slugs, never-attempted first. */
+  selectFactsReconcileDrain(sourceId: string, pageLimit: number): Promise<string[]>;
   listRelinkCandidateRows(opts: { sourceId: string; afterId: number; since: Date | null; limit: number }): Promise<FactsPurgeSql.RelinkCandidateRow[]>;
   countRelinkCandidates(sourceId: string): Promise<number>;
   listSimilarActiveFacts(opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number }): Promise<FactsPurgeSql.SimilarActiveFacts>;

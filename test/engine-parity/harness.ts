@@ -275,9 +275,9 @@ export async function recordPagePurge(engine: BrainEngine, backend: ParityBacken
 }
 
 /**
- * Fixture: a `page_facts_reconcile` watermark row, as the extract_facts phase writes it (`settleFactsReconcile` and
- * `selectFactsReconcileDrain` in facts/reconcile-watermark.ts). Neither has a typed writer, so this is harness-only SQL
- * behind the backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
+ * Fixture: a `page_facts_reconcile` watermark row in any state, including ones the typed `settleFactsReconcile` cannot
+ * reach (a reconciled revision older than the page, an attempt older than the reconcile). Harness-only SQL behind the
+ * backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
  * `knowledge_revision`, an `older` one, or null.
  */
 export async function recordFactsReconcile(
@@ -285,7 +285,7 @@ export async function recordFactsReconcile(
   outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', reconciled: 'current' | 'older' | null, attempted: 'current' | 'older' | null,
 ): Promise<void> {
   switch (backend) {
-    // The Rust store reads the watermark but has no writer for it: the same SQL stops on the engine's typed raw_sql refusal.
+    // The Rust store writes the watermark only through settle and drain: the same SQL stops on the engine's typed raw_sql refusal.
     case 'rust':
     case 'pglite':
     case 'postgres':

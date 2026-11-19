@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
- *    listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
+ *    settleFactsReconcile, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
  *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs and
  *    expireFactsByWithdrawal return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -12,9 +12,10 @@
  *    as already stored; the Rust engine has no SQL, so each read has to exist as a typed method it can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: recordFactsReconcile (harness.ts) writes a page_facts_reconcile row with SQL, as the extract_facts phase
- *    does; the Rust arm stops there on the typed raw_sql refusal, because no member writes the watermark on Rust. Every
- *    other row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage`, `expireFact` and
+ *  - Seam: the watermark is written through the typed settleFactsReconcile and selectFactsReconcileDrain, and read back
+ *    through listFactsReconcileBacklog. recordFactsReconcile (harness.ts) still writes states settle cannot reach (an
+ *    older reconciled revision) with SQL, and the extract_facts commit step's lockReconcileRevision is raw SQL; the Rust
+ *    arm stops on the typed raw_sql refusal at both. Every other row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage`, `expireFact` and
  *    `createSegmentedPageShell`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or
  *    shape, never by value.
  */
@@ -25,6 +26,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
+import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -229,6 +231,106 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     ]);
     expect(backlog.segmented).toBe(1);
     return backlog;
+  });
+
+  parityTest('settleFactsReconcile records an outcome only at the revision the reconcile read, keeps the reconciled one, and skips a gone page', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    const slugs = ['done', 'stale', 'invalid-now', 'kept', 'any', 'gone', 'edited', 'cancelled'];
+    for (const slug of slugs) await engine.putPage(`notes/${slug}`, note(slug, fence));
+    await engine.putPage('notes/done', note('done', fence), { sourceId: 'other' });
+    const rev = async (slug: string) => (await engine.getPage(`notes/${slug}`))!.knowledge_revision!;
+    const settle = (slug: string, outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', revision?: string | null) =>
+      engine.settleFactsReconcile(SRC, `notes/${slug}`, outcome, revision);
+    await settle('done', 'complete', await rev('done'));
+    await settle('stale', 'complete', '00000000-0000-4000-8000-000000000000');
+    await settle('stale', 'complete', null);
+    await settle('invalid-now', 'invalid', await rev('invalid-now'));
+    await settle('kept', 'complete', await rev('kept'));
+    await settle('kept', 'deferred');
+    await settle('any', 'complete');
+    await engine.softDeletePage('notes/gone');
+    await settle('gone', 'complete');
+    await settle('edited', 'complete', await rev('edited'));
+    await engine.putPage('notes/edited', note('edited', `${fence}\nmore`));
+    await settle('cancelled', 'cancelled');
+    await settle('missing', 'complete');
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => [`${r.source_id}:${r.slug}`, r.invalid])).toEqual([
+      ['default:notes/cancelled', false], ['default:notes/edited', false], ['default:notes/invalid-now', true],
+      ['default:notes/stale', false], ['other:notes/done', false],
+    ]);
+    return backlog;
+  });
+
+  parityTest('selectFactsReconcileDrain settles the fenceless pages and lists the rest never-attempted first, then by oldest attempt, at most the limit', {
+    methods: ['putPage', 'insertFacts', 'softDeletePage', 'createSegmentedPageShell', 'settleFactsReconcile', 'selectFactsReconcileDrain', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    // Created in id order; tried-early has a later id than tried-late but is attempted first, so attempt order differs from id order.
+    for (const slug of ['new-a', 'tried-late', 'tried-early', 'new-b', 'invalid-now', 'invalid-before', 'gone']) {
+      await engine.putPage(`notes/${slug}`, note(slug, fence));
+    }
+    await engine.putPage('notes/plain', note('Plain', 'no fence'));
+    await engine.putPage('notes/rows', note('Rows', 'rows only'));
+    await engine.insertFacts([{ fact: 'a row', source: 'fence', entity_slug: 'notes/rows', source_markdown_slug: 'notes/rows', row_num: 1 }] as never, { source_id: SRC });
+    await engine.createSegmentedPageShell('notes/seg', pageMeta('Seg'), { sourceId: SRC });
+    await engine.putPage('notes/elsewhere', note('Elsewhere', fence), { sourceId: 'other' });
+    await engine.putPage('notes/plain-elsewhere', note('Plain elsewhere', 'no fence'), { sourceId: 'other' });
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+    await engine.settleFactsReconcile(SRC, 'notes/invalid-before', 'invalid');
+    await engine.putPage('notes/invalid-before', note('invalid-before', `${fence}\nedited`));
+    await tick();
+    await engine.settleFactsReconcile(SRC, 'notes/tried-early', 'deferred');
+    await tick();
+    await engine.settleFactsReconcile(SRC, 'notes/tried-late', 'deferred');
+    await engine.settleFactsReconcile(SRC, 'notes/invalid-now', 'invalid');
+    await engine.softDeletePage('notes/gone');
+    const limited = await engine.selectFactsReconcileDrain(SRC, 2);
+    const drain = await engine.selectFactsReconcileDrain(SRC, 50);
+    // A settled page stays out of the backlog after it gains a fence row; an unsettled one comes back.
+    await engine.insertFacts([{ fact: 'late row', source: 'fence', entity_slug: 'notes/plain', source_markdown_slug: 'notes/plain', row_num: 1 }] as never, { source_id: SRC });
+    await engine.insertFacts([{ fact: 'late row', source: 'fence', entity_slug: 'notes/plain-elsewhere', source_markdown_slug: 'notes/plain-elsewhere', row_num: 1 }] as never, { source_id: 'other' });
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(limited).toEqual(['notes/new-a', 'notes/new-b']);
+    expect(drain).toEqual(['notes/new-a', 'notes/new-b', 'notes/rows', 'notes/seg', 'notes/invalid-before', 'notes/tried-early', 'notes/tried-late']);
+    expect(backlog.rows.map((r) => `${r.source_id}:${r.slug}`)).not.toContain('default:notes/plain');
+    expect(backlog.rows.map((r) => `${r.source_id}:${r.slug}`)).toContain('other:notes/plain-elsewhere');
+    return { limited, drain, backlog };
+  });
+
+  parityTest('settleFactsReconcile inside a transaction settles the page when the transaction commits', {
+    methods: ['putPage', 'getPage', 'transaction', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  }, async (engine) => {
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    await engine.putPage('notes/fenced', note('Fenced', fence));
+    await engine.putPage('notes/other', note('Other', fence));
+    const rev = (await engine.getPage('notes/fenced'))!.knowledge_revision!;
+    await engine.transaction((tx) => tx.settleFactsReconcile(SRC, 'notes/fenced', 'complete', rev));
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => r.slug)).toEqual(['notes/other']);
+    return backlog;
+  });
+
+  parityTest('the extract_facts commit step locks the page revision, then settles complete; Rust stops at the raw-SQL lock', {
+    methods: ['putPage', 'getPage', 'transaction', 'executeRaw', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  }, async (engine) => {
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    await engine.putPage('notes/fenced', note('Fenced', fence));
+    await engine.putPage('notes/other', note('Other', fence));
+    const rev = (await engine.getPage('notes/fenced'))!.knowledge_revision!;
+    const locked = await engine.transaction(async (tx) => {
+      if (!await lockReconcileRevision(tx, SRC, 'notes/fenced', rev)) return false;
+      await tx.settleFactsReconcile(SRC, 'notes/fenced', 'complete', rev);
+      return true;
+    });
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(locked).toBe(true);
+    expect(backlog.rows.map((r) => r.slug)).toEqual(['notes/other']);
+    return { locked, backlog };
   });
 
   parityTest('listRelinkCandidateRows lists the loose active facts after an id, from a time, at most the limit', { methods: ['listRelinkCandidateRows'] }, async (engine, backend) => {
