@@ -36,6 +36,7 @@ the record as it is.
 | `brain.listTakes(filter)` | `Take[]`: page/slug/holder/kind/active/resolved/allow-list/source filters, `since_on_or_before` (`since_date <= x`, nulls drop), sort by `since_date` (NULLS LAST, `oldest_first` flips), `weight DESC` or `created_at DESC`, then `id DESC`; `limit` (100 when absent) and `offset` (a non-number, negative or non-finite offset is `invalid_argument`) | `listTakes` |
 | `brain.listActiveTakesForPages({ page_ids, allow_list })` | active takes of the pages, by page then row | `listActiveTakesForPages` |
 | `brain.searchTakes({ query, limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged })` | `TakeHit[]`: active takes whose `word_similarity(query, claim) >= 0.6` (`pg_trgm` default), `score DESC, weight DESC`; `limit` 30 when absent | `searchTakes` |
+| `brain.searchTakesVector({ embedding, limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged, exclude_private })` | `TakeHit[]`: active takes whose vector was written for their current claim, nearest by pgvector cosine distance first (`takes/vector_search.rs`), `score` = `(1 - distance)::real`; `limit` 30 when absent. `invalid_argument` for an empty query, more than 16000 elements, a NaN (sent as null) or infinite element, or a width other than a candidate take's vector ("different vector dimensions") | `searchTakesVector` |
 | `brain.updateTake({ page_id, row_num, weight, since_date, source })` | `false` when no take; else COALESCEs the three columns, moves `updated_at`, `true`. `takes_weight_check` applies | `updateTake` |
 | `brain.supersedeTake(input)` | `{ status: 'not_found' \| 'resolved' }`, or `{ status: 'ok', old_row, new_row }` with `new_row = max(row_num) + 1` on the page; the old row turns inactive with `superseded_by = new_row`. Both rows share one timestamp; the new take keeps the old take's source | `supersedeTake` |
 | `brain.resolveTake({ page_id, row_num, resolution })` | `'not_found'`, `'resolved'` or `'ok'`. Writes only on `'ok'` with a resolution: `takes_resolution_consistency` (three-valued, as the CHECK: `correct` needs outcome not false, `incorrect` not true, `partial`/`unresolvable` null) then `takes_resolved_quality_values` | `resolveTake` |
@@ -49,7 +50,7 @@ Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of so
 whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge
 writes `needs_rederive` and `executeRaw` refuses on Rust, so that clause never hides a row here. The
 members send `eligible_only: true` for any eligibility object and the store applies the first two clauses.
-`listTakes` and `searchTakes` also take `min_trust` (`eligibility.floor`: `trustFloorSql`, the take's stamped
+`listTakes`, `searchTakes` and `searchTakesVector` also take `min_trust` (`eligibility.floor`: `trustFloorSql`, the take's stamped
 tier at or above the floor) and `suppress_flagged` (`eligibility.suppressFlagged`: `activationSuppressedSql`
 over the take's tier and its write-gate receipts), through `trust::TrustPolicy`.
 
@@ -65,6 +66,10 @@ Differences from PGLite:
 
 - `searchTakes`: Postgres sorts by `score DESC, weight DESC` alone, so ties come in no fixed order. The store
   breaks ties by take `id` ascending.
+- `searchTakesVector`: Postgres orders by distance alone, so ties come in no fixed order; the store puts NaN
+  (a zero query vector) last and breaks ties by take `id` ascending. A NaN score crosses as null, where the
+  SQL arms read NaN. Postgres refuses another width only for the rows its plan scans; the store refuses when a
+  take that passes the filters has one.
 - `getCalibrationCurve`: Postgres computes `FLOOR(weight::numeric / bucket_size)` with numeric division,
   which rounds to its working scale before `FLOOR`. The store divides exactly. The two differ only when the
   quotient lies within about 1e-16 of an integer without being one.

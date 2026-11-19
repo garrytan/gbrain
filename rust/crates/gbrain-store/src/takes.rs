@@ -34,8 +34,10 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod reads;
+mod vector_search;
 
 pub use reads::{McpResolvedInput, PurgeTakesInput};
+pub use vector_search::SearchTakesVectorOptions;
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
@@ -165,6 +167,25 @@ pub(crate) fn real_out(value: f32) -> f64 {
 }
 
 impl TakeRecord {
+    /// The hit `takeHitRowToHit` reads from `searchTakes` and `searchTakesVector`, with its `real`
+    /// score.
+    fn hit_json(&self, page_slug: &str, score: f32) -> Value {
+        json!({
+            "take_id": self.id,
+            "page_id": self.page_id,
+            "page_slug": page_slug,
+            "row_num": self.row_num,
+            "claim": self.claim,
+            "kind": self.kind,
+            "holder": self.holder,
+            "weight": real_out(self.weight),
+            "since_date": self.since_date,
+            "until_date": self.until_date,
+            "source": self.source,
+            "score": real_out(score),
+        })
+    }
+
     /// The row `takeRowToTake` reads (`t.*` plus `p.slug AS page_slug`).
     fn to_json(&self, page_slug: &str) -> Value {
         json!({
@@ -1141,22 +1162,7 @@ impl Store {
         Ok(hits
             .iter()
             .take(limit)
-            .map(|(score, t, slug)| {
-                json!({
-                    "take_id": t.id,
-                    "page_id": t.page_id,
-                    "page_slug": slug,
-                    "row_num": t.row_num,
-                    "claim": t.claim,
-                    "kind": t.kind,
-                    "holder": t.holder,
-                    "weight": real_out(t.weight),
-                    "since_date": t.since_date,
-                    "until_date": t.until_date,
-                    "source": t.source,
-                    "score": real_out(*score),
-                })
-            })
+            .map(|(score, t, slug)| t.hit_json(slug, *score))
             .collect())
     }
 

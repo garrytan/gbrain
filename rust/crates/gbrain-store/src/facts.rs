@@ -49,6 +49,7 @@ pub mod repair;
 pub mod trust;
 pub mod trust_reads;
 
+pub(crate) use embedding::cosine_distance;
 pub use fence::{FenceContext, FenceTarget};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;

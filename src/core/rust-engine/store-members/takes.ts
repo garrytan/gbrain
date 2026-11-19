@@ -1,5 +1,5 @@
 /**
- * Takes members (BrainEngine addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
+ * Takes members (BrainEngine addTakesBatch, listTakes, searchTakes, searchTakesVector, updateTake, supersedeTake, resolveTake,
  * getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, matchTakeRows, deleteTakeRows).
  * The store keeps the `takes` and `synthesis_evidence` rows (rust/docs/store/takes.md). This shell does what the shared SQL module does before its
  * statement runs (weight normalization, defaults, limit clamps, the GBrainErrors), so both engines say the same thing.
@@ -32,7 +32,7 @@ const IGNORED_READ_OPTIONS = ['minTrust', 'suppressFlagged', 'requireSafeChunks'
  */
 const IGNORED_AGGREGATE_OPTIONS = [...IGNORED_READ_OPTIONS, 'takesHoldersAllowList'] as const;
 
-/** `SearchOpts` keys that do not change which takes `searchTakes` returns (its SQL never reads them). */
+/** `SearchOpts` keys that do not change which takes `searchTakes` and `searchTakesVector` return (their SQL never reads them). */
 const SEARCH_IGNORED = [
   ...IGNORED_READ_OPTIONS,
   'offset', 'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete',
@@ -129,6 +129,24 @@ export const searchTakes: StoreMember<
     exclude_private: storePagePolicy('searchTakes', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   return storeCall({ member: 'searchTakes' }, () => brain.searchTakes(options));
+};
+
+export const searchTakesVector: StoreMember<
+  [embedding: Float32Array, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility }],
+  TakeHit[]
+> = async (brain, embedding, opts = {}) => {
+  const o = takeOptions('searchTakesVector', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility', 'excludePrivate'], SEARCH_IGNORED) as
+    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility; excludePrivate?: boolean };
+  const options = {
+    // A NaN element crosses as null; the store refuses it as the `::vector` cast does.
+    embedding: Array.from(embedding, (v) => (Number.isNaN(v) ? null : v)),
+    limit: clampSearchLimit(o.limit, 30, 100),
+    allow_list: allowList(o.takesHoldersAllowList),
+    source_ids: sourceScope(o),
+    ...eligibilityScope(o.eligibility),
+    exclude_private: storePagePolicy('searchTakesVector', o.excludePrivate, { callerReaders: true }) ?? null,
+  };
+  return storeCall({ member: 'searchTakesVector' }, () => brain.searchTakesVector(options));
 };
 
 export const updateTake: StoreMember<[pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string }], void> =

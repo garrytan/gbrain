@@ -1212,7 +1212,7 @@ Chunk vectors and vector search.
 - **Files:** `gbrain-store/src/vectors.rs`, `gbrain-napi/src/families/vectors.rs`, `store-members/vectors.ts`.
 - **Tag:** `X` (`VECTOR`). Cascade on page delete: yes.
 - **Members (2), capability:** `vector_search` (1), `takes` (1).
-- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`).
+- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`). `searchTakesVector` is built in the takes files: `gbrain-store/src/takes/vector_search.rs`, `gbrain-napi/src/families/takes.rs` and `store-members/takes.ts`.
 - **Postgres tables:** Chunk and take vectors (`embedding` columns), the vector index.
 - **Keys:** `X` (core sub-layout).
 - **Depends on:** The coming vector store work (HNSW or exact scan choice, design phase 2).
