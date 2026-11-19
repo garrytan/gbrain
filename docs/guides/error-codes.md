@@ -128,7 +128,7 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 |---|---|---|---|---|---|---|
 | A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, or a declared member email is invalid, taken or ambiguous, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
 
-Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`.
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`, `leaver`, `audience_target`.
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
@@ -2838,6 +2838,58 @@ More: [docs/guides/write-refusals.md#guest_readers_invalid](../../docs/guides/wr
 
 More: [docs/guides/write-refusals.md#guest_source_database_only](../../docs/guides/write-refusals.md#guest_source_database_only)
 
+### handover_member_enabled
+
+<a id="handover_member_enabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain access member handover was asked for a member that is still enabled, so nothing was previewed or written. | A handover moves pages away from the member; while it still reads, it would lose its own pages. | Switch the member off first with gbrain access member disable <id>, then preview the handover. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_owner_unset
+
+<a id="handover_owner_unset"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A handover group goes to the owner (the default for kept pages and folder rules), but this brain names no owner, so nothing was previewed. | Without an owner the default would leave the pages readable by no member. | Name the owner with gbrain access owner set <member>, or give the group to a member with --set kept=<member>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_partial
+
+<a id="handover_partial"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A handover apply wrote some of its items and skipped or failed others (a page changed since the preview, or a write failed); the written items stay in place and the handover row records each outcome. | Each item is written through its own door and rechecked first, so one changed page never blocks the rest; rerunning the same apply resumes from the recorded items. | Read the skipped items in detail, then rerun the same apply command (same --expect); items already written count as done. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_rules_held
+
+<a id="handover_rules_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source the handover changes folder rules on already has a widening change waiting for approval, so the handover wrote nothing. | Approving a rule change installs every change waiting for that source, and a handover approves only what its preview showed. | Preview and approve or drop the waiting change with gbrain access apply --source <id>, then preview the handover again. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_undo_member_disabled
+
+<a id="handover_undo_member_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An undo of a handover was asked for while its member is disabled or removed, so nothing was written. | Undo restores the readers the member had; while it is off, that would leave its pages readable by no member again. Removed ids are never reused, so a removed member's handover cannot be undone. | Enable the member again with gbrain access member enable <id>, then preview the undo. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `disabled`, `removed`.
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
 ### harness_hook_duplicates
 
 <a id="harness_hook_duplicates"></a>
@@ -5460,13 +5512,23 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
 
+### skill_resolver_host_hidden
+
+<a id="skill_resolver_host_hidden"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| OpenClaw now hides some skills the plugin still suggests from the agent's model (ineligible on this host, outside the agent's skill filter, or model invocation off). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only, which re-reads OpenClaw's skill list and stops suggesting them without installing anything. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_host_hidden](../../docs/guides/skill-resolver.md#skill_resolver_host_hidden)
+
 ### skill_resolver_host_load_cut
 
 <a id="skill_resolver_host_load_cut"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot), so setup leaves them out of the agent's suggestions. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot in openclaw.json, or split the skill root, then run setup again. | agent | `repeat the read that failed` | 1 | no |
+| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so setup leaves them out of the agent's suggestions and doctor warns when the plugin still offers one. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot and skills.limits.maxSkillsLoadedPerSource in openclaw.json, or split the skill root, then run gbrain setup openclaw --skills-index-only. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_host_load_cut](../../docs/guides/skill-resolver.md#skill_resolver_host_load_cut)
 

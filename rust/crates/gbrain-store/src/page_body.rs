@@ -836,6 +836,17 @@ pub(crate) fn page_columns(
     Ok(())
 }
 
+/// The live body generation and `body_bytes` of a segmented page, which its version snapshot
+/// references (`insertSegmentedVersion`); `None` for an inline page or a missing one.
+pub(crate) fn segmented_reference(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<(i64, Option<i64>)>> {
+    Ok(read_body_state(read, page_id)?
+        .filter(|state| state.body_storage == "segmented")
+        .map(|state| (state.body_generation, state.body_bytes)))
+}
+
 // ---------------------------------------------------------------------------------------------
 // Members
 // ---------------------------------------------------------------------------------------------
@@ -1157,6 +1168,9 @@ impl Store {
                 ingested_at_us: meta_ingested(meta).then_some(now),
                 tags: Vec::new(),
                 tag_sources: Default::default(),
+                trust_tier: None,
+                write_origin: None,
+                version_history_gap_at_us: None,
             };
             write_page(tx, &record)?;
             let state = BodyState {
