@@ -805,7 +805,10 @@ pub(crate) fn complete_write_row_in(
             .intent_bytes
             .checked_sub(c.intent_bytes)
             .ok_or_else(out_of_range)?;
-        counter.terminal_bytes -= released.min(counter.terminal_bytes);
+        counter.terminal_bytes = counter
+            .terminal_bytes
+            .checked_sub(released.min(counter.terminal_bytes))
+            .ok_or_else(out_of_range)?;
         write_counter(tx, &key, &counter)?;
     }
     if clamped > 0 {

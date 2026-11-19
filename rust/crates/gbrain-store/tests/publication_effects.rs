@@ -350,6 +350,8 @@ fn a_completion_whose_bytes_overflow_is_refused_not_wrapped_into_a_fit() {
     for (result, retained, reservation, intent) in [
         (i64::MAX, 0, 4096, 10),
         (100, 0, i64::MIN, 10),
+        // exactly i64::MIN once the reservation is subtracted: only the counter subtraction can refuse it
+        (100, 0, i64::MIN + 4096, 10),
         (100, 0, 4096, i64::MIN),
     ] {
         let completion: WriteCompletion = serde_json::from_value(json!({
