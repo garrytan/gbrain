@@ -1,11 +1,14 @@
 //! Jobs: the revoke members of `src/core/engine-sql/oauth-revocation.ts` over `oauth_tokens` and `oauth_clients`
 //! (rust/docs/store/oauth-tokens.md, oauth-clients.md).
 
+use gbrain_store::jobs::GrantAuditInsert;
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 
-use crate::store_binding::Brain;
+use serde_json::Value;
+
+use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
@@ -40,5 +43,32 @@ impl Brain {
         client_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.soft_delete_oauth_client(&client_id))
+    }
+
+    /// `setOauthClientRevision(clientId, revision, revoke)`: whether a client has the id.
+    #[napi]
+    pub fn set_oauth_client_revision<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+        revision: i32,
+        revoke: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_oauth_client_revision(&client_id, revision, revoke)
+        })
+    }
+
+    /// `insertOauthGrantAudit(row)`: null.
+    #[napi]
+    pub fn insert_oauth_grant_audit<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: GrantAuditInsert = required(row, "insertOauthGrantAudit row")?;
+            s.insert_oauth_grant_audit(&row)
+        })
     }
 }

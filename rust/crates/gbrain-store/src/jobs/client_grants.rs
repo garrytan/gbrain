@@ -67,6 +67,18 @@ pub struct GrantAudit {
     pub after_grant: String,
 }
 
+/// One grant audit row a client lifecycle action appends (`insertOauthGrantAudit`): the documents are JSON text.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GrantAuditInsert {
+    pub client_id: String,
+    pub actor: String,
+    pub action: String,
+    pub revision: i32,
+    #[serde(default)]
+    pub before_grant: Option<String>,
+    pub after_grant: String,
+}
+
 /// What `insertOauthClientGrant` writes beside the client: the register audit row.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RegisterAudit {
@@ -332,6 +344,28 @@ impl Store {
                 row.grant_revision,
                 ("register", &audit.actor),
                 None,
+                after_grant,
+            )
+        })
+    }
+
+    /// `insertOauthGrantAudit(row)`: appends one audit row, whether or not the client exists (a `delete` writes its
+    /// audit after the client is gone). `invalid_argument` for a document that is not JSON.
+    pub fn insert_oauth_grant_audit(&self, row: &GrantAuditInsert) -> Result<()> {
+        let before_grant = row
+            .before_grant
+            .as_deref()
+            .map(|t| parse_document(t, "audit before_grant"))
+            .transpose()?;
+        let after_grant = parse_document(&row.after_grant, "audit after_grant")?;
+        self.write(|tx| {
+            append_audit(
+                tx,
+                &*self.env,
+                &row.client_id,
+                row.revision,
+                (&row.action, &row.actor),
+                before_grant,
                 after_grant,
             )
         })

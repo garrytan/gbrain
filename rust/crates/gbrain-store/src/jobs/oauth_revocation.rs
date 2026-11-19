@@ -19,6 +19,27 @@ impl Store {
         self.write(|tx| delete_client_tokens(tx, client_id))
     }
 
+    /// `setOauthClientRevision(clientId, revision, revoke)`: `UPDATE oauth_clients SET grant_revision = $1` (with
+    /// `deleted_at = COALESCE(deleted_at, now())` when `revoke`); whether the client exists.
+    pub fn set_oauth_client_revision(
+        &self,
+        client_id: &str,
+        revision: i32,
+        revoke: bool,
+    ) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = load_client(tx, client_id)? else {
+                return Ok(false);
+            };
+            record.grant_revision = revision;
+            if revoke && record.deleted_at.is_none() {
+                record.deleted_at = Some(self.env.now_micros());
+            }
+            put_client(tx, &record)?;
+            Ok(true)
+        })
+    }
+
     /// `softDeleteOauthClient(clientId)`: `UPDATE oauth_clients SET deleted_at = now() WHERE client_id = $1`; whether
     /// the client exists. A client already soft-deleted takes the new time (the statement has no guard).
     pub fn soft_delete_oauth_client(&self, client_id: &str) -> Result<bool> {

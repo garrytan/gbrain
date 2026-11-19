@@ -156,8 +156,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readOauthClientLocked', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens',
     // grant writes and reads for rescope, first consent and attest sources (engine-sql/client-grants.ts)
     'readOauthClientForUpdate', 'readLiveOauthClients', 'readLiveAccessTokenRows', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'readSourceAttestState', 'replaceSourceConfig', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit',
-    // revoke deletes of a token and a client (engine-sql/oauth-revocation.ts)
-    'deleteOauthTokenByHash', 'softDeleteOauthClient', 'deleteOauthClientTokens', 'deleteOauthClientCodes'],
+    // revoke deletes of a token and a client, and the client lifecycle writes (engine-sql/oauth-revocation.ts)
+    'deleteOauthTokenByHash', 'softDeleteOauthClient', 'deleteOauthClientTokens', 'deleteOauthClientCodes',
+    'deleteOauthClientRow', 'setOauthClientRevision', 'insertOauthGrantAudit'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
   minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
     'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',

@@ -10,6 +10,7 @@ import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, O
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { OauthClientGrantPersist, OauthGrantAuditRow } from './engine-sql/client-grants.ts';
+import type { OauthGrantAuditInsert } from './engine-sql/oauth-revocation.ts';
 import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthCodeRow, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
@@ -3885,6 +3886,12 @@ export interface BrainEngine {
   deleteOauthClientTokens(clientId: string): Promise<void>;
   /** Delete every authorization code of the client (a store that keeps none deletes none). */
   deleteOauthClientCodes(clientId: string): Promise<void>;
+  /** Delete the OAuth client row (the lifecycle `delete`); its tokens and codes are separate deletes. */
+  deleteOauthClientRow(clientId: string): Promise<void>;
+  /** Set the client's grant revision; `revoke` also stamps `deleted_at` when the client is not already revoked. */
+  setOauthClientRevision(clientId: string, revision: number, revoke: boolean): Promise<void>;
+  /** Append one row to the OAuth grant audit (the grant documents are JSON text). */
+  insertOauthGrantAudit(row: OauthGrantAuditInsert): Promise<void>;
   /** The bearer check's OAuth token read at one rung of its degrade ladder. */
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]>;
   /** The bearer check's whole row (`SELECT *`) of the token not revoked with this hash, or null. */

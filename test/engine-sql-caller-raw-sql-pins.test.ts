@@ -498,6 +498,27 @@ const PINS: Pin[] = [
     texts: ['DELETE FROM oauth_tokens WHERE client_id = $1'],
   },
   {
+    from: 'src/core/grants/lifecycle.ts delete (at d8d9956871)',
+    case: { method: 'deleteOauthClientRow', variant: 'default', run: e => e.deleteOauthClientRow('client-a') },
+    texts: ['DELETE FROM oauth_clients WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/grants/lifecycle.ts revoke (at d8d9956871)',
+    case: { method: 'setOauthClientRevision', variant: 'revoke', run: e => e.setOauthClientRevision('client-a', 2, true) },
+    texts: ['UPDATE oauth_clients SET deleted_at = COALESCE(deleted_at, now()), grant_revision = $1 WHERE client_id = $2'],
+  },
+  {
+    from: 'src/core/grants/lifecycle.ts invalidate-tokens (at d8d9956871)',
+    case: { method: 'setOauthClientRevision', variant: 'invalidate', run: e => e.setOauthClientRevision('client-a', 2, false) },
+    texts: ['UPDATE oauth_clients SET grant_revision = $1 WHERE client_id = $2'],
+  },
+  {
+    from: 'src/core/grants/lifecycle.ts audit (at d8d9956871)',
+    case: { method: 'insertOauthGrantAudit', variant: 'default', run: e => e.insertOauthGrantAudit({ client_id: 'client-a', actor: 'admin', action: 'revoke', revision: 2, before_grant: '{}', after_grant: '{}' }) },
+    texts: [`INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
+      VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb)`],
+  },
+  {
     from: 'src/commands/auth.ts:180 list (at 837c389e52)',
     case: { method: 'listAccessTokens', variant: 'default', run: e => e.listAccessTokens() },
     texts: [`

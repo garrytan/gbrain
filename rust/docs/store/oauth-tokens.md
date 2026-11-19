@@ -71,3 +71,15 @@ All of them run in the store's write transaction, so a revoke is one write.
 - `deleteOauthClientCodes(clientId)`: a no-op on the Rust store for now; the store's `oauth_codes` delete is wired in
   the integration commit that follows.
 
+## Client lifecycle members
+
+`mutateClientLifecycle` (`src/core/grants/lifecycle.ts`: `invalidate-tokens`, `revoke`, `delete`) runs in one engine
+transaction on `readOauthClientForUpdate`, `deleteOauthClientTokens`, `deleteOauthClientCodes` and three more members of
+`engine-sql/oauth-revocation.ts`:
+
+- `deleteOauthClientRow(clientId)`: `DELETE FROM oauth_clients WHERE client_id = $1`. The Rust half is `delete_oauth_client`
+  (the row and its tokens); the returned row is dropped.
+- `setOauthClientRevision(clientId, revision, revoke)`: `grant_revision = $1`, and with `revoke` also
+  `deleted_at = COALESCE(deleted_at, now())` (`set_oauth_client_revision`): a second revoke keeps the first time.
+- `insertOauthGrantAudit(row)`: one `oauth_grant_audit` row whose documents are JSON text (`insert_oauth_grant_audit`,
+  the audit key space of `client_grants.rs`). It works for a client that is gone: a `delete` writes its tombstone after the row.
