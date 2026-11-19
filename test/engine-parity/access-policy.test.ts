@@ -194,4 +194,30 @@ describe('access policy members (engine-sql/access-policy.ts)', () => {
     expect(applied).toEqual({ alice: { satisfiedRuleIds: [`${SRC}:diary`], folderCoverage: [] }, served: ['notes/acme-open', 'private/acme-diary'], carol: ['notes/acme-open'] });
     return { pending, applied };
   });
+
+  parityTest('a caller record with no folder coverage reads a pending prefix as its record says, not as the store holds it', { methods: ['findPagesByTitles', 'getRecentSalience', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    // The record was read before the narrowing: it names no pending prefix, so PGLite and Postgres render no coverage
+    // conjunct and judge the page by its readers and stamped rules alone, while the store holds the prefix pending.
+    const stale = async (member: string, satisfiedRuleIds: string[]) => {
+      const identity = [`member:${member}`];
+      return withCallerAccess({ identity, hidePrivate: true, satisfiedRuleIds, folderCoverage: [] }, async () => ({
+        titles: (await engine.findPagesByTitles(['acme example'], [SRC], ['note'], { excludePrivate: true })).map(r => r.slug).sort(),
+        salience: (await engine.getRecentSalience({ days: 30, limit: 10, excludePrivate: true, sourceIds: [SRC] })).map(r => r.slug).sort(),
+      }));
+    };
+    const pending: unknown[] = [];
+    policySeams.afterInstall = async () => {
+      pending.push({ coverage: await coverageRows(engine, SRC), alice: await stale('alice-example', [`${SRC}:diary`]), carol: await stale('carol-example', []) });
+    };
+    try {
+      await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    expect(pending).toHaveLength(1);
+    expect((pending[0] as { coverage: unknown[] }).coverage).toHaveLength(1);
+    expect((pending[0] as { alice: { titles: string[] } }).alice.titles).toContain('private/acme-diary');
+    return { pending };
+  });
 });

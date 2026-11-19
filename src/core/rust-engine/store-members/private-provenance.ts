@@ -72,6 +72,11 @@ export interface StorePrivacyPolicy {
   satisfiedRuleIds?: string[];
   /** The prefixes the caller's record reads as nobody (`CallerAccess.folderCoverage`): a page under one is hidden. */
   folderCoverage?: { source_id: string; prefix: string }[];
+  /**
+   * The text is a caller record's rendering: `folderCoverage` is the whole pending test (`coverageSql` inside a record
+   * renders no live conjunct), so a prefix the store holds pending that the record does not name hides nothing.
+   */
+  callerRecord?: boolean;
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
@@ -232,7 +237,7 @@ export function storePageTextPolicy(
         ...(folders.satisfiedRuleIds.length ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
         ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
       };
-      return { ...pagePolicyFlags(canonical), ...readers, ...stored, ...openFlag };
+      return { ...pagePolicyFlags(canonical), ...readers, ...stored, ...openFlag, callerRecord: true };
     }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');

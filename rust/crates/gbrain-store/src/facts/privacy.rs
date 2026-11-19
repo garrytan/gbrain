@@ -36,6 +36,7 @@
 use super::FactRecord;
 use crate::Result;
 use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
+use crate::access_policy::kept_rules;
 use crate::access_rules::{
     AccessRuleRecord, folder_rules, pending_covers, rule_covers, stamped, valid_prefix,
 };
@@ -106,6 +107,12 @@ pub struct PrivacyPolicy {
     /// holds is. An entry with an invalid source id or prefix hides every page.
     #[serde(default)]
     pub folder_coverage: Vec<FolderCoverage>,
+    /// The policy is a caller record's rendering (`coverageSql` inside a record): the record's
+    /// `folder_coverage` is the whole pending test, so a prefix the store holds pending but the
+    /// record does not name hides nothing. Unset, the store's pending prefixes are read live, as
+    /// the no-caller rendering reads them.
+    #[serde(default)]
+    pub caller_record: bool,
 }
 
 /// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
@@ -122,6 +129,8 @@ pub struct FolderCoverage {
 struct FolderAccess<'a> {
     satisfied: &'a [String],
     coverage: &'a [FolderCoverage],
+    /// [`PrivacyPolicy::caller_record`]: `coverage` replaces the live pending prefixes.
+    record: bool,
 }
 
 impl FolderAccess<'_> {
@@ -266,14 +275,17 @@ fn member_access_allows(
     policy: &PrivacyPolicy,
     derived: bool,
 ) -> Result<bool> {
-    // `satisfiedFor(identity)`: the record's folder access holds for the record's own identity.
-    let folders = if !identity.is_empty() && identity == policy.identity.as_slice() {
-        FolderAccess {
-            satisfied: &policy.satisfied_rule_ids,
-            coverage: &policy.folder_coverage,
-        }
+    // `satisfiedFor(identity)`: the record's satisfied rules hold for the record's own identity;
+    // `coverageSql` reads the record's coverage whatever identity is judged.
+    let satisfied: &[String] = if !identity.is_empty() && identity == policy.identity.as_slice() {
+        &policy.satisfied_rule_ids
     } else {
-        FolderAccess::default()
+        &[]
+    };
+    let folders = FolderAccess {
+        satisfied,
+        coverage: &policy.folder_coverage,
+        record: policy.caller_record,
     };
     Ok(
         readers_allowed(read, page, identity, folders, policy.open, derived)?
@@ -507,7 +519,9 @@ pub(crate) fn access_readers(frontmatter: &Map<String, Value>) -> Option<Vec<Str
 
 /// The member-access part (`accessAllowedSql`) for `identity`: no readers of its own or readers
 /// that name one of its principals (`readersAllowedSql`), no folder rule the caller does not
-/// satisfy (`folderRulesAllowedSql` with an empty satisfied set) and no restricted origin. With
+/// satisfy (`folderRulesAllowedSql` with an empty satisfied set) and no restricted origin. A
+/// caller record's rendering reads its own coverage for the pending test, any other the store's
+/// pending prefixes. With
 /// `open` (the short form) a page that names readers or is stamped fails for any identity, and the
 /// rest runs only when the store's flag is set: unset, no stored page names readers. The full form
 /// also fails a page under a pending prefix, and with `derived` counts only the rules that cover
@@ -520,7 +534,15 @@ fn readers_allowed(
     open: bool,
     derived: bool,
 ) -> Result<bool> {
-    let rules = stamped_rules(read, page)?;
+    // A caller record's rendering reads no live pending prefix, so a page under one is judged by
+    // the ids its last stamp kept (`folder_rule_ids`), not the rules installed since; elsewhere the
+    // live pending prefix hides the page, and the kept ids equal the rules after the restamp.
+    let pending = pending_covers(read, &page.source_id, &page.slug)?;
+    let rules = if folders.record && pending {
+        kept_rules(read, &page.source_id, page.id)?
+    } else {
+        stamped_rules(read, page)?
+    };
     if open && (names_readers(page) || !restrictions_present(read)?) {
         return Ok(!names_readers(page) && rules.is_empty());
     }
@@ -531,10 +553,7 @@ fn readers_allowed(
     } else {
         !folders.satisfies_all(rules.iter())
     };
-    if folder_closed
-        || (!open && folders.covers(page))
-        || pending_covers(read, &page.source_id, &page.slug)?
-    {
+    if folder_closed || (!open && folders.covers(page)) || (!folders.record && pending) {
         return Ok(false);
     }
     if names_readers(page)
@@ -806,6 +825,28 @@ mod tests {
             assert!(!allowed(&raw, open, false));
         }
         assert!(!allowed(&queued, false, false));
+        // A caller record's rendering reads only its own coverage: a prefix the store holds pending
+        // but the record does not name hides nothing (`coverageSql` inside a record).
+        let record = |coverage: &[FolderCoverage]| {
+            readers_allowed(
+                &*read,
+                &queued,
+                &identity,
+                FolderAccess {
+                    satisfied: &[],
+                    coverage,
+                    record: true,
+                },
+                false,
+                false,
+            )
+            .unwrap()
+        };
+        assert!(record(&[]));
+        assert!(!record(&[FolderCoverage {
+            source_id: queued.source_id.clone(),
+            prefix: String::new(),
+        }]));
         // As a fact's origin a raw-only rule does not count; a derived-covering rule does.
         assert!(allowed(&raw, false, true));
         assert!(!allowed(&private, false, true));
@@ -842,6 +883,7 @@ mod tests {
         let named = FolderAccess {
             satisfied: &satisfied,
             coverage: &[],
+            record: false,
         };
         assert!(allowed(&private, named, false, false));
         assert!(
@@ -857,11 +899,13 @@ mod tests {
         let covered = FolderAccess {
             satisfied: &satisfied,
             coverage: &coverage,
+            record: false,
         };
         assert!(!allowed(&private, covered, false, false));
         let invalid = FolderAccess {
             satisfied: &satisfied,
             coverage: &bad,
+            record: false,
         };
         assert!(!allowed(&private, invalid, false, false));
         let policy = PrivacyPolicy {

@@ -102,8 +102,12 @@ The folder test reads the store's rules and pending prefixes, and the policy's `
 So a policy with every defaulted field missing still hides a folder-restricted page, and no
 owner-only form reopens one (`a_policy_missing_its_defaulted_fields_still_hides_a_folder_restricted_page`).
 
-The store also hides a page under a pending prefix when the caller's record has no coverage entries, where the
-Postgres text renders no pending conjunct for such a record. That hides more than Postgres hides, never less.
+Inside a caller record (`callerRecord: true`, the canonical caller-readers rendering), Postgres renders the record's
+coverage and no live pending conjunct, so a record that names no pending prefix reads a page under one by the ids
+its last stamp kept. The store does the same: in that rendering the record's `folderCoverage` replaces the live
+pending test, and a page under a live pending prefix is judged by its kept ids (sub-tag `0x05`), not the rules
+installed since. The record's coverage applies whatever identity is judged; its satisfied rules only for its own
+identity. Outside a caller record, and for every fact and origin test, the store reads the pending prefixes live.
 
 ## Setup and policy-store members
 
@@ -139,7 +143,8 @@ that differ only in punctuation or case can come back in another order than PGLi
   newest applied revision per source, folder restriction and stamping, and the writes the v283 checks refuse.
 - `crates/gbrain-store/src/facts/privacy.rs` (unit tests): a folder rule and a pending prefix hide pages from a
   caller that satisfies no rule; a raw-only rule does not close an origin; a reader a rule names is served the folder
-  unless its record covers the prefix or the prefix is invalid, and only for its own identity.
+  unless its record covers the prefix or the prefix is invalid, and only for its own identity; a caller record that
+  names no pending prefix reads a page under one.
 - `test/engine-parity/write-misc.test.ts` and `test/engine-parity/import-path.test.ts`: `readFolderAccess`,
   `folderAccessForAll`, `appliedAccessSummary`, `isFolderRestricted` and `listAppliedPolicyRevisions` on every arm, and
   a private folder that refuses a caller its rule does not name (no rule satisfied, the folder's page hidden from
@@ -152,7 +157,8 @@ that differ only in punctuation or case can come back in another order than PGLi
   removal waits for approval and then shows it, the pending prefix between install and restamp, the revision count, a
   rule change refused part way, two concurrent rule changes that cannot both apply against one revision, a page
   written or renamed under an applied rule that a later restamp does not count, and a reader a rule names that
-  `findPagesByTitles` serves the folder, except while its prefix is pending.
+  `findPagesByTitles` serves the folder, except while its prefix is pending; and a caller record with no folder
+  coverage, read while a prefix is pending, that `findPagesByTitles` and `getRecentSalience` serve as Postgres does.
 - `crates/gbrain-store/src/access_migrations.rs` (unit tests): the unfinished migration is the newest that has not
   switched, and a migration write the table refuses (a source with no access state, a direction or phase it does not
   allow, a used id) writes nothing.
