@@ -612,7 +612,7 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
         last: r.last_page === null ? null : [pages.get(Number(r.last_page)), r.last_pipeline, occurrences.indexOf(Number(r.last_occurrence))] };
     });
     const first = await probe(SRC, [], null, 2);
-    const cursorOf = (last: Array<string | number | undefined> | null): [number, string, string] =>
+    const cursorOf = (last: Array<string | number | null | undefined> | null): [number, string, string] =>
       [[...pages].find(([, label]) => label === last![0])![0], String(last![1]), String(occurrences[Number(last![2])])];
     const answers = {
       whole: await probe(SRC, [], null, 100), rewritten: await probe(SRC, [a.pageId], null, 100), first,

@@ -433,7 +433,7 @@ describe('engine parity: dream-cycle statements', () => {
       keys: Object.keys(r).sort(), id: nameOf(String(r.id)), request_id: r.request_id, operation: r.operation, slug: r.slug, state: r.state,
       error_code: r.error_code, principal_kind: r.principal_kind, source_id: r.source_id, compacted: r.compacted,
     });
-    const later = async (slug: string, sequence: number | string, inc = incarnation) => (await engine.listLaterPersistenceRequests('default', inc, slug, sequence)).map(view);
+    const later = async (slug: string, sequence: number | string, inc = incarnation) => (await engine.listLaterPersistenceRequests('default', inc, slug, sequence)).map(r => view({ ...r }));
     const committedOf = async (ids: string[], inc = incarnation) => (await engine.listCommittedOutputRequests(ids, 'default', inc)).map(r => ({ request: view(r.request as never) }));
     const receipt = async (id: string) => engine.readDreamDeferralReceipt(id);
     const out = {

@@ -174,8 +174,8 @@ describe('engine parity: group 5 facts conversation publication and relink state
     expect(out.batches[0]!.members).toEqual([{ generation: 'g1', attempt: 1 }, { generation: 'g2', attempt: 2 }]);
     expect(out.elsewhere.map(b => b.id)).toEqual(['elsewhere']);
     expect({ none: out.none, otherWriter: out.otherWriter }).toEqual({ none: [], otherWriter: [] });
-    expect(out.stored.first).toEqual(entry('g1', 1));
-    expect(out.stored.second).toEqual(entry('g2', 2));
+    expect(out.stored.first).toEqual(entry('g1', 1) as never);
+    expect(out.stored.second).toEqual(entry('g2', 2) as never);
     expect(out.stored.compacted).toBeNull();
     expect(out.stored.wrongGeneration).toBeNull();
     // Six requests were admitted and four settled: two stay outstanding.
