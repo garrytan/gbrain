@@ -213,6 +213,7 @@ import * as jobsImpl from './engine-sql/jobs.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from './engine-sql/jobs.ts';
 import * as jobsQueue from './engine-sql/jobs-queue.ts';
 import * as jobsHealth from './engine-sql/jobs-health.ts';
+import * as engineMigration from './engine-sql/engine-migration.ts';
 import type { QueueDivergenceSpec, QueueHealthSpec } from './engine-sql/jobs-health.ts';
 import * as jobsStatus from './engine-sql/jobs-status.ts';
 import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
@@ -3898,6 +3899,12 @@ export class PostgresEngine implements BrainEngine {
   async readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }) { return jobsHealth.readWedgeSignals(this, queue, handlerNames, opts); }
   async readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }) { return jobsHealth.readOldestWaitingAge(this, queue, opts); }
   async listStuckActiveJobsByName() { return jobsHealth.listStuckActiveJobsByName(this); }
+  // Engine migration source reads (engine-sql/engine-migration.ts).
+  async readEngineMigrationHistory() { return engineMigration.readEngineMigrationHistory(this); }
+  async readMigrationRows(table: engineMigration.MigrationTable) { return engineMigration.readMigrationRows(this, table); }
+  async readMigrationPageColumns(slug: string, sourceId: string) { return engineMigration.readMigrationPageColumns(this, slug, sourceId); }
+  async listManualLinkTransitions(slug: string, sourceId: string) { return engineMigration.listManualLinkTransitions(this, slug, sourceId); }
+  async countLiveTimelineEntries() { return engineMigration.countLiveTimelineEntries(this); }
 
   // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
   async readLastAutopilotCycles() { return jobsStatus.readLastAutopilotCycles(this); }

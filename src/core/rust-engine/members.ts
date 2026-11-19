@@ -1006,6 +1006,12 @@ export const RUST_ENGINE_MEMBERS = {
   listSegmentedPages: 'facts',
   invalidateWithdrawnPages: 'facts',
   hasWithdrawnFenceClaim: 'facts',
+  // The source-side reads of `gbrain migrate --to <engine>` (rust/docs/store/engine-migration.md).
+  readEngineMigrationHistory: 'persistence_journal',
+  readMigrationRows: 'sources',
+  readMigrationPageColumns: 'pages',
+  listManualLinkTransitions: 'links',
+  countLiveTimelineEntries: 'timeline',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

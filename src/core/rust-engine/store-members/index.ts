@@ -92,6 +92,7 @@ import * as calibrationProfiles from './calibration-profiles.ts';
 import * as decideProposals from './decide-proposals.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as decideStore from './decide-store.ts';
+import * as engineMigration from './engine-migration.ts';
 import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
@@ -165,6 +166,8 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
+  // The source-side reads of `gbrain migrate --to <engine>` (rust/docs/store/engine-migration.md).
+  ...engineMigration,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

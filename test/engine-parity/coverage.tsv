@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 908/908
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -79,6 +79,7 @@
 # decide_store: 20/20
 # jobs_wake: 19/19
 # owner_only: 1/1
+# engine_migration: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
@@ -89,17 +90,17 @@ transaction	lifecycle	yes	116	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	126	yes	yes	yes	serves
+getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	541	yes	yes	yes	serves
+putPage	pages	yes	543	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	152	yes	yes	yes	serves
+softDeletePage	pages	yes	153	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -112,7 +113,7 @@ listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
 listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
-listAllPageRefs	pages	yes	2	yes	yes	yes	serves
+listAllPageRefs	pages	yes	3	yes	yes	yes	serves
 listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	7	no	yes	yes	serves
@@ -172,7 +173,7 @@ linkRelationshipKeysForPages	link_temporal	yes	2	no	yes	yes	serves
 staleLinkRelationshipKeys	link_temporal	yes	2	no	yes	yes	serves
 linkRelationshipKeysForOrigin	link_temporal	yes	2	no	yes	yes	serves
 applyLinkTemporalRows	link_temporal	yes	1	no	yes	yes	serves
-writeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
+writeManualLinkTransitions	link_temporal	yes	3	no	yes	yes	serves
 removeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
 edgeValidityCounts	link_temporal	yes	1	no	yes	yes	serves
@@ -241,13 +242,13 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	113	yes	yes	yes	serves
+addLink	links	yes	115	yes	yes	yes	serves
 addLinksBatch	links	yes	16	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	20	yes	yes	yes	serves
+getLinks	links	yes	21	yes	yes	yes	serves
 getBacklinks	links	yes	12	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -264,7 +265,7 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	10	no	yes	yes	serves
 getSalienceScores	links	yes	12	yes	yes	yes	serves
 findOrphanPages	links	yes	8	yes	yes	yes	serves
-addTag	tags	yes	18	yes	yes	yes	serves
+addTag	tags	yes	20	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
@@ -278,7 +279,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	41	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	43	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	18	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
@@ -293,7 +294,7 @@ mergeOntologyFact	ontology	yes	10	no	yes	yes	serves
 getOntology	ontology	yes	5	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
-putRawData	raw_files	yes	6	yes	yes	yes	serves
+putRawData	raw_files	yes	8	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	3	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
@@ -335,7 +336,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	61	yes	yes	yes	serves
+insertFact	facts	yes	63	yes	yes	yes	serves
 insertFacts	facts	yes	95	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
@@ -366,7 +367,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	27	no	yes	yes	serves
+createVersion	versions	yes	28	no	yes	yes	serves
 getVersions	versions	yes	16	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -374,7 +375,7 @@ stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
 pruneHoldingPageVersions	versions	yes	1	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
-getStats	stats_ingest	yes	5	yes	yes	yes	serves
+getStats	stats_ingest	yes	6	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
@@ -389,12 +390,12 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	15	no	yes	yes	serves
-setConfig	config	yes	28	no	yes	yes	serves
+setConfig	config	yes	30	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
-getAllConfig	config	yes	1	no	yes	yes	serves
+getAllConfig	config	yes	2	no	yes	yes	serves
 getConfigValues	config	yes	6	no	yes	yes	serves
-readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
+readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
@@ -818,7 +819,7 @@ listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	10	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	12	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
@@ -983,3 +984,8 @@ queueWakeForget	jobs_wake	yes	2	no	yes	yes	serves
 claimWakeForgets	jobs_wake	yes	2	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
+readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
+readMigrationRows	engine_migration	yes	2	no	yes	yes	serves
+readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves
+listManualLinkTransitions	engine_migration	yes	2	no	yes	yes	serves
+countLiveTimelineEntries	engine_migration	yes	2	no	yes	yes	serves

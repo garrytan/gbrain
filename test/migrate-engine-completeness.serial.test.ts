@@ -315,7 +315,7 @@ describe('copyMigrationConfig — copy-all with an explicit engine-local denylis
       { key: 'version', value: '99' },
     ];
     const source = {
-      executeRaw: async () => sourceRows,
+      getAllConfig: async () => Object.fromEntries(sourceRows.map(r => [r.key, r.value])),
     } as unknown as BrainEngine;
     const writes: Array<[string, string]> = [];
     const target = {

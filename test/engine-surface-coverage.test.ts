@@ -65,6 +65,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // Minion queue: health reads (engine-sql/jobs-health.ts)
   'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
   'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName',
+  // gbrain migrate --to <engine>: the source-side reads (engine-sql/engine-migration.ts)
+  'readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries',
   // Minion job counts and last-run reads for the status surfaces, lane L5 group B (engine-sql/jobs-status.ts)
   'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',

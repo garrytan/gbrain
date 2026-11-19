@@ -102,6 +102,7 @@ import type {
 import type {
   PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
 } from './engine-sql/jobs-health.ts';
+import type { EngineMigrationHistory, ManualLinkTransition, MigrationPageColumns, MigrationRows, MigrationTable } from './engine-sql/engine-migration.ts';
 import type {
   EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
   WaitingScopeState,
@@ -4231,6 +4232,18 @@ export interface BrainEngine {
   readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
+
+  // Engine migration source reads (engine-sql/engine-migration.ts): what `gbrain migrate --to` reads from the brain it moves.
+  /** The write-history tables holding rows and the page-version count, which the legacy copier refuses to discard. */
+  readEngineMigrationHistory(): Promise<EngineMigrationHistory>;
+  /** Every row of a table the copier carries whole, by id (sources: `default` first); null when the schema lacks it. */
+  readMigrationRows(table: MigrationTable): Promise<MigrationRows | null>;
+  /** A page's origin, kind and provenance columns and whether its projection is sealed, in any deletion state; null for none. */
+  readMigrationPageColumns(slug: string, sourceId: string): Promise<MigrationPageColumns | null>;
+  /** The manual dated statements of the relationships a page starts. */
+  listManualLinkTransitions(slug: string, sourceId: string): Promise<ManualLinkTransition[]>;
+  /** Timeline rows of live pages. */
+  countLiveTimelineEntries(): Promise<number>;
 
   // Minion job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts): `gbrain status`, `jobs stats`,
   // the facts drain backlog, source health and the sync status report. Windows are seconds.

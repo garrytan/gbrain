@@ -288,6 +288,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
   ],
   owner_only: ['ownerOnlyMarkTriggers'],
+  // engine_migration: the source-side reads of `gbrain migrate --to <engine>` (engine-sql/engine-migration.ts)
+  engine_migration: ['readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

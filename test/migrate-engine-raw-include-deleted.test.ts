@@ -36,7 +36,7 @@ describe('copyPageToTarget — raw_data read opts', () => {
     ];
     const source = {
       getChunksWithEmbeddings: async () => [],
-      executeRaw: async () => [], // #6286: the copier reads the source row's origin and provenance columns
+      readMigrationPageColumns: async () => null, // #6286: the copier reads the source row's origin and provenance columns
       getTags: async () => [],
       getTimeline: async () => [],
       getRawData: async (slug: string, rawSource: unknown, opts: unknown) => {
