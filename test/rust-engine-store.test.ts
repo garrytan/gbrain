@@ -25,7 +25,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { bindCredential, getMember, listMembers } from '../src/core/access/members.ts';
+import { addMember, bindCredential, getMember, listMembers } from '../src/core/access/members.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -287,6 +287,10 @@ describe('Rust engine on the store', () => {
     expect(await code(() => engine.writeCredentialReadsUnscoped(target, true))).toBe('engine_capability_missing');
     // bindCredential (gbrain auth rescope --member none) stops at the locked read, so applyAttestSources never runs.
     expect(await code(() => bindCredential(engine, target, { member: null }))).toBe('engine_capability_missing');
+    // gbrain access member add --bind-token looks the token up first, so the command refuses before it writes.
+    expect(await code(() => addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' }))).toBe('engine_capability_missing');
+    expect(await getMember(engine, 'alice-example')).toBeNull();
+    expect(await engine.getConfig('access.restrictions_present')).toBeNull();
     // Without a token the same insert writes the member.
     expect(await engine.insertAccessMember({ ...spec, bindTokenId: null })).toEqual({ groupsCreated: ['team-a'] });
     expect(await engine.listActiveAccessMembers()).toEqual(['alice-example']);

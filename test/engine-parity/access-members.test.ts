@@ -19,7 +19,8 @@
  *    the result shows it (a second member for the count, a removed member for the email and kind writes, a taken
  *    email, an unknown member id).
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and no parity
- *    case wrote a member.
+ *    case wrote a member. The end-to-end cases run the commands (addMember, disable, enable, set --email, kind) and
+ *    read back through getMember, listMembers and readAudiencePrincipals on every arm.
  *    The credential binding members (gbrain access member add --bind-token, gbrain auth rescope --member) lock and
  *    write access_tokens and oauth_clients rows; the Rust store keeps no credentials, so there they stop on
  *    engine_capability_missing (test/rust-engine-store.test.ts pins that nothing is written first).
@@ -31,6 +32,7 @@ import { parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AccessMemberInsert, CredentialBindingRow } from '../../src/core/engine-sql/access-members.ts';
+import { addMember, disableMember, enableMember, getMember, listMembers, setMemberEmail, setMemberKind, type MemberRecord } from '../../src/core/access/members.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -228,6 +230,77 @@ describe('access member writes', () => {
       tokenNarrow: bound,
       client: { ...none, member_id: 'alice-example', grant_types: ['authorization_code'], confidential: false },
       missing: undefined,
+    });
+    return out;
+  });
+});
+
+/** A member record with its creation time reduced to its shape. */
+const shape = (m: MemberRecord | null) => m && { ...m, created_at: SINCE_ISO.test(m.created_at ?? '') ? '<created>' : m.created_at };
+const SINCE_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+/** The operation error fields a member command refusal carries, or 'ok'. */
+async function opRefusal(fn: () => Promise<unknown>): Promise<unknown> {
+  try { await fn(); return 'ok'; }
+  catch (error) {
+    const e = error as { code?: unknown; reason?: unknown; details?: { reason?: unknown } };
+    return { code: e.code, reason: e.reason ?? e.details?.reason ?? null };
+  }
+}
+
+describe('access member commands, end to end', () => {
+  parityTest('gbrain access member add, disable, enable, set --email and kind read back through getMember and listMembers', {
+    methods: ['insertAccessMember', 'readAccessMembers', 'readAccessMemberIdByEmail', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind'],
+  }, async (engine) => {
+    const added = await addMember(engine, 'alice-example', { name: 'Alice', email: 'a@example.com', groups: ['team-a'] });
+    const out = {
+      added: { ...added, member: shape(added.member) },
+      takenEmail: await opRefusal(() => addMember(engine, 'bob-example', { email: 'a@example.com' })),
+      again: await opRefusal(() => addMember(engine, 'alice-example')),
+      bob: shape((await addMember(engine, 'bob-example', { groups: ['team-a', 'team-b'] })).member),
+      disabled: shape(await disableMember(engine, 'bob-example')),
+      enabled: shape(await enableMember(engine, 'bob-example')),
+      email: await setMemberEmail(engine, 'alice-example', null).then(r => ({ changed: r.changed, email: r.member.email })),
+      kind: await setMemberKind(engine, 'bob-example', 'audience', { remote: false }).then(r => ({ changed: r.changed, kind: r.member.kind })),
+      unknown: await getMember(engine, 'zz-none'),
+      list: (await listMembers(engine)).map(m => [m.id, m.status, m.kind, m.email, m.groups]),
+    };
+    expect(out).toEqual({
+      added: {
+        member: { id: 'alice-example', display_name: 'Alice', email: 'a@example.com', status: 'enabled', kind: 'person', labelled_only: false, groups: ['team-a'], created_at: '<created>' },
+        groups_created: ['team-a'], bound: null,
+      },
+      takenEmail: { code: 'access_member_invalid', reason: 'email_taken' },
+      again: { code: 'access_member_invalid', reason: 'exists' },
+      bob: { id: 'bob-example', display_name: null, email: null, status: 'enabled', kind: 'person', labelled_only: false, groups: ['team-a', 'team-b'], created_at: '<created>' },
+      disabled: { id: 'bob-example', display_name: null, email: null, status: 'disabled', kind: 'person', labelled_only: false, groups: ['team-a', 'team-b'], created_at: '<created>' },
+      enabled: { id: 'bob-example', display_name: null, email: null, status: 'enabled', kind: 'person', labelled_only: false, groups: ['team-a', 'team-b'], created_at: '<created>' },
+      email: { changed: true, email: null },
+      kind: { changed: true, kind: 'audience' },
+      unknown: null,
+      list: [['alice-example', 'enabled', 'person', null, ['team-a']], ['bob-example', 'enabled', 'audience', null, ['team-a', 'team-b']]],
+    });
+    return out;
+  });
+
+  parityTest('readAudiencePrincipals names only the enabled members and the existing groups asked for', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'readAudiencePrincipals'],
+  }, async (engine) => {
+    await engine.insertAccessMember(member('alice-example', { groups: ['team-b', 'team-a'] }));
+    await engine.insertAccessMember(member('bob-example'));
+    await engine.insertAccessMember(member('carol-example', { groups: ['team-c'] }));
+    await engine.setAccessMemberDisabled('bob-example', true);
+    await engine.tombstoneAccessMember('carol-example');
+    const read = await engine.readAudiencePrincipals(['alice-example', 'bob-example', 'carol-example', 'zz-none'], ['team-a', 'team-c', 'zz-none']);
+    const out = {
+      members: [...read.members].sort((a, b) => (a.id < b.id ? -1 : 1)),
+      groups: [...read.groups].sort(),
+      empty: await engine.readAudiencePrincipals([], []),
+    };
+    expect(out).toEqual({
+      members: [{ id: 'alice-example', groups: ['team-a', 'team-b'] }],
+      groups: ['team-a', 'team-c'],
+      empty: { members: [], groups: [] },
     });
     return out;
   });
