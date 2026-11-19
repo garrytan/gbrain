@@ -390,7 +390,6 @@ src/core/enrichment-service.ts	execute_raw	2
 src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
 src/core/entities/resolve.ts	execute_raw	11
-src/core/entity-identity.ts	execute_raw	6
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
 src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
@@ -473,7 +472,7 @@ src/core/ghost-pages.ts	execute_raw	3
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3
 src/core/google/attachment-backfill.ts	execute_raw	2
-src/core/google/counterparty.ts	execute_raw	2
+src/core/google/counterparty.ts	execute_raw	1
 src/core/google/file-modes.ts	execute_raw	1
 src/core/google/google-source.ts	execute_raw	4
 src/core/google/loop-catchup.ts	execute_raw	8

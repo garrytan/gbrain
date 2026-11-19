@@ -175,6 +175,23 @@ describe('engine parity: open loops', () => {
   );
 
   parityTest(
+    'readEntityOpenLoops breaks a tie in last activity by the newest loop id, so tied loops read in one order',
+    { methods: ['upsertOpenLoop', 'readEntityOpenLoops'] },
+    async (engine) => {
+      const loopId = loopIds(await engine.upsertOpenLoop(loop({ dedupKey: 't1', counterpartySlug: 'people/alice-example', lastActivityAt: T2 })));
+      for (const k of ['t2', 't3', 't4']) {
+        await engine.upsertOpenLoop(loop({ dedupKey: k, counterpartySlug: 'people/alice-example', lastActivityAt: T2 }));
+      }
+      await engine.upsertOpenLoop(loop({ dedupKey: 't5', counterpartySlug: 'people/alice-example', lastActivityAt: T3 }));
+      const read = async (limit: number) =>
+        (await engine.readEntityOpenLoops('people/alice-example', 'default', limit)).map(r => observe(loopId, r as unknown as Record<string, unknown>)?.id);
+      const all = await read(10);
+      expect(all).toEqual([5, 4, 3, 2, 1]);
+      return { all, two: await read(2), three: await read(3) };
+    },
+  );
+
+  parityTest(
     'closeOpenLoop closes only an open loop in the named source, and refuses a status the table does not allow',
     { methods: ['upsertOpenLoop', 'closeOpenLoop'] },
     async (engine, backend) => {

@@ -255,6 +255,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
   // Open loops (engine-sql/open-loops.ts)
   'upsertOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'closeOpenLoop',
+  // Entity identity groups (engine-sql/entity-identities.ts)
+  'linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin',
   // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts)
   'openWakeWatch', 'listWakeWatches', 'endWakeWatches', 'countWakeWatches', 'readWakeDoctor', 'countPendingWakeForgets', 'listWakeCrons',
   'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun', 'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches',
@@ -296,6 +298,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'telemetryRead',
   // Alias fan-out reads: the unscoped engine-sql executor they run through.
   'aliasFanoutRead',
+  // Entity identity reads: the unscoped engine-sql executor they run through.
+  'entityIdentityRead',
   // CLI reads: the executors the CLI read members run through (PGLite rawRead wraps executeRaw; cliReads is the unscoped engine-sql executor).
   'rawRead',
   'cliReads',

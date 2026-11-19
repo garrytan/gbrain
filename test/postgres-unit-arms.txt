@@ -141,6 +141,7 @@ test/engine-parity/delegated-grant.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
+test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-pool-widening.test.ts

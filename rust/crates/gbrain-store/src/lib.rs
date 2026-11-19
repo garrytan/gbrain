@@ -43,6 +43,7 @@ pub mod contradictions;
 pub mod dream;
 pub mod embedding_catalog;
 pub mod embeddings;
+pub mod entity_identities;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;

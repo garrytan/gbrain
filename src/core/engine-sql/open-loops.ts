@@ -120,8 +120,9 @@ export interface EntityOpenLoopRow {
 
 /**
  * entity-card.ts assembleCard's open-loop read: the open loops whose counterparty page is (sourceId, slug), a row with
- * no counterparty source counting as its own source's, newest activity first, at most `limit`. Same text and
- * parameters the caller ran; `limit` is the integer literal it interpolated.
+ * no counterparty source counting as its own source's, newest activity first and then the newest loop id, at most
+ * `limit`. The caller's text and parameters, plus the `id DESC` tie-break; `limit` is the integer literal it
+ * interpolated.
  */
 export async function readEntityOpenLoops(exec: LegacyUnscopedRead, slug: string, sourceId: string, limit: number): Promise<EntityOpenLoopRow[]> {
   if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 1) throw new Error(`readEntityOpenLoops: limit must be a positive integer, got ${limit}`);
@@ -129,7 +130,7 @@ export async function readEntityOpenLoops(exec: LegacyUnscopedRead, slug: string
        FROM open_loops
        WHERE status = 'open' AND counterparty_slug = ${slug}
          AND COALESCE(counterparty_source_id, source_id) = ${sourceId}
-       ORDER BY last_activity_at DESC
+       ORDER BY last_activity_at DESC, id DESC
        LIMIT ${trustedSql(`${limit}`)}`);
 }
 

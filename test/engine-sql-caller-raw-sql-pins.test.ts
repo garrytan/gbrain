@@ -140,6 +140,7 @@ const PINS: Pin[] = [
     : ''} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $4' : ''}))
           ORDER BY l.id`],
   })),
+  // Not the caller's text: the statement adds `id DESC` as the last ORDER BY key, so tied loops read in one order.
   {
     from: 'src/core/verbs/entity-card.ts:691 assembleCard open loops',
     case: { method: 'readEntityOpenLoops', variant: 'default', run: e => e.readEntityOpenLoops('people/alice-example', 'default', 3) },
@@ -147,8 +148,90 @@ const PINS: Pin[] = [
        FROM open_loops
        WHERE status = 'open' AND counterparty_slug = $1
          AND COALESCE(counterparty_source_id, source_id) = $2
-       ORDER BY last_activity_at DESC
+       ORDER BY last_activity_at DESC, id DESC
        LIMIT 3`],
+  },
+  ...([[true, 'canonical'], [null, 'keep']] as const).map(([canonical, variant]): Pin => ({
+    from: 'src/core/entity-identity.ts:71/114/118 resolvePageId + linkEntityIdentity',
+    case: {
+      method: 'linkEntityIdentityRow', variant,
+      rows: [[/SELECT id FROM pages/i, [{ id: 7 }]]],
+      run: e => e.linkEntityIdentityRow({ entityId: 'alice', slug: 'people/alice-example', sourceId: 'default', confidence: 1, establishedBy: 'manual', canonical }),
+    },
+    texts: [
+      'SELECT id FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL',
+      ...(canonical === true ? ['UPDATE entity_identities SET canonical = false WHERE entity_id = $1 AND canonical'] : []),
+      `INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::boolean, false))
+       ON CONFLICT (source_id, page_id) DO UPDATE SET
+         entity_id = EXCLUDED.entity_id,
+         confidence = EXCLUDED.confidence,
+         established_by = EXCLUDED.established_by,
+         canonical = CASE WHEN $6::boolean IS NULL
+           THEN entity_identities.canonical AND entity_identities.entity_id = EXCLUDED.entity_id
+           ELSE EXCLUDED.canonical END,
+         established_at = now()`,
+    ],
+  })),
+  {
+    from: 'src/core/entity-identity.ts:146 unlinkEntityIdentity',
+    case: { method: 'unlinkEntityIdentityRow', variant: 'default', run: e => e.unlinkEntityIdentityRow({ entityId: 'alice', slug: 'people/alice-example', sourceId: 'default' }) },
+    texts: [`DELETE FROM entity_identities ei
+     USING pages p
+     WHERE ei.page_id = p.id
+       AND ei.entity_id = $1
+       AND p.slug = $2
+       AND ei.source_id = $3
+     RETURNING ei.id`],
+  },
+  // Equivalent statement, not byte for byte: master expanded each source list into `IN ($4, $5)` placeholders;
+  // engine-sql binds the list once as `= ANY($n::text[])` (check-engine-sql-dynamic bans a composed `IN (`
+  // list). The same sources match, so the same rows come back in the same order. The rest of the text is verbatim.
+  ...([
+    ['all', {}],
+    ['entity', { entityId: 'alice' }],
+    ['seed+grant+private', { entityId: 'alice', slug: 'people/alice-example', slugSourceId: 'default', allowedSources: ['default', 'team'], excludePrivate: true }],
+  ] as const).map(([variant, filter]): Pin => ({
+    from: 'src/core/entity-identity.ts:220 listEntityIdentities',
+    case: { method: 'listEntityIdentityRows', variant, run: e => e.listEntityIdentityRows(filter) },
+    texts: () => {
+      const f = filter as { entityId?: string; slug?: string; excludePrivate?: boolean };
+      const where: string[] = [];
+      if (f.excludePrivate) where.push(privatePagesFilterForCaller('p'));
+      if (f.entityId) where.push('ei.entity_id = $1');
+      if (f.slug) {
+        where.push(`ei.entity_id IN (
+      SELECT ei2.entity_id FROM entity_identities ei2
+      JOIN pages p2 ON p2.id = ei2.page_id AND p2.source_id = ei2.source_id
+      WHERE p2.slug = $2 AND p2.deleted_at IS NULL AND ei2.source_id = $3 AND ei2.source_id = ANY($4::text[]) AND ${privatePagesFilterForCaller('p2')}
+    )`);
+        where.push('ei.source_id = ANY($5::text[])');
+      }
+      return [`SELECT ei.entity_id, ei.source_id, p.slug, p.title, ei.confidence,
+              ei.established_by, ei.established_at, ei.canonical
+       FROM entity_identities ei
+       JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
+       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY ei.entity_id, ei.canonical DESC, ei.source_id, p.slug`];
+    },
+  })),
+  {
+    from: 'src/core/entity-identity.ts:266 identityIdsForPages',
+    case: { method: 'readEntityIdentityIdsForPages', variant: 'default', run: e => e.readEntityIdentityIdsForPages([{ sourceId: 'default', slug: 'people/alice-example' }]) },
+    texts: [`SELECT ei.entity_id, ei.source_id, p.slug
+         FROM entity_identities ei
+         JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
+        WHERE ei.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`],
+  },
+  {
+    from: 'src/core/google/counterparty.ts:35 canonicalTwin',
+    case: { method: 'readCanonicalTwin', variant: 'default', run: e => e.readCanonicalTwin('default', 'people/alice-example') },
+    texts: [`SELECT c.slug, ei.source_id
+         FROM entity_identities me
+         JOIN pages p ON p.id = me.page_id AND p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
+         JOIN entity_identities ei ON ei.entity_id = me.entity_id AND ei.canonical AND ei.source_id <> $1
+         JOIN pages c ON c.id = ei.page_id AND c.deleted_at IS NULL
+        LIMIT 2`],
   },
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',

@@ -540,6 +540,13 @@ export const RUST_ENGINE_MEMBERS = {
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',
   readEntityOpenLoops: 'facts',
+  // entity_identities (engine-sql/entity-identities.ts): cross-source identity groups (key tag `i`,
+  // rust/docs/store/entity_identities.md).
+  linkEntityIdentityRow: 'entity_identities',
+  unlinkEntityIdentityRow: 'entity_identities',
+  listEntityIdentityRows: 'entity_identities',
+  readEntityIdentityIdsForPages: 'entity_identities',
+  readCanonicalTwin: 'entity_identities',
   closeOpenLoop: 'facts',
   // persistence_journal
   readManagedModeRows: 'persistence_journal',

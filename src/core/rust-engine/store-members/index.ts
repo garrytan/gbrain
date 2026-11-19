@@ -64,6 +64,7 @@ import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
+import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
 import * as pageVisibility from './page-visibility.ts';
 import * as largePage from './large-page.ts';
@@ -109,6 +110,7 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
+  ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
