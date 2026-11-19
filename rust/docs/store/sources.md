@@ -37,7 +37,12 @@ The source members below behave differently on the Rust engine. Each difference 
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
-- `last_commit` is `null` in the row that `gbrain sources` reads through `getSource`.
+- `advanceSourceCommit` stamps `last_sync_at` with the process clock. The SQL engines use the
+  database clock (`now()`). `getSource`, `readPlainSyncSource` and `listSourceRecords` read the
+  stored `last_commit`; `listSourceRecords` also reads the stored `newest_content_at`.
+- `readPageSizeRows` returns `null` for `state` and `reason` on every row. The store keeps no
+  `page_embedding_budget` rows, so it lists a page only for `embed_skip`, a segmented body or a body
+  over the limit, never for a budget row alone.
 - Restore-target and connector status sort sources by id in byte order on every engine.
 - `insertSource` refuses an id outside `[a-z0-9-]{1,32}` with `invalid_argument`. The SQL engines
   have no check on the id column, so they accept such an id. `sources add` validates the id

@@ -240,6 +240,88 @@ export async function countSourcePages(exec: LegacyUnscopedRead, sourceId: strin
   return Number(row?.n ?? 0);
 }
 
+/**
+ * Records that the source's git sync reached `commit` and stamps `last_sync_at` with the database clock, in one UPDATE.
+ * `newestContentAt` (the HEAD committer time, ISO) is written in the same UPDATE when given; `null` clears it and
+ * `undefined` leaves it alone. An unknown source changes nothing (sync-anchor.ts `writeSyncAnchor`).
+ */
+export async function advanceSourceCommit(exec: SqlExecutor, sourceId: string, commit: string, newestContentAt?: string | null): Promise<void> {
+  if (newestContentAt !== undefined) {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+      [commit, sourceId, newestContentAt],
+    );
+    return;
+  }
+  await exec.executeRaw(
+    `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+    [commit, sourceId],
+  );
+}
+
+/** A stored page a sync size-state read reports (`readPageSizeRows`); `state`/`reason` are its page_embedding_budget row. */
+export interface PageSizeRow { slug: string; bytes: number | string | null; segmented: boolean; frontmatter: Record<string, unknown> | null; state: 'held' | 'capped' | null; reason: string | null }
+
+const PAGE_SIZE_ROWS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+const PAGE_SIZE_ROWS_FOR_SLUGS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($3::text[])
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+
+/**
+ * The live pages of one source (only `slugs` when given) that carry embed_skip, have a body over `maxBytes`, are
+ * segmented or have a page_embedding_budget row, by slug: the rows page-embedding-budget.ts readPageSizeStates maps.
+ */
+export async function readPageSizeRows(exec: LegacyUnscopedRead, sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]> {
+  return slugs
+    ? exec.executeRaw<PageSizeRow>(PAGE_SIZE_ROWS_FOR_SLUGS_SQL, [sourceId, maxBytes, [...slugs]])
+    : exec.executeRaw<PageSizeRow>(PAGE_SIZE_ROWS_SQL, [sourceId, maxBytes]);
+}
+
+/** A live page with a file origin (`listSourcePathPages`). */
+export interface SourcePathPageRow { slug: string; source_path: string }
+
+/** The live pages of one source that have a `source_path`, in no set order: the pages a full sync reconciles (sync/full.ts). */
+export async function listSourcePathPages(exec: LegacyUnscopedRead, sourceId: string): Promise<SourcePathPageRow[]> {
+  return exec.executeRaw<SourcePathPageRow>(
+    `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
+    [sourceId],
+  );
+}
+
+/** A live page a rename's identity check compares (`readRenameIdentityRows`). */
+export interface RenameIdentityRow { slug: string; source_path: string | null; title: string | null }
+
+/**
+ * The live pages of one source whose source_path is in `paths` or whose slug is in `slugs`, in no set order
+ * (sync-rename-identity.ts). A value the database cannot encode throws the driver's error (22021/22P05), which the
+ * caller retries path by path.
+ */
+export async function readRenameIdentityRows(exec: LegacyUnscopedRead, sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameIdentityRow[]> {
+  return exec.executeRaw<RenameIdentityRow>(
+    `SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[]))`,
+    [sourceId, [...paths], [...slugs]],
+  );
+}
+
+/** A live page that holds a frontmatter id or a title (`readLiveIdentityHolders`). */
+export interface LiveIdentityHolderRow { slug: string; source_path: string | null; fm_id: string | null; title: string | null }
+
+/**
+ * The live pages of one source whose frontmatter id is in `ids` or whose title is in `titles`, in no set order
+ * (sync-rename-identity.ts). A value the database cannot encode throws the driver's error, which the caller handles.
+ */
+export async function readLiveIdentityHolders(exec: LegacyUnscopedRead, sourceId: string, ids: readonly string[], titles: readonly string[]): Promise<LiveIdentityHolderRow[]> {
+  return exec.executeRaw<LiveIdentityHolderRow>(
+    `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
+    [sourceId, [...ids], [...titles]],
+  );
+}
+
 /** The columns `insertSource` writes; the table fills the rest with its defaults. */
 export interface SourceInsert { id: string; name: string; local_path: string | null; config: Record<string, unknown> }
 

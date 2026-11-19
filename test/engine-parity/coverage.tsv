@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 706/706
+# covered: 711/711
 # lifecycle: 9/9
-# pages: 40/40
+# pages: 45/45
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 11/11
@@ -102,10 +102,10 @@ getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	3	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	7	no	yes	yes	serves
+getSource	pages	yes	8	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
-readPlainSyncSource	pages	yes	1	no	yes	yes	serves
+readPlainSyncSource	pages	yes	2	no	yes	yes	serves
 readOwnerOnlySourcesPresent	pages	yes	1	no	yes	yes	serves
 readOwnerOnlySourceConfig	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
@@ -115,6 +115,11 @@ readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	1	no	yes	yes	serves
+readPageSizeRows	pages	yes	1	no	yes	yes	serves
+listSourcePathPages	pages	yes	1	no	yes	yes	serves
+readRenameIdentityRows	pages	yes	1	no	yes	yes	serves
+readLiveIdentityHolders	pages	yes	1	no	yes	yes	serves
+advanceSourceCommit	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
@@ -671,7 +676,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	4	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

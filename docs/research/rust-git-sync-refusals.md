@@ -5,6 +5,48 @@ each `executeRaw` call that a plain git sync makes on a PGLite brain, and the sm
 that can replace it on a Rust brain. On a Rust brain `executeRaw` is not implemented (capability `raw_sql`), so each
 call below refuses with `engine_capability_missing` unless a guard in its caller skips it.
 
+## Update after the lane 11 merge (`ad4a53cac3`)
+
+The branch merged lane 11 at `ad4a53cac3` and the four-step trace ran again on a Rust brain. The counts and tables
+below are still the first trace at `08a0c5dae8`; this section says what changed since.
+
+Switched to typed members on this branch (PGLite and Postgres run the same SQL; parity tests in
+`test/engine-parity/sync-route.test.ts` pass on PGLite, Postgres and Rust):
+
+| Site at `08a0c5dae8` | Now calls |
+|---|---|
+| `sync-anchor.ts:271` (`UPDATE sources SET last_commit ...`) | `advanceSourceCommit` (new) |
+| `sync-anchor.ts:298` (`UPDATE sources SET local_path ...`) | `attachSourcePath` |
+| `sync.ts:951` | `readSourceRow('default')` |
+| `sync-upstream.ts:67` | `getSource` |
+| `commands/sync/full.ts:124` | `countSourcePages` |
+| `commands/sync/full.ts:460` | `listSourcePathPages` (new) |
+| `sync-rename-identity.ts:304` (both texts) | `readRenameIdentityRows` and `readLiveIdentityHolders` (new) |
+| `page-embedding-budget.ts:453` `readPageSizeStates` | `readPageSizeRows` (new) |
+
+Lane 11 typed `sync-dispatch-read.ts:51`, `sync-authority.ts:50`, `sync/perform.ts:43` and the applied-watermark
+reads. Lane 11 also owns `access/policy.ts` (`ad821f6e06` types all of it); this branch does not touch it.
+
+The trace below ran with a scratch stub in place of `access/policy.ts`, because without it a Rust step 1 and step 2
+stop first at `policy.ts:92` and then `:139`, which wait on lane 11.
+
+| Step | Rust exit | First fatal refusal |
+|---|---:|---|
+| 1. first `sync` | 0 | none |
+| 2. incremental `sync` | 1 | `reason-trailers.ts:151` `scanSyncReasons` (`SELECT commit_sha, path FROM reason_purge_tombstones`) |
+| 3. `sync status` | 1 | `sync-status.ts:361` |
+| 4. `sources status` | 1 | `source-health.ts:384` |
+
+Hidden refusals that step 1 still makes on Rust (the caller catches each one and goes on, so the step exits 0):
+`notifier/store.ts:277` and `:146` (from `sync-anchor.ts:270`), `backup/coverage.ts:128` and `:112`, and the
+applied-watermark callers `sync-holds.ts:573` (from `applied-watermark.ts:110`) and `sync-pass-row.ts:185` (from
+`applied-watermark.ts:112`). `sync-upstream.ts:72` is also caught.
+
+`reason-trailers.ts:151` has a twin with `ORDER BY` at `repair/purged-change-reasons.ts:66`, and the same table is
+read when a version is written (`page-state/versions.ts:28`). The Rust store has no `reason_purge_tombstones` keys,
+and the tombstone writer (`facts/purge-reasons.ts:63`) is raw SQL that refuses on Rust, so a typed read can answer
+from an empty key range. Until the hold store is typed, step 2 on Rust would write no hold for the bad file.
+
 ## Counts
 
 | Class | Sites | Meaning |

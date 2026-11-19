@@ -2,6 +2,43 @@
   "golden": {
     "domain": "sources",
     "methods": {
+      "advanceSourceCommit": {
+        "clearNewest": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $2 WHERE id = $3",
+            "textSha256": "9402e122e8f0e545238e2fbbd0f193041b349d67b1f031d7d85a79b7f1e27602"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2",
+            "textSha256": "e08954b8645774987704b5860cd2d5d760ed91d5d41ade4de5c89ebf6b72e498"
+          }
+        ],
+        "newest": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $2 WHERE id = $3",
+            "textSha256": "9402e122e8f0e545238e2fbbd0f193041b349d67b1f031d7d85a79b7f1e27602"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -106,6 +143,18 @@
           }
         ]
       },
+      "listSourcePathPages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL",
+            "textSha256": "66f4014f93809e90652bc19041ff3a71a2588e7f6e7059e20bc6bcaaba6fb49c"
+          }
+        ]
+      },
       "listSourceRoutingRows": {
         "default": [
           {
@@ -135,6 +184,59 @@
             ],
             "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE",
             "textSha256": "c96279eec5f617f9eee6412cb97ea5799f1b30d4c826b2eaf5be7c7456bf2c08"
+          }
+        ]
+      },
+      "readLiveIdentityHolders": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))",
+            "textSha256": "ddc02e1c9dbe2b26b94eca4839a4cc3b4933da97fd60670b469a089b189c3fa1"
+          }
+        ]
+      },
+      "readPageSizeRows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
+            "textSha256": "056b71d4359215c2373ec81e174be8cbd46570ba1d6a4653fc6d198de9c35460"
+          }
+        ],
+        "slugs": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $3 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
+            "textSha256": "aa98a64693e09380f76b21ee932430d338292d6fdfd7318d63aa7b7213d0f2c5"
+          }
+        ]
+      },
+      "readRenameIdentityRows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[]))",
+            "textSha256": "fe3982b718a18e71e5cf5b6e0f30f9cf569a7d33e345df07534c3cf3d50fbeec"
           }
         ]
       },

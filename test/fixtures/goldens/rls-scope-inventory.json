@@ -100,6 +100,39 @@
         ],
         "flagOnScopes": []
       },
+      "advanceSourceCommit#clearNewest": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "advanceSourceCommit#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "advanceSourceCommit#newest": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "applyTransactionSettings#default": {
         "flagOffLanes": [
           "tx"
@@ -2789,6 +2822,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourcePathPages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceRoutingRows#default": {
         "flagOffLanes": [
           "pool"
@@ -3529,6 +3573,17 @@
         ],
         "flagOnScopes": []
       },
+      "readLiveIdentityHolders#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readLiveMember#legacy_token": {
         "flagOffLanes": [
           "pool"
@@ -3650,6 +3705,28 @@
         ],
         "flagOnScopes": []
       },
+      "readPageSizeRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageSizeRows#slugs": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -3712,6 +3789,17 @@
         "flagOnScopes": []
       },
       "readReceiptBudget#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRenameIdentityRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4933,14 +5021,17 @@
         "addTimelineEntry": "none",
         "addWakeCron": "none",
         "admitJob": "none",
+        "advanceSourceCommit": "none",
         "aliasCanonicalRefs": "none",
         "aliasFanoutRead": "none",
         "allocateBodyOccurrenceIds": "none",
+        "appendOpCheckpointPaths": "none",
         "applyForwardReferenceBootstrap": "none",
         "applyLinkTemporalRows": "none",
         "applyTransactionSettings": "none",
         "assertCycleLease": "none",
         "attachSourcePath": "none",
+        "attributionReads": "none",
         "autocommitSql": "none",
         "backfillSearchVectors": "none",
         "batchLoadEmotionalInputs": "none",
@@ -5039,6 +5130,8 @@
         "deleteFactRelinkMemos": "none",
         "deleteFactsForPage": "none",
         "deleteJobAttachment": "none",
+        "deleteOpCheckpoint": "none",
+        "deleteOpCheckpointPaths": "none",
         "deletePage": "none",
         "deletePages": "none",
         "deleteStalePageWriteGateReceipts": "none",
@@ -5285,6 +5378,7 @@
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
         "listSourceLocalPaths": "none",
+        "listSourcePathPages": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",
         "listStaleChunks": "direct",
@@ -5310,6 +5404,7 @@
         "listSubagentWriteOutcomes": "none",
         "listSupersessions": "none",
         "listSymbolTypesForName": "none",
+        "listSynopsisSourceIds": "none",
         "listSynthesisCompletionKeys": "none",
         "listTakeRowsForPage": "none",
         "listTakeSupersessionCandidates": "none",
@@ -5389,6 +5484,7 @@
         "pruneMcpRequestLogBatch": "none",
         "purgeDeletedPages": "none",
         "purgeMemoryProposals": "none",
+        "purgeStaleCheckpoints": "none",
         "putCodeTraversalCache": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",
@@ -5430,6 +5526,7 @@
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGuestSourceRow": "none",
+        "readHealthMemoClock": "none",
         "readHeldCoverageRows": "none",
         "readHeldPageRows": "none",
         "readIdentitySiblingCandidates": "none",
@@ -5446,6 +5543,7 @@
         "readLedgerSource": "none",
         "readLegacyJobAuthority": "none",
         "readLinkRelationshipEvidence": "none",
+        "readLiveIdentityHolders": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
         "readLivePageTypes": "none",
@@ -5459,12 +5557,16 @@
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
         "readNamedEntitySlugs": "none",
+        "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
+        "readOpCheckpointKeys": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
         "readPageAliasRows": "none",
         "readPageHiddenFromCaller": "none",
         "readPageOrigin": "none",
+        "readPageRevisionAttribution": "none",
+        "readPageSizeRows": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPageSynopses": "none",
@@ -5486,7 +5588,9 @@
         "readQueuedSpendRows": "none",
         "readRankCoverage": "none",
         "readReceiptBudget": "none",
+        "readRenameIdentityRows": "none",
         "readRetirementHop": "none",
+        "readRowAttribution": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",
         "readSeedTitleSlugs": "none",
@@ -5506,10 +5610,12 @@
         "readTransactionSettings": "none",
         "readTrigramCandidates": "none",
         "readUnembeddedPageSummary": "none",
+        "readVersionAttributions": "none",
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",
         "readWakeDoctor": "none",
         "readWedgeSignals": "none",
+        "readWriteAttributionNames": "none",
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
@@ -5650,6 +5756,7 @@
         "writeManualLinkTransitions": "none",
         "writeMiscRead": "none",
         "writeMiscReads": "none",
+        "writeOpCheckpointKeys": "none",
         "writeTextProjectionSeal": "none"
       }
     }
