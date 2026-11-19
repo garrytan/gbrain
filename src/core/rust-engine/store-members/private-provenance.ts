@@ -179,7 +179,21 @@ export function storePageTextPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy {
-  if (currentCallerAccess().restricted === false) {
+  const outer = currentCallerAccess();
+  if (outer.restricted === false) {
+    // A remote read on a brain with no access restrictions (CallerAccess.restricted false) renders the open form: a
+    // page passes when it names no readers and no folder rule, whoever the caller is. A family that serves caller
+    // readers sends that form as the empty identity, which hides every page that names readers, as the open form does
+    // even where the premise of the flag fails. Any other read is judged as the same caller with `restricted` true.
+    if (opts.callerReaders) {
+      const privateReadableSources = [...outer.privateReadableSources];
+      const open = withoutCallerAccess(() => withCallerAccess(
+        { identity: [], privateReadableSources, hidePrivate: true, restricted: false },
+        () => privatePagesFilterForCaller('p')));
+      if (normalizeConceptInputs(rendered()) === normalizeConceptInputs(open)) {
+        return { ...pagePolicyFlags(open), identity: [], privateReadableSources };
+      }
+    }
     return withCallerAccess({ restricted: true }, () => storePageTextPolicy(member, rendered, opts));
   }
   const text = normalizeConceptInputs(rendered());
@@ -191,17 +205,6 @@ export function storePageTextPolicy(
     const canonical = withoutCallerAccess(() =>
       withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
     if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
-    // A remote read on a brain with no access restrictions (CallerAccess.restricted false) renders the open form: a
-    // page passes when it names no readers and no folder rule, whoever the caller is. The store judges that page by
-    // the empty identity, which hides every page that names readers, as the open form does.
-    if (access.restricted === false) {
-      const open = withoutCallerAccess(() => withCallerAccess(
-        { identity: [], privateReadableSources: readers.privateReadableSources, hidePrivate: true, restricted: false },
-        () => privatePagesFilterForCaller('p')));
-      if (text === normalizeConceptInputs(open)) {
-        return { ...pagePolicyFlags(open), identity: [], privateReadableSources: readers.privateReadableSources };
-      }
-    }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
