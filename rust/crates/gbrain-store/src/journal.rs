@@ -37,7 +37,12 @@ use sha2::{Digest, Sha256};
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
+/// The single JSON counter record of brains written before the per-counter layout below. It is
+/// read as a base and never written again.
 const COUNTERS: &str = "journal_counters";
+/// Unfinished-request counters, one record each (8-byte little-endian), so that admissions never
+/// all touch one key: `journal_outstanding` for the brain and `journal_outstanding/<principal>`.
+const OUTSTANDING: &str = "journal_outstanding";
 const NEXT_SEQUENCE: &str = "next_sequence";
 
 pub const PRINCIPAL_KINDS: &[&str] = &[
@@ -135,6 +140,44 @@ pub struct FinishWrite {
 struct Counters {
     brain: u64,
     principals: BTreeMap<String, u64>,
+}
+
+fn outstanding_key(principal: Option<&str>) -> Vec<u8> {
+    match principal {
+        None => keys::meta(OUTSTANDING),
+        Some(p) => keys::meta(&format!("{OUTSTANDING}/{p}")),
+    }
+}
+
+/// The unfinished-request counters: the legacy record plus the per-counter records. A principal
+/// whose count is 0 is left out.
+fn read_counters(read: &dyn KvRead) -> Result<Counters> {
+    let mut counters: Counters = get_json(read, &keys::meta(COUNTERS))?.unwrap_or_default();
+    let brain = counters.brain as i64 + crate::kv::read_i64(read, &outstanding_key(None))?;
+    counters.brain = brain.max(0) as u64;
+    let prefix = keys::meta(&format!("{OUTSTANDING}/"));
+    let mut failure = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let Ok(name) = std::str::from_utf8(&k[prefix.len()..]) else {
+            failure = Some(StoreError::new(
+                STORE_CORRUPT,
+                "bad outstanding counter key",
+            ));
+            return false;
+        };
+        let Ok(bytes) = <[u8; 8]>::try_from(v) else {
+            failure = Some(StoreError::new(STORE_CORRUPT, "bad outstanding counter"));
+            return false;
+        };
+        let entry = counters.principals.entry(name.to_string()).or_insert(0);
+        *entry = (*entry as i64 + i64::from_le_bytes(bytes)).max(0) as u64;
+        true
+    })?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    counters.principals.retain(|_, n| *n > 0);
+    Ok(counters)
 }
 
 /// What is stored for a request.
@@ -293,14 +336,7 @@ fn digest_of(operation: &str, source_id: &str, slug: &str, intent: &Value) -> St
 }
 
 fn next_sequence(tx: &mut dyn KvWrite) -> Result<u64> {
-    let key = keys::meta(NEXT_SEQUENCE);
-    let current = match tx.get(&key)? {
-        Some(bytes) => keys::be8(&bytes)
-            .ok_or_else(|| StoreError::new(STORE_CORRUPT, "bad sequence counter"))?,
-        None => 1,
-    };
-    tx.put(&key, &(current + 1).to_be_bytes())?;
-    Ok(current)
+    tx.allocate(&keys::meta(NEXT_SEQUENCE), 1)
 }
 
 fn read_request(
@@ -374,10 +410,15 @@ fn admit_in(
         }
         return Ok((existing, false));
     }
-    let mut counters: Counters = get_json(&*tx, &keys::meta(COUNTERS))?.unwrap_or_default();
+    // Postgres counts unfinished requests under a row lock; here each counter is its own record
+    // and the check is re-run at commit (`counter_below`), so admissions do not conflict with
+    // each other unless one of them would cross a limit.
+    let legacy: Counters = get_json(&*tx, &keys::meta(COUNTERS))?.unwrap_or_default();
     let pkey = principal_key(&admission.principal.kind, &admission.principal.id);
-    let mine = counters.principals.get(&pkey).copied().unwrap_or(0);
-    if mine >= limits.principal_outstanding {
+    let legacy_mine = legacy.principals.get(&pkey).copied().unwrap_or(0) as i64;
+    let cap = limits.principal_outstanding as i64 - legacy_mine;
+    if let Some(n) = tx.counter_below(&outstanding_key(Some(&pkey)), cap)? {
+        let mine = (n + legacy_mine).max(0);
         return Err(StoreError::new(
             ADMISSION_REFUSED,
             format!(
@@ -386,18 +427,19 @@ fn admit_in(
             ),
         ));
     }
-    if counters.brain >= limits.brain_outstanding {
+    let cap = limits.brain_outstanding as i64 - legacy.brain as i64;
+    if let Some(n) = tx.counter_below(&outstanding_key(None), cap)? {
         return Err(StoreError::new(
             ADMISSION_REFUSED,
             format!(
                 "this brain already has {} unfinished writes (limit {})",
-                counters.brain, limits.brain_outstanding
+                (n + legacy.brain as i64).max(0),
+                limits.brain_outstanding
             ),
         ));
     }
-    counters.brain += 1;
-    counters.principals.insert(pkey, mine + 1);
-    put_json(tx, &keys::meta(COUNTERS), &counters)?;
+    tx.add_i64(&outstanding_key(None), 1)?;
+    tx.add_i64(&outstanding_key(Some(&pkey)), 1)?;
     let now = env.now_micros();
     let record = RequestRecord {
         id: env.new_uuid(),
@@ -466,18 +508,9 @@ fn finish_in(
     record.updated_at_us = now;
     record.completed_at_us = Some(now);
     write_request(tx, &record)?;
-    let mut counters: Counters = get_json(&*tx, &keys::meta(COUNTERS))?.unwrap_or_default();
-    counters.brain = counters.brain.saturating_sub(1);
     let pkey = principal_key(&record.principal_kind, &record.principal_id);
-    match counters.principals.get(&pkey).copied().unwrap_or(0) {
-        0 | 1 => {
-            counters.principals.remove(&pkey);
-        }
-        n => {
-            counters.principals.insert(pkey, n - 1);
-        }
-    }
-    put_json(tx, &keys::meta(COUNTERS), &counters)?;
+    tx.add_i64(&outstanding_key(None), -1)?;
+    tx.add_i64(&outstanding_key(Some(&pkey)), -1)?;
     Ok(record)
 }
 
@@ -570,8 +603,7 @@ impl Store {
 
     /// `{ brain, principals: { "principal:<kind>:<id>": n } }`: unfinished requests.
     pub fn journal_outstanding(&self) -> Result<Value> {
-        let counters: Counters =
-            get_json(&*self.read()?, &keys::meta(COUNTERS))?.unwrap_or_default();
+        let counters = read_counters(&*self.read()?)?;
         Ok(json!({"brain": counters.brain, "principals": counters.principals}))
     }
 
@@ -606,6 +638,7 @@ impl Store {
         let admission = mutation.admission(operation, &source_id);
         let applying = Cell::new(false);
         let attempt = self.write(|tx| {
+            applying.set(false);
             let (record, fresh) = admit_in(tx, &*self.env, &admission, limits)?;
             if !fresh {
                 return Ok(record);

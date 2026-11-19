@@ -822,15 +822,8 @@ impl Store {
         }
         int4(count, "allocateBodyOccurrenceIds count")?;
         self.write(|tx| {
-            let key = keys::meta(NEXT_OCCURRENCE_ID);
-            let first = match tx.get(&key)? {
-                Some(bytes) => keys::be8(&bytes).ok_or_else(|| {
-                    StoreError::new(crate::error::STORE_CORRUPT, "bad occurrence id counter")
-                })?,
-                None => 1,
-            };
+            let first = tx.allocate(&keys::meta(NEXT_OCCURRENCE_ID), count as u64)?;
             let next = first + count as u64;
-            tx.put(&key, &next.to_be_bytes())?;
             Ok((first..next).map(|v| v as i64).collect())
         })
     }

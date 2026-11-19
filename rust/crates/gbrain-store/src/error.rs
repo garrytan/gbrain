@@ -48,6 +48,10 @@ pub const WRITER_REJECTED: &str = "writer_rejected";
 pub const SOURCE_CHANGED: &str = "source_changed";
 /// A journal request is not in a state that allows the call.
 pub const INVALID_STATE: &str = "invalid_state";
+/// Internal: an optimistic write transaction read something another transaction changed before
+/// it committed. `Store::write` runs the transaction again; callers do not see this code unless
+/// a write keeps losing until its retry budget is spent.
+pub const WRITE_CONFLICT: &str = "write_conflict";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {

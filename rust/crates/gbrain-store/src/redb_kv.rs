@@ -219,6 +219,21 @@ impl KvWrite for Writer {
     }
 }
 
+impl RedbKv {
+    /// A snapshot that can move to another thread, with the commit sequence it sees (read from
+    /// inside the snapshot, so the two always agree).
+    pub(crate) fn snapshot_with_version(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+        let snapshot = Snapshot {
+            tx: self.db.begin_read().map_err(map)?,
+        };
+        let version = match snapshot.get(SEQ_KEY)? {
+            Some(bytes) => decode_seq(&bytes)?,
+            None => 0,
+        };
+        Ok((Box::new(snapshot), version))
+    }
+}
+
 impl Kv for RedbKv {
     fn snapshot(&self) -> Result<Box<dyn KvRead>> {
         let tx = self.db.begin_read().map_err(map)?;
