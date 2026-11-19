@@ -72,4 +72,4 @@ test/engine-parity/versions-raw.test.ts	11	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/write-attribution.test.ts	4	2
 test/engine-parity/write-guards.test.ts	7	0
-test/engine-parity/write-misc.test.ts	16	5
+test/engine-parity/write-misc.test.ts	19	4
