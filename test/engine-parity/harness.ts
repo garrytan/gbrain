@@ -192,6 +192,15 @@ async function withSeededConfig(arm: ParityArm, reset: () => Promise<void>): Pro
   for (const [key, value] of seed) await arm.engine.setConfig(key, value);
 }
 
+/**
+ * The v322 held flag is a table comment, so the row reset does not clear it: a case that made an owner-only source would
+ * leave `gbrain_owner_only_lineage()` true for every later case on the same database, while a reset Rust brain reads false.
+ * A reset brain holds no owner-only data, so the comment goes with the rows.
+ */
+async function clearOwnerOnlyHold(engine: BrainEngine): Promise<void> {
+  await engine.executeRaw(`COMMENT ON TABLE public.owner_only_marks IS NULL`);
+}
+
 /** Return the arm to an empty brain (default source and the seeded config only). Harness-only SQL: cases never use it. */
 export async function resetArm(arm: ParityArm): Promise<void> {
   switch (arm.backend) {
@@ -200,10 +209,12 @@ export async function resetArm(arm: ParityArm): Promise<void> {
       return;
     case 'pglite':
       await withSeededConfig(arm, () => resetPgliteState(arm.engine as PGLiteEngine));
+      await clearOwnerOnlyHold(arm.engine);
       await seedTrustPolicyState(arm.engine);
       return;
     case 'postgres':
       await withSeededConfig(arm, () => resetPostgres(arm.engine));
+      await clearOwnerOnlyHold(arm.engine);
       await seedTrustPolicyState(arm.engine);
       return;
     default:
