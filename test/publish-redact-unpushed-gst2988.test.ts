@@ -34,6 +34,7 @@ import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { finishRedactions, secretPublishMaintenance, settlePublishRedactions } from '../src/core/git/redact-finish.ts';
 import { reveal, seal } from '../src/core/secret-store/store.ts';
+import { computeIsoWeekFilename } from '../src/core/audit/audit-writer.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -87,6 +88,11 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     expect(result.outcome).toBe('pushed');
     expect(result.redaction).toMatchObject({ values: 1, rebuilt: 2, old_head: old, held: [], spooled: 1 });
     expect(result.notices?.map(n => n.code)).toEqual(['publish_secret_redacted', 'secret_store_spooled']);
+    const spooledNotice = result.notices!.find(n => n.code === 'secret_store_spooled')!;
+    expect(spooledNotice.kind).toBe('info');
+    expect(spooledNotice.why).toStartWith('1 original(s) were sealed in this machine\'s encrypted spool');
+    expect(spooledNotice.why).toContain('gbrain git commit-push does not move them itself');
+    expect(spooledNotice.why).not.toContain('could not be written');
     expect(remoteTip(r)).toBe(git(r.root, 'rev-parse', 'HEAD'));
     expectRemoteClean(r);
     const file = readFileSync(join(r.root, 'notes.md'), 'utf8');
@@ -431,10 +437,17 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
   test("a page write's Git effect publishes redacted: the store holds the original, the database page holds the same marker", async () => {
     const c = managedCheckout();
     await managedWrite(c, databaseUrl, async w => {
+      const auditFile = join(c.home, 'audit', computeIsoWeekFilename('secret-spans'));
+      mkdirSync(join(c.home, 'audit'), { recursive: true });
+      writeFileSync(auditFile, '', { mode: 0o644 });
+      chmodSync(auditFile, 0o644);
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
       expect(git(c.remote, 'rev-parse', 'refs/heads/main')).toBe(git(c.root, 'rev-parse', 'HEAD'));
       managedRemoteClean(c);
+      expect(readFileSync(auditFile, 'utf8')).toContain('"kind":"publish-redact"');
+      expect(readFileSync(auditFile, 'utf8')).not.toContain(token);
+      expect(statSync(auditFile).mode & 0o777).toBe(0o600);
       const marker = MARKER.exec(readFileSync(join(c.root, 'notes/beta-example.md'), 'utf8'))!;
       const page = (await w.engine.getPage('notes/beta-example', { sourceId: w.sourceId }))!;
       expect(page.compiled_truth).not.toContain(token);

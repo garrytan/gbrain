@@ -35,7 +35,7 @@ const aad = (id: string, sourceId: string, rule: string) => Buffer.from(`gbrain-
 const macOf = (key: Buffer, value: string) => createHmac('sha256', macKeyOf(key)).update(value, 'utf8').digest('hex');
 
 export const secretsAudit = createAuditWriter<{ ts: string } & Record<string, unknown>>({
-  featureName: 'secrets', errorLabel: 'secrets-audit', errorTrailer: '; the read or write itself went ahead',
+  featureName: 'secrets', errorLabel: 'secrets-audit', errorTrailer: '; the read or write itself went ahead', fileMode: 0o600,
 });
 
 function keyMissing(keyId: string) {

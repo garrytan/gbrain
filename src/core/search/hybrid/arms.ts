@@ -14,6 +14,7 @@ import { type VectorArm, pushVectorList } from '../fusion-lists.ts';
 import { buildRelationalArm } from '../relational-recall.ts';
 import { isAmbiguousModalityQuery } from '../query-intent.ts';
 import { isDbAccessFailure } from '../../pg-access-classify.ts';
+import { rethrowCapabilityRefusal } from '../../engine-capability-refusal.ts';
 import { isKeywordSkippedAfterTimeout } from '../../postgres-engine/keyword-timeout-cache.ts';
 import { isTimeoutError, pushDegraded } from './degraded.ts';
 import { markKeywordHits } from '../evidence.ts';
@@ -80,6 +81,8 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
       : await Promise.all([
           req.timer.overlap('keyword_arm', engine.searchKeyword(query, opts?.useCache === false ? searchOpts : { ...searchOpts, keywordTimeoutCache: true })).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
+            // An engine that refuses an option (the Rust engine's engine_capability_missing) must not read as an empty arm.
+            rethrowCapabilityRefusal(err);
             if (isKeywordSkippedAfterTimeout(err)) {
               pushDegraded(degraded, 'keyword_arm_failed', 'skipped_after_timeout');
               warnOncePerProcess('search-keyword-arm-skipped', `[gbrain] searchKeyword arm skipped (fail-open): ${err.message}`);
@@ -96,6 +99,7 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
           }),
           req.timer.overlap('title_arm', engine.searchTitles(query, searchOpts)).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
+            rethrowCapabilityRefusal(err);
             if (isDbAccessFailure(err)) titleAccessError = err;
             pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
             warnOncePerProcess(
@@ -474,6 +478,8 @@ export async function runVectorArms(
           pushVectorList(vectorArms, imageVectorList, 'image');
         }
       } catch (err) {
+        // A refused searchVector option is not an embedding failure: pass it on rather than answer from the keyword arm alone.
+        rethrowCapabilityRefusal(err);
         // Embedding failure is non-fatal, fall back to keyword-only —
         // stamped with an enumerated code; raw text to stderr only (D6).
         const timedOut = isTimeoutError(err);
@@ -542,6 +548,7 @@ export async function runVectorArms(
           }
         }
         if (vFailed > 0) {
+          rethrowCapabilityRefusal(vFirstErr);
           pushDegraded(degraded, 'vector_arm_failed', isTimeoutError(vFirstErr) ? 'timeout' : 'provider_error');
           warnOncePerProcess(
             'search-vector-arm-failed',
