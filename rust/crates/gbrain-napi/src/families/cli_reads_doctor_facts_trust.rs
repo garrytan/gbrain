@@ -35,3 +35,54 @@ impl Brain {
         self.run(env, move |s| s.list_persistent_writer_contention(&reason))
     }
 }
+
+#[napi]
+impl Brain {
+    /// `countRowTrustTiers({ table })`: resolves `[{ tier, n }]`.
+    #[napi]
+    pub fn count_row_trust_tiers<'env>(
+        &self,
+        env: &'env Env,
+        input: serde_json::Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_row_trust_tiers(&required(input, "countRowTrustTiers input")?)
+        })
+    }
+
+    /// `countDerivedTaintRows({ table })`: resolves `{ derived, external }`.
+    #[napi]
+    pub fn count_derived_taint_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: serde_json::Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_derived_taint_rows(&required(input, "countDerivedTaintRows input")?)
+        })
+    }
+
+    /// `countClaimLiftedRows({ table })`: resolves the count.
+    #[napi]
+    pub fn count_claim_lifted_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: serde_json::Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_claim_lifted_rows(&required(input, "countClaimLiftedRows input")?)
+        })
+    }
+
+    /// `countLegacyUnknownBySource({ ceilings, sourceIds })`: resolves `[{ source_id, n }]`.
+    #[napi]
+    pub fn count_legacy_unknown_by_source<'env>(
+        &self,
+        env: &'env Env,
+        input: serde_json::Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_legacy_unknown_by_source(&required(input, "countLegacyUnknownBySource input")?)
+        })
+    }
+}

@@ -75,7 +75,6 @@ src/commands/doctor/checks/shared-agent-access.ts	execute_raw	2
 src/commands/doctor/checks/slug-collisions.ts	execute_raw	1
 src/commands/doctor/checks/slug-path-mismatch.ts	execute_raw	1
 src/commands/doctor/checks/supervisor-health.ts	execute_raw	1
-src/commands/doctor/checks/trust-sources-unclaimed.ts	execute_raw	1
 src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
@@ -995,9 +994,9 @@ src/core/transcripts/ingest.ts	execute_raw	3
 src/core/transcripts/recover.ts	execute_raw	1
 src/core/transcripts/secret-audit.ts	execute_raw	1
 src/core/trust/allow-rules.ts	execute_raw	6
-src/core/trust/backfill.ts	execute_raw	15
+src/core/trust/backfill.ts	execute_raw	10
 src/core/trust/channel.ts	execute_raw	1
-src/core/trust/claim.ts	execute_raw	8
+src/core/trust/claim.ts	execute_raw	7
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/fence-append.ts	execute_raw	3
 src/core/trust/fence-guard.ts	execute_raw	8
@@ -1014,7 +1013,7 @@ src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	16
 src/core/trust/supersede-handlers.ts	execute_raw	12	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
-src/core/trust/taint.ts	execute_raw	5
+src/core/trust/taint.ts	execute_raw	4
 src/core/trust/timeline-projection.ts	execute_raw	2
 src/core/uncommitted-deletions.ts	execute_raw	1
 src/core/url-clone.ts	execute_raw	2

@@ -15,7 +15,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AdmitJobSpec, ClaimJobSpec, JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { BACKSTOP_RESCUE_SLUG_PREFIXES, CONVERSATION_PIPELINE_TYPES } from '../../src/core/facts/eligibility.ts';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
+import { readTrustBackfillState, TRUST_BACKFILL_COMPLETED_KEY } from '../../src/core/trust/backfill.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -44,6 +45,15 @@ async function completedAbsorb(engine: BrainEngine, data: Record<string, unknown
   expect(Number(row?.id)).toBe(Number(out.row.id));
   await engine.completeJob(Number(out.row.id), 'tok');
   await Bun.sleep(2);
+}
+
+/** Run `fn` in a transaction whose write trust settings declare `tier` and the write origin; `null` writes with none. */
+function stamped<T>(engine: BrainEngine, tier: string | null, origin: Record<string, unknown> | null, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  if (tier === null) return fn(engine);
+  return engine.transaction(async (tx) => {
+    await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'], [tier, tier, origin ? JSON.stringify(origin) : '']);
+    return fn(tx);
+  });
 }
 
 const patterns = BACKSTOP_RESCUE_SLUG_PREFIXES.map(p => `${p}%`);
@@ -94,6 +104,143 @@ describe('doctor facts, fence and trust reads', () => {
         { source_id: 'busy', n: 11 }, { source_id: 'covered', n: 11 }, { source_id: 'default', n: 11 },
       ] });
       return { none, shaped };
+    },
+  );
+
+  parityTest(
+    'countRowTrustTiers, countDerivedTaintRows and countClaimLiftedRows count the stamped tiers and write origins of every table',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'addTakesBatch', 'addTimelineEntry',
+      'countRowTrustTiers', 'countDerivedTaintRows', 'countDerivedFactTaint', 'countClaimLiftedRows'] },
+    async (engine) => {
+      const holder = await stamped(engine, 'operator_curated', { channel: 'import' }, tx => tx.putPage('trust/holder', { type: 'note', title: 'Holder', compiled_truth: 'h', timeline: '' }));
+      const origins: Array<[string | null, Record<string, unknown> | null]> = [
+        ['agent_written', { channel: 'agent', taint_inputs: [{ table: 'pages', id: 1 }] }],
+        ['external_untrusted', { channel: 'agent', taint_inputs: [{ table: 'pages', id: 2 }] }],
+        ['external_untrusted', { channel: 'web' }],
+        ['operator_curated', { channel: 'trust_claim' }],
+        [null, null],
+      ];
+      for (const [i, [tier, origin]] of origins.entries()) {
+        await stamped(engine, tier, origin, async (tx) => {
+          await tx.putPage(`trust/page-${i}`, { type: 'note', title: `P${i}`, compiled_truth: `p${i}`, timeline: '' });
+          await tx.insertFacts([{ fact: `fact ${i}`, entity_slug: 'people/a-example', kind: 'fact', visibility: 'world', source: 'cli', context: `ctx ${i}`,
+            valid_from: new Date(Date.UTC(2026, 0, 1)), row_num: i + 1, source_markdown_slug: 'trust/holder' }] as never, { source_id: 'default' });
+          await tx.addTakesBatch([{ page_id: holder.id, row_num: i + 1, claim: `take ${i}`, kind: 'take', holder: 'h', weight: 0.5 }]);
+          await tx.addTimelineEntry('trust/holder', { date: `2026-07-0${i + 1}`, summary: `entry ${i}` });
+        });
+      }
+      const tiers = async (table: 'facts' | 'takes' | 'timeline_entries') => (await engine.countRowTrustTiers(table))
+        .map((r) => ({ tier: r.tier, n: Number(r.n) })).sort((a, b) => String(a.tier).localeCompare(String(b.tier)));
+      const out = {
+        facts: await tiers('facts'), takes: await tiers('takes'), timeline: await tiers('timeline_entries'),
+        taint: {
+          facts: await engine.countDerivedFactTaint(), pages: await engine.countDerivedTaintRows('pages'),
+          takes: await engine.countDerivedTaintRows('takes'), timeline: await engine.countDerivedTaintRows('timeline_entries'),
+        },
+        lifted: {
+          pages: await engine.countClaimLiftedRows('pages'), facts: await engine.countClaimLiftedRows('facts'),
+          takes: await engine.countClaimLiftedRows('takes'), timeline: await engine.countClaimLiftedRows('timeline_entries'),
+        },
+      };
+      const byTier = [{ tier: 'agent_written', n: 1 }, { tier: 'external_untrusted', n: 2 }, { tier: 'operator_curated', n: 1 }, { tier: 'unknown', n: 1 }];
+      expect(out.facts).toEqual(byTier);
+      expect(out.takes).toEqual(byTier);
+      expect(out.timeline).toEqual(byTier);
+      expect(out.taint.facts).toEqual({ derived: 2, external: 1 });
+      expect(out.taint.takes).toEqual({ derived: 2, external: 1 });
+      expect(out.taint.timeline).toEqual({ derived: 2, external: 1 });
+      expect(out.taint.pages).toEqual({ derived: 2, external: 1 });
+      expect(out.lifted).toEqual({ pages: 1, facts: 1, takes: 1, timeline: 1 });
+      return out;
+    },
+  );
+
+  parityTest(
+    'countLegacyUnknownBySource counts live unknown rows per source at or below the ceilings, within the named sources',
+    { methods: ['putPage', 'softDeletePage', 'insertFacts', 'addTakesBatch', 'addTimelineEntry', 'listTakes', 'getTimeline', 'getPage', 'countLegacyUnknownBySource'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const pages = new Map<string, number>();
+      let row = 0;
+      const seed = async (tag: string, source: string, curated = false) => {
+        const slug = `legacy/${tag}`;
+        const write = (tx: BrainEngine) => tx.putPage(slug, { type: 'note', title: tag, compiled_truth: tag, timeline: '' }, { sourceId: source });
+        await (curated ? stamped(engine, 'operator_curated', { channel: 'import' }, write) : write(engine));
+        pages.set(slug, (await engine.getPage(slug, { sourceId: source }))!.id);
+        const factIds = (await engine.insertFacts([{ fact: `fact ${tag}`, entity_slug: 'people/a-example', kind: 'fact', visibility: 'world', source: 'cli',
+          context: tag, valid_from: new Date(Date.UTC(2026, 0, 1)), row_num: ++row, source_markdown_slug: slug }] as never, { source_id: source })).ids;
+        await engine.addTakesBatch([{ page_id: pages.get(slug)!, row_num: 1, claim: `take ${tag}`, kind: 'take', holder: 'h', weight: 0.5 }]);
+        await engine.addTimelineEntry(slug, { date: '2026-07-01', summary: `entry ${tag}` }, { sourceId: source });
+        return { pageId: pages.get(slug)!, factId: Number(factIds[0]) };
+      };
+      const maxTakeId = async (): Promise<number> => Math.max(0, ...(await Promise.all([...pages.values()].map((page_id) => engine.listTakes({ page_id })))).flat().map((t) => Number(t.id)));
+      const maxEntryId = async (): Promise<number> => {
+        let max = 0;
+        for (const [slug] of pages) for (const sourceId of ['default', 'other']) for (const e of await engine.getTimeline(slug, { sourceId }).catch(() => [])) max = Math.max(max, Number(e.id));
+        return max;
+      };
+      const early = [await seed('a', 'default'), await seed('b', 'other'), await seed('c', 'other'), await seed('curated', 'default', true)];
+      await engine.softDeletePage('legacy/c', { sourceId: 'other' });
+      const ceilings = {
+        pages: Math.max(...early.map((e) => e.pageId)), facts: Math.max(...early.map((e) => e.factId)),
+        takes: await maxTakeId(), timeline_entries: await maxEntryId(),
+      };
+      await seed('d', 'default');
+      await seed('e', 'other');
+      const shape = async (c: typeof ceilings | null, ids?: string[]) => (await engine.countLegacyUnknownBySource(c, ids)).map((r) => ({ source_id: r.source_id, n: Number(r.n) }))
+        .sort((a, b) => a.source_id.localeCompare(b.source_id));
+      const out = {
+        all: await shape(null), early: await shape(ceilings), named: await shape(null, ['other']), earlyNamed: await shape(ceilings, ['default']),
+        none: await shape(null, ['missing']), empty: await shape(null, []),
+      };
+      // Deleted pages drop out of the page count only; their facts, takes and entries still count (the take and entry joins read the page row).
+      expect(out.all).toEqual([{ source_id: 'default', n: 11 }, { source_id: 'other', n: 11 }]);
+      expect(out.early).toEqual([{ source_id: 'default', n: 7 }, { source_id: 'other', n: 7 }]);
+      expect(out.named).toEqual([{ source_id: 'other', n: 11 }]);
+      expect(out.earlyNamed).toEqual([{ source_id: 'default', n: 7 }]);
+      expect(out.none).toEqual([]);
+      expect(out.empty).toEqual([]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'listTrustClaimTargets lists the non-connector sources, the named ones and the claimed ones with their claim state',
+    { methods: ['listTrustClaimTargets'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'docs');
+      await createSource(engine, backend, 'gmail', { kind: 'google' });
+      await createSource(engine, backend, 'claimed', { trust_claimed_at: '2026-01-01T00:00:00Z', trust_tier: 'operator_curated' });
+      await createSource(engine, backend, 'claimed-gmail', { kind: 'github', trust_claimed_at: '2026-01-01T00:00:00Z', trust_tier: 'operator_curated' });
+      await createSource(engine, backend, 'ended', { trust_claimed_at: '2026-01-01T00:00:00Z', trust_tier: 'agent_written' });
+      const by = <T extends { id: string }>(rows: T[]) => [...rows].sort((a, b) => a.id.localeCompare(b.id));
+      const out = {
+        owned: by(await engine.listTrustClaimTargets('owned')),
+        named: await engine.listTrustClaimTargets('named', ['ended', 'gmail', 'claimed', 'missing']),
+        claimed: await engine.listTrustClaimTargets('claimed'),
+      };
+      expect(out.owned).toEqual([{ id: 'claimed', claimed: true }, { id: 'default', claimed: false }, { id: 'docs', claimed: false }, { id: 'ended', claimed: false }]);
+      expect(out.named).toEqual([{ id: 'claimed', claimed: true }, { id: 'ended', claimed: false }]);
+      expect(out.claimed).toEqual([{ id: 'claimed', claimed: true }]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'listTrustColumns reports the trust columns, and the trust backfill state reads no interrupted run on a fresh brain',
+    { methods: ['listTrustColumns', 'readOpCheckpointKeys', 'getConfig', 'setConfig'] },
+    async (engine) => {
+      // The store keeps the trust columns only: the other columns the probe lists are a PGLite/Postgres schema detail.
+      const columns = (await engine.listTrustColumns()).map((c) => `${c.table_name}.${c.column_name}`)
+        .filter((c) => /\.(trust_tier|write_origin)$|^sources\.config$/.test(c)).sort();
+      const fresh = await readTrustBackfillState(engine);
+      await engine.setConfig(TRUST_BACKFILL_COMPLETED_KEY, '2026-07-01T00:00:00Z');
+      const done = await readTrustBackfillState(engine);
+      expect(columns).toEqual(['facts.trust_tier', 'facts.write_origin', 'pages.trust_tier', 'pages.write_origin', 'sources.config',
+        'takes.trust_tier', 'takes.write_origin', 'timeline_entries.trust_tier', 'timeline_entries.write_origin']);
+      expect(fresh).toEqual({ interrupted: false, completedAt: null });
+      expect(done.completedAt).toBe('2026-07-01T00:00:00Z');
+      return { columns, fresh, done };
     },
   );
 });

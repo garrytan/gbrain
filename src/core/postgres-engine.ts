@@ -1361,6 +1361,12 @@ export class PostgresEngine implements BrainEngine {
   countDefaultSourceFiles() { return doctorSourcesImpl.countDefaultSourceFiles(this.executeRaw.bind(this)); }
   countConversationPipelinePages(types: readonly string[], slugPatterns: readonly string[]) { return doctorFactsTrustImpl.countConversationPipelinePages(this.executeRaw.bind(this), types, slugPatterns); }
   listPersistentWriterContention(reason: string) { return doctorFactsTrustImpl.listPersistentWriterContention(this.executeRaw.bind(this), reason); }
+  countRowTrustTiers(table: doctorFactsTrustImpl.TrustTierTable) { return doctorFactsTrustImpl.countRowTrustTiers(this.executeRaw.bind(this), table); }
+  countDerivedTaintRows(table: doctorFactsTrustImpl.DerivedTaintTable) { return doctorFactsTrustImpl.countDerivedTaintRows(this.executeRaw.bind(this), table); }
+  countLegacyUnknownBySource(ceilings: doctorFactsTrustImpl.LegacyIdCeilings, sourceIds?: readonly string[]) { return doctorFactsTrustImpl.countLegacyUnknownBySource(this.executeRaw.bind(this), ceilings, sourceIds); }
+  listTrustColumns() { return doctorFactsTrustImpl.listTrustColumns(this.executeRaw.bind(this)); }
+  listTrustClaimTargets(mode: doctorFactsTrustImpl.TrustClaimTargetMode, sourceIds?: readonly string[]) { return doctorFactsTrustImpl.listTrustClaimTargets(this.executeRaw.bind(this), mode, sourceIds); }
+  countClaimLiftedRows(table: doctorFactsTrustImpl.ClaimLiftTable) { return doctorFactsTrustImpl.countClaimLiftedRows(this.executeRaw.bind(this), table); }
   upsertFactRelinkAttempt(sourceId: string, attempt: factRelinkImpl.FactRelinkAttempt, opts: factRelinkImpl.FactRelinkUpsertOpts = {}) { return factRelinkImpl.upsertFactRelinkAttempt(this.engineSql, sourceId, attempt, opts); }
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]) { return factRelinkImpl.listFactRelinkOutcomes(this.executeRaw.bind(this), sourceId, factIds, outcomes); }
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string) { return factRelinkImpl.deleteFactRelinkMemos(this.engineSql, sourceId, tier, targetSlug); }

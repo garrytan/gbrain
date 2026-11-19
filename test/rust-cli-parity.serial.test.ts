@@ -453,7 +453,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // image_embedding_coverage run on Rust too; person_title_duplicates still warns with its typed refusal (okWhileRefused).
       // sync_failures is gone from this list too: it no longer warns in its own words.
       // backup_coverage is gone from this list: with the brain sync reads served, it no longer warns in its own words.
-      untypedWarnings: ['fact_take_vectors', 'provenance_stamp_drift', 'trust_scan'],
+      // trust_tiers and trust_sources_unclaimed warn here: their reads are served, but a fresh Rust brain does not mark the
+      // trust backfill done yet, so both report it missing where PGLite passes.
+      untypedWarnings: ['fact_take_vectors', 'provenance_stamp_drift', 'trust_scan', 'trust_sources_unclaimed', 'trust_tiers'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path

@@ -1,7 +1,7 @@
 /**
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
- * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
+ * `countUnscannedTrustRows` over pages, facts, takes and timeline entries, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
@@ -11,7 +11,6 @@
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
  *    page, a grant, a lineage read, a labelled-only caller), as `storePagePolicy` refuses it;
- *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
  *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
  *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
  *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
@@ -41,7 +40,7 @@ import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-const SCAN_TABLES = new Set(['pages', 'facts']);
+const SCAN_TABLES = new Set(['pages', 'facts', 'takes', 'timeline_entries']);
 
 function requireCount(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) refuseMember(member, `a ${name} that is not a non-negative integer`);

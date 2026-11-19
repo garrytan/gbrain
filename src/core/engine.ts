@@ -4536,4 +4536,10 @@ export interface BrainEngine {
   countConversationPipelinePages(types: readonly string[], slugPatterns: readonly string[]): Promise<number>;
   /** Per source, the facts writes deferred for `reason` in the last 24 hours that no later completed facts-absorb job covers, when they persist (more than 10, or the oldest over an hour old). */
   listPersistentWriterContention(reason: string): Promise<DoctorFactsTrustSql.WriterContentionRow[]>;
+  countRowTrustTiers(table: DoctorFactsTrustSql.TrustTierTable): Promise<DoctorFactsTrustSql.RowTrustTierCount[]>;
+  countDerivedTaintRows(table: DoctorFactsTrustSql.DerivedTaintTable): Promise<{ derived: number; external: number }>;
+  countLegacyUnknownBySource(ceilings: DoctorFactsTrustSql.LegacyIdCeilings, sourceIds?: readonly string[]): Promise<DoctorFactsTrustSql.LegacyUnknownRow[]>;
+  listTrustColumns(): Promise<DoctorFactsTrustSql.TrustColumnRow[]>;
+  listTrustClaimTargets(mode: DoctorFactsTrustSql.TrustClaimTargetMode, sourceIds?: readonly string[]): Promise<DoctorFactsTrustSql.TrustClaimTargetRow[]>;
+  countClaimLiftedRows(table: DoctorFactsTrustSql.ClaimLiftTable): Promise<number>;
 }

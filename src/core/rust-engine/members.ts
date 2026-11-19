@@ -533,6 +533,12 @@ export const RUST_ENGINE_MEMBERS = {
   // doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts)
   countConversationPipelinePages: 'pages',
   listPersistentWriterContention: 'ingest_log',
+  countRowTrustTiers: 'facts',
+  countDerivedTaintRows: 'facts',
+  countLegacyUnknownBySource: 'pages',
+  listTrustColumns: 'health',
+  listTrustClaimTargets: 'sources',
+  countClaimLiftedRows: 'pages',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
