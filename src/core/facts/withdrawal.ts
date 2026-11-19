@@ -85,7 +85,7 @@ export async function recordFactWithdrawal(
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
-    if (!opts.publication) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+    if (!opts.publication) await tx.lockSourceRow(sourceId);
     const plan = await planFactWithdrawal(tx, id, sourceId, worldOnly, opts.excludePrivate, opts.memberPage);
     if (!plan) return { withdrawn: false, pages: [] };
     const { affected, slugs } = plan;
@@ -95,7 +95,8 @@ export async function recordFactWithdrawal(
           'Read the fact again and submit the forget with a new request_id; nothing was withdrawn.');
       }
     } else await tx.lockPageKeys(slugs.map(slug => ({ sourceId, slug })));
-    const row = await tx.lockFactForWithdrawal({ id, sourceId, worldOnly, memberPage: opts.memberPage ?? null, remoteFloor: opts.excludePrivate === true });
+    // The fact row, locked: its claim cannot change before the withdrawal commits.
+    const row = await tx.readFactWithdrawalClaim({ id, sourceId, worldOnly, memberPage: opts.memberPage ?? null, remoteFloor: opts.excludePrivate === true, lock: true });
     if (!row) return { withdrawn: false, pages: [] };
     const ledger = affected.length ? await readLedgerSource(tx, sourceId) : null;
     // W1 (docs/designs/BELIEF_LEDGER.md section 10): the pre-withdrawal body stays readable at its revision.
@@ -120,7 +121,7 @@ export async function recordFactWithdrawal(
       // Overnight semantic review (decide review lane): queued with the ledger row so a late commit is never skipped.
       // Not queued when the caller opted out (`semantic_review: false`, also used by review-accepted withdrawals).
       if (opts.semanticReview !== false && reviewWithdrawOn(await tx.getConfig(REVIEW_WITHDRAW_KEY))) {
-        await tx.queueWithdrawalReview(sourceId, String(id));
+        await tx.applyDecideReviewQueue({ op: 'enqueue', kind: 'withdraw', source_id: sourceId, a_ref: String(id), b_ref: '*' });
       }
       // Wave B (spec 11): a segmented page's withdrawn rows are struck in the segment holding the fence, a new
       // generation whose flip retires only the chunks of the occurrences it rewrote.
@@ -135,11 +136,7 @@ export async function recordFactWithdrawal(
       if (inline.length) await tx.deleteChunksForPages(inline.map(page => Number(page.id)));
       const pages = [...inline, ...segmented.length ? await tx.readPageRevisions(segmented.map(page => page.id)) : []];
       if (opts.requestId && !opts.publication) {
-        await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
-          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
-          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
-          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`, [opts.requestId, sourceId, JSON.stringify({ version: 2, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })).sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) })]);
+        await tx.insertWithdrawalEffects({ requestId: opts.requestId, sourceId, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })) });
       }
       const committed = pages.map(page => ({ sourceId, slug: page.slug, revision: page.knowledge_revision }));
       for (const invalidate of withdrawalInvalidations) await invalidate(tx, { sourceId, factId: id, subject: row.subject, pages: committed });

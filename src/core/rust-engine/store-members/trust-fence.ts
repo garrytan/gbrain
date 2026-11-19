@@ -61,8 +61,8 @@ export const listHeldFenceCells: StoreMember<[keys: readonly HeldFenceCellKey[]]
 
 /**
  * #5575 ENG-1: the fence overlay's read of one page (BrainEngine readFenceOverlayRows), one row per incoming row in
- * incoming order. `purged` reads the store's fact purge ledger (`facts/purge_ledger.rs` `purged_claim`). With `hideHeld`, `narrower` is listHeldFenceCells' rule for an uncut claim, and a member caller
- * or a private-facts grant refuses here as it does there. rust/docs/store/facts.md, "The fence overlay".
+ * incoming order. `purged` reads the store's fact purge ledger (`facts/purge_ledger.rs` `purged_claim`). With `hideHeld`, `narrower` is listHeldFenceCells' rule for an uncut claim for the caller with no
+ * member page and no private-facts grant; a member caller or a private-facts grant refuses here (listHeldFenceCells serves both). rust/docs/store/facts.md, "The fence overlay".
  */
 export const readFenceOverlayRows: StoreMember<[page: { sourceId: string; slug: string }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean }], FenceOverlayRow[]> =
   async (brain, page, incoming, opts) => {

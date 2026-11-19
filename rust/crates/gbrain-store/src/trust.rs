@@ -37,7 +37,7 @@
 mod stamp;
 
 mod eligibility;
-mod fingerprint;
+pub(crate) mod fingerprint;
 pub mod proposals;
 mod row_trust;
 pub mod tier_reads;

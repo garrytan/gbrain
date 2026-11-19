@@ -362,6 +362,32 @@ pub struct ReadManifestOptions {
     pub last_n: Option<i64>,
 }
 
+/// `readSegmentedEmbedPage(ref)`: a page by id, or by source and slug.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SegmentedEmbedRef {
+    Id {
+        id: i64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Slug {
+        source_id: String,
+        slug: String,
+    },
+}
+
+/// The page fields a segmented embed reads (`SegmentedEmbedPage`): metadata only, never the body.
+/// `body_bytes` is the stored count, `None` when the shell recorded none (PGLite's NULL column).
+#[derive(Debug, Clone, Serialize)]
+pub struct SegmentedEmbedPage {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    pub contextual_retrieval_mode: Option<String>,
+    pub body_bytes: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ShellOptions {
@@ -1154,6 +1180,47 @@ impl Store {
             }
             Ok(())
         })
+    }
+
+    /// `readSegmentedEmbedPage(ref)`: the page `ref` names when it is segmented, not deleted, in a
+    /// source that exists and is not archived, and sealed (its text projection is at its knowledge
+    /// revision, `currentTextProjectionFilter`); `None` otherwise, an inline page included. The
+    /// same tests as the `pages JOIN sources` read PGLite sends.
+    pub fn read_segmented_embed_page(
+        &self,
+        reference: &SegmentedEmbedRef,
+    ) -> Result<Option<SegmentedEmbedPage>> {
+        let read = self.read()?;
+        let page = match reference {
+            SegmentedEmbedRef::Id { id } => match page_u64(*id) {
+                Some(id) => read_page_by_id(&*read, id)?,
+                None => None,
+            },
+            SegmentedEmbedRef::Slug { source_id, slug } => read_page(&*read, source_id, slug)?,
+        };
+        let Some(page) = page else {
+            return Ok(None);
+        };
+        let Some((_, body_bytes)) = segmented_reference(&*read, page.id)? else {
+            return Ok(None);
+        };
+        let sealed =
+            page.text_projection_revision.as_deref() == Some(page.knowledge_revision.as_str());
+        if page.deleted_at_us.is_some() || !sealed {
+            return Ok(None);
+        }
+        match crate::sources::read_source(&*read, &page.source_id)? {
+            Some(source) if !source.archived => {}
+            _ => return Ok(None),
+        }
+        Ok(Some(SegmentedEmbedPage {
+            id: page.id,
+            contextual_retrieval_mode: crate::aliases::contextual_retrieval_mode(&*read, page.id)?,
+            slug: page.slug,
+            source_id: page.source_id,
+            title: page.title,
+            body_bytes,
+        }))
     }
 
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? })`: with `stagingId`, that
@@ -2086,6 +2153,31 @@ pub(crate) fn closed_manifest_rows(read: &dyn KvRead, page_id: u64) -> Result<Ve
         .map(|(_, row)| row)
         .filter(|row| row.gen_to.is_some() && row.staging_id.is_none())
         .collect())
+}
+
+/// The live published manifest rows of segmented page `page_id` that carry facts slots
+/// (`gen_to IS NULL AND staging_id IS NULL AND facts_slots <> '[]'`), each with the bytes of its
+/// segment text (`None` when the source holds no text of that sha). An inline or missing page has
+/// none. Withdrawal discovery (facts/withdrawal_discovery.rs) scans them for facts fences.
+pub(crate) fn live_facts_slot_rows(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Vec<(ManifestRow, Option<Vec<u8>>)>> {
+    if !is_segmented(read_body_state(read, page_id)?.as_ref()) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (_, row) in manifest_rows(read, page_id)? {
+        if !live_published(&row) || row.facts_slots.as_array().is_none_or(Vec::is_empty) {
+            continue;
+        }
+        let sha = from_hex(&row.sha256, "sha256")?;
+        let text = get_json::<TextRecord>(read, &text_key(&row.source_id, &sha))?
+            .map(|t| from_hex(&t.body, "body"))
+            .transpose()?;
+        out.push((row, text));
+    }
+    Ok(out)
 }
 
 /// The body of `sweepSegments`, run in the open write `tx`: `prune_versions` calls it after a

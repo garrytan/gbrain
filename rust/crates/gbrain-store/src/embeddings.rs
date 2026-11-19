@@ -13,6 +13,7 @@
 //!   vector write or delete, so a reader can tell that its cached vectors are out of date.
 //! - `B 's' <page id>` -> the page's embedding signature (PGLite's `pages.embedding_signature`),
 //!   UTF-8.
+//! - `B 'b' <page id>` -> the page's embedding ledger row (`page_embedding_budget`).
 //! - `B 'k' <take id>` -> the take's `claim_rev` when its vector was written, u64 BE. A take
 //!   vector counts only while this equals the take's current `claim_rev` (PGLite compares
 //!   `embedded_text_hash` with `md5(claim)`); a claim edit makes the vector stale at once.
@@ -386,6 +387,7 @@ pub(crate) fn reset_page_vectors(tx: &mut dyn KvWrite, page_id: u64, now_us: i64
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&signature_key(page.id))?;
+    crate::page_embedding_budget::remove_page_budget(tx, page.id)?;
     let mut prefix = vec![keys::EMBEDDING_STATE, CHUNK_VECTOR];
     prefix.extend_from_slice(&page.id.to_be_bytes());
     let mut doomed = Vec::new();
@@ -557,7 +559,7 @@ fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     Ok(out)
 }
 
-fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+pub(crate) fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     read.get(&signature_key(page_id))?
         .map(|bytes| String::from_utf8(bytes).map_err(|_| corrupt("page signature")))
         .transpose()

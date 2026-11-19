@@ -905,8 +905,16 @@ Facts and their supersession chains.
     `readFactWithdrawnRow` and `readFactWithdrawnBacking` for the `fact_withdrawn` refusal of a remember. The store
     serves them in `trust/withdrawal_commit.rs` (rust/docs/store/trust.md "The forget commit"). Pinned by
     `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. Still raw on Rust:
-    `discoverWithdrawalTargets`, the purge sweep (`facts/purge.ts`), `memberPageWithdrawal` and the non-publication
-    statements of `recordFactWithdrawal`.
+    the purge sweep (`facts/purge.ts`) and `memberPageWithdrawal`. The write-request forget (lane 4) reaches these
+    members and the typed `lockSourceRow`, `readFactWithdrawalClaim`, `applyDecideReviewQueue` and
+    `insertWithdrawalEffects` calls, so `recordFactWithdrawal` makes no raw statement but the ledger and fence reads.
+  - The reads withdrawal discovery makes (`discoverWithdrawalTargets`, `facts/withdrawal-discovery.ts`) are one typed
+    member, `readWithdrawalDiscovery(read)` (`engine-sql/withdrawal-discovery.ts`), tagged by `kind`: `claim_keys`,
+    `provenance_pages`, `claim_matches`, `inline_fence_pages`, `segment_fence_rows`, `split_fence_slots`,
+    `target_pages` and `sample_slugs`. PGLite and Postgres run the statement text the call site ran. The store serves
+    every kind from the `F 0x01` fact rows, the page records and the live segmented-body rows with facts slots
+    (`facts/withdrawal_discovery.rs`, no new key prefix; rust/docs/store/facts.md). The member refuses a cursor, limit
+    or id that is not a safe integer. Pinned by `test/engine-parity/withdrawal-discovery-reads.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

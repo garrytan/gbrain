@@ -60,6 +60,7 @@ pub mod relink_writes;
 pub mod repair;
 pub mod trust;
 pub mod trust_reads;
+pub mod withdrawal_discovery;
 
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub use crate::owner_only::OwnerOnlyForm;

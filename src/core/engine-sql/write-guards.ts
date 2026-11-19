@@ -12,6 +12,7 @@ import { pageSearchVectorSql } from '../fts-language.ts';
 import type { SqlExecutor } from './executor.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { PageKind } from '../types.ts';
 
 /** The page an origin check is about: its id, slug, recorded origin and tombstone time (null while live). */
 export interface PageOriginRow { id: number; slug: string; source_path: string | null; deleted_at: Date | string | null }
@@ -98,6 +99,21 @@ export async function readLivePageBody(exec: LegacyUnscopedRead, slug: string, o
   const [row] = await exec.executeRaw<LivePageBodyRow>(`SELECT frontmatter, compiled_truth, timeline, body_storage, content_hash FROM pages
       WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [opts.sourceId, slug]);
   return row ?? null;
+}
+
+/** The page row columns a text projection is keyed on (page-state/projections.ts indexingContext). */
+export interface PageIndexingState { chunker_version: number | null; corpus_generation: string | null; page_kind: PageKind }
+
+/**
+ * `readPageIndexingState`: page `pageId`'s stored chunker version, corpus generation and page kind, live or a tombstone,
+ * or null when no page has that id. The two statements page-state/projections.ts sent, in the same order.
+ */
+export async function readPageIndexingState(exec: LegacyUnscopedRead, pageId: number): Promise<PageIndexingState | null> {
+  const [projection] = await exec.executeRaw<{ chunker_version: number | null; corpus_generation: string | null }>(
+    'SELECT chunker_version,corpus_generation FROM pages WHERE id=$1', [pageId]);
+  const [kind] = await exec.executeRaw<{ page_kind: PageKind }>('SELECT page_kind FROM pages WHERE id=$1', [pageId]);
+  if (!kind) return null;
+  return { chunker_version: projection?.chunker_version ?? null, corpus_generation: projection?.corpus_generation ?? null, page_kind: kind.page_kind };
 }
 
 /** Whether the brain holds any segment storage: a body staging or a segment text. The vacuum skips its sweep without either. */

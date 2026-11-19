@@ -204,13 +204,13 @@ fn granted(read: &dyn KvRead, input: &HeldFenceCellsInput, row: &FactRecord) -> 
 }
 
 /// A live fact of the page as `heldRowSql` reads it: the row and whether the caller's reads admit it.
-struct LiveRow {
-    row: FactRecord,
-    admitted: bool,
+pub(super) struct LiveRow {
+    pub(super) row: FactRecord,
+    pub(super) admitted: bool,
 }
 
-/// `heldRowSql` over the page's live rows.
-fn held(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
+/// `heldRowSql` over the page's live rows. The fence overlay (`fence_overlay.rs`) passes rows no caller admits.
+pub(super) fn held(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
     let narrower = |r: &&LiveRow| r.row.visibility != "world" && !r.admitted;
     rows.iter()
         .filter(narrower)
@@ -219,15 +219,6 @@ fn held(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
             && !rows
                 .iter()
                 .any(|r| r.row.visibility == "world" && states(&r.row, key)))
-}
-
-/// `heldRowSql` with both caller admissions `FALSE`, over the page's live rows (the world-only reader of a fence overlay).
-pub(super) fn held_unadmitted(rows: &[FactRecord], key: &HeldFenceCellKey, row_num: i32) -> bool {
-    let live: Vec<LiveRow> = rows
-        .iter()
-        .map(|row| LiveRow { row: row.clone(), admitted: false })
-        .collect();
-    held(&live, key, row_num)
 }
 
 impl Store {

@@ -155,6 +155,7 @@ test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
+test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
@@ -196,6 +197,7 @@ test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
+test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/page-visibility.test.ts
@@ -239,6 +241,8 @@ test/engine-parity/typed-config-reads.test.ts
 test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/withdrawal-discovery-reads.test.ts
+test/engine-parity/withdrawal-forget.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
 test/engine-parity/writer-versions.test.ts
