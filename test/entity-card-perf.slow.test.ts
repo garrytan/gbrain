@@ -483,9 +483,11 @@ describe('entity names with records (50 names, 150 target pages)', () => {
       if (sql.includes('refs AS MATERIALIZED')) referrerStatements++;
       return raw(sql, params as never);
     }) as typeof engine.executeRaw;
-    // The batched counts statement runs through its typed member (engine-sql/link-temporal.ts); count it too.
+    // The batched counts and record candidates run through their typed members (engine-sql/link-temporal.ts); count them too.
     const counts = engine.readReferrerTargetCounts.bind(engine);
     engine.readReferrerTargetCounts = ((...a: Parameters<typeof counts>) => { referrerStatements++; return counts(...a); }) as typeof counts;
+    const candidates = engine.readReferrerRecordCandidates.bind(engine);
+    engine.readReferrerRecordCandidates = ((...a: Parameters<typeof candidates>) => { referrerStatements++; return candidates(...a); }) as typeof candidates;
     const on = async () => { await engine.setConfig('entity.record_types', 'contract'); await engine.unsetConfig('entity.names_references'); };
     const off = async () => { await engine.unsetConfig('entity.record_types'); await engine.setConfig('entity.names_references', 'false'); };
     try {
@@ -530,6 +532,7 @@ describe('entity names with records (50 names, 150 target pages)', () => {
     } finally {
       engine.executeRaw = raw;
       engine.readReferrerTargetCounts = counts;
+      engine.readReferrerRecordCandidates = candidates;
       await engine.unsetConfig('entity.record_types');
       await engine.unsetConfig('entity.names_references');
     }

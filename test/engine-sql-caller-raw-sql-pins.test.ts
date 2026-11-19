@@ -221,6 +221,75 @@ const PINS: Pin[] = [
        FROM pages WHERE id = ANY($1::int[])`],
   },
   {
+    from: 'src/core/ops/backlinks-paged.ts:50 targetSource (at 97bf5544dd)',
+    case: { method: 'listReferrerTargetSources', variant: 'default', run: e => e.listReferrerTargetSources('companies/acme-example', ['default', 'other']) },
+    texts: ['SELECT source_id FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL'],
+  },
+  ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
+    from: 'src/core/mentions/referrers.ts:143 readReferrerPage count (with referrersCte at mentions/referrers-sql.ts:43; lines at 97bf5544dd)',
+    case: {
+      method: 'countReferrerRows', variant: excludePrivate ? 'remote+floor' : 'local',
+      run: e => e.countReferrerRows({ sources: ['default'], slugs: ['companies/acme-example'] }, {
+        referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], excludePrivate,
+        eligibility: floored ? { floor: 'operator_curated' } : undefined, includeQuarantined: false, type: 'meeting',
+      }),
+    },
+    texts: () => [`${pinnedReferrersCte(excludePrivate, floored)} SELECT count(*)::int AS n FROM typed WHERE ($6::text IS NULL OR canonical_type = $6 OR type = $6)`],
+  })),
+  ...([[false, false, false], [true, true, true]] as const).map(([excludePrivate, floored, cursor]): Pin => ({
+    from: `src/core/mentions/referrers.ts:151 readReferrerPage rows (${cursor ? 'after a cursor' : 'first page'}; at 97bf5544dd)`,
+    case: {
+      method: 'readReferrerRows', variant: cursor ? 'remote+floor+cursor' : 'local',
+      run: e => e.readReferrerRows({ sources: ['default'], slugs: ['companies/acme-example'] }, {
+        referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], excludePrivate,
+        eligibility: floored ? { floor: 'operator_curated' } : undefined, includeQuarantined: false, type: null,
+        cursor: cursor ? ['2026-04-01T00:00:00.000000Z', 'default', 'notes/a-tie'] : null, limit: 3,
+      }),
+    },
+    texts: () => [`${pinnedReferrersCte(excludePrivate, floored)}
+     SELECT id, slug, source_id, type, canonical_type, to_char(d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d FROM typed
+      WHERE ($6::text IS NULL OR canonical_type = $6 OR type = $6)${cursor ? ` AND ((d IS NOT DISTINCT FROM $7::timestamptz AND (source_id, slug) > ($8::text, $9::text))
+                OR ($7::timestamptz IS NOT NULL AND (d < $7::timestamptz OR d IS NULL)))` : ''}
+      ORDER BY d DESC NULLS LAST, source_id, slug LIMIT $${cursor ? 10 : 7}`],
+  })),
+  ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
+    from: 'src/core/mentions/referrers.ts:369 readTargetReferences candidates (with referrersCteBatched at mentions/referrers-sql.ts:69; lines at 97bf5544dd)',
+    case: {
+      method: 'readReferrerRecordCandidates', variant: excludePrivate ? 'remote+floor' : 'local',
+      run: e => e.readReferrerRecordCandidates({ sources: ['default', 'default'], slugs: ['companies/acme-example', 'people/alice-example'], indexes: [0, 1] }, {
+        referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], excludePrivate,
+        eligibility: floored ? { floor: 'operator_curated' } : undefined, includeQuarantined: false, recordTypes: ['meeting'], perTarget: 5,
+      }),
+    },
+    texts: () => [`WITH tgt AS MATERIALIZED (
+      SELECT k.i, t.id FROM pages t JOIN unnest($1::text[], $2::text[], $3::int[]) AS k(s, g, i) ON t.source_id = k.s AND t.slug = k.g
+       WHERE t.deleted_at IS NULL${excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : ''}
+    ),
+    refs AS MATERIALIZED (
+      SELECT DISTINCT tg.i, l.from_page_id AS id FROM links l JOIN tgt tg ON l.to_page_id = tg.id WHERE true${excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : ''}
+    ),
+    typed AS MATERIALIZED (
+      SELECT r.i, f.id, f.slug, f.source_id, f.type,
+             COALESCE(f.effective_date, f.updated_at) AS d,
+             COALESCE(($6::text[])[array_position($5::text[], f.type)], NULLIF(f.type, ''), 'untyped') AS canonical_type
+        FROM refs r JOIN pages f ON f.id = r.id
+       WHERE f.deleted_at IS NULL AND f.source_id = ANY($4::text[])
+         AND NOT EXISTS (SELECT 1 FROM tgt x WHERE x.i = r.i AND x.id = f.id)${excludePrivate ? ` AND ${privatePagesFilterFastForCaller('f')}` : ''} AND ${pageEligibleSql('f', floored ? { floor: 'operator_curated' } : undefined)} AND ${quarantineFilterFragment('f')}
+    )
+     SELECT x.i, x.id, x.slug, x.source_id, x.canonical_type, to_char(x.d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
+       FROM (SELECT DISTINCT i FROM tgt) q CROSS JOIN LATERAL (
+         SELECT * FROM typed t WHERE t.i = q.i AND t.canonical_type = ANY($7::text[])
+          ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $8
+       ) x
+      ORDER BY x.i, x.d DESC NULLS LAST, x.source_id, x.slug`],
+  })),
+  {
+    from: 'src/core/mentions/referrers.ts:414 hydrateRecords (at 97bf5544dd)',
+    case: { method: 'readReferrerRecordPages', variant: 'default', run: e => e.readReferrerRecordPages([7, 3]) },
+    texts: [`SELECT id, title, CASE WHEN effective_date IS NULL THEN 'updated_at' ELSE COALESCE(effective_date_source, 'effective_date') END AS date_source
+         FROM pages WHERE id = ANY($1::int[])`],
+  },
+  {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
     texts: [`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true')) AS present`],
@@ -255,6 +324,26 @@ const PINS: Pin[] = [
           WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`],
   },
 ];
+
+/** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */
+function pinnedReferrersCte(excludePrivate: boolean, floored: boolean): string {
+  return `WITH tgt AS MATERIALIZED (
+      SELECT t.id FROM pages t JOIN unnest($1::text[], $2::text[]) AS k(s, g) ON t.source_id = k.s AND t.slug = k.g
+       WHERE t.deleted_at IS NULL${excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : ''}
+    ),
+    refs AS MATERIALIZED (
+      SELECT DISTINCT l.from_page_id AS id FROM links l WHERE l.to_page_id IN (SELECT id FROM tgt)${excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : ''}
+    ),
+    typed AS MATERIALIZED (
+      SELECT f.id, f.slug, f.source_id, f.type,
+             COALESCE(f.effective_date, f.updated_at) AS d,
+             COALESCE(($5::text[])[array_position($4::text[], f.type)], NULLIF(f.type, ''), 'untyped') AS canonical_type
+        FROM pages f
+       WHERE f.id IN (SELECT id FROM refs)
+         AND f.deleted_at IS NULL AND f.source_id = ANY($3::text[])
+         AND f.id NOT IN (SELECT id FROM tgt)${excludePrivate ? ` AND ${privatePagesFilterFastForCaller('f')}` : ''} AND ${pageEligibleSql('f', floored ? { floor: 'operator_curated' } : undefined)} AND ${quarantineFilterFragment('f')}
+    )`;
+}
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
 function CARD_ROW_COLUMNS(): string {
