@@ -84,6 +84,11 @@ export function withoutNulJson<T>(value: T): T {
   if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
   const entries = Object.entries(value);
   const out = entries.map(([key, item]) => [withoutNulJson(key), withoutNulJson(item)] as const);
+  const keys = new Set<string>();
+  for (const [key] of out) {
+    if (keys.has(key)) throw new Error(`Frontmatter key ${JSON.stringify(key)} appears twice once U+0000 is removed`);
+    keys.add(key);
+  }
   return (out.some(([key, item], i) => key !== entries[i]![0] || item !== entries[i]![1]) ? Object.fromEntries(out) : value) as T;
 }
 

@@ -22,6 +22,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { makeContext } from '../src/cli/main.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
+import { parseDataFrontmatter } from '../src/core/data-frontmatter.ts';
 import { disposePersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
@@ -107,6 +108,12 @@ for (const kind of testBackends()) {
           const entries = await engine.executeRaw<{ summary: string; detail: string }>(
             'SELECT t.summary, t.detail FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.source_id = $1 AND p.slug = $2 ORDER BY t.date', ['default', slug]);
           expect(entries.map(r => [r.summary, r.detail])).toEqual([['Talked about canapes', ''], ['Served canapes', 'Both canapes trays']]);
+          const { revision: next } = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+          const refused = await withVerifiedLocalRegistration(engine, registration, () => dispatchToolCall(engine, 'edit_page',
+            { slug, expected_revision: next, request_id: randomUUID(), edits: [{ old_text: `the${NUL}n thrice`, new_text: 'then never' }] },
+            { remote: true, config: { engine: kind } as never, sourceId: 'default', auth, logger: { info() {}, warn() {}, error() {} } }));
+          expect((refused.content[0] as { text: string }).text).toContain('edit_no_match');
+          expect((await engine.getPage(slug, { sourceId: 'default' }))!.compiled_truth).toContain('then thrice, canapes.');
         } finally {
           await disposePersistenceConsumer(engine);
           await engine.unsetConfig('sync.repo_path');
@@ -151,3 +158,8 @@ for (const kind of testBackends()) {
     }
   });
 }
+
+test('a frontmatter key that only U+0000 told apart from another is refused, never merged over it', () => {
+  expect(() => parseDataFrontmatter(`---\nreadable_by: [alice-example]\n"readable\\0_by": null\n---\nbody\n`)).toThrow(/appears twice once U\+0000 is removed/);
+  expect(parseDataFrontmatter(`---\nsnack\\0: "canap\\0es"\n---\nbody\n`).data).toEqual({ 'snack\\0': 'canapes' });
+});
