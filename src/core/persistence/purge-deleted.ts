@@ -39,17 +39,24 @@ import { scrubPurgedSlugHolds, scrubPurgedSlugStores } from './purge-slug-stores
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 import { maintenanceTransaction } from './attribution.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
-import { DreamWriteDeferralPass, writeStatusCommand, DREAM_WRITE_DEFERRED_CODE } from '../cycle/dream-write-deferral.ts';
+import { DreamWriteDeferralPass, pendingRequestId, writeStatusCommand, DREAM_WRITE_DEFERRED_CODE } from '../cycle/dream-write-deferral.ts';
 
 /** A tombstone that moved under a concurrent writer; the next run retries it. */
 const DEFERRAL_CODES = new Set(['revision_conflict', 'page_not_found', 'page_identity_changed']);
+
+/** #9742: a purge accepted and still pending after its publish wait commits on its own later; it is not a failure. */
+const pendingPurgeReason = (requestId: string) =>
+  `Accepted and still pending after the publish wait (request_id ${requestId}); it commits on its own, so it is not a failure (${writeStatusCommand(requestId)}).`;
 
 export interface DeletedPagePurge {
   slugs: string[];
   count: number;
   /** Every expired tombstone not purged this run, with its reason. On an unmanaged brain: the belief-ledger expiry's failed and parked tombstones. */
   blocked: Array<{ source_id: string; slug: string; reason: string; code: string | null; binding_state?: string }>;
-  /** Tombstones restored, changed or removed by a concurrent writer; retried next run. */
+  /**
+   * Tombstones restored, changed or removed by a concurrent writer; retried next run. On a manual run with
+   * dream.write_deferral.enabled=false, also each purge accepted and still pending (in `blocked`, code `write_pending`, with its request id).
+   */
   deferred: number;
   /** Operational failures (owner, binding, storage, protocol); on an unmanaged brain, recorded tombstones whose delete failed (retried next run). */
   failed: number;
@@ -65,7 +72,7 @@ export interface DeletedPagePurge {
   /** #7130: managed sync tombstones with no live twin an automatic purge kept (in `blocked`, code `sync_delete_unreviewed`). */
   held: number;
   /**
-   * W3 (#7587): automatic runs only. Tombstones not purged because an accepted purge of their source was still
+   * W3 (#7587), manual runs too since #9742. Tombstones not purged because an accepted purge of their source was still
    * pending after its wait (in `blocked`, code `dream_write_deferred`); never a failure. `deferral` names the receipts.
    */
   write_deferred?: number;
@@ -427,6 +434,11 @@ async function purgeOwedPages(engine: BrainEngine, config: OperationContext['con
       }
       if (purged.status === 'purged') out.slugs.push(row.slug);
     } catch (error) {
+      const pending = pendingRequestId(error);
+      if (pending) {
+        out.blocked.push({ source_id: row.source_id, slug: row.slug, code: 'write_pending', reason: pendingPurgeReason(pending) });
+        continue;
+      }
       out.failed++;
       out.blocked.push({ source_id: row.source_id, slug: row.slug, code: typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : null,
         reason: `${error instanceof Error ? error.message : String(error)}; retried on the next run` });
@@ -466,8 +478,9 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
       blocked: [...originParked(reparked), ...recorded.blocked, ...owner.blocked, ...held.map(row => syncDeleteHeld(row, olderThanHours))],
       deferred: 0, failed: recorded.failed + owner.failed, inactive: 0, parked: recorded.parked, capacity_deferred: 0, held: held.length, ...(reparked.length ? { origin_parked: reparked.length } : {}) };
   }
-  // W3 (#7587): an automatic run reconciles the purges an earlier run left pending before it selects or submits anything.
-  const deferral = await DreamWriteDeferralPass.start(engine, 'purge', opts.automatic === true);
+  // W3 (#7587): a run reconciles the purges an earlier run left pending before it selects or submits anything; #9742: a
+  // consented manual run defers a still-pending purge the same way instead of counting it failed.
+  const deferral = await DreamWriteDeferralPass.start(engine, 'purge', true);
   const selection = await selectPurgeCandidates(engine, olderThanHours, opts);
   for (const [sourceId, active] of Object.entries(selection.writers)) await notePurgeSourceWriter(engine, sourceId, active);
   await prunePurgeParks(engine);
@@ -531,6 +544,12 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
           reason: `Accepted and still pending after the publish wait (request_id ${entry.request_id}); the next run reconciles it before submitting more in this source (${writeStatusCommand(entry.request_id)}).` });
         continue;
       }
+      const pending = opts.automatic ? null : pendingRequestId(error);
+      if (pending) {
+        deferred++;
+        blocked.push({ source_id: row.source_id, slug: row.slug, code: 'write_pending', reason: pendingPurgeReason(pending) });
+        continue;
+      }
       const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : null;
       const reason = error instanceof Error ? error.message : String(error);
       if (code && DEFERRAL_CODES.has(code)) deferred++;
@@ -538,7 +557,7 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
       blocked.push({ source_id: row.source_id, slug: row.slug, code, reason });
     }
   }
-  const failures = blocked.filter(b => !b.code || !DEFERRAL_CODES.has(b.code) && b.code !== 'writer_not_active' && b.code !== 'purge_parked' && b.code !== 'write_capacity_deferred' && b.code !== 'sync_delete_unreviewed' && b.code !== DREAM_WRITE_DEFERRED_CODE);
+  const failures = blocked.filter(b => !b.code || !DEFERRAL_CODES.has(b.code) && b.code !== 'writer_not_active' && b.code !== 'purge_parked' && b.code !== 'write_capacity_deferred' && b.code !== 'sync_delete_unreviewed' && b.code !== DREAM_WRITE_DEFERRED_CODE && b.code !== 'write_pending');
   const error = failed > 0 ? { class: 'ManagedPurgeFailed', code: 'managed_purge_failed',
     message: `${failed} expired page(s) could not be purged through the coordinator: ${failures.slice(0, 3)
       .map(b => `${b.source_id}/${b.slug}: ${b.reason}`).join('; ')}` } : undefined;
