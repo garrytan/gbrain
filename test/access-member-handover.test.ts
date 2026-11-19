@@ -268,6 +268,32 @@ async function rulePrefixMoved(engine: BrainEngine): Promise<void> {
   expect(await ruleNow()).toEqual({ prefix: 'moved-ivy/', readable_by: ['member:ivy-example'] });
 }
 
+/** An undo approval belongs to the handover it was previewed for: naming another handover of the same member refuses. */
+async function undoBinding(engine: BrainEngine): Promise<void> {
+  await engine.setConfig('access.owner_member', 'owner-example');
+  await addMember(engine, 'jo-example');
+  const page = (slug: string) => importFromContent(engine, slug, '---\ntype: note\ntitle: jo\nreadable_by: [jo-example]\n---\nSynthetic.\n', { sourceId: SRC });
+  await page('notes/jo-first-example');
+  await access(engine, ['member', 'disable', 'jo-example']);
+  const first = await json<Preview>(engine, ['member', 'handover', 'jo-example']);
+  const h1 = await json<Record>(engine, ['member', 'handover', 'jo-example', '--yes', '--expect', first.plan_hash]);
+  await access(engine, ['member', 'enable', 'jo-example']);
+  await page('notes/jo-second-example');
+  await access(engine, ['member', 'disable', 'jo-example']);
+  const second = await json<Preview>(engine, ['member', 'handover', 'jo-example']);
+  const h2 = await json<Record>(engine, ['member', 'handover', 'jo-example', '--yes', '--expect', second.plan_hash]);
+  expect(h2.id).not.toBe(h1.id);
+  await access(engine, ['member', 'enable', 'jo-example']);
+  const undo1 = await json<{ plan_hash: string }>(engine, ['member', 'handover', 'jo-example', '--undo', h1.id]);
+  const crossed = await refusal(() => access(engine, ['member', 'handover', 'jo-example', '--undo', h2.id, '--yes', '--expect', undo1.plan_hash]));
+  expect(crossed.code).toBe('preview_changed');
+  expect(await readers(engine, 'notes/jo-first-example')).toEqual(['owner-example']);
+  expect((await json<Record>(engine, ['member', 'handover', '--status', h2.id])).state).toBe('applied');
+  const undone = await json<Record>(engine, ['member', 'handover', 'jo-example', '--undo', h1.id, '--yes', '--expect', undo1.plan_hash]);
+  expect(undone.undo_of).toBe(h1.id);
+  expect(await readers(engine, 'notes/jo-first-example')).toEqual(['jo-example']);
+}
+
 for (const backend of testBackends()) {
   describe('member handover on a repo-less brain (' + backend + ')', () => {
     let engine: BrainEngine;
@@ -285,6 +311,7 @@ for (const backend of testBackends()) {
     test('a brain with no owner refuses the default and allows keep', () => noOwner(engine), 60_000);
     test("another member's apply of an approved handover refuses", () => memberBinding(engine), 120_000);
     test('a folder rule moved to a new prefix after the preview is never rewritten', () => rulePrefixMoved(engine), 120_000);
+    test('an undo approval applies only to the handover it was previewed for', () => undoBinding(engine), 120_000);
   });
 
   describe('member handover on a managed git source (' + backend + ')', () => {
