@@ -470,3 +470,25 @@ fn profiles_survive_a_reopen() {
         "2"
     );
 }
+
+#[test]
+fn a_non_finite_native_number_is_refused_and_leaves_no_row() {
+    let dir = TempDir::new("cp-nonfinite");
+    let (store, _) = open(&dir);
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for column in 0..4 {
+            let mut input = profile(json!({}));
+            match column {
+                0 => input.brier = Some(bad),
+                1 => input.accuracy = Some(bad),
+                2 => input.partial_rate = Some(bad),
+                _ => input.grade_completion = Some(bad),
+            }
+            let err = store.insert_calibration_profile(&input).unwrap_err();
+            assert_eq!(err.code, INVALID_ARGUMENT, "{bad} in column {column}");
+        }
+    }
+    assert!(latest(&store, json!({"holder": "self"})).is_none());
+    insert(&store, json!({}));
+    assert!(latest(&store, json!({"holder": "self"})).is_some());
+}
