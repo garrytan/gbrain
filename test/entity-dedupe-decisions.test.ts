@@ -626,6 +626,18 @@ describe('with a repository', () => {
     expect(committed(decisionId([{ source_id: 'default', slug: 'people/alice-example' }, { source_id: 'source-b', slug: 'people/alice-example' }]))).toContain('verdict: same');
   });
 
+  test('a page derived from a page in an owner-only source is still refused while the confirm judges each page', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('source-c', 'source-c', $1::jsonb) ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config", ['{"owner_only": true}']);
+    await page('notes/secret-example', 'Secret Example', {}, 'source-c');
+    const id = async (slug: string, src: string) => String((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [slug, src]))[0]!.id);
+    await engine.executeRaw("INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES ('pages', $1, 'pages', $2, 'source-b')",
+      [await id('people/alice-example', 'source-b'), await id('notes/secret-example', 'source-c')]);
+    const alice = await groupOf('people/alice-example');
+    await expect(cli(['confirm', alice])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'restricted_page' });
+    await expect(cli(['reject', alice])).rejects.toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'restricted_page' });
+    expect(await rows()).toEqual({ decisions: [], identities: [] });
+  });
+
   test('a host that does not see the checkout refuses instead of writing a decision only the database holds', async () => {
     await cli(['reject', await groupOf('people/bob-sample')]);
     const dan = await groupOf('people/dan-sample');
