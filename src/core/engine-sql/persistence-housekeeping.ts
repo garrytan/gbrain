@@ -298,26 +298,23 @@ export async function selectProjectionWindowJobs(exec: LegacyUnscopedRead, curso
 // ---------------------------------------------------------------------------------------------------------------------
 // The segmented projector's queue writes (page-body/projection.ts).
 
-/** A page's queue row: $1 source id, $2 slug. */
-const JOB_OF_PAGE_TEXT = 'source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2';
-
 /** `claimSegmentedProjection`: $1 source id, $2 slug, $3 the claim. No row when the page has no queued job. */
 export const CLAIM_SEGMENTED_PROJECTION_SQL = `WITH claimed AS (UPDATE page_projection_jobs SET reason=$3, updated_at=clock_timestamp()
-      WHERE ${JOB_OF_PAGE_TEXT} AND NOT (split_part(reason,':',1)='segmented_projecting' AND updated_at>=now()-interval '60 seconds') RETURNING 1)
-    SELECT EXISTS (SELECT 1 FROM claimed) AS claimed WHERE EXISTS (SELECT 1 FROM claimed) OR EXISTS (SELECT 1 FROM page_projection_jobs WHERE ${JOB_OF_PAGE_TEXT})`;
+      WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND NOT (split_part(reason,':',1)='segmented_projecting' AND updated_at>=now()-interval '60 seconds') RETURNING 1)
+    SELECT EXISTS (SELECT 1 FROM claimed) AS claimed WHERE EXISTS (SELECT 1 FROM claimed) OR EXISTS (SELECT 1 FROM page_projection_jobs WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2)`;
 
 /** `renewSegmentedProjectionClaim`: $1 source id, $2 slug, $3 the claim. */
-export const RENEW_SEGMENTED_PROJECTION_CLAIM_SQL = `UPDATE page_projection_jobs SET updated_at=clock_timestamp() WHERE ${JOB_OF_PAGE_TEXT} AND reason=$3 RETURNING 1`;
+export const RENEW_SEGMENTED_PROJECTION_CLAIM_SQL = 'UPDATE page_projection_jobs SET updated_at=clock_timestamp() WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND reason=$3 RETURNING 1';
 
 /** `releaseSegmentedProjectionClaim`: $1 source id, $2 slug, $3 the claim. */
-export const RELEASE_SEGMENTED_PROJECTION_CLAIM_SQL = `UPDATE page_projection_jobs SET reason='canonical_change', updated_at=clock_timestamp() WHERE ${JOB_OF_PAGE_TEXT} AND reason=$3`;
+export const RELEASE_SEGMENTED_PROJECTION_CLAIM_SQL = "UPDATE page_projection_jobs SET reason='canonical_change', updated_at=clock_timestamp() WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND reason=$3";
 
 /** `deleteProjectionJob`: $1 source incarnation, $2 slug, $3 revision. */
 export const DELETE_PROJECTION_JOB_SQL = 'DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid';
 
-/** `markProjectionRebuildFailed`: $1 source incarnation, $2 slug, $3 revision. */
+/** `markProjectionRebuildFailed`: $1 source incarnation, $2 slug, $3 revision. The last test is `SEGMENTED_PROJECTION_CLAIMED_TEXT` written out. */
 export const MARK_PROJECTION_REBUILD_FAILED_SQL = `UPDATE page_projection_jobs j SET reason='rebuild_failed', updated_at=now()
-        WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`;
+        WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')`;
 
 /** A page by source and slug, as the projector names it. */
 export interface ProjectionPageRef { sourceId: string; slug: string }
