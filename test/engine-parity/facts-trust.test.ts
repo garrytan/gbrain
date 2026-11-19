@@ -234,6 +234,90 @@ describe('engine parity: facts relevance and trust statements', () => {
     return out;
   });
 
+  parityTest('matchSavedFacts applies the word threshold, CJK substrings, the cue pool and the read policy, and returns each row\'s columns', { methods: ['matchSavedFacts'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/open', note('Open'));
+    await engine.putPage('notes/quarantined', note('Quarantined', { quarantine: { reason: 'junk_pattern' } }));
+    await engine.putPage('notes/deleted', note('Deleted'));
+    await engine.putPage('notes/private', note('Private', { visibility: 'private' }));
+    await remember(engine, [
+      { fact: 'Orbix ships widgets from Lisbon every spring', entity_slug: 'companies/orbix', valid_from: at('2026-01-01T00:00:00Z'), visibility: 'world' },
+      { fact: 'Orbix ships widgets', entity_slug: 'companies/orbix', valid_from: at('2026-02-01T00:00:00Z'), visibility: 'world' },
+      { fact: 'Orbix widgets are blue', entity_slug: 'companies/orbix', valid_from: at('2026-03-01T00:00:00Z') },
+      { fact: 'Disregard what I said about Orbix widgets', entity_slug: 'companies/orbix', valid_from: at('2026-04-01T00:00:00Z') },
+      { fact: 'Orbix widgets in Lisbon', entity_slug: 'people/zed', valid_from: at('2026-04-01T00:00:00Z') },
+      { fact: 'オルビクスは東京で生産する', entity_slug: 'companies/orbix', valid_from: at('2026-05-01T00:00:00Z'), visibility: 'world' },
+      { fact: 'Orbix widgets audit', source: 'cli:extract-conversation-facts:terminal:v2', entity_slug: 'companies/orbix' },
+      { fact: 'Orbix widgets lapsed', valid_until: at('2020-01-01T00:00:00Z'), entity_slug: 'companies/orbix' },
+      { fact: 'Lisbon spring widgets', entity_slug: 'companies/orbix-lisbon', valid_from: at('2026-06-01T00:00:00Z') },
+    ]);
+    await engine.insertFacts(['open', 'private', 'quarantined', 'deleted'].map((page, i) => ({
+      fact: `Orbix widgets on the ${page} page`, entity_slug: 'companies/orbix', source_markdown_slug: `notes/${page}`, row_num: 1,
+      kind: 'fact' as const, visibility: 'world' as const, source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1 + i)),
+    })) as never, { source_id: SRC });
+    const forgotten = await remember(engine, [{ fact: 'Orbix widgets forgotten', entity_slug: 'companies/orbix' }]);
+    await engine.expireFact(forgotten.get('Orbix widgets forgotten')!);
+    await remember(engine, [{ fact: 'Orbix widgets in another source', entity_slug: 'companies/orbix' }], 'other');
+    await engine.softDeletePage('notes/deleted');
+    const cjk = (t: string) => /[\u3040-\u30ff\u4e00-\u9fff]/.test(t) ? `%${t}%` : null;
+    const match = async (terms: string[], extra: Partial<Parameters<BrainEngine['matchSavedFacts']>[0]> = {}) => {
+      const rows = await engine.matchSavedFacts({ sources: [SRC], terms, pats: terms.map(cjk), cue: CORRECTION_CUE, supersede: false, excludePrivate: false, worldOnly: false, ...extra });
+      return rows.map(r => ({
+        fact: r.fact, entity_slug: r.entity_slug, kind: r.kind, valid_from: r.valid_from, source: r.source, at: new Date(r.at as string).toISOString(),
+        source_id: r.source_id, visibility: r.visibility, attributed_to: r.attributed_to ?? null, fact_fingerprint: r.fact_fingerprint,
+        matched: r.matched.map(Number), need: Number(r.need), cue: r.cue, trust_rank: Number(r.trust_rank), pool_rank: Number(r.pool_rank),
+      }));
+    };
+    const facts = (rows: Array<{ fact: string }>) => rows.map(r => r.fact);
+    const out = {
+      three: await match(['orbix', 'widgets', 'lisbon']),
+      cue: await match(['orbix', 'widgets', 'lisbon'], { supersede: true }),
+      one: await match(['spring']),
+      stopWord: await match(['the', 'orbix', 'about']),
+      cjk: await match(['東京', '生産']),
+      cjkHalf: await match(['東京', '大阪']),
+      worldOnly: await match(['orbix', 'widgets'], { worldOnly: true }),
+      excludePrivate: await match(['orbix', 'widgets'], { excludePrivate: true }),
+      floorUnknown: await match(['orbix', 'widgets'], { minTrust: 'unknown' }),
+      floorAgent: await match(['orbix', 'widgets'], { minTrust: 'agent_written' }),
+      twoSources: await match(['orbix', 'widgets'], { sources: [SRC, 'other'] }),
+      none: await match(['zebra']),
+    };
+    // Three words need all three. The entity name counts, but 'companies/orbix lisbon' parses as a path token and a word, so
+    // the row on companies/orbix-lisbon matches 'lisbon' and not 'orbix'; words match by stem ('ships', 'widgets').
+    expect(facts(out.three)).toEqual(['Orbix widgets in Lisbon', 'Orbix ships widgets from Lisbon every spring']);
+    expect(out.three[0]).toMatchObject({ matched: [1, 2, 3], need: 3, cue: false, trust_rank: 2, pool_rank: 1, valid_from: '2026-04-01 00:00:00+00', at: '2026-04-01T00:00:00.000Z' });
+    // With supersede on, a cue row matching two of three words is kept in its own pool.
+    expect(out.three.find(r => r.fact === 'Disregard what I said about Orbix widgets')).toBeUndefined();
+    expect(out.cue.find(r => r.fact === 'Disregard what I said about Orbix widgets')).toMatchObject({ matched: [1, 2], need: 3, cue: true, pool_rank: 1 });
+    expect(facts(out.stopWord)).toEqual(expect.arrayContaining(['Disregard what I said about Orbix widgets']));
+    expect(out.stopWord.every(r => r.need === 1 && r.matched.join() === '2')).toBe(true);
+    expect(facts(out.cjk)).toEqual(['オルビクスは東京で生産する']);
+    expect(out.cjk[0]).toMatchObject({ matched: [1, 2], need: 2 });
+    expect(out.cjkHalf).toEqual([]);
+    expect(facts(out.worldOnly)).not.toContain('Orbix widgets are blue');
+    expect(facts(out.floorUnknown)).toContain('Orbix widgets are blue');
+    expect(facts(out.excludePrivate)).not.toContain('Orbix widgets on the private page');
+    expect(facts(out.floorUnknown)).toContain('Orbix widgets on the open page');
+    const shown = facts(out.floorUnknown);
+    for (const hidden of ['Orbix widgets audit', 'Orbix widgets lapsed', 'Orbix widgets forgotten', 'Orbix widgets on the quarantined page', 'Orbix widgets on the deleted page', 'Orbix widgets in another source']) {
+      expect(shown).not.toContain(hidden);
+    }
+    expect(out.floorAgent).toEqual([]);
+    expect(facts(out.twoSources)).toContain('Orbix widgets in another source');
+    expect(out.none).toEqual([]);
+    return out;
+  });
+
+  parityTest('matchSavedFacts under excludePrivate applies a caller\'s reader identity, own member page and private-readable grant', { methods: ['matchSavedFacts'] }, async (engine) => {
+    await putCallerPages(engine);
+    await engine.insertFacts(callerFactRows().map((r, i) => ({
+      ...r, fact: `tea ${r.fact}`, kind: 'fact' as const, visibility: 'world' as const, source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1 + i)),
+    })) as never, { source_id: SRC });
+    return readAsCallers(async () => (await engine.matchSavedFacts({ sources: [SRC], terms: ['tea'], pats: [null], cue: CORRECTION_CUE, supersede: false, excludePrivate: true, worldOnly: false }))
+      .map(r => r.fact).sort());
+  });
+
   parityTest('readFactForOwnerAction returns the fact an owner action binds to, or null for an id no fact has', { methods: ['readFactForOwnerAction'] }, async (engine) => {
     const ids = await remember(engine, [
       { fact: 'Pat leads Acme', entity_slug: 'people/pat', claim_metric: 'headcount', claim_value: 12, claim_unit: 'people', claim_period: '2026-Q1' },

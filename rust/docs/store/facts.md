@@ -322,7 +322,7 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 |---|---|---|---|
 | `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
 | `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
-| `matchSavedFacts` | `search/saved-facts-match.ts` | refused | Reads `trust_tier` (`trustRankSql`). |
+| `matchSavedFacts` | `search/saved-facts-match.ts` | yes, `english` FTS and the `CORRECTION_CUE` of saved-facts-match.ts only (`facts/saved_match.rs`) | The active rows (no `superseded_by` filter), the read policy, the per-term match list, `need`, the correction cue as literal phrases between word boundaries, and the 200-row pool per cue class. The member refuses a widened `worldOnly`. |
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | refused | `trust_tier` is hashed into the owner binding. |
 | `listStandingPreferences` | `trust/review.ts` | refused | Reads `trust_tier`, `write_gate_receipts` and the `sources` claim state. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |

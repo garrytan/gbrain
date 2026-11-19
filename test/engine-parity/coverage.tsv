@@ -572,7 +572,7 @@ listUnwithdrawnFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
 listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves
 listFactsForRelevance	facts_trust	yes	4	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	2	no	yes	yes	serves
-matchSavedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
+matchSavedFacts	facts_trust	yes	3	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
 listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
 listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
