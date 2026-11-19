@@ -48,6 +48,7 @@ mod embedding;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
+pub mod forget;
 pub mod generations;
 mod held_cells;
 pub mod holding_purges;

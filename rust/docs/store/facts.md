@@ -385,7 +385,8 @@ Thirty-six members that were raw `executeRaw` statements in seventeen callers (`
 `src/core/engine-sql/facts-recall.ts` (`readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`,
 `listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-nine are in `facts-trust.ts`. Each runs the
 statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
-(dimensions once when the column type is declared), so its `$n` numbers differ from the old text. None is implemented on Rust
+(dimensions once when the column type is declared), so its `$n` numbers differ from the old text. Except `readFactForForget`, `expireFactSuperseded`, `expireFactAtDate` and `readWithdrawalAnchor`
+(served by `facts/forget.rs`, below), none is implemented on Rust
 yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
 serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
 
@@ -406,6 +407,28 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 |---|---|---|---|
 | `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
 | `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
+
+## Forget reads and expiry (`facts/forget.rs`)
+
+Four of the members above are served: the reads and writes `forgetFactInFence` (`src/core/facts/forget.ts`) and the
+proposal review (`facts/proposal-review.ts`) make. The TypeScript members are `rust-engine/store-members/facts-forget.ts`;
+the napi family is `families/facts_forget.rs`.
+
+| Member | What the store does |
+| --- | --- |
+| `readFactForForget(id)` | The fact by id in any source: `id`, `source_id`, `entity_slug`, `row_num`, `source_markdown_slug`, `expired_at` (a `Date` on the TypeScript side) and `visibility`; `null` for an id below 1 or one that names nothing. |
+| `expireFactSuperseded(factId, validUntil)` | For an unexpired fact: `valid_until` = the given instant (or a bare date as its midnight UTC), else `GREATEST(valid_from, LEAST(COALESCE(valid_until, now), now))`; `expired_at` = now. A missing or expired fact is left alone. |
+| `expireFactAtDate(factId, today)` | For an unexpired fact: `valid_until` = `today` at midnight UTC, `expired_at` = now. |
+| `readWithdrawalAnchor(factId, sourceId)` | `{ withdrawn }` for a fact of `sourceId`: true when a ledger row of the source has the fact's visibility, the fact's current or v1 fingerprint, and a subject the withdrawal reaches (`facts/generations.rs` `covers_fact`: a member page's own subject, else `*`, the entity, an unbacked name key or the owned memory page). `null` when the fact is gone or in another source. |
+
+Both writes go through `write_fact`, so the trust stamp and the purge refusal apply as they do for `expireFact`.
+The TypeScript members refuse (`engine_capability_missing`) an id that is not a whole number, a `validUntil` that is not an
+ISO instant, a bare date or null, and a `today` that is not a real `YYYY-MM-DD` day, instead of guessing at Postgres's
+errors. `expireFactAtDate` is reached only on the fence path of a forget (a written source file); the legacy path
+expires through the withdrawal ledger.
+Parity: `test/engine-parity/forget-members.test.ts` (the members one by one) and `forget-whole.test.ts` (a whole
+`forgetFactInFence` and the `forget_fact` operation). `readFactActivity` (the proposal review's candidate read) is still
+not served.
 
 ## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)
 

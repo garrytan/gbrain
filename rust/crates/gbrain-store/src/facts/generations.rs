@@ -287,7 +287,7 @@ impl Store {
 
 /// `withdrawalCoversFactSql`: on a member page only that page's withdrawal covers the row;
 /// otherwise the withdrawal's reach ([`withdrawal_covers`]).
-fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool> {
+pub(super) fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool> {
     let slug = f.source_markdown_slug.as_deref().unwrap_or("");
     if slug.starts_with(super::MEMBER_PAGE_PREFIX) {
         return Ok(subject == slug);

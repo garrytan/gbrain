@@ -175,8 +175,10 @@ test/engine-parity/family-tail-sites.test.ts
 test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/files-ops-sites.test.ts
+test/engine-parity/forget-members.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/forget-whole.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/holding-page-purges.test.ts
 test/engine-parity/import-members.test.ts
@@ -215,6 +217,7 @@ test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/segmented-fence-staging.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/source-verify-reads.test.ts
 test/engine-parity/spend-log.test.ts
