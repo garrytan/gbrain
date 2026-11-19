@@ -37,6 +37,7 @@ import { randomUUID } from 'node:crypto';
 import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { CLI_CASES, MCP_OVERRIDES, MCP_PARAM_FILL, type CliCase } from './cases.ts';
 import { buildPackages, renderPackages } from './packages.ts';
+import { normalize } from './normalize.ts';
 
 const ROOT = resolve(import.meta.dir, '..', '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
@@ -243,37 +244,6 @@ function makeRepo(dir: string): string {
 }
 
 // ---- normalising and comparing ---------------------------------------------------------------------------------
-
-const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-const INSTANT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
-const TIMESTAMP_KEY = /(^|_)(created_at|updated_at|updated_at_iso|deleted_at|snapshot_at|ingested_at|embedded_at|last_written_at|last_sync_at|last_checked|first_seen|at|ts|time|timestamp|started_at|finished_at|generated_at|now)$/;
-const CLOCK_KEY = /(^|_)(latency_ms|duration_ms|durationMs|elapsedMs|duration_s|elapsed_ms|took_ms|days_since_effective|ms|uptime_s|age_s|age_ms|pid)$/;
-const ENGINE_NAME = /^(rust|pglite|postgres)$/;
-const ID_KEY = /^(id|page_id|event_page_id|chunk_id|fact_id|version_id|job_id)$/;
-
-function normalize(value: unknown, paths: Array<[string, string]>, key = ''): unknown {
-  if (value === null || value === undefined) return value === null ? null : '<undefined>';
-  if (typeof value === 'string') {
-    if (TIMESTAMP_KEY.test(key) || INSTANT.test(value)) return '<timestamp>';
-    if (/engine/i.test(key) && ENGINE_NAME.test(value)) return '<engine>';
-    let s = paths.reduce((text, [path, mark]) => text.split(path).join(mark), value);
-    s = s.replace(/\b(engine:\s*)(rust|pglite|postgres)\b/g, '$1<engine>');
-    s = s.replace(UUID, '<uuid>').replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, '<timestamp>').replace(/\b\d+(\.\d+)?\s?ms\b/g, '<n>ms');
-    return s;
-  }
-  if (typeof value === 'number') {
-    if (ID_KEY.test(key)) return '<id>';
-    if (CLOCK_KEY.test(key)) return '<clock>';
-    return Number.isInteger(value) ? value : Math.round(value * 1e5) / 1e5;
-  }
-  if (Array.isArray(value)) return value.map((v) => normalize(v, paths, key));
-  if (typeof value === 'object') {
-    const o = value as Record<string, unknown>;
-    // engine names are expected to differ; compare everything else
-    return Object.fromEntries(Object.keys(o).sort().filter((k) => k !== 'engine').map((k) => [k, normalize(o[k], paths, k)]));
-  }
-  return value;
-}
 
 function parseOut(text: string): unknown {
   const t = text.trim();
