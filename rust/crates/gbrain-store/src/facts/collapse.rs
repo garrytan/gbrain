@@ -102,8 +102,14 @@ impl Store {
             let Some(page) = read_page_by_id(&*read, id)? else {
                 continue;
             };
+            // `coalesce(compiled_truth, truth_lead)`: a segmented page has no compiled_truth; its stored lead is the
+            // same raw prefix.
+            let lead_text = match page.compiled_truth.as_deref() {
+                Some(text) => Some(text.to_string()),
+                None => crate::page_body::truth_lead(&*read, page.id)?,
+            };
             let body = btrim(left(
-                page.compiled_truth.as_deref().unwrap_or(""),
+                lead_text.as_deref().unwrap_or(""),
                 BOUNDED_PREFIX_CHARS,
             ));
             let chars = body.chars().count();
