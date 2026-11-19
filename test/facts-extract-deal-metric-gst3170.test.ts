@@ -10,7 +10,7 @@ import { __setChatTransportForTests, resetGateway, type ChatResult } from '../sr
 
 const FOLDS = ['fundraise', 'Fundraise Seed', 'fundraise_series_a', 'raise', 'raise_amount', 'seed_round', 'pre_seed', 'series_a',
   'Series B round', 'round_size', 'bridge_round', 'funding_round', 'deal_amount_usd', 'deal_size', 'seed_raise'];
-const KEEPS = ['valuation', 'post_money_valuation', 'pre_money_valuation', 'share_price', 'price_per_share', 'round_valuation',
+const KEEPS = ['funding_runway_months', 'bridge_loan_interest', 'raise_target', 'funding_needed', 'round_trip_ms', 'deal_interest_rate', 'valuation', 'post_money_valuation', 'pre_money_valuation', 'share_price', 'price_per_share', 'round_valuation',
   'valuation_cap', 'seed_valuation', 'series_a_price', 'deal_count', 'number_of_rounds', 'raise_date', 'mrr', 'revenue', 'arr',
   'team_size', 'equity_stake', 'ownership_pct'];
 

@@ -86,7 +86,8 @@ import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust
 import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
 import { sourceWindowKey, type SourceWindow } from '../page-body/derivations.ts';
 import { findCaptureDuplicate } from './capture-dedup.ts';
-import { deriveSlotCloses, normalizeSlot, slotCloseEndSql, slotCloseLinkSql, type SlotRow } from './slots.ts';
+import { normalizeSlot, slotCloseEndSql, slotCloseLinkSql } from './slots.ts';
+import { lockSlotCloses, storeSlotCloses, type SlotKey } from './slot-closes.ts';
 import { unbackedEntitySql } from './withdrawal-schema.ts';
 import { CONVERSATION_SLOT_SQL, valueHash } from '../chronicle/ontology.ts';
 
@@ -508,6 +509,10 @@ async function stampSourceWindows(tx: BrainEngine, ids: readonly number[], windo
  */
 export async function publishConversationFacts(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[],
   opts: { scope: ConversationScope; requestId?: string; segments?: ConversationSegmentsPublication }): Promise<{ deleted: number; facts_inserted: number; duplicates_skipped: number; purged_skipped: number }> {
+  // GST-3170: a publication that touches a slot writes the stored closes of other pages' rows too, so it holds the
+  // source's slot-close lock before its first row lock (slot-closes.ts).
+  if (rows.some(row => row.dimension) || (await tx.executeRaw(`SELECT 1 FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
+    AND f.dimension IS NOT NULL AND ${CONVERSATION_SLOT_SQL} LIMIT 1`, [sourceId, slug])).length) await lockSlotCloses(tx, sourceId);
   const derivation = await conversationDerivation(tx, sourceId, slug);
   const cfg = await derivedGateConfig(tx);
   const gated = rows.map((row, index) => ({ row, index, decision: OUTCOME_SOURCES.has(row.source) ? null : decideFactWrite(row,
@@ -593,35 +598,6 @@ async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: 
   }
   await storeSlotCloses(tx, sourceId, rows.flatMap(row => row.dimension && row.entity_slug ? [{ entity_slug: row.entity_slug, dimension: row.dimension }] : []));
   return { inserted, ids, purged };
-}
-
-type SlotKey = { entity_slug: string; dimension: string };
-
-/**
- * GST-3170: stores exactly the closes deriveSlotCloses gives for `slots` of the source from their active conversation
- * slot rows (valid_until and superseded_by; never expired_at); a world row's from the world rows alone, since a private
- * row never ends a world row at read time either. Only a row that is open (no superseded_by, no valid_until) or carries
- * a close stored here (slotCloseEndSql) changes, so another writer's end or link is never touched. Runs in the
- * publication's transaction after every insert and clear, so the stored closes always match the rows present.
- */
-async function storeSlotCloses(tx: BrainEngine, sourceId: string, slots: readonly SlotKey[]): Promise<void> {
-  if (!slots.length) return;
-  const rows = await tx.executeRaw<SlotRow & { visibility: string; superseded_by: number | string | null; open: boolean; ours: boolean }>(
-    `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact, f.visibility, f.superseded_by,
-       f.superseded_by IS NULL AND f.valid_until IS NULL AS open, ${slotCloseEndSql('f')} AS ours
-     FROM facts f WHERE f.source_id = $1 AND (f.entity_slug, f.dimension) IN (SELECT * FROM unnest($2::text[], $3::text[]))
-       AND f.expired_at IS NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
-       AND (f.superseded_by IS NULL OR ${slotCloseLinkSql('f')})`,
-    [sourceId, slots.map(slot => slot.entity_slug), slots.map(slot => slot.dimension)]);
-  const all = deriveSlotCloses(rows);
-  const world = deriveSlotCloses(rows.filter(row => row.visibility === 'world'));
-  const changes = rows.flatMap(row => {
-    const want = (row.visibility === 'world' ? world : all).get(Number(row.id))?.by ?? null;
-    return (row.open || row.ours) && want !== (row.superseded_by == null ? null : Number(row.superseded_by)) ? [{ id: Number(row.id), succ: want }] : [];
-  });
-  if (!changes.length) return;
-  await tx.executeRaw(`UPDATE facts f SET superseded_by = x.succ, valid_until = s.valid_from
-    FROM unnest($1::bigint[], $2::bigint[]) AS x(id, succ) LEFT JOIN facts s ON s.id = x.succ WHERE f.id = x.id`, [changes.map(c => c.id), changes.map(c => c.succ)]);
 }
 
 /**

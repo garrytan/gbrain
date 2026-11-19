@@ -313,8 +313,11 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const named = await namedEntity(engine, question, { sourceIds, excludePrivate: scope.excludePrivate });
     if (!named) return [];
     const p = armParams(allSim ? simParams : []);
+    // GST-3170: a future-dated fact ranks as of when it was written; each branch keeps an index-ordered scan.
+    const arm = (order: string, from: string) => `(SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where}
+       AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT $${p.length + 3})`;
     const active = await engine.executeRaw<Row>(
-      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2}
+      `SELECT * FROM (${arm('f.valid_from', 'f.valid_from <= now()')} UNION ALL ${arm('f.created_at', 'f.valid_from > now()')}) f
        ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT $${p.length + 3}`,
       [...p, named.source_id, named.slug, opts.depth.entity]);
     if (!opts.history) return active;

@@ -472,7 +472,7 @@ src/core/facts/contested-claims.ts	execute_raw	1
 src/core/facts/conversation-entity-hints.ts	execute_raw	1
 src/core/facts/conversation-incremental.ts	execute_raw	1
 src/core/facts/conversation-memo.ts	execute_raw	4
-src/core/facts/conversation-publication.ts	execute_raw	27	GST-3170: storeSlotCloses (read, update) and the clear release share the publication transaction and its page predicates; they move with the area
+src/core/facts/conversation-publication.ts	execute_raw	26	GST-3170: the clear releases the slot closes stored toward the rows it removes and the publication checks for slot rows before taking the slot-close lock, in the publication transaction with its page predicates; they move with the area
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/dead-absorb-retry.ts	execute_raw	2
@@ -502,6 +502,7 @@ src/core/facts/relink.ts	execute_raw	5
 src/core/facts/retire.ts	execute_raw	1
 src/core/facts/similar-active.ts	execute_raw	2
 src/core/facts/single-prepare.ts	execute_raw	7
+src/core/facts/slot-closes.ts	execute_raw	5	GST-3170: the stored conversation slot closes (lock, derive read, store update, release) run inside the caller's publication or purge transaction; they move behind a typed facts engine method with the conversation publication
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	8
@@ -844,7 +845,7 @@ src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	6
 src/core/persistence/page-prepare.ts	execute_raw	11
-src/core/persistence/page-purge.ts	execute_raw	30
+src/core/persistence/page-purge.ts	execute_raw	31	GST-3170: the purge reads its page's fact ids so the slot closes stored toward them are released before the delete (facts/slot-closes.ts); moves with the purge sweep
 src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	14
 src/core/persistence/parked-groups.ts	execute_raw	1

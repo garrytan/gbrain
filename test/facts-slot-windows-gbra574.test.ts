@@ -283,6 +283,29 @@ for (const backend of testBackends()) {
         await engine.executeRaw(`UPDATE facts SET superseded_by = NULL, valid_until = NULL WHERE source_id='default' AND source LIKE 'cli:extract-conversation-facts%'`);
         expect(await read()).toEqual(stored);
       });
+
+      test('purging the later page reopens the earlier row: a deleted successor leaves no stored end behind', async () => {
+        await putPages([A, B]);
+        await extract([A, B]);
+        expect(await closes()).toEqual(CLOSED);
+        const page = await call('get_page', { slug: B.slug });
+        const purged = await call('delete_page', { slug: B.slug, purge: true, expected_revision: page.revision });
+        expect(purged.error).toBeUndefined();
+        expect(await closes()).toEqual([[ACME.fact, null, null]]);
+      });
+
+      test('two pages of one slot published at the same time store the closes of the whole chain', async () => {
+        const GAMMA: Said = { fact: 'Alice Example moved to Gamma Example.', valid: P3, slot: ['employer', 'Gamma Example'] };
+        const C: Page = { slug: 'meetings/chat-c', title: 'Chat C', date: P3, said: [GAMMA] };
+        await putPages([A, B, C]);
+        await extract([A]);
+        await disposePersistenceConsumer(engine);
+        const run = (p: Page) => runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: [p.slug], sleepMs: 0, overrideDisabled: true,
+          extractor: async () => p.said.map(asFact) });
+        const results = await Promise.all([run(B), run(C)]);
+        expect(results.map(r => r.failed_pages ?? [])).toEqual([[], []]);
+        expect(await closes()).toEqual([[ACME.fact, P2, BETA.fact], [BETA.fact, P3, GAMMA.fact], [GAMMA.fact, null, null]]);
+      });
     });
 
     describe('read-time windows in the facts block', () => {

@@ -526,10 +526,17 @@
               "array<string>",
               "string",
               "number",
+              "string",
+              "string",
+              "array<string>",
+              "array<string>",
+              "string",
+              "number",
+              "number",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND facts.visibility IN ('world') AND source != ALL($4::text[]) AND fact ILIKE $5 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) ORDER BY valid_from DESC, id DESC LIMIT $6 OFFSET $7",
-            "textSha256": "382772a89cb86b97fb1565f507dee897f9af3d8f6a4dadf014285ebfd98f0070"
+            "sql": "SELECT * FROM ((SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND facts.visibility IN ('world') AND source != ALL($4::text[]) AND fact ILIKE $5 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT $6) UNION ALL (SELECT * FROM facts WHERE source_id = $7 AND entity_slug = $8 AND consolidated_at IS NULL AND kind = ANY($9::text[]) AND facts.visibility IN ('world') AND source != ALL($10::text[]) AND fact ILIKE $11 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT $12)) f ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC LIMIT $13 OFFSET $14",
+            "textSha256": "b08ca5936fe6bd6c1ea8e3bc1e5bb131162306d21fb33a26fa7486758fdfecab"
           }
         ],
         "default": [
@@ -539,10 +546,14 @@
               "string",
               "string",
               "number",
+              "string",
+              "string",
+              "number",
+              "number",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) ORDER BY valid_from DESC, id DESC LIMIT $3 OFFSET $4",
-            "textSha256": "027398b406f284b7be64589ef4f64333d5a1badad86f1ca2958dbbef5e45b618"
+            "sql": "SELECT * FROM ((SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT $3) UNION ALL (SELECT * FROM facts WHERE source_id = $4 AND entity_slug = $5 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT $6)) f ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC LIMIT $7 OFFSET $8",
+            "textSha256": "e4a14abf67764bbedeb5a93efa9adaa50e503895c38ac12cdc50f955c904f8d4"
           }
         ]
       },

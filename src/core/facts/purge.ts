@@ -40,6 +40,7 @@ import { declareDurablePersistence } from '../persistence/protocol.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { outcomeMarkerSql } from './audit-sources.ts';
+import { withSlotClosesReleased } from './slot-closes.ts';
 import { requestAttribution } from '../persistence/attribution.ts';
 import { isTerminal, principalKey, type WriteRequest } from '../persistence/model.ts';
 import { retryWriteAdmission } from '../persistence/admission-retry.ts';
@@ -578,7 +579,8 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       const proposals = (await tx.executeRaw('DELETE FROM take_proposals WHERE source_id=$1 AND gbrain_fact_fingerprint(claim_text)=$2 RETURNING 1', [p.sourceId, current.fact_hash])).length;
       const notices = (await tx.executeRaw(`UPDATE core_edit_notices SET base_text=NULL WHERE source_id=$1 AND strpos(lower(base_text),$2)>0 RETURNING 1`,
         [p.sourceId, current.fact.toLowerCase()])).length;
-      const facts = (await tx.executeRaw('DELETE FROM facts WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id', [ids, p.sourceId])).length;
+      const facts = (await withSlotClosesReleased(tx, p.sourceId, ids,
+        () => tx.executeRaw('DELETE FROM facts WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id', [ids, p.sourceId]))).length;
       const bodies = await rewritePageBodies(tx, p.sourceId, plan.pages);
       ({ rewritten, unsealed } = bodies);
       const pageIds = plan.pages.map(page => page.page_id);
