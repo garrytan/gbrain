@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 942/942
+# covered: 976/976
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -23,7 +23,7 @@
 # ontology: 4/4
 # raw_files: 26/26
 # takes: 23/23
-# dream: 3/3
+# dream: 37/37
 # contradictions: 5/5
 # facts: 15/15
 # segmented_body: 16/16
@@ -83,21 +83,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	99	no	yes	yes	serves
+transaction	lifecycle	yes	101	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	113	yes	yes	yes	serves
+getPage	pages	yes	114	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	475	yes	yes	yes	serves
+putPage	pages	yes	479	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	144	yes	yes	yes	serves
+softDeletePage	pages	yes	145	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -302,9 +302,9 @@ countFilesRegisteredElsewhere	raw_files	yes	1	no	yes	yes	refuses:files
 registerFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 readReadableFileForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 listReadableFilePaths	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	37	yes	yes	yes	serves
+addTakesBatch	takes	yes	38	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
-listTakes	takes	yes	16	no	yes	yes	serves
+listTakes	takes	yes	17	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -312,7 +312,7 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	2	no	yes	yes	serves
 supersedeTake	takes	yes	2	no	yes	yes	serves
-resolveTake	takes	yes	12	no	yes	yes	serves
+resolveTake	takes	yes	13	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
@@ -328,16 +328,50 @@ listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
 sweepDreamVerdicts	dream	yes	1	no	yes	yes	serves
+listDreamQueueCandidates	dream	yes	1	no	yes	yes	refuses:minion_queue
+listLiveDreamCycleLocks	dream	yes	1	no	yes	yes	refuses:minion_queue
+readDreamJobStatus	dream	yes	1	no	yes	yes	refuses:minion_queue
+ensureDreamMapConfigRow	dream	yes	2	no	yes	yes	serves
+lockDreamMapConfigRow	dream	yes	2	no	yes	yes	serves
+writeDreamMapConfigRow	dream	yes	2	no	yes	yes	serves
+recordDreamBreakerReset	dream	yes	4	no	yes	yes	serves
+stampDreamPageProvenance	dream	yes	1	no	yes	yes	refuses:pages
+listDreamPageIds	dream	yes	1	no	yes	yes	refuses:pages
+countDreamProvenancePages	dream	yes	1	no	yes	yes	refuses:pages
+readDreamDeferralReceipt	dream	yes	1	no	yes	yes	refuses:persistence_journal
+listConsolidationClaimValues	dream	yes	1	no	yes	yes	refuses:facts
+setConsolidatedFactValidUntil	dream	yes	1	no	yes	yes	refuses:facts
+listReadersSourcedFactIds	dream	yes	1	no	yes	yes	refuses:facts
+findConsolidationPageIds	dream	yes	1	no	yes	yes	refuses:pages
+readConsolidationTakesMaxRowNum	dream	yes	1	no	yes	yes	refuses:takes
+findConsolidatedTakes	dream	yes	1	no	yes	yes	refuses:takes
+refreshConsolidatedTakeSource	dream	yes	1	no	yes	yes	refuses:takes
+findConsolidatedTakeIds	dream	yes	1	no	yes	yes	refuses:takes
+listConsolidationClaimShapes	dream	yes	1	no	yes	yes	refuses:facts
+listRetainedDreamOutputSources	dream	yes	1	no	yes	yes	refuses:pages
+readDreamSourceIncarnation	dream	yes	2	no	yes	yes	serves
+listDreamAtomPages	dream	yes	1	no	yes	yes	refuses:pages
+listSynthesisPageBodies	dream	yes	1	no	yes	yes	refuses:pages
+listLaterPersistenceRequests	dream	yes	1	no	yes	yes	refuses:persistence_journal
+listCommittedOutputRequests	dream	yes	1	no	yes	yes	refuses:persistence_journal
+readDreamVerifyEpoch	dream	yes	1	no	yes	yes	refuses:pages
+listDreamJobCreatedAt	dream	yes	1	no	yes	yes	refuses:minion_queue
+readDreamPreRunRevision	dream	yes	1	no	yes	yes	refuses:page_versions
+listCompletedSynthJobs	dream	yes	1	no	yes	yes	refuses:minion_queue
+countCoalescibleSynthJobs	dream	yes	1	no	yes	yes	refuses:minion_queue
+listWaitingChildJobIds	dream	yes	1	no	yes	yes	refuses:minion_queue
+listDreamChildJobTimings	dream	yes	1	no	yes	yes	refuses:minion_queue
+countRecentDreamSynthSubmissions	dream	yes	1	no	yes	yes	refuses:minion_queue
 writeContradictionsRun	contradictions	yes	1	no	yes	yes	serves
 loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	66	yes	yes	yes	serves
-insertFacts	facts	yes	97	no	yes	yes	serves
+insertFact	facts	yes	67	yes	yes	yes	serves
+insertFacts	facts	yes	98	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	52	no	yes	yes	serves
-listFactsByEntity	facts	yes	23	yes	yes	yes	serves
+listFactsByEntity	facts	yes	24	yes	yes	yes	serves
 listFactsSince	facts	yes	15	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	5	yes	yes	yes	serves
@@ -364,7 +398,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	25	no	yes	yes	serves
+createVersion	versions	yes	26	no	yes	yes	serves
 getVersions	versions	yes	12	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -385,8 +419,8 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	14	no	yes	yes	serves
-setConfig	config	yes	27	no	yes	yes	serves
+getConfig	config	yes	19	no	yes	yes	serves
+setConfig	config	yes	30	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -485,7 +519,7 @@ readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
-acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
+acquireCycleLock	cycle_locks	yes	13	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 readCycleLocks	cycle_locks	yes	9	no	yes	yes	serves
@@ -495,12 +529,12 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	102	no	yes	yes	serves
+admitJob	minion_jobs	yes	104	no	yes	yes	serves
 getJob	minion_jobs	yes	35	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	74	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	75	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	43	no	yes	yes	serves
+completeJob	minion_jobs	yes	44	no	yes	yes	serves
 failJob	minion_jobs	yes	34	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	3	no	yes	yes	serves
@@ -516,7 +550,7 @@ delayActiveJob	minion_queue	yes	1	no	yes	yes	serves
 releaseWatchdogClaim	minion_queue	yes	1	no	yes	yes	serves
 markJobWatchdogSuspect	minion_queue	yes	2	no	yes	yes	serves
 promoteDelayedJobs	minion_queue	yes	3	no	yes	yes	serves
-cancelJobs	minion_queue	yes	15	no	yes	yes	serves
+cancelJobs	minion_queue	yes	16	no	yes	yes	serves
 killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
 killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves

@@ -120,7 +120,6 @@ src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	3
 src/commands/doctor/skill-checks.ts	execute_raw	5
-src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
@@ -316,9 +315,6 @@ src/core/cycle/chronicle.ts	execute_raw	3
 src/core/cycle/concept-publication.ts	execute_raw	3
 src/core/cycle/concept-redirects.ts	execute_raw	2
 src/core/cycle/derived-write-through.ts	execute_raw	5
-src/core/cycle/dream-breaker.ts	execute_raw	4
-src/core/cycle/dream-provenance.ts	execute_raw	3
-src/core/cycle/dream-write-deferral.ts	execute_raw	4
 src/core/cycle/drift.ts	execute_raw	2
 src/core/cycle/edge-contradictions.ts	execute_raw	13
 src/core/cycle/edge-contradictions.ts	sql_template	1
@@ -334,16 +330,9 @@ src/core/cycle/inline-drain.ts	execute_raw	3
 src/core/cycle/pattern-claim-sources.ts	execute_raw	1
 src/core/cycle/patterns-plan.ts	execute_raw	1
 src/core/cycle/patterns.ts	execute_raw	7
-src/core/cycle/phases/consolidate.ts	execute_raw	9
 src/core/cycle/propose-takes-failures.ts	execute_raw	5
 src/core/cycle/propose-takes.ts	execute_raw	5
 src/core/cycle/source-window.ts	execute_raw	4
-src/core/cycle/synthesize-completion.ts	execute_raw	2
-src/core/cycle/synthesize-concepts.ts	execute_raw	1
-src/core/cycle/synthesize-generations.ts	execute_raw	1
-src/core/cycle/synthesize-postprocess.ts	execute_raw	2
-src/core/cycle/synthesize-verify-epochs.ts	execute_raw	3
-src/core/cycle/synthesize.ts	execute_raw	5
 src/core/cycle/transcript-discovery.ts	execute_raw	2
 src/core/cycle/unindexed-files.ts	execute_raw	1
 src/core/db-lock.ts	execute_raw	2

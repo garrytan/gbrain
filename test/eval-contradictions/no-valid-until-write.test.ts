@@ -88,6 +88,7 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/facts/proposal-supersede.ts',
   'src/core/facts/withdrawal.ts',
   'src/core/engine-sql/facts-cycle.ts', // the fence row's cells statement (updateFenceFactCells), moved from cycle/extract-facts.ts
+  'src/core/engine-sql/dream-cycle.ts', // setConsolidatedFactValidUntil, moved from cycle/phases/consolidate.ts: the consolidate phase closes a fact's interval when its take supersedes it
   'src/core/engine-sql/facts-purge.ts', // the withdrawal expiry statement (expireFactsByWithdrawal), moved from facts/withdrawal.ts
   'src/core/facts/withdrawal-schema.ts',
   'src/core/generations/adapters/fact-rows.ts',

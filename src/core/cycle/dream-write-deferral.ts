@@ -88,13 +88,11 @@ export async function readDreamWriteDeferrals(engine: Pick<BrainEngine, 'getConf
 async function withDeferrals<T>(engine: BrainEngine,
   mutate: (map: Record<string, DreamWriteDeferral>, now: string, tx: BrainEngine) => Promise<{ result: T; audit: HealAuditInput[] }>): Promise<T> {
   return engine.transaction(async tx => {
-    await tx.executeRaw("INSERT INTO config (key, value) VALUES ($1, '{}') ON CONFLICT (key) DO NOTHING", [DREAM_WRITE_DEFERRALS_KEY]);
-    const [row] = await tx.executeRaw<{ value: string; now: string }>(
-      `SELECT value, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now FROM config WHERE key=$1 FOR UPDATE`,
-      [DREAM_WRITE_DEFERRALS_KEY]);
+    await tx.ensureDreamMapConfigRow(DREAM_WRITE_DEFERRALS_KEY);
+    const row = await tx.lockDreamMapConfigRow(DREAM_WRITE_DEFERRALS_KEY);
     const map = parseDeferrals(row?.value);
     const { result, audit } = await mutate(map, row!.now, tx);
-    await tx.executeRaw('UPDATE config SET value=$2 WHERE key=$1', [DREAM_WRITE_DEFERRALS_KEY, JSON.stringify(map)]);
+    await tx.writeDreamMapConfigRow(DREAM_WRITE_DEFERRALS_KEY, JSON.stringify(map));
     await recordHealAudit(tx, audit);
     return result;
   });
@@ -115,8 +113,7 @@ export async function reconcileDreamWriteDeferrals(engine: BrainEngine, phase: s
     const audit: HealAuditInput[] = [];
     for (const [key, entry] of Object.entries(map)) {
       if (entry.phase !== phase) continue;
-      const [receipt] = entry.receipt_id ? await tx.executeRaw<{ state: string; error_code: string | null; error_message: string | null }>(
-        'SELECT state, error_code, error_message FROM persistence_requests WHERE id=$1::uuid', [entry.receipt_id]) : [];
+      const receipt = entry.receipt_id ? await tx.readDreamDeferralReceipt(entry.receipt_id) : null;
       if (!receipt) {
         delete map[key];
         out.cleared.push(entry);
