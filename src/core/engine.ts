@@ -3485,6 +3485,8 @@ export interface BrainEngine {
   readCheckpointManifestRow(sourceId: string, clientId: string, sessionId: string): Promise<{ checkpoint_manifest: unknown } | null>;
   /** Replaces the session's checkpoint manifest, creating the row when there is none. */
   writeCheckpointManifest(sourceId: string, clientId: string, sessionId: string, manifest: readonly unknown[]): Promise<void>;
+  /** Deletes every session row last written more than `olderThanDays` (a whole number >= 1) days ago. */
+  ageOutSessionState(olderThanDays: number): Promise<void>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

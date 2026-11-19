@@ -540,6 +540,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readDeltaSessionRow': OOS.callerRawSql,
   'readCheckpointManifestRow': OOS.callerRawSql,
   'writeCheckpointManifest': OOS.callerRawSql,
+  'ageOutSessionState': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,

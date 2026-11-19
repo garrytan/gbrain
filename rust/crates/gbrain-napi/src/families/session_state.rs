@@ -88,4 +88,14 @@ impl Brain {
             s.write_checkpoint_manifest(&source_id, &client_id, &session_id, &manifest)
         })
     }
+
+    /// `ageOutSessionState(olderThanDays)`: resolves null.
+    #[napi]
+    pub fn age_out_session_state<'env>(
+        &self,
+        env: &'env Env,
+        older_than_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.age_out_session_state(older_than_days))
+    }
 }

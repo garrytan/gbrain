@@ -23,3 +23,7 @@ export const readCheckpointManifestRow: StoreMember<Key, { checkpoint_manifest: 
 export const writeCheckpointManifest: StoreMember<[...Key, manifest: readonly unknown[]], void> = async (brain, sourceId, clientId, sessionId, manifest) => {
   await storeCall({ member: 'writeCheckpointManifest' }, () => brain.writeCheckpointManifest(sourceId, clientId, sessionId, wellFormedJson([...manifest])));
 };
+
+export const ageOutSessionState: StoreMember<[olderThanDays: number], void> = async (brain, olderThanDays) => {
+  await storeCall({ member: 'ageOutSessionState' }, () => brain.ageOutSessionState(olderThanDays));
+};

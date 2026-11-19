@@ -14,7 +14,11 @@ behaviour on every engine. Key parts holding U+0000 are `invalid_argument`.
 | `brain.readDeltaSessionRow(sourceId, clientId, sessionId)` | `{ surfaced_slugs, last_wake_at, facts_cursor_at, facts_cursor_id, degraded_wakes }` or `null`; both times are microsecond ISO text or `null`, the id and counter are numbers | `readDeltaSessionRow` |
 | `brain.readCheckpointManifestRow(sourceId, clientId, sessionId)` | `{ checkpoint_manifest }` or `null` | `readCheckpointManifestRow` |
 | `brain.writeCheckpointManifest(sourceId, clientId, sessionId, manifest)` | `null`; replaces the manifest and `updated_at`, creating the row with column defaults when there is none | `writeCheckpointManifest` |
+| `brain.ageOutSessionState(olderThanDays)` | `null`; deletes every row with `updated_at < now - olderThanDays days` | `ageOutSessionState` |
 
 Every write sets `updated_at` to the store clock, which inside a transaction is the transaction's clock, as Postgres
 `now()` is. JSON values read back in jsonb key order. The TypeScript members apply `wellFormedJson` before the call, so
 a lone surrogate becomes U+FFFD as it does on Postgres.
+
+A day in `ageOutSessionState` is 86,400 seconds. Postgres adds calendar days in the session time zone, so the two
+differ by the daylight-saving shift for a row written within that hour of the cutoff in a zone that has one.

@@ -157,4 +157,21 @@ describe('engine parity: session state', () => {
       return { created, rewritten };
     },
   );
+
+  parityTest(
+    'ageOutSessionState keeps rows written inside the window',
+    { methods: ['upsertSessionState', 'writeCheckpointManifest', 'ageOutSessionState', 'readSessionCursor'] },
+    async (engine) => {
+      await engine.upsertSessionState('default', 'local', 'a', write('keep'));
+      await engine.writeCheckpointManifest('other', 'agent-a', 'b', []);
+      await engine.ageOutSessionState(1);
+      await engine.ageOutSessionState(7);
+      const rows = {
+        a: (await engine.readSessionCursor('default', 'local', 'a')) !== null,
+        b: (await engine.readSessionCursor('other', 'agent-a', 'b')) !== null,
+      };
+      expect(rows).toEqual({ a: true, b: true });
+      return rows;
+    },
+  );
 });

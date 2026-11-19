@@ -20,6 +20,7 @@ use crate::dream::jsonb_check;
 use crate::env::iso;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::KvWrite;
+use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::persistence::parse_timestamptz;
 use crate::{Store, get_json, keys, put_json};
@@ -117,11 +118,37 @@ fn bigint(op: &str, value: f64) -> Result<i64> {
     Ok(value as i64)
 }
 
+/// A whole number the caller passes as a `$1` text parameter (`String(n)`).
+fn whole(op: &str, what: &str, value: f64) -> Result<i64> {
+    if value.fract() != 0.0 || !value.is_finite() || value.abs() > 9.0e15 {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("{op}: {what} must be a whole number, got {value}"),
+        ));
+    }
+    Ok(value as i64)
+}
+
 /// Writes `record` with this write's time and the next `write_seq`.
 fn put_record(tx: &mut dyn KvWrite, key: &[u8], mut record: SessionRecord, now: i64) -> Result<()> {
     record.updated_at_us = now;
     record.write_seq = crate::pages::next_id(tx, WRITE_SEQ)?;
     put_json(tx, key, &record)
+}
+
+/// A stored row with its key.
+type Row = (Vec<u8>, SessionRecord);
+
+/// Every stored row with its key, in key order.
+fn all_rows(read: &dyn KvRead) -> Result<Vec<Row>> {
+    let mut raw = Vec::new();
+    scan_prefix(read, &[keys::SESSION_STATE], false, &mut |k, v| {
+        raw.push((k.to_vec(), v.to_vec()));
+        true
+    })?;
+    raw.into_iter()
+        .map(|(k, v)| Ok((k, serde_json::from_slice(&v)?)))
+        .collect()
 }
 
 impl Store {
@@ -283,6 +310,24 @@ impl Store {
             put_record(tx, &key, record, now)
         })
     }
+
+    /// `ageOutSessionState(olderThanDays)`: deletes every row with `updated_at < now - N days`. A
+    /// day is 86,400 seconds here; Postgres adds calendar days in the session time zone, which
+    /// differs only across a daylight-saving change in a zone that has one.
+    pub fn age_out_session_state(&self, older_than_days: f64) -> Result<()> {
+        const OP: &str = "ageOutSessionState";
+        let days = whole(OP, "olderThanDays", older_than_days)?;
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let cutoff = now.saturating_sub(days.saturating_mul(86_400_000_000));
+            for (key, record) in all_rows(&*tx)? {
+                if record.updated_at_us < cutoff {
+                    tx.delete(&key)?;
+                }
+            }
+            Ok(())
+        })
+    }
 }
 
 #[cfg(test)]
@@ -436,5 +481,28 @@ mod tests {
                 .unwrap()["degraded_wakes"],
             1
         );
+    }
+
+    #[test]
+    fn age_out_deletes_rows_older_than_whole_days() {
+        let (s, clock) = store();
+        s.upsert_session_state("default", "c", "old", &write("a", "keep"))
+            .unwrap();
+        clock.0.store(T0 + 1, Ordering::SeqCst);
+        s.upsert_session_state("default", "c", "edge", &write("a", "keep"))
+            .unwrap();
+        clock.0.store(T0 + 1 + 7 * 86_400_000_000, Ordering::SeqCst);
+        s.age_out_session_state(7.0).unwrap();
+        assert!(
+            s.read_session_cursor("default", "c", "old")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            s.read_session_cursor("default", "c", "edge")
+                .unwrap()
+                .is_some()
+        );
+        assert!(s.age_out_session_state(1.5).is_err());
     }
 }

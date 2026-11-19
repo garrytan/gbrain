@@ -319,10 +319,7 @@ export async function gcSessionContextState(
   maxRowsPerClient = MAX_ROWS_PER_CLIENT,
 ): Promise<void> {
   try {
-    await engine.executeRaw(
-      `DELETE FROM session_context_state WHERE updated_at < now() - ($1 || ' days')::interval`,
-      [String(Math.max(1, Math.floor(olderThanDays)))],
-    );
+    await engine.ageOutSessionState(Math.max(1, Math.floor(olderThanDays)));
     // Per-client LRU cap: keep the newest `maxRowsPerClient` rows per lane.
     await engine.executeRaw(
       `DELETE FROM session_context_state s

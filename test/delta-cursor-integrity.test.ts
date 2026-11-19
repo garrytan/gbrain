@@ -24,6 +24,7 @@ import {
   DELTA_SESSION_SQL,
   CHECKPOINT_MANIFEST_SQL,
   WRITE_CHECKPOINT_MANIFEST_SQL,
+  AGE_OUT_SESSION_STATE_SQL,
   UPSERT_SESSION_STATE_SQL,
 } from '../src/core/engine-sql/session-state.ts';
 
@@ -49,6 +50,7 @@ const STATE_MEMBER_SQL: Record<string, string> = {
   readDeltaSessionRow: DELTA_SESSION_SQL,
   readCheckpointManifestRow: CHECKPOINT_MANIFEST_SQL,
   writeCheckpointManifest: WRITE_CHECKPOINT_MANIFEST_SQL,
+  ageOutSessionState: AGE_OUT_SESSION_STATE_SQL,
 };
 
 function faulty(engine: BrainEngine, faults: Faults): BrainEngine {

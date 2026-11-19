@@ -113,6 +113,11 @@ const PINS: Pin[] = [
          checkpoint_manifest = EXCLUDED.checkpoint_manifest,
          updated_at          = now()`],
   },
+  {
+    from: 'src/core/context/session-state.ts:389 gcSessionContextState (age-out), at eb30f47b89',
+    case: { method: 'ageOutSessionState', variant: 'default', run: e => e.ageOutSessionState(7) },
+    texts: [`DELETE FROM session_context_state WHERE updated_at < now() - ($1 || ' days')::interval`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

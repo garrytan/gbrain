@@ -150,3 +150,10 @@ export const WRITE_CHECKPOINT_MANIFEST_SQL = `INSERT INTO session_context_state
 export async function writeCheckpointManifest(exec: SessionStateExec, sourceId: string, clientId: string, sessionId: string, manifest: readonly unknown[]): Promise<void> {
   await exec.executeRaw(WRITE_CHECKPOINT_MANIFEST_SQL, [sourceId, clientId, sessionId, JSON.stringify(manifest)]);
 }
+
+export const AGE_OUT_SESSION_STATE_SQL = `DELETE FROM session_context_state WHERE updated_at < now() - ($1 || ' days')::interval`;
+
+/** Deletes every session row last written more than `olderThanDays` days ago (the caller passes a whole number >= 1). */
+export async function ageOutSessionState(exec: SessionStateExec, olderThanDays: number): Promise<void> {
+  await exec.executeRaw(AGE_OUT_SESSION_STATE_SQL, [String(olderThanDays)]);
+}

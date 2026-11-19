@@ -216,6 +216,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readDeltaSessionRow',
   'readCheckpointManifestRow',
   'writeCheckpointManifest',
+  'ageOutSessionState',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
