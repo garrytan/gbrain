@@ -150,6 +150,16 @@ current and a page ahead is rebuilt by its batch. Dropping the `Store` stops the
 
 The binding and `gbrain doctor` do not expose `verify` or `rebuild` yet.
 
+`Store::open_dir_read_only(dir)` opens an existing brain only to read, for checks such as `keyword_index_verify`
+that must not change the store they check. It opens the record file through redb's read-only database
+(`redb_kv.rs` `RedbReadOnlyKv`), which takes no write lock, runs no recovery and commits nothing on close: a plain
+open commits redb's allocator state when it closes, so it changes bytes of `records.redb` even when nothing was
+written. The builder does not run. Every write is refused with `read_only_transaction`, and so is an open that
+would have to write: no records yet, a format before 4 (the upgrade) or an index state to reset. `store_io` names
+a missing record file or one not closed cleanly (redb repairs only on a writable open); `store_locked` means a
+writable handle has the brain open. Pinned by `tests/read_only.rs` (the record file and `FORMAT` keep every byte
+across a keyword search and `keyword_index_verify`) and the format-1 case in `tests/lifecycle.rs`.
+
 ### Scale
 
 Measured with `keyword_scale` (`crates/gbrain-store/examples/keyword_scale.rs`) on the bake-off corpus at 50,000
@@ -193,7 +203,8 @@ cost without postings.
 between the indexed and the forced-scan result bytes for every member.
 
 To rerun: the header of `keyword_scale.rs` lists every mode and the full recipe (`load ... nosync`, `queries`,
-`build`, `run <store> <queries> <member> 900 2` once per member, `index-check`, `verify`, `sizes`). `verify` is the
+`build`, `run <store> <queries> <member> 900 2` once per member, `index-check`, `verify`, `sizes`). `index-check`,
+`sizes` and `verify` without `fixtures` open the store read-only, so the file keeps every byte. `verify` is the
 untimed correctness mode: it runs each query through the index and through the forced scan on the same store and
 compares the full result bytes, and `writes` times durable `put_page` calls and queries during writes.
 

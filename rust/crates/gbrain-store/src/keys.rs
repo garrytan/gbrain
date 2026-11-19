@@ -59,7 +59,10 @@ pub const RAW_FILES: u8 = b'r';
 pub const LINK_QUERIES: u8 = b'q';
 /// Family `timeline_queries` (`timeline_queries.rs`).
 pub const TIMELINE_QUERIES: u8 = b'u';
-/// Family `keyword` (`keyword.rs`).
+/// Family `keyword` (`keyword.rs`): the keyword index of store format 4. Kind byte after the tag:
+/// `0x00` the index state, `0x01` chunk and `0x02` page lexeme postings, `0x03` title trigrams,
+/// `0x04` slug basenames, `0x05` and `0x06` the chunk and page forward records (the `KW_*`
+/// constants and builders below; `rust/docs/store/keyword.md`, "Keys").
 pub const TRIGRAM: u8 = b'R';
 /// Family `chunk_queries` (`chunk_queries.rs`).
 pub const CHUNK_QUERIES: u8 = b'c';
