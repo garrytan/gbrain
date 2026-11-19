@@ -33,14 +33,12 @@ import { WRITE_GATE_SCAN_BASELINE_KEY } from '../write-gate-schema.ts';
 import { storedTrustTier, TRUST_TIER_RANK, TRUST_TIERS, type TrustTier } from '../trust/tier.ts';
 import { ACTIVATION_TIER_CEILING } from './sql.ts';
 import { opError } from '../ops/contract.ts';
-import { claimPendingSql, TRUST_CLAIM_RESUME_COMMAND } from '../trust/claim-state.ts';
-import { readConfigValue, type ConfigReader } from '../config-values.ts';
+import { TRUST_CLAIM_RESUME_COMMAND } from '../trust/claim-state.ts';
+import { readConfigValue } from '../config-values.ts';
 
 export type ScanTable = 'pages' | 'facts' | 'takes' | 'timeline_entries';
 export const SCAN_TABLES: readonly ScanTable[] = ['pages', 'facts', 'takes', 'timeline_entries'];
 
-const CHECKPOINT_OP = 'trust_scan';
-const CHECKPOINT_KEY = 'v1';
 export const DEFAULT_SCAN_BATCH = 500;
 
 /** Every hit is recorded as a flag: the scan never quarantines or rejects retroactively. */
@@ -56,18 +54,15 @@ export const SCAN_TIERS: readonly TrustTier[] = TRUST_TIERS.filter(t => TRUST_TI
  */
 interface Cursor { detector_version: number; ids: Partial<Record<ScanTable, number>>; until?: Partial<Record<ScanTable, number>>; completed_at?: string }
 
-async function readCursor(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Cursor | null> {
-  const [row] = await engine.executeRaw<{ keys: unknown }>(
-    'SELECT completed_keys AS keys FROM op_checkpoints WHERE op = $1 AND fingerprint = $2', [CHECKPOINT_OP, CHECKPOINT_KEY]);
-  const keys = typeof row?.keys === 'string' ? JSON.parse(row.keys) as unknown : row?.keys;
+/** The stored cursor (the `op_checkpoints` row engine-sql/trust-scan.ts reads), or null when there is none or it is not one. */
+async function readCursor(engine: Pick<BrainEngine, 'readTrustScanCursor'>): Promise<Cursor | null> {
+  const keys = await engine.readTrustScanCursor();
   const first = Array.isArray(keys) ? keys[0] as Cursor | undefined : undefined;
   return first && typeof first === 'object' && typeof first.detector_version === 'number' ? first : null;
 }
 
-async function saveCursor(engine: Pick<BrainEngine, 'executeRaw'>, cursor: Cursor): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op, fingerprint, completed_keys) VALUES ($1, $2, $3::text::jsonb)
-    ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()`,
-  [CHECKPOINT_OP, CHECKPOINT_KEY, JSON.stringify([cursor])]);
+async function saveCursor(engine: Pick<BrainEngine, 'writeTrustScanCursor'>, cursor: Cursor): Promise<void> {
+  await engine.writeTrustScanCursor([cursor]);
 }
 
 /**
@@ -75,7 +70,7 @@ async function saveCursor(engine: Pick<BrainEngine, 'executeRaw'>, cursor: Curso
  * the detector version it records): rows above it were assessed by their writers. Only a baseline taken
  * under the current detector bounds the scan; a detector bump rescans all.
  */
-async function readBaseline(engine: ConfigReader): Promise<Cursor['until'] | null> {
+async function readBaseline(engine: Pick<BrainEngine, 'getConfigValues'>): Promise<Cursor['until'] | null> {
   const value = await readConfigValue(engine, WRITE_GATE_SCAN_BASELINE_KEY);
   const parsed = value !== undefined ? JSON.parse(value) as { detector_version?: unknown; until?: unknown } : null;
   return parsed?.detector_version === WRITE_GATE_DETECTOR_VERSION && parsed.until && typeof parsed.until === 'object'
@@ -83,8 +78,8 @@ async function readBaseline(engine: ConfigReader): Promise<Cursor['until'] | nul
 }
 
 /** The cursor that applies to the current detector; an older detector's cursor starts over from the gate's baseline, if any. */
-async function currentCursor(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Cursor> {
-  const stored = await readCursor(engine).catch(() => null);
+async function currentCursor(engine: Pick<BrainEngine, 'readTrustScanCursor' | 'getConfigValues'>): Promise<Cursor> {
+  const stored = await readCursor(engine);
   if (stored && stored.detector_version === WRITE_GATE_DETECTOR_VERSION) return stored;
   const until = await readBaseline(engine).catch(() => null);
   return { detector_version: WRITE_GATE_DETECTOR_VERSION, ids: {}, ...(until ? { until } : {}) };
@@ -131,9 +126,9 @@ export interface TrustScanOptions {
 export async function runTrustScan(engine: BrainEngine, opts: TrustScanOptions = {}): Promise<TrustScanReport> {
   const batchSize = Math.max(1, Math.min(opts.batchSize ?? DEFAULT_SCAN_BATCH, 10_000));
   // A claimed source's legacy rows are owner tier once its lift finishes; scanning them first would flag the owner's own notes.
-  const pending = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE ${claimPendingSql('s')} ORDER BY s.id`);
+  const pending = await engine.listClaimPendingSourceIds();
   if (pending.length) {
-    throw opError('recovery_required', `Claimed source(s) ${pending.map(r => r.id).join(', ')} have not finished their lift, so the scan would treat the owner's notes as unverified.`,
+    throw opError('recovery_required', `Claimed source(s) ${pending.join(', ')} have not finished their lift, so the scan would treat the owner's notes as unverified.`,
       'Run the fix (it finishes the claim the owner already confirmed), then run the scan again.', {
         fix: { argv: [...TRUST_CLAIM_RESUME_COMMAND], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Finishes lifting the claimed sources\' legacy rows in resumable batches; nothing goes above "your notes".', verify: { argv: ['gbrain', 'doctor', '--only', 'trust_sources_unclaimed', '--json'] } },
@@ -141,11 +136,7 @@ export async function runTrustScan(engine: BrainEngine, opts: TrustScanOptions =
   }
   const cursor = await currentCursor(engine);
   if (!cursor.until) {
-    cursor.until = {};
-    for (const table of SCAN_TABLES) {
-      const [row] = await engine.executeRaw<{ n: number | string | null }>(`SELECT max(id) AS n FROM ${table}`);
-      cursor.until[table] = Number(row?.n ?? 0);
-    }
+    cursor.until = await engine.readTrustScanCeilings();
     await saveCursor(engine, cursor);
   }
   const tables: TrustScanTableReport[] = [];
@@ -186,7 +177,7 @@ export interface TrustScanState { detector_version: number; unscanned: Record<Sc
  * scanned (doctor `trust_scan`): everything before the first run, then the
  * rows between the cursor and the run's id ceiling.
  */
-export async function readTrustScanState(engine: Pick<BrainEngine, 'executeRaw' | 'countUnscannedTrustRows'>): Promise<TrustScanState> {
+export async function readTrustScanState(engine: Pick<BrainEngine, 'readTrustScanCursor' | 'countUnscannedTrustRows' | 'getConfigValues'>): Promise<TrustScanState> {
   const cursor = await currentCursor(engine);
   const unscanned = {} as Record<ScanTable, number>;
   for (const table of SCAN_TABLES) {

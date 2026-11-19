@@ -134,7 +134,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'countUncomparableFacts', 'matchSavedFacts', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
   'listRestatedPrivateCopies', 'countDerivedFactTaint',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
-  'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
+  'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readTrustScanCursor', 'writeTrustScanCursor',
+  'listClaimPendingSourceIds', 'readTrustScanCeilings', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',
   'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive',
   // Timeline site reads (engine-sql/timeline-reads.ts)

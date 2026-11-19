@@ -294,6 +294,7 @@
         "listBuildSkewStacktraceLines",
         "listCapturedFactsForClassification",
         "listChunklessPagesWithContent",
+        "listClaimPendingSourceIds",
         "listCompactableReceipts",
         "listConfigKeys",
         "listContextualModeCandidates",
@@ -615,6 +616,8 @@
         "readTopologyChange",
         "readTransactionSettings",
         "readTrigramCandidates",
+        "readTrustScanCeilings",
+        "readTrustScanCursor",
         "readUnembeddedPageSummary",
         "readVersionAttributions",
         "readWaitingQueueDepths",
@@ -761,7 +764,8 @@
         "writeManualLinkTransitions",
         "writeMiscReads",
         "writeOpCheckpointKeys",
-        "writeTextProjectionSeal"
+        "writeTextProjectionSeal",
+        "writeTrustScanCursor"
       ],
       "PostgresEngine": [
         "_searchKeywordCJK",
@@ -1057,6 +1061,7 @@
         "listBuildSkewStacktraceLines",
         "listCapturedFactsForClassification",
         "listChunklessPagesWithContent",
+        "listClaimPendingSourceIds",
         "listCompactableReceipts",
         "listConfigKeys",
         "listContextualModeCandidates",
@@ -1380,6 +1385,8 @@
         "readTransaction",
         "readTransactionSettings",
         "readTrigramCandidates",
+        "readTrustScanCeilings",
+        "readTrustScanCursor",
         "readUnembeddedPageSummary",
         "readVersionAttributions",
         "readWaitingQueueDepths",
@@ -1534,7 +1541,8 @@
         "writeMiscRead",
         "writeMiscReads",
         "writeOpCheckpointKeys",
-        "writeTextProjectionSeal"
+        "writeTextProjectionSeal",
+        "writeTrustScanCursor"
       ]
     },
     "subpaths": {

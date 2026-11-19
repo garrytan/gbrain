@@ -56,6 +56,7 @@ mod housekeeping;
 mod op_checkpoint;
 mod projection_queue;
 mod topology;
+mod trust_scan_cursor;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,

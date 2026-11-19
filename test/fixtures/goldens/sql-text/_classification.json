@@ -56,6 +56,7 @@
       "out-of-scope:timeline-reads (born in engine-sql/timeline-reads.ts; pinned by test/engine-parity/timeline-reads.test.ts)": 9,
       "out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts and test/fold-hook-noop-6712.test.ts)": 2,
       "out-of-scope:trust-proposals (born in engine-sql/trust-proposals.ts; pinned by test/engine-parity/trust-proposals.test.ts and test/engine-parity/trust-fence.test.ts)": 7,
+      "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)": 4,
       "out-of-scope:trust-tier-reads (born in engine-sql/trust-tier-reads.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)": 14,
       "out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts)": 6,
       "out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)": 10,
@@ -365,6 +366,7 @@
       "listBuildSkewStacktraceLines": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "listCapturedFactsForClassification": "out-of-scope:facts-repair (born in engine-sql/facts-repair.ts; pinned by test/engine-parity/facts-repair.test.ts)",
       "listChunklessPagesWithContent": "chunks",
+      "listClaimPendingSourceIds": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)",
       "listCompactableReceipts": "out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)",
       "listConfigKeys": "out-of-scope:config",
       "listContextualModeCandidates": "out-of-scope:chunk-reads (born in engine-sql/chunk-reads.ts; pinned by test/engine-parity/chunk-reads.test.ts)",
@@ -688,6 +690,8 @@
       "readTransaction": "out-of-scope:internal-helper (private; exercised through public callers)",
       "readTransactionSettings": "out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)",
       "readTrigramCandidates": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
+      "readTrustScanCeilings": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)",
+      "readTrustScanCursor": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)",
       "readUnembeddedPageSummary": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "readVersionAttributions": "out-of-scope:write-attribution (born in engine-sql/write-attribution.ts; pinned by test/engine-parity/write-attribution.test.ts)",
       "readWaitingQueueDepths": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
@@ -842,7 +846,8 @@
       "writeMiscRead": "out-of-scope:internal-helper (private; exercised through public callers)",
       "writeMiscReads": "out-of-scope:internal-helper (private; exercised through public callers)",
       "writeOpCheckpointKeys": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",
-      "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)"
+      "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)",
+      "writeTrustScanCursor": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)"
     }
   },
   "normalizer": "sql-text-classification-v1"

@@ -5298,6 +5298,7 @@
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
         "listChunklessPagesWithContent": "direct",
+        "listClaimPendingSourceIds": "none",
         "listCompactableReceipts": "none",
         "listConfigKeys": "none",
         "listContextualModeCandidates": "none",
@@ -5621,6 +5622,8 @@
         "readTransaction": "none",
         "readTransactionSettings": "none",
         "readTrigramCandidates": "none",
+        "readTrustScanCeilings": "none",
+        "readTrustScanCursor": "none",
         "readUnembeddedPageSummary": "none",
         "readVersionAttributions": "none",
         "readWaitingQueueDepths": "none",
@@ -5775,7 +5778,8 @@
         "writeMiscRead": "none",
         "writeMiscReads": "none",
         "writeOpCheckpointKeys": "none",
-        "writeTextProjectionSeal": "none"
+        "writeTextProjectionSeal": "none",
+        "writeTrustScanCursor": "none"
       }
     }
   },

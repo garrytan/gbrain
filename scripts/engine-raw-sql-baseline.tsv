@@ -368,7 +368,6 @@ src/core/eligibility/activation.ts	execute_raw	1
 src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
-src/core/eligibility/scan.ts	execute_raw	4
 src/core/eligibility/stamp.ts	execute_raw	1
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
