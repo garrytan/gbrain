@@ -49,7 +49,7 @@ const DIM = 1536;
 const INTERFACE_METHODS: readonly string[] = [
   // Cycle-lock leases
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
-  'assertCycleLease',
+  'assertCycleLease', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease',
   // Minion jobs: the job lifecycle (engine-sql/jobs.ts)
   'admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs',
   // Minion queue: operator writes, sweeps, inbox, private queues, stats and attachments (engine-sql/jobs-queue.ts)

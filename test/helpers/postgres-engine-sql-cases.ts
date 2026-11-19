@@ -471,6 +471,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
   'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
+  'takePageEmbeddingLease': OOS.cycleLocks, 'renewPageEmbeddingLease': OOS.cycleLocks, 'releasePageEmbeddingLease': OOS.cycleLocks,
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',

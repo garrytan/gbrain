@@ -3675,6 +3675,16 @@ export interface BrainEngine {
   }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
 
   /**
+   * Page embedding leases (`embed-page:<page id>`, page-embedding-lease.ts owns the policy). Take: insert the row, or
+   * take over an expired one (no steal grace); false while another holder's unexpired row stands. Renew: push the
+   * expiry out when the row still carries `acquisitionToken`, false when the lease was lost; a holder renews inside its
+   * install transaction. Release: delete this holder's row and every expired `embed-page:` row. Database clock.
+   */
+  takePageEmbeddingLease(leaseId: string, opts: { holderPid: number; holderHost: string; acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
+  renewPageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
+  releasePageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string }): Promise<void>;
+
+  /**
    * The lease fence: true when `lockId` is still held under `acquisitionToken` and unexpired. Inside a transaction it
    * holds the row `FOR KEY SHARE` until commit, so the holder's renewal passes and a takeover or delete waits.
    */

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 666/666
+# covered: 669/669
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -34,7 +34,7 @@
 # import_guards: 11/11
 # persistence_journal: 65/65
 # entity_reads: 6/6
-# cycle_locks: 7/7
+# cycle_locks: 10/10
 # minion_jobs: 8/8
 # minion_queue: 70/70
 # minion_status: 11/11
@@ -426,12 +426,15 @@ readIdentitySiblingCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
-acquireCycleLock	cycle_locks	yes	11	no	yes	yes	serves
+acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
-readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
+readCycleLocks	cycle_locks	yes	9	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
+takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
+renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
+releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
 admitJob	minion_jobs	yes	101	no	yes	yes	serves
 getJob	minion_jobs	yes	35	no	yes	yes	serves
