@@ -86,6 +86,8 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     readClientOpUsage: async () => [],
     // The scope-source check reads source configs through a typed method; no source here is a scope source.
     readScopeSourceConfigs: async () => [],
+    // `sources unfederate` names the member keys still reading the source through a typed method; this brain has none.
+    listKeysReadingSource: async () => [],
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,

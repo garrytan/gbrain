@@ -220,9 +220,10 @@ import * as connectGateImpl from './engine-sql/connect-gate.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
-import * as sessionStateImpl from './engine-sql/session-state.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, MemberBindingVia, AudiencePrincipalRows, JobPrincipalKind, MayActForVia } from './engine-sql/access-control.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
+import * as accessSetupImpl from './engine-sql/access-setup.ts';
+import * as sessionStateImpl from './engine-sql/session-state.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, MemberBindingVia, AudiencePrincipalRows, MayActForVia, JobPrincipalKind } from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
 import * as jobsImpl from './engine-sql/jobs.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from './engine-sql/jobs.ts';
@@ -1768,6 +1769,21 @@ export class PGLiteEngine implements BrainEngine {
   listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]) { return accessPolicyImpl.listAccessPrefixSlugs(this, sourceId, prefixes); }
   readAccessPolicyMarks(sourceId: string, operationId?: string) { return accessPolicyImpl.readAccessPolicyMarks(this, sourceId, operationId); }
   replaceAccessInvalidCoverage(sourceId: string, prefixes: readonly string[], detail: unknown) { return accessPolicyImpl.replaceAccessInvalidCoverage(this, sourceId, prefixes, detail); }
+  // The access setup and policy-store members (engine-sql/access-setup.ts), on this handle: a transaction's own clone inside one.
+  listUnboundTokenNames() { return accessSetupImpl.listUnboundTokenNames(this); }
+  listUnboundClientIds() { return accessSetupImpl.listUnboundClientIds(this); }
+  readLiveAccessToken(name: string) { return accessSetupImpl.readLiveAccessToken(this, name); }
+  listUnarchivedSourceIds(ids: readonly string[]) { return accessSetupImpl.listUnarchivedSourceIds(this, ids); }
+  recordTokenSetupReads(name: string, reads: readonly string[]) { return accessSetupImpl.recordTokenSetupReads(this, name, reads); }
+  listKeysReadingSource(sourceId: string) { return accessSetupImpl.listKeysReadingSource(this, sourceId); }
+  countCompanyPages(sourceId: string) { return accessSetupImpl.countCompanyPages(this, sourceId); }
+  revokeAccessTokenById(id: string) { return accessSetupImpl.revokeAccessTokenById(this, id); }
+  readUnfinishedAccessMigration(sourceId: string) { return accessSetupImpl.readUnfinishedAccessMigration(this, sourceId); }
+  insertAccessMigration(id: string, sourceId: string, direction: string) { return accessSetupImpl.insertAccessMigration(this, id, sourceId, direction); }
+  recordAccessMigrationPhase(id: string, phase: string, receipts: Record<string, unknown>) { return accessSetupImpl.recordAccessMigrationPhase(this, id, phase, receipts); }
+  switchAccessMigration(id: string, receipts: Record<string, unknown>) { return accessSetupImpl.switchAccessMigration(this, id, receipts); }
+  listAccessPolicySources() { return accessSetupImpl.listAccessPolicySources(this); }
+  countPeopleFolderPages() { return accessSetupImpl.countPeopleFolderPages(this); }
   readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]> { return accessControlImpl.readAccessMembers(this, by); }
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]> { return accessControlImpl.readAccessCredentials(this, by); }
   revokeAccessTokensNamed(name: string) { return accessCredentials.revokeAccessTokensNamed(this, name); }

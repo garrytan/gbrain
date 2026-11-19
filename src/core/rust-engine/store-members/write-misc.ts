@@ -5,8 +5,8 @@
  * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readJobPrincipal, readAccessCredentials, hasLabelledOnlyMember and listPagesNamingReader;
  * SQL in engine-sql/access-control.ts and engine-sql/write-misc.ts; the member and group reads are in access-members.ts). The credential revokes and the token list are
  * served by the jobs credential members (store-members/jobs-access-tokens.ts and jobs-oauth-clients.ts). The source read, the path attach and the pages naming a reader are served by
- * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
- * rust/docs/store/write_misc.md.
+ * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not
+ * keep. What each member answers and why: rust/docs/store/write_misc.md.
  */
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,

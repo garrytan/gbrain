@@ -18,10 +18,11 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. listPagesNamingReader
- *    reads the Rust store's pages, so its cases compare a real answer on every arm. The
- *    Rust store keeps no skillpacks, chronicle state, access tokens, notifier state, source synopsis modes, writer bindings or memory proposals, so those cases
- *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md). Folder rules, pending prefixes and policy
- *    revisions come from the restrictFolder and seedAccessPolicy fixtures (the policy writes themselves are compared in access-policy.test.ts). The access member
+ *    reads the Rust store's pages, so its cases compare a real answer on every arm. Folder rules, pending prefixes and
+ *    policy revisions come from the restrictFolder and seedAccessPolicy fixtures (the policy writes themselves are compared
+ *    in access-policy.test.ts; rust/docs/store/access_rules.md). The Rust store keeps no skillpacks, chronicle state,
+ *    access tokens, notifier state, source synopsis modes, writer bindings or memory proposals, so those cases compare
+ *    the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). The access member
  *    fixtures here write raw SQL, which a Rust brain refuses; access-members.test.ts covers Rust through the typed writes.
  *    It keeps op checkpoints (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes;
  *    keys compare sorted, since the store lists them in path order and the SQL engines in no stated order.

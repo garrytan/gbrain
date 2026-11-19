@@ -2,7 +2,9 @@ file	equal	stopped
 test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/access-grants.test.ts	3	4
 test/engine-parity/access-members.test.ts	12	2
-test/engine-parity/access-policy.test.ts	6	0
+test/engine-parity/access-policy.test.ts	14	0
+test/engine-parity/access-setup.test.ts	7	0
+test/engine-parity/access-sort-order.test.ts	4	0
 test/engine-parity/access-tokens.test.ts	12	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
@@ -23,7 +25,7 @@ test/engine-parity/embedding-catalog.test.ts	7	0
 test/engine-parity/embedding-install.test.ts	3	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-card-option-reads.test.ts	6	0
-test/engine-parity/entity-identities.test.ts	7	5
+test/engine-parity/entity-identities.test.ts	8	4
 test/engine-parity/entity-reads.test.ts	12	1
 test/engine-parity/extraction.test.ts	6	0
 test/engine-parity/fact-pool-widening.test.ts	2	0

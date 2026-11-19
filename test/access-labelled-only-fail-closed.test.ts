@@ -157,6 +157,34 @@ async function withFailures<T>(engine: BrainEngine, marker: string, times: numbe
   }
 }
 
+/**
+ * Makes the next `times` calls of the typed write-visibility probe (BrainEngine.readWriteVisibilityProbe) on `engine`
+ * fail, in every transaction it opens too: each sends FAILING_STATEMENT with the probe's two parameters on the calling
+ * engine, so the database rejects it with a real SQLSTATE and an open transaction aborts. Returns how many failed and a
+ * restore.
+ */
+function failProbe(engine: BrainEngine, times: number) {
+  const state = { left: times, failed: 0 };
+  const original = engine.readWriteVisibilityProbe;
+  engine.readWriteVisibilityProbe = async function (this: BrainEngine, sourceId: string, slug: string) {
+    if (state.left <= 0) return original.call(this, sourceId, slug);
+    state.left--;
+    state.failed++;
+    await this.executeRaw(FAILING_STATEMENT, [sourceId, slug]);
+    throw new Error('the injected probe failure did not fail');
+  } as BrainEngine['readWriteVisibilityProbe'];
+  return { state, restore: () => { delete (engine as { readWriteVisibilityProbe?: unknown }).readWriteVisibilityProbe; } };
+}
+
+async function withProbeFailures<T>(engine: BrainEngine, times: number, fn: () => Promise<T>): Promise<{ value: T; failed: number }> {
+  const injected = failProbe(engine, times);
+  try {
+    return { value: await fn(), failed: injected.state.failed };
+  } finally {
+    injected.restore();
+  }
+}
+
 function vectorFor(text: string): number[] {
   const v = new Array<number>(DIMS).fill(0);
   for (const w of text.toLowerCase().match(/[a-z]+/g) ?? []) {
@@ -431,7 +459,7 @@ for (const kind of testBackends()) {
     test('Q2 inside a transaction: a combined probe that fails aborts it, so the write check errors and never passes (labelled-only and unbound writers; open, labelled and missing pages)', async () => {
       for (const [who, id] of [['labelled-only', bot.id], ['unbound', unbound.id]] as const) {
         for (const slug of [OPEN, LABELLED, MISSING]) {
-          const { value, failed } = await withFailures(engine, COMBINED_PROBE, PROBE_FAILURES, () => FAILING_STATEMENT,
+          const { value, failed } = await withProbeFailures(engine, PROBE_FAILURES,
             () => outcome(engine.transaction(tx => authorizePageVisibility(tx, authorityFor(id), slug))));
           expect({ who, slug, failed, passed: value === 'pass' }).toEqual({ who, slug, failed: PROBE_FAILURES, passed: false });
         }
@@ -441,7 +469,7 @@ for (const kind of testBackends()) {
     test('Q2 outside a transaction: a combined probe that fails counts as labelled-only; the labelled-only writer is refused the unlabelled page and allowed the page naming it, and an unbound writer is unaffected', async () => {
       const checks = async (id: string) => ({ open: await outcome(authorizePageVisibility(engine, authorityFor(id), OPEN)),
         labelled: await outcome(authorizePageVisibility(engine, authorityFor(id), LABELLED)), missing: await outcome(authorizePageVisibility(engine, authorityFor(id), MISSING)) });
-      const probeFails = (id: string) => withFailures(engine, COMBINED_PROBE, PROBE_FAILURES, () => FAILING_STATEMENT, () => checks(id));
+      const probeFails = (id: string) => withProbeFailures(engine, PROBE_FAILURES, () => checks(id));
       expect(await probeFails(bot.id)).toEqual({ failed: PROBE_FAILURES, value: { open: 'page_not_found', labelled: 'pass', missing: 'pass' } });
       const unboundBaseline = await checks(unbound.id);
       expect(unboundBaseline).toEqual({ open: 'pass', labelled: 'page_not_found', missing: 'pass' });

@@ -45,10 +45,10 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
-    from: 'src/core/access/caller.ts:376 appliedAccessSummary',
+    from: 'src/core/access/caller.ts:376 appliedAccessSummary (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAppliedPolicyRevisions', variant: 'default', run: e => e.listAppliedPolicyRevisions() },
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
-          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`],
+          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id COLLATE "C"`],
   },
   ...([
     ['member', 'alice-example', '$1'],
@@ -56,26 +56,26 @@ const PINS: Pin[] = [
     ['legacy_token', '00000000-0000-4000-8000-0000000000aa', 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],
     ['oauth_client', 'client-example', 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL'],
   ] as const).map(([via, key, member]): Pin => ({
-    from: 'src/core/access/caller.ts:94 liveIdentity (MEMBER_SQL)',
+    from: 'src/core/access/caller.ts:94 liveIdentity (MEMBER_SQL; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readLiveMember', variant: via, run: e => e.readLiveMember(via, key) },
-    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
   WHERE m.id = (${member}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
   GROUP BY m.id`],
   })),
   {
-    from: 'src/core/access/caller.ts:170 folderAccessForAll (no readers: the rules read is skipped)',
+    from: 'src/core/access/caller.ts:170 folderAccessForAll (no readers: the rules read is skipped; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readFolderAccess', variant: 'no_readers', run: e => e.readFolderAccess([]) },
     texts: [`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`],
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id COLLATE "C", prefix COLLATE "C"`],
   },
   {
-    from: 'src/core/access/caller.ts:170 folderAccessForAll',
+    from: 'src/core/access/caller.ts:170 folderAccessForAll (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readFolderAccess', variant: 'readers', run: e => e.readFolderAccess(['member:alice-example', 'group:team-a']) },
     texts: [
       'SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]',
       `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`,
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id COLLATE "C", prefix COLLATE "C"`,
     ],
   },
   ...([
@@ -552,9 +552,9 @@ const PINS: Pin[] = [
     texts: ['SELECT value FROM config WHERE key = $1'],
   },
   {
-    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (members, then groups)',
+    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (members, then groups; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAudiencePrincipals', variant: 'members-and-groups', run: e => e.readAudiencePrincipals(['alice-example'], ['team-a']) },
-    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
   WHERE m.id = ANY($1::text[]) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
   GROUP BY m.id`, 'SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
@@ -565,16 +565,16 @@ const PINS: Pin[] = [
     texts: ['SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
   },
   {
-    from: 'src/core/access/caller.ts:168 folderAccessForAll (rules, then coverage; at 949a7c98cc)',
+    from: 'src/core/access/caller.ts:168 folderAccessForAll (rules, then coverage; at 949a7c98cc; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readFolderAccess', variant: 'readers', run: e => e.readFolderAccess(['member:alice-example', 'group:team-a']) },
     texts: ['SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]', `SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`],
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id COLLATE "C", prefix COLLATE "C"`],
   },
   {
-    from: 'src/core/access/caller.ts:171 folderAccessForAll (no readers reads the coverage only; at 949a7c98cc)',
+    from: 'src/core/access/caller.ts:171 folderAccessForAll (no readers reads the coverage only; at 949a7c98cc; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readFolderAccess', variant: 'no-readers', run: e => e.readFolderAccess([]) },
     texts: [`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`],
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id COLLATE "C", prefix COLLATE "C"`],
   },
   {
     from: 'src/core/access/policy.ts:92 readAccessStore (at 6e123afe98)',
@@ -597,9 +597,9 @@ const PINS: Pin[] = [
     texts: ['SELECT 1 FROM sources WHERE id = $1 FOR NO KEY UPDATE', 'SELECT 1 FROM access_policy_state WHERE source_id = $1 FOR UPDATE'],
   },
   {
-    from: 'src/core/access/policy.ts:117 appliedRules (at 6e123afe98)',
+    from: 'src/core/access/policy.ts:117 appliedRules (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAccessRules', variant: 'default', run: e => e.listAccessRules('src-a') },
-    texts: ['SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id'],
+    texts: ['SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id COLLATE "C"'],
   },
   {
     from: 'src/core/access/policy.ts:123 listRevisions (at 6e123afe98)',
@@ -622,9 +622,9 @@ const PINS: Pin[] = [
     texts: ['SELECT * FROM access_policy_revisions WHERE operation_id = $1'],
   },
   {
-    from: 'src/core/access/policy.ts:136 coverageRows (at 6e123afe98)',
+    from: 'src/core/access/policy.ts:136 coverageRows (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAccessCoverage', variant: 'default', run: e => e.listAccessCoverage('src-a') },
-    texts: ['SELECT prefix, reason, revision, detail FROM access_pending_coverage WHERE source_id = $1 ORDER BY reason, prefix'],
+    texts: ['SELECT prefix, reason, revision, detail FROM access_pending_coverage WHERE source_id = $1 ORDER BY reason COLLATE "C", prefix COLLATE "C"'],
   },
   {
     from: 'src/core/access/policy.ts:151 requireReadableAccessState (at 6e123afe98)',
@@ -678,14 +678,14 @@ const PINS: Pin[] = [
     texts: ['SELECT count(*)::int AS n FROM access_policy_state WHERE source_id = $1'],
   },
   {
-    from: 'src/core/access/policy.ts:348 previewApply (derived release) (at 6e123afe98)',
+    from: 'src/core/access/policy.ts:348 previewApply (derived release) (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAccessPrefixSlugs', variant: 'one-prefix', run: e => e.listAccessPrefixSlugs('src-a', 'team/') },
-    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug'],
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug COLLATE "C"'],
   },
   {
-    from: 'src/core/access/policy.ts:354 previewApply (widened prefixes) (at 6e123afe98)',
+    from: 'src/core/access/policy.ts:354 previewApply (widened prefixes) (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAccessPrefixSlugs', variant: 'prefixes', run: e => e.listAccessPrefixSlugs('src-a', ['team/', 'old/']) },
-    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug'],
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug COLLATE "C"'],
   },
   {
     from: 'src/core/access/policy.ts:420 policyStatus (at 6e123afe98)',
@@ -708,32 +708,103 @@ const PINS: Pin[] = [
     texts: [`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`],
   },
   {
-    from: 'src/core/access/members.ts:124 getMember (one member by id)',
+    from: 'src/core/access/members.ts:124 getMember (one member by id; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAccessMembers', variant: 'by-id', run: e => e.readAccessMembers({ id: 'alice-example' }) },
     texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`],
   },
   {
-    from: 'src/core/access/members.ts:160 memberByEmail and :143 assertEmailFree (members declaring one email)',
+    from: 'src/core/access/members.ts:160 memberByEmail and :143 assertEmailFree (members declaring one email; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAccessMembers', variant: 'by-email', run: e => e.readAccessMembers({ email: 'alice@example.com' }) },
     texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`],
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id COLLATE "C"`],
   },
   {
-    from: 'src/core/access/members.ts:129 listMembers (removed members filtered out)',
+    from: 'src/core/access/members.ts:129 listMembers (removed members filtered out; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAccessMembers', variant: 'live', run: e => e.readAccessMembers({ includeRemoved: false }) },
     texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`],
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id COLLATE "C"`],
   },
   {
-    from: 'src/core/access/members.ts:129 listMembers (--all)',
+    from: 'src/core/access/members.ts:129 listMembers (--all; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAccessMembers', variant: 'all', run: e => e.readAccessMembers({ includeRemoved: true }) },
     texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id`],
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access-serves.ts:135 unboundCredentials (tokens) (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
+    case: { method: 'listUnboundTokenNames', variant: 'default', run: e => e.listUnboundTokenNames() },
+    texts: ['SELECT DISTINCT name COLLATE "C" AS name FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NULL ORDER BY name'],
+  },
+  {
+    from: 'src/commands/access-serves.ts:136 unboundCredentials (clients) (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
+    case: { method: 'listUnboundClientIds', variant: 'default', run: e => e.listUnboundClientIds() },
+    texts: ['SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id COLLATE "C"'],
+  },
+  {
+    from: 'src/commands/access-serves.ts:186 member key plan (live token) (at 6e123afe98)',
+    case: { method: 'readLiveAccessToken', variant: 'default', run: e => e.readLiveAccessToken('member-alice-example') },
+    texts: ['SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98)',
+    case: { method: 'listUnarchivedSourceIds', variant: 'default', run: e => e.listUnarchivedSourceIds(['src-a', 'src-b']) },
+    texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
+  },
+  {
+    from: 'src/commands/access-serves.ts:241 recordSetupReads (at 6e123afe98)',
+    case: { method: 'recordTokenSetupReads', variant: 'default', run: e => e.recordTokenSetupReads('member-alice-example', ['src-a']) },
+    texts: ["UPDATE access_tokens SET permissions = COALESCE(permissions, '{}'::jsonb) || jsonb_build_object('setup_reads', $2::text[]) WHERE name = $1 AND revoked_at IS NULL AND (permissions IS NULL OR jsonb_typeof(permissions) = 'object')"],
+  },
+  {
+    from: 'src/commands/access-serves.ts:251 keysStillReading (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
+    case: { method: 'listKeysReadingSource', variant: 'default', run: e => e.listKeysReadingSource('src-a') },
+    texts: ["SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name COLLATE \"C\""],
+  },
+  {
+    from: 'src/commands/access-serves.ts:265 companyCounts (at 6e123afe98)',
+    case: { method: 'countCompanyPages', variant: 'default', run: e => e.countCompanyPages('company') },
+    texts: ["SELECT count(*)::int AS pages, count(*) FILTER (WHERE slug LIKE 'company/calls/%')::int AS calls FROM pages WHERE source_id = $1 AND deleted_at IS NULL"],
+  },
+  {
+    from: 'src/commands/access-serves.ts:339 serves key mint (revoke on a failed key file) (at 6e123afe98)',
+    case: { method: 'revokeAccessTokenById', variant: 'default', run: e => e.revokeAccessTokenById('00000000-0000-0000-0000-000000000001') },
+    texts: ['UPDATE access_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/policy-migrate.ts:41 unfinished (at 6e123afe98)',
+    case: { method: 'readUnfinishedAccessMigration', variant: 'default', run: e => e.readUnfinishedAccessMigration('src-a') },
+    texts: ["SELECT id, phase, direction, receipts FROM access_policy_migrations WHERE source_id = $1 AND phase <> 'switched' ORDER BY created_at DESC LIMIT 1"],
+  },
+  {
+    from: 'src/core/access/policy-migrate.ts:80 migratePolicyStore (start) (at 6e123afe98)',
+    case: { method: 'insertAccessMigration', variant: 'default', run: e => e.insertAccessMigration('mig_1', 'src-a', 'to_git') },
+    texts: ["INSERT INTO access_policy_migrations (id, source_id, direction, phase) VALUES ($1, $2, $3, 'started')"],
+  },
+  {
+    from: 'src/core/access/policy-migrate.ts:85 migratePolicyStore (record a phase) (at 6e123afe98)',
+    case: { method: 'recordAccessMigrationPhase', variant: 'default', run: e => e.recordAccessMigrationPhase('mig_1', 'exported', { approved: 'abc' }) },
+    texts: ['UPDATE access_policy_migrations SET phase = $2, receipts = $3::text::jsonb, updated_at = now() WHERE id = $1'],
+  },
+  {
+    from: 'src/core/access/policy-migrate.ts:104 migratePolicyStore (switch) (at 6e123afe98)',
+    case: { method: 'switchAccessMigration', variant: 'default', run: e => e.switchAccessMigration('mig_1', { approved: 'abc' }) },
+    texts: ["UPDATE access_policy_migrations SET phase = 'switched', receipts = $2::text::jsonb, updated_at = now() WHERE id = $1"],
+  },
+  {
+    from: 'src/core/access/policy-transfer.ts:34 exportPolicyFiles (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
+    case: { method: 'listAccessPolicySources', variant: 'default', run: e => e.listAccessPolicySources() },
+    texts: ['SELECT source_id FROM access_policy_state ORDER BY source_id COLLATE "C"'],
+  },
+  {
+    from: 'src/core/access/serves.ts:38 unlabeledPeopleFolders (at 6e123afe98; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
+    case: { method: 'countPeopleFolderPages', variant: 'default', run: e => e.countPeopleFolderPages() },
+    texts: [`SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
+      WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY source_id COLLATE "C", split_part(slug, '/', 2) COLLATE "C"`],
   },
   {
     from: 'src/core/access/members.ts:199 legacyTokenByName (active tokens with one name)',
@@ -747,29 +818,29 @@ const PINS: Pin[] = [
       "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id"],
   },
   {
-    from: 'src/core/access/members.ts:295 audienceMemberIds',
+    from: 'src/core/access/members.ts:295 audienceMemberIds (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAudienceAccessMembers', variant: 'default', run: e => e.listAudienceAccessMembers() },
-    texts: ["SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id"],
+    texts: [`SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"`],
   },
   {
-    from: 'src/core/access/members.ts:345 listGroups (every group)',
+    from: 'src/core/access/members.ts:345 listGroups (every group; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAccessGroups', variant: 'all', run: e => e.readAccessGroups(null) },
-    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
      FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-      GROUP BY g.id ORDER BY g.id`],
+      GROUP BY g.id ORDER BY g.id COLLATE "C"`],
   },
   {
-    from: 'src/core/access/members.ts:345 listGroups (one group by id)',
+    from: 'src/core/access/members.ts:345 listGroups (one group by id; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAccessGroups', variant: 'by-id', run: e => e.readAccessGroups('team-a') },
-    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
      FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id`],
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id COLLATE "C"`],
   },
   {
-    from: 'src/core/access/members.ts:303 pagesNaming',
+    from: 'src/core/access/members.ts:303 pagesNaming (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listPagesNamingReader', variant: 'default', run: e => e.listPagesNamingReader('member:alice-example') },
     texts: [`SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id, slug LIMIT 51`],
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 51`],
   },
   {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',

@@ -13,10 +13,11 @@ import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, Leg
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, MayActForVia } from './engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia, JobPrincipalKind } from './engine-sql/access-control.ts';
+import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
+import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount } from './engine-sql/access-setup.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
-import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -3991,6 +3992,25 @@ export interface BrainEngine {
   listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]): Promise<string[]>;
   readAccessPolicyMarks(sourceId: string, operationId?: string): Promise<AccessPolicyMarks>;
   replaceAccessInvalidCoverage(sourceId: string, prefixes: readonly string[], detail: unknown): Promise<void>;
+  /**
+   * The access setup and policy-store members outside access/policy.ts (engine-sql/access-setup.ts says what each reads
+   * or writes): the member-key setup of commands/access-serves.ts, the policy-store migration journal of
+   * access/policy-migrate.ts, the policy sources of access/policy-transfer.ts and the people folders of access/serves.ts.
+   */
+  listUnboundTokenNames(): Promise<string[]>;
+  listUnboundClientIds(): Promise<string[]>;
+  readLiveAccessToken(name: string): Promise<LiveAccessTokenRow | null>;
+  listUnarchivedSourceIds(ids: readonly string[]): Promise<string[]>;
+  recordTokenSetupReads(name: string, reads: readonly string[]): Promise<void>;
+  listKeysReadingSource(sourceId: string): Promise<MemberKeyReadingRow[]>;
+  countCompanyPages(sourceId: string): Promise<{ pages: number; calls: number }>;
+  revokeAccessTokenById(id: string): Promise<void>;
+  readUnfinishedAccessMigration(sourceId: string): Promise<AccessMigrationRow | null>;
+  insertAccessMigration(id: string, sourceId: string, direction: string): Promise<void>;
+  recordAccessMigrationPhase(id: string, phase: string, receipts: Record<string, unknown>): Promise<void>;
+  switchAccessMigration(id: string, receipts: Record<string, unknown>): Promise<void>;
+  listAccessPolicySources(): Promise<string[]>;
+  countPeopleFolderPages(): Promise<PeopleFolderCount[]>;
 
   /** Access member rows with their groups: one by exact id or by declared email (any status), or all by id, removed ones only when asked. */
   readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]>;

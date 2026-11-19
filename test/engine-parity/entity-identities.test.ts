@@ -216,12 +216,12 @@ describe('engine parity: entity identities', () => {
   );
 
   parityTest(
-    'listEntityIdentityRows refuses on Rust for a caller whose folder rules widen the page policy',
+    'listEntityIdentityRows under excludePrivate serves a caller under a pending folder prefix the same on every arm',
     { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
     async (engine, backend) => {
       await people(engine, backend);
       await link(engine, 'g-alice', 'default', 'people/alice-example', true);
-      // The SQL engines read the folder rules; the Rust store has no copy of them, so the shell refuses typed.
+      // Every arm reads the folder rules and the pending prefixes (the Rust store keeps them: rust/docs/store/access_rules.md).
       const rows = await withCallerAccess({
         identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
       }, () => list(engine, { entityId: 'g-alice', excludePrivate: true }));
@@ -358,8 +358,9 @@ describe('entity identity union: a refused Rust read is not "no identity"', () =
     }) as unknown as BrainEngine;
     const viaStore: BrainEngine['listEntityIdentityRows'] = (filter) =>
       (STORE_MEMBERS.listEntityIdentityRows as (b: unknown, f: unknown) => Promise<never>)(brain, filter);
+    // A lineage caller still widens the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], hidePrivate: true, lineage: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => unionLinksAcrossIdentity(engine, 'people/alice-example', base, 'in',
       { sourceId: 'default', excludePrivate: true } as never));
