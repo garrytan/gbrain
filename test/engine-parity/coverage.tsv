@@ -340,11 +340,11 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	22	no	yes	yes	serves
+setConfig	config	yes	23	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
-getConfigValues	config	yes	3	no	yes	yes	serves
+getConfigValues	config	yes	5	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
