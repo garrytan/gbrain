@@ -279,6 +279,38 @@ describe('deadlines, cancel and permits', () => {
   });
 });
 
+describe('fair queueing across clients', () => {
+  test('a client that floods the owner does not starve another client\'s single call', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-fair-'));
+    let finished = 0;
+    // One permit and a member that takes 20 ms: the queue order decides who waits.
+    const engine = {
+      kind: 'fake', capabilities: new Set<string>(),
+      getHealth: async () => { await Bun.sleep(20); return { finished: ++finished }; },
+    } as unknown as BrainEngine;
+    const served = await serveOwnerEngine(engine, join(dir, 'owner.sock'), { permits: 1 });
+    if (!served) throw new Error('no socket');
+    const flood = await clientOf(served.socketPath);
+    const single = await clientOf(served.socketPath);
+    try {
+      const flooded = Array.from({ length: 20 }, () => flood.engine.getHealth());
+      await Bun.sleep(30);
+      expect(served.stats().queued).toBeGreaterThan(10);
+      const mine = (await single.engine.getHealth()) as unknown as { finished: number };
+      // Round-robin between connections: the single call runs right after the flood's running and next call, not
+      // after all twenty.
+      expect(mine.finished).toBeLessThanOrEqual(4);
+      await Promise.all(flooded);
+      expect(served.stats()).toMatchObject({ active: 0, queued: 0 });
+    } finally {
+      flood.close();
+      single.close();
+      await served.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('closing the owner server', () => {
   test('close() resolves only after every running engine call has settled', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-close-'));
