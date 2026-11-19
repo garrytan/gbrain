@@ -21,7 +21,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { hostIdFor } from '../persistence/identity.ts';
-import { readNotifierLease, type NotifierLeaseClaim, type NotifierLeaseClaimInput, type NotifierLeaseHolder } from '../engine-sql/notifier.ts';
+import type { NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder } from '../engine-sql/notifier.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -190,20 +190,18 @@ export async function claimLease(engine: Pick<BrainEngine, 'claimNotifierLease'>
   return engine.claimNotifierLease(l);
 }
 
-export async function readLease(engine: Exec, hostId: string): Promise<LeaseHolder | null> {
-  return readNotifierLease(engine, hostId);
+export async function readLease(engine: Pick<BrainEngine, 'readNotifierLease'>, hostId: string): Promise<LeaseHolder | null> {
+  return engine.readNotifierLease(hostId);
 }
 
 /** The fencing check before a start: still the owner, with the token this resident claimed, and unexpired. */
-export async function holdsLease(engine: Exec, hostId: string, ownerId: string, fence: number): Promise<boolean> {
-  const rows = await engine.executeRaw<{ host_id: string }>(
-    'SELECT host_id FROM sync_notifier_leases WHERE host_id = $1 AND owner_id = $2 AND fence = $3 AND expires_at > now()', [hostId, ownerId, fence]);
-  return rows.length > 0;
+export async function holdsLease(engine: Pick<BrainEngine, 'holdsNotifierLease'>, hostId: string, ownerId: string, fence: number): Promise<boolean> {
+  return engine.holdsNotifierLease(hostId, ownerId, fence);
 }
 
 /** Releases the lease only while this resident still holds it, so a clean stop hands over at once. */
-export async function releaseLease(engine: Exec, hostId: string, ownerId: string): Promise<void> {
-  await engine.executeRaw('UPDATE sync_notifier_leases SET expires_at = now() WHERE host_id = $1 AND owner_id = $2', [hostId, ownerId]);
+export async function releaseLease(engine: Pick<BrainEngine, 'releaseNotifierLease'>, hostId: string, ownerId: string): Promise<void> {
+  await engine.releaseNotifierLease(hostId, ownerId);
 }
 
 // ── Per-source state and coverage ────────────────────────────────────────────

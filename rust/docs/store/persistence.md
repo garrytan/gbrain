@@ -113,16 +113,20 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 ## Commit notifier
 
 The resident commit notifier's host lease and host source list (`src/core/engine-sql/notifier.ts`,
-`notifier/store.ts` `claimLease` and `notifier/resident.ts` `listHostSources`). With both typed, a
+`notifier/store.ts` `claimLease`, `readLease`, `holdsLease` and `releaseLease`, and
+`notifier/resident.ts` `listHostSources`). With both typed, a
 resident on this engine starts the notifier, as it does on Postgres.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.claimNotifierLease({ hostId, ownerId, kind, pid, leaseMs })` | `{ owner: true, fence }` when the host has no lease row, the row is the caller's (a renewal keeps the fence) or the row expired (a takeover adds 1 to the fence); the row then holds the caller with an expiry `leaseMs` (rounded, at least 1) from now. Otherwise `{ owner: false, holder: { owner_id, fence, resident_kind, pid, expires_at, live } }`. `invalid_argument` for a host id with NUL | `claimNotifierLease` |
+| `brain.readNotifierLease(hostId)` | the host's lease row `{ owner_id, fence, resident_kind, pid, expires_at, live }`, or `null` when it has none. `invalid_argument` for a host id with NUL | `readNotifierLease` |
+| `brain.holdsNotifierLease(hostId, ownerId, fence)` | `true` only when the host's row is `ownerId`'s, with `fence`, and not expired: the fencing check before a start | `holdsNotifierLease` |
+| `brain.releaseNotifierLease(hostId, ownerId)` | sets the row's expiry to now when the row is `ownerId`'s, in one write; another owner's row, or no row, is left as it is | `releaseNotifierLease` |
 | `brain.listNotifierHostSourceRows()` | every source that is not archived, in id order: `{ id, local_path, last_commit, bound, owner, root, syncer, config }`. This engine keeps no managed worktree binding, no classic syncer row and no source `last_commit`, so `bound` is `false` and the other four are `null` | `listNotifierHostSourceRows` |
 
-The notifier's other reads and writes (sync states, due markers, coverage records, the drain lease,
-the lease release) still refuse with `engine_capability_missing`; the notifier logs each refusal once and
+The notifier's other reads and writes (sync states, due markers, coverage records, the drain lease)
+still refuse with `engine_capability_missing`; the notifier logs each refusal once and
 keeps running. Search freshness on this engine reports no source, as a brain without the notifier
 tables does.
 

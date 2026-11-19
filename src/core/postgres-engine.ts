@@ -1320,6 +1320,18 @@ export class PostgresEngine implements BrainEngine {
     return notifierImpl.claimNotifierLease(this.autocommitSql, l);
   }
 
+  async readNotifierLease(hostId: string): Promise<notifierImpl.NotifierLeaseHolder | null> {
+    return notifierImpl.readNotifierLease(this.autocommitSql, hostId);
+  }
+
+  async holdsNotifierLease(hostId: string, ownerId: string, fence: number): Promise<boolean> {
+    return notifierImpl.holdsNotifierLease(this.autocommitSql, hostId, ownerId, fence);
+  }
+
+  async releaseNotifierLease(hostId: string, ownerId: string): Promise<void> {
+    return notifierImpl.releaseNotifierLease(this.autocommitSql, hostId, ownerId);
+  }
+
   async listNotifierHostSourceRows(): Promise<notifierImpl.NotifierHostSourceRow[]> {
     return this.preparationRead(exec => notifierImpl.listNotifierHostSourceRows(unscopedExecutor(exec, 'notifier: unscoped on master (the resident read its host sources through executeRaw)')));
   }

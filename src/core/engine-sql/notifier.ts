@@ -1,10 +1,11 @@
 /**
- * The commit notifier's host lease and host source list (migration v262 tables). notifier/store.ts claimLease and
- * readLease and notifier/resident.ts listHostSources sent these statements through `executeRaw`; the SQL text is
+ * The commit notifier's host lease and host source list (migration v262 tables). notifier/store.ts claimLease,
+ * readLease, holdsLease and releaseLease and notifier/resident.ts listHostSources sent these statements through `executeRaw`; the SQL text is
  * theirs, unchanged.
  *
  * - The lease (`sync_notifier_leases`): one owner per host. A claim wins when the row is free, expired or already the
- *   caller's; a takeover bumps the fencing token. A lost claim reads the current holder.
+ *   caller's; a takeover bumps the fencing token. A lost claim reads the current holder. The owner re-checks its token
+ *   before each start (holdsNotifierLease) and expires the row on a clean stop (releaseNotifierLease).
  * - The host source list: every source that is not archived, in id order, with its managed binding, the worktree's
  *   owner host and checkout root, and the classic syncer host. notifier/resident.ts decides what the host watches.
  */
@@ -65,6 +66,18 @@ export async function readNotifierLease(exec: RawExec, hostId: string): Promise<
     'SELECT owner_id, fence, resident_kind, pid, expires_at, expires_at > now() AS live FROM sync_notifier_leases WHERE host_id = $1', [hostId]);
   return row ? { owner_id: String(row.owner_id), fence: num(row.fence), resident_kind: String(row.resident_kind),
     pid: optNum(row.pid), expires_at: iso(row.expires_at)!, live: bool(row.live) } : null;
+}
+
+/** The fencing check before a start: the host's lease is still `ownerId`'s, with the token it claimed, and unexpired. */
+export async function holdsNotifierLease(exec: RawExec, hostId: string, ownerId: string, fence: number): Promise<boolean> {
+  const rows = await exec.executeRaw<{ host_id: string }>(
+    'SELECT host_id FROM sync_notifier_leases WHERE host_id = $1 AND owner_id = $2 AND fence = $3 AND expires_at > now()', [hostId, ownerId, fence]);
+  return rows.length > 0;
+}
+
+/** Expires the host's lease now, only while `ownerId` still holds it, so a clean stop hands over at once. */
+export async function releaseNotifierLease(exec: RawExec, hostId: string, ownerId: string): Promise<void> {
+  await exec.executeRaw('UPDATE sync_notifier_leases SET expires_at = now() WHERE host_id = $1 AND owner_id = $2', [hostId, ownerId]);
 }
 
 /** Every source that is not archived, in id order, with what the notifier needs to decide whether this host watches it. */

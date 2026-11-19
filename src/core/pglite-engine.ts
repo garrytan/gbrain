@@ -1669,6 +1669,18 @@ export class PGLiteEngine implements BrainEngine {
     return notifierImpl.claimNotifierLease(this.engineSql, l);
   }
 
+  async readNotifierLease(hostId: string): Promise<notifierImpl.NotifierLeaseHolder | null> {
+    return notifierImpl.readNotifierLease(this.engineSql, hostId);
+  }
+
+  async holdsNotifierLease(hostId: string, ownerId: string, fence: number): Promise<boolean> {
+    return notifierImpl.holdsNotifierLease(this.engineSql, hostId, ownerId, fence);
+  }
+
+  async releaseNotifierLease(hostId: string, ownerId: string): Promise<void> {
+    return notifierImpl.releaseNotifierLease(this.engineSql, hostId, ownerId);
+  }
+
   async listNotifierHostSourceRows(): Promise<notifierImpl.NotifierHostSourceRow[]> {
     return notifierImpl.listNotifierHostSourceRows(unscopedExecutor(this.engineSql, 'notifier: unscoped on master (the resident read its host sources through executeRaw)'));
   }

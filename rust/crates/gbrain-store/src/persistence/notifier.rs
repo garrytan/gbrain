@@ -1,4 +1,5 @@
-//! The commit notifier's host lease and host source list: the `claimNotifierLease` and
+//! The commit notifier's host lease and host source list: the `claimNotifierLease`,
+//! `readNotifierLease`, `holdsNotifierLease`, `releaseNotifierLease` and
 //! `listNotifierHostSourceRows` members of `src/core/engine-sql/notifier.ts`
 //! (rust/docs/store/persistence.md, "Commit notifier").
 //!
@@ -6,8 +7,9 @@
 //! text, which cannot hold NUL, as Postgres text cannot), JSON `NotifierLeaseRecord`. A claim
 //! wins when the host has no row, when the row is the caller's, or when it expired
 //! (`expires_at <= now`); a takeover adds 1 to the fencing token, a renewal keeps it. A lost
-//! claim reads the holder. Rows are never deleted on this engine (the notifier's release, which
-//! still refuses here, would expire the row, not delete it).
+//! claim reads the holder. The fencing check (`holdsNotifierLease`) is true only for the row's
+//! owner, with its fence, before the expiry. A release (`releaseNotifierLease`) sets the expiry
+//! to now when the caller owns the row, in one write; rows are never deleted on this engine.
 //!
 //! The host source list reads the source records. This engine keeps no managed worktree bindings
 //! and no classic syncer rows (`sync_notifier_sources`), and a source keeps no `last_commit`, so
@@ -98,6 +100,51 @@ pub(crate) fn claim_notifier_lease_in(
     Ok(json!({ "owner": true, "fence": fence }))
 }
 
+/// The SELECT of `readNotifierLease`: the host's row as a holder, or `None` when it has none.
+pub(crate) fn read_notifier_lease_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    host_id: &str,
+) -> Result<Option<Value>> {
+    let now = env.now_micros();
+    Ok(get_json::<NotifierLeaseRecord>(read, &lease_key(host_id)?)?.map(|r| holder(&r, now)))
+}
+
+/// The SELECT of `holdsNotifierLease`: the row is `owner_id`'s, with `fence`, and unexpired
+/// (`expires_at > now`).
+pub(crate) fn holds_notifier_lease_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    host_id: &str,
+    owner_id: &str,
+    fence: f64,
+) -> Result<bool> {
+    let now = env.now_micros();
+    Ok(
+        get_json::<NotifierLeaseRecord>(read, &lease_key(host_id)?)?.is_some_and(|r| {
+            r.owner_id == owner_id && r.fence as f64 == fence && r.expires_at_us > now
+        }),
+    )
+}
+
+/// The UPDATE of `releaseNotifierLease`: `expires_at = now` when the row is `owner_id`'s; any
+/// other row, or none, is left as it is.
+pub(crate) fn release_notifier_lease_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    host_id: &str,
+    owner_id: &str,
+) -> Result<()> {
+    let key = lease_key(host_id)?;
+    if let Some(mut r) = get_json::<NotifierLeaseRecord>(&*tx, &key)?
+        && r.owner_id == owner_id
+    {
+        r.expires_at_us = env.now_micros();
+        put_json(tx, &key, &r)?;
+    }
+    Ok(())
+}
+
 /// The notifier's host source list: every source that is not archived, in id order.
 pub(crate) fn list_notifier_host_source_rows_in(read: &dyn KvRead) -> Result<Vec<Value>> {
     let mut records = all_sources(read)?;
@@ -124,6 +171,21 @@ impl Store {
     /// `claimNotifierLease(l)`.
     pub fn claim_notifier_lease(&self, claim: &NotifierLeaseClaim) -> Result<Value> {
         self.write(|tx| claim_notifier_lease_in(tx, &*self.env, claim))
+    }
+
+    /// `readNotifierLease(hostId)`.
+    pub fn read_notifier_lease(&self, host_id: &str) -> Result<Option<Value>> {
+        read_notifier_lease_in(&*self.read()?, &*self.env, host_id)
+    }
+
+    /// `holdsNotifierLease(hostId, ownerId, fence)`.
+    pub fn holds_notifier_lease(&self, host_id: &str, owner_id: &str, fence: f64) -> Result<bool> {
+        holds_notifier_lease_in(&*self.read()?, &*self.env, host_id, owner_id, fence)
+    }
+
+    /// `releaseNotifierLease(hostId, ownerId)`: one write.
+    pub fn release_notifier_lease(&self, host_id: &str, owner_id: &str) -> Result<()> {
+        self.write(|tx| release_notifier_lease_in(tx, &*self.env, host_id, owner_id))
     }
 
     /// `listNotifierHostSourceRows()`.

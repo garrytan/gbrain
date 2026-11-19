@@ -571,6 +571,9 @@ export const RUST_ENGINE_MEMBERS = {
   claimHousekeepingTurn: 'persistence_journal',
   // The commit notifier's host lease (engine-sql/notifier.ts), a per-host lease like the housekeeping turn.
   claimNotifierLease: 'persistence_journal',
+  readNotifierLease: 'persistence_journal',
+  holdsNotifierLease: 'persistence_journal',
+  releaseNotifierLease: 'persistence_journal',
   completeHousekeepingTurn: 'persistence_journal',
   readReceiptBudget: 'persistence_journal',
   listCompactableReceipts: 'persistence_journal',

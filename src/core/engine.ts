@@ -53,7 +53,7 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
-import type { NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput } from './engine-sql/notifier.ts';
+import type { NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder } from './engine-sql/notifier.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
@@ -1359,6 +1359,15 @@ export interface BrainEngine {
    * when the caller owns it (a takeover bumps it), else the current holder. notifier/store.ts claimLease.
    */
   claimNotifierLease(l: NotifierLeaseClaimInput): Promise<NotifierLeaseClaim>;
+
+  /** This host's commit notifier lease row (owner, fence, kind, pid, expiry, live), or null when it has none. notifier/store.ts readLease. */
+  readNotifierLease(hostId: string): Promise<NotifierLeaseHolder | null>;
+
+  /** The commit notifier's fencing check: the host's lease is still `ownerId`'s, with `fence`, and unexpired. notifier/store.ts holdsLease. */
+  holdsNotifierLease(hostId: string, ownerId: string, fence: number): Promise<boolean>;
+
+  /** Expires the host's commit notifier lease now, only while `ownerId` holds it (a clean stop). notifier/store.ts releaseLease. */
+  releaseNotifierLease(hostId: string, ownerId: string): Promise<void>;
 
   /** Every source that is not archived, in id order, as the commit notifier's host source list reads it (notifier/resident.ts). */
   listNotifierHostSourceRows(): Promise<NotifierHostSourceRow[]>;

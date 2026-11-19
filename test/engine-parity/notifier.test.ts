@@ -26,7 +26,8 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NotifierLeaseClaim } from '../../src/core/engine-sql/notifier.ts';
-import { listHostSources } from '../../src/core/notifier/resident.ts';
+import { listHostSources, sqlNotifierStore } from '../../src/core/notifier/resident.ts';
+import { readLease } from '../../src/core/notifier/store.ts';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -68,6 +69,45 @@ describe('engine parity: commit notifier lease and host sources', () => {
       takeover: { owner: true, fence: 2 },
       stale: { owner: false, holder: { owner_id: OWNER_B, fence: 2, resident_kind: 'jobs-worker', pid: 202, live: true, expires_at_is_iso: true } },
       live: true,
+    });
+    return observed;
+  });
+
+  parityTest('the notifier store reads the lease, checks the fence and releases only its own lease', { methods: ['claimNotifierLease', 'readNotifierLease', 'holdsNotifierLease', 'releaseNotifierLease'] }, async (engine) => {
+    const store = sqlNotifierStore(engine);
+    const lease = async (hostId = HOST) => {
+      const row = await readLease(engine, hostId);
+      if (row === null) return null;
+      const { expires_at, ...rest } = row;
+      return { ...rest, expires_at_is_iso: new Date(expires_at).toISOString() === expires_at };
+    };
+    const none = await lease();
+    const claimed = await engine.claimNotifierLease({ hostId: HOST, ownerId: OWNER_A, kind: 'serve', pid: 101, leaseMs: 60_000 });
+    const held = await lease();
+    const holds = {
+      owner: await store.holdsLease(HOST, OWNER_A, 1),
+      otherFence: await store.holdsLease(HOST, OWNER_A, 2),
+      otherOwner: await store.holdsLease(HOST, OWNER_B, 1),
+      otherHost: await store.holdsLease(OTHER_HOST, OWNER_A, 1),
+    };
+    // Another owner's release leaves the lease alone; the owner's own release expires it at once.
+    await store.releaseLease(HOST, OWNER_B);
+    const afterOtherRelease = { holds: await store.holdsLease(HOST, OWNER_A, 1), live: (await lease())?.live };
+    await store.releaseLease(HOST, OWNER_A);
+    const released = { holds: await store.holdsLease(HOST, OWNER_A, 1), lease: await lease() };
+    const takeover = await engine.claimNotifierLease({ hostId: HOST, ownerId: OWNER_B, kind: 'jobs-worker', pid: 201, leaseMs: 60_000 });
+    await store.releaseLease(OTHER_HOST, OWNER_A);
+    const observed = { none, claimed, held, holds, afterOtherRelease, released, takeover, holdsAfterTakeover: await store.holdsLease(HOST, OWNER_B, 2), otherHost: await lease(OTHER_HOST) };
+    expect(observed).toEqual({
+      none: null,
+      claimed: { owner: true, fence: 1 },
+      held: { owner_id: OWNER_A, fence: 1, resident_kind: 'serve', pid: 101, live: true, expires_at_is_iso: true },
+      holds: { owner: true, otherFence: false, otherOwner: false, otherHost: false },
+      afterOtherRelease: { holds: true, live: true },
+      released: { holds: false, lease: { owner_id: OWNER_A, fence: 1, resident_kind: 'serve', pid: 101, live: false, expires_at_is_iso: true } },
+      takeover: { owner: true, fence: 2 },
+      holdsAfterTakeover: true,
+      otherHost: null,
     });
     return observed;
   });

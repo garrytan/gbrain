@@ -1947,6 +1947,17 @@
         ],
         "flagOnScopes": []
       },
+      "holdsNotifierLease#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "insertFact#default": {
         "flagOffLanes": [
           "pool",
@@ -3525,6 +3536,17 @@
         ],
         "flagOnScopes": []
       },
+      "readNotifierLease#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -3675,6 +3697,17 @@
         "flagOnScopes": []
       },
       "refreshPageBody#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "releaseNotifierLease#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4974,6 +5007,7 @@
         "hasWakeCron": "none",
         "hasWakeTermsAcceptance": "none",
         "holdSchemaMigrationLock": "none",
+        "holdsNotifierLease": "none",
         "inboundLinkCoverage": "none",
         "initSchema": "none",
         "insertFact": "none",
@@ -5263,6 +5297,7 @@
         "readMcpLogPruneCutoff": "none",
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
+        "readNotifierLease": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
         "readPageHiddenFromCaller": "none",
@@ -5320,6 +5355,7 @@
         "relationalChainHop": "none",
         "relationalFanout": "none",
         "releaseCycleLock": "none",
+        "releaseNotifierLease": "none",
         "releaseWatchdogClaim": "none",
         "removeLink": "none",
         "removeLinksByPagesAndSource": "none",

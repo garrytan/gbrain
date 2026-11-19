@@ -79,6 +79,52 @@ fn an_expired_lease_goes_to_the_next_owner_with_the_fence_up_by_one() {
 }
 
 #[test]
+fn the_fencing_check_holds_only_for_the_owner_with_its_fence_and_a_release_expires_only_its_own_lease()
+ {
+    let dir = TempDir::new("notifier-release");
+    let store = open(&dir);
+    assert_eq!(store.read_notifier_lease(HOST).unwrap(), None);
+    assert!(!store.holds_notifier_lease(HOST, "owner-a", 1.0).unwrap());
+    claim(&store, HOST, "owner-a", "serve", 101, 60_000.0);
+    let mut lease = store.read_notifier_lease(HOST).unwrap().unwrap();
+    assert!(lease["expires_at"].as_str().unwrap().ends_with('Z'));
+    lease.as_object_mut().unwrap().remove("expires_at");
+    assert_eq!(
+        lease,
+        json!({ "owner_id": "owner-a", "fence": 1, "resident_kind": "serve", "pid": 101, "live": true })
+    );
+    assert!(store.holds_notifier_lease(HOST, "owner-a", 1.0).unwrap());
+    assert!(!store.holds_notifier_lease(HOST, "owner-a", 2.0).unwrap());
+    assert!(!store.holds_notifier_lease(HOST, "owner-b", 1.0).unwrap());
+    assert!(
+        !store
+            .holds_notifier_lease(OTHER_HOST, "owner-a", 1.0)
+            .unwrap()
+    );
+    // Another owner's release changes nothing; the owner's own release expires the row at once.
+    store.release_notifier_lease(HOST, "owner-b").unwrap();
+    assert!(store.holds_notifier_lease(HOST, "owner-a", 1.0).unwrap());
+    store.release_notifier_lease(HOST, "owner-a").unwrap();
+    assert!(!store.holds_notifier_lease(HOST, "owner-a", 1.0).unwrap());
+    assert_eq!(
+        store.read_notifier_lease(HOST).unwrap().unwrap()["live"],
+        json!(false)
+    );
+    // The next owner takes the released lease over with the fence up by one.
+    assert_eq!(
+        claim(&store, HOST, "owner-b", "jobs-worker", 201, 60_000.0),
+        json!({ "owner": true, "fence": 2 })
+    );
+    // A release on a host with no row writes none.
+    store.release_notifier_lease(OTHER_HOST, "owner-a").unwrap();
+    assert_eq!(store.read_notifier_lease(OTHER_HOST).unwrap(), None);
+    assert_eq!(
+        store.read_notifier_lease("a\u{0}b").unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
 fn a_lease_of_under_half_a_millisecond_is_one_millisecond_and_a_nul_host_is_refused() {
     let dir = TempDir::new("notifier-bounds");
     let store = open(&dir);

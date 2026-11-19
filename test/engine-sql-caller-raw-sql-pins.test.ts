@@ -102,6 +102,21 @@ const PINS: Pin[] = [
       'SELECT owner_id, fence, resident_kind, pid, expires_at, expires_at > now() AS live FROM sync_notifier_leases WHERE host_id = $1'],
   },
   {
+    from: 'src/core/notifier/store.ts:193 readLease (at 6e123afe98)',
+    case: { method: 'readNotifierLease', variant: 'default', run: e => e.readNotifierLease('host-1') },
+    texts: ['SELECT owner_id, fence, resident_kind, pid, expires_at, expires_at > now() AS live FROM sync_notifier_leases WHERE host_id = $1'],
+  },
+  {
+    from: 'src/core/notifier/store.ts:198 holdsLease (at 6e123afe98)',
+    case: { method: 'holdsNotifierLease', variant: 'default', run: e => e.holdsNotifierLease('host-1', 'owner-1', 3) },
+    texts: ['SELECT host_id FROM sync_notifier_leases WHERE host_id = $1 AND owner_id = $2 AND fence = $3 AND expires_at > now()'],
+  },
+  {
+    from: 'src/core/notifier/store.ts:205 releaseLease (at 6e123afe98)',
+    case: { method: 'releaseNotifierLease', variant: 'default', run: e => e.releaseNotifierLease('host-1', 'owner-1') },
+    texts: ['UPDATE sync_notifier_leases SET expires_at = now() WHERE host_id = $1 AND owner_id = $2'],
+  },
+  {
     from: 'src/core/notifier/resident.ts:71 listHostSources (at 6e123afe98)',
     case: { method: 'listNotifierHostSourceRows', variant: 'default', run: e => e.listNotifierHostSourceRows() },
     texts: [`SELECT s.id, s.local_path, s.last_commit, (b.source_id IS NOT NULL) AS bound, w.owner_host_id::text AS owner, h.local_path AS root, n.syncer_host_id AS syncer, s.config
