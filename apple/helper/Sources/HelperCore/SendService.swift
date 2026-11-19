@@ -144,14 +144,10 @@ public final class SendService {
         let limits: SendLimits
         let hashKey: [UInt8]
         do {
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            var state = try store.load() ?? SendState()
-            observeKill(&state)
-            guard state.enabled, switchedOn() else { return fail(.sendDisabled) }
-            guard state.keys.contains(signer) else { return fail(.unknownSendKey) }
-            limits = state.limits
-            hashKey = try recipientKey(&state)
+            (limits, hashKey) = try locked { () throws -> (SendLimits, [UInt8]) in
+                var state = try allowed(signer)
+                return (state.limits, try recipientKey(&state))
+            }
         } catch {
             return fail((error as? Problem) ?? .sendKeysUnreadable)
         }
@@ -197,7 +193,18 @@ public final class SendService {
         let dispatch: DispatchResult
         switch messages.prepare(askPermission: false) {
         case .ready:
-            dispatch = messages.send(text: send.text, to: send.to)
+            let handed = locked { () -> Result<DispatchResult, Problem> in
+                do {
+                    _ = try allowed(signer)
+                } catch {
+                    return .failure((error as? Problem) ?? .sendKeysUnreadable)
+                }
+                return .success(messages.send(text: send.text, to: send.to))
+            }
+            switch handed {
+            case .success(let result): dispatch = result
+            case .failure(let stopped): return refuse(stopped, error: nil, pending: pending)
+            }
         case .automationDenied:
             return refuse(.automationDenied, error: -1743, pending: pending)
         case .signedOut:
@@ -225,6 +232,14 @@ public final class SendService {
             clock.sleep(pollInterval)
         }
         return record(.from(delivery), pending: pending)
+    }
+
+    func allowed(_ signer: SendKey) throws -> SendState {
+        var state = try store.load() ?? SendState()
+        observeKill(&state)
+        guard state.enabled, switchedOn() else { throw Problem.sendDisabled }
+        guard state.keys.contains(signer) else { throw Problem.unknownSendKey }
+        return state
     }
 
     func recipientKey(_ state: inout SendState) throws -> [UInt8] {
@@ -394,6 +409,7 @@ public final class SendService {
                 state = try locked { () throws -> SendState in
                     var current = try store.load() ?? SendState()
                     observeKill(&current)
+                    guard current.enabled || !first.change.state.enabled || switchedOn() else { throw Problem.sendDisabled }
                     guard current == first.seen, adminSaves == first.saves else { throw Problem.overloaded }
                     if first.change.save {
                         try store.save(first.change.state)
