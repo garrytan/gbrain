@@ -238,6 +238,77 @@ impl Brain {
         })
     }
 
+    /// `listReferrerTargetSources`: `{ slug, sources }`: the sources holding a live page with the slug.
+    #[napi]
+    pub fn list_referrer_target_sources<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerTargetSourcesInput =
+                arg(input, "listReferrerTargetSources input")?;
+            s.list_referrer_target_sources(&input)
+        })
+    }
+
+    /// `countReferrerRows`: `{ targetSources, targetSlugs, referrerSources, storedTypes, canonicalTypes,
+    /// excludePrivate, type, minTrust, suppressFlagged, includeQuarantined }`: the referrer total.
+    #[napi]
+    pub fn count_referrer_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRowInput =
+                arg(input, "countReferrerRows input")?;
+            s.count_referrer_rows(&input)
+        })
+    }
+
+    /// `readReferrerRows`: `countReferrerRows`'s input plus `{ cursor, limit }`: one referrer page.
+    #[napi]
+    pub fn read_referrer_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRowInput =
+                arg(input, "readReferrerRows input")?;
+            s.read_referrer_rows(&input)
+        })
+    }
+
+    /// `readReferrerRecordCandidates`: `readReferrerTargetCounts`'s input plus `{ perTarget }`: the record candidates.
+    #[napi]
+    pub fn read_referrer_record_candidates<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRecordCandidateInput =
+                arg(input, "readReferrerRecordCandidates input")?;
+            s.read_referrer_record_candidates(&input)
+        })
+    }
+
+    /// `readReferrerRecordPages`: `{ ids }`: the title and date source of each page id that exists.
+    #[napi]
+    pub fn read_referrer_record_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerPageDetailsInput =
+                arg(input, "readReferrerRecordPages input")?;
+            s.read_referrer_record_pages(&input)
+        })
+    }
+
     /// `countSearchVectorRows`: `{ pages, chunks }`.
     #[napi]
     pub fn count_search_vector_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
