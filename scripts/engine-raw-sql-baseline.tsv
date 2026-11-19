@@ -734,7 +734,7 @@ src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/ownership.ts	execute_raw	24
 src/core/persistence/page-advisories.ts	execute_raw	1
-src/core/persistence/page-append.ts	execute_raw	3
+src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	10
@@ -1057,7 +1057,7 @@ src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	9
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/fence-append.ts	execute_raw	3
-src/core/trust/fence-guard.ts	execute_raw	8
+src/core/trust/fence-guard.ts	execute_raw	7
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4

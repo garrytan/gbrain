@@ -9,6 +9,7 @@
  * The writer's tier (`gbrain.write_trust_tier`) and the opened fact ids (`gbrain.write_open_facts`) are transaction-local
  * settings the SQL reads itself; this member passes neither.
  */
+import type { BrainEngine } from '../engine.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
 import { trustRankSql } from '../trust/tier.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -50,4 +51,40 @@ export async function listFenceFactRows(exec: LegacyUnscopedRead, target: FenceR
         AND (${above} OR (${held}) OR ${opened})
       ORDER BY f.row_num FOR UPDATE OF f`)).rows;
   return rows;
+}
+
+/** The tables whose rows a lower-tier write may be held from deleting or overwriting (trust/fence-guard.ts). */
+export type HeldTable = 'takes' | 'timeline_entries';
+
+const OPEN_CONTEST_TAKES_SQL = `EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'
+  AND tp.target_table = 'takes' AND tp.target_id = x.id)`;
+const OPEN_CONTEST_TIMELINE_SQL = `EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'
+  AND tp.target_table = 'timeline_entries' AND tp.target_id = x.id)`;
+
+/** SQL for an open owner contest of row `x`: a pending `forget` proposal that targets it. */
+export const OPEN_CONTEST_SQL = (table: HeldTable) => table === 'takes' ? OPEN_CONTEST_TAKES_SQL : OPEN_CONTEST_TIMELINE_SQL;
+
+/** What `heldRows` asks: of the page's rows `ids` in `table`, which ones a write by `writer` (the declared tier when omitted) may not touch. */
+export interface HeldRowsQuery { table: HeldTable; pageId: number; ids: readonly number[]; writer?: string; pending?: boolean }
+
+/**
+ * Of the page's rows `ids`, the rows a write may not delete or overwrite, by id and locked (`FOR UPDATE OF x`): rows more
+ * trusted than `writer` (the transaction's declared tier when omitted; a name that is no tier ranks 0) and, with
+ * `pending`, rows an open contest already holds. `trust_tier` is the stored tier. This is the statement
+ * `trust/fence-guard.ts` `heldRows` sent through `executeRaw`, scoped to the page that owns the rows, with the values
+ * bound as fragment parameters (a named writer once, as `w.writer`).
+ */
+export async function listHeldRows(exec: LegacyUnscopedRead, q: HeldRowsQuery): Promise<Array<{ id: number; trust_tier: string }>> {
+  if (q.table !== 'takes' && q.table !== 'timeline_entries') throw new Error(`listHeldRows: unknown table ${String(q.table)}`);
+  if (!q.ids.length) return [];
+  const table = trustedSql(q.table === 'takes' ? 'takes' : 'timeline_entries');
+  const named = q.writer !== undefined;
+  const writerFrom = named ? sqlFragment` CROSS JOIN (SELECT ${q.writer}::text AS writer) w` : sqlFragment``;
+  const rank = trustedSql(trustRankSql('x.trust_tier'));
+  const writer = named ? trustedSql(trustRankSql('w.writer')) : trustedSql(WRITER_RANK_SQL);
+  const contest = !q.pending ? sqlFragment``
+    : q.table === 'takes' ? sqlFragment` OR ${trustedSql(OPEN_CONTEST_TAKES_SQL)}` : sqlFragment` OR ${trustedSql(OPEN_CONTEST_TIMELINE_SQL)}`;
+  const rows = (await exec.run<{ id: number | string; trust_tier: string }>(sqlFragment`SELECT x.id, x.trust_tier FROM ${table} x${writerFrom}
+      WHERE x.page_id = ${q.pageId} AND x.id = ANY(${[...q.ids]}::bigint[]) AND (${rank} > ${writer}${contest}) ORDER BY x.id FOR UPDATE OF x`)).rows;
+  return rows.map(r => ({ id: Number(r.id), trust_tier: r.trust_tier }));
 }

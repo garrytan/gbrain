@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 741/741
+# covered: 743/743
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -64,8 +64,8 @@
 # alias_fanout_reads: 4/4
 # write_guards: 9/9
 # page_visibility: 4/4
-# large_page: 1/1
-# trust_fence: 1/1
+# large_page: 2/2
+# trust_fence: 2/2
 # trust_proposals: 6/6
 # connect_gate: 4/4
 # decide_proposals: 16/16
@@ -78,21 +78,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	72	no	yes	yes	serves
+transaction	lifecycle	yes	73	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	86	yes	yes	yes	serves
+getPage	pages	yes	87	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	341	yes	yes	yes	serves
+putPage	pages	yes	343	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	112	yes	yes	yes	serves
+softDeletePage	pages	yes	113	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -250,7 +250,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	31	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	32	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	16	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	4	no	yes	yes	serves
@@ -317,17 +317,17 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	4	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	5	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	6	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	6	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	13	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	14	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	14	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	15	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	9	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	8	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
@@ -701,7 +701,7 @@ readPageTrustRows	cli_reads_import	yes	9	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	2	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
-listStoredTimelineRows	cli_reads_import	yes	6	no	yes	yes	serves
+listStoredTimelineRows	cli_reads_import	yes	7	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	6	no	yes	yes	serves
@@ -747,8 +747,10 @@ readCallerPageAccess	page_visibility	yes	2	no	yes	yes	serves
 readWriteVisibilityProbe	page_visibility	yes	1	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
+readPageBodySizes	large_page	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	4	no	yes	yes	serves
+listHeldRows	trust_fence	yes	1	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	5	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves

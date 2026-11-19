@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::FenceTarget;
+use gbrain_store::trust::held_rows::HeldRowsQuery;
 
 #[napi]
 impl Brain {
@@ -27,6 +28,16 @@ impl Brain {
         self.run(env, move |s| {
             let t: FenceTarget = required(target, "listFenceFactRows target")?;
             s.list_fence_fact_rows(&t, &s.fence_context())
+        })
+    }
+
+    /// `listHeldRows({ table, pageId, ids, writer?, pending })`: `[{ id, trust_tier }]`. With no
+    /// `writer`, the writer's tier comes from the store's write trust context (`applyWriteTrust`).
+    #[napi]
+    pub fn list_held_rows<'env>(&self, env: &'env Env, q: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: HeldRowsQuery = required(q, "listHeldRows args")?;
+            s.list_held_rows(&q, &s.fence_context())
         })
     }
 }

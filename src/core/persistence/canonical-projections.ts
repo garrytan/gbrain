@@ -715,7 +715,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     const removedDates: string[] = [];
     // W1 #6783 §12 (a): a timeline row or take more trusted than the writer is never deleted, replaced or deactivated by
     // it. It stays as it is and a `forget` proposal asks the owner (trust/fence-guard.ts), decided before any statement runs.
-    const heldTimeline = await heldRows(tx, 'timeline_entries', [...deletionRows, ...refreshRows].map(row => Number(row.id)));
+    const heldTimeline = await heldRows(tx, 'timeline_entries', id, [...deletionRows, ...refreshRows].map(row => Number(row.id)));
     const deletions = deletionRows.filter(row => !heldTimeline.has(Number(row.id)));
     const refreshes = refreshRows.filter(row => !heldTimeline.has(Number(row.id)));
     const heldTakes = projectFences ? await guardFenceTakes(tx, id, takes, takeRowsGone) : [];

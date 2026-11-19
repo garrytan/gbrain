@@ -20,4 +20,14 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_stored_body_bytes(&slug, &source_id))
     }
+
+    /// `readPageBodySizes(pageId)`: `{ bytes, truth }` of the page, or null.
+    #[napi]
+    pub fn read_page_body_sizes<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_body_sizes(page_id))
+    }
 }

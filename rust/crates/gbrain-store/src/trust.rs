@@ -37,6 +37,7 @@ mod stamp;
 
 mod eligibility;
 mod fingerprint;
+pub mod held_rows;
 pub mod proposals;
 pub mod tier_reads;
 pub mod valid_time;

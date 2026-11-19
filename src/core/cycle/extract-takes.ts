@@ -130,7 +130,7 @@ async function unheldTakes(db: BrainEngine, pageId: number, where: string, param
   const candidates = (await db.executeRaw<{ id: number }>(`SELECT id FROM takes WHERE page_id = $1 AND ${where}`, [pageId, ...params])).map(r => Number(r.id));
   if (!candidates.length) return [];
   const page = await reconcileTier(db, pageId);
-  const held = page ? await heldRows(db, 'takes', candidates, { writer: page.tier, pending: true }) : new Map();
+  const held = page ? await heldRows(db, 'takes', pageId, candidates, { writer: page.tier, pending: true }) : new Map();
   if (page && held.size) await contestHeldRows(db, { sourceId: page.sourceId, slug: page.slug, table: 'takes', proposer: 'takes_reextract', writer: page.tier,
     rows: [...held].map(([id, tier]) => ({ id, tier, change })) });
   return candidates.filter(id => !held.has(id));
