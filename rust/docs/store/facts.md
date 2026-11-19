@@ -259,9 +259,16 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 the columns the store has not got: `source_window`, `last_written_at` and the `write_*` and
 `last_write_*` columns.
 
-Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its reconcile ledger table
-`page_facts_reconcile` is not in the store). `listSingleFactMetadata` is served by
-`facts/trust_reads.rs` (below), except under the remote provenance floor.
+`listFactsReconcileBacklog` is served from the `page_facts_reconcile` watermark (`facts/reconcile.rs`, key
+`F 0x0D page_id`): a live page is due when it has no watermark row or its `reconciled_revision` is not its
+`knowledge_revision`. The rows are the due pages whose body or timeline holds `FACTS_FENCE_BEGIN` (the member sends
+it; a plain substring match, as the SQL's `LIKE` is for that marker) or that own a fence row of their source
+(`row_num` set, expired or not), with `invalid` when the latest attempt was `invalid` at the current revision, in
+(source, slug) byte order (the SQL pins `COLLATE "C"`). `segmented` counts the other due pages with a NULL body.
+No member writes the watermark on Rust: the extract_facts phase writes it with raw SQL (`settleFactsReconcile` and
+`selectFactsReconcileDrain` in `facts/reconcile-watermark.ts`), so it stops on the typed `raw_sql` refusal and every
+live page stays due. A writer that binds the watermark must also delete a page's row with the page row.
+`listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 

@@ -3,14 +3,16 @@
  * store (rust/crates/gbrain-store/src/facts/purge.rs). Each member sends the arguments of its BrainEngine member and
  * turns the ISO times the store returns into `Date`s, as PGLite returns them.
  *
- * A member not exported here refuses with `engine_capability_missing`: `listFactsReconcileBacklog` reads
- * `page_facts_reconcile`, a table the store does not have. `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `listFactsReconcileBacklog` reads the store's `page_facts_reconcile` watermark (facts/reconcile.rs), which no member
+ * writes on Rust: the extract_facts phase writes it with raw SQL and refuses, so on Rust every live page is due.
+ * `listSingleFactMetadata` is served by facts-trust-reads.ts.
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy);
  * it and `listSimilarActiveFacts` refuse a caller whose policy the store does not model (private-provenance.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
@@ -29,6 +31,10 @@ export const loadPurgeTarget: Member<'loadPurgeTarget'> = (brain, id, sourceId) 
 
 export const planFactPurgeIds: Member<'planFactPurgeIds'> = (brain, sourceId, visibility, factHash, subject) =>
   storeCall({ member: 'planFactPurgeIds' }, () => brain.planFactPurgeIds({ sourceId, visibility, factHash, subject }));
+
+/** `listFactsReconcileBacklog`: the store matches the fence marker as plain text, as the SQL's `LIKE '%marker%'` does. */
+export const listFactsReconcileBacklog: Member<'listFactsReconcileBacklog'> = (brain) =>
+  storeCall({ member: 'listFactsReconcileBacklog' }, () => brain.listFactsReconcileBacklog({ marker: FACTS_FENCE_BEGIN }));
 
 export const listRelinkCandidateRows: Member<'listRelinkCandidateRows'> = (brain, opts) =>
   storeCall({ member: 'listRelinkCandidateRows' }, () => brain.listRelinkCandidateRows({

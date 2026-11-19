@@ -548,7 +548,7 @@ countWorldFacts	facts_cycle	yes	5	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
 loadPurgeTarget	facts_purge	yes	5	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
-listFactsReconcileBacklog	facts_purge	yes	3	no	yes	yes	refuses:facts
+listFactsReconcileBacklog	facts_purge	yes	3	no	yes	yes	serves
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
 countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	3	no	yes	yes	serves

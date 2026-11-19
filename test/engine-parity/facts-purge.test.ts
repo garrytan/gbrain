@@ -12,8 +12,11 @@
  *    as already stored; the Rust engine has no SQL, so each read has to exist as a typed method it can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none; every row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage` and
- *    `expireFact`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or shape, never by value.
+ *  - Seam: recordFactsReconcile (harness.ts) writes a page_facts_reconcile row with SQL, as the extract_facts phase
+ *    does; the Rust arm stops there on the typed raw_sql refusal, because no member writes the watermark on Rust. Every
+ *    other row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage`, `expireFact` and
+ *    `createSegmentedPageShell`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or
+ *    shape, never by value.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, recordFactsReconcile, sorted } from './harness.ts';

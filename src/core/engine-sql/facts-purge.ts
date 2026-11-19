@@ -58,7 +58,7 @@ export async function planFactPurgeIds(raw: EngineRawRead, sourceId: string, vis
 
 export interface FactsReconcileBacklogRows { rows: Array<{ source_id: string; slug: string; invalid: boolean }>; segmented: number }
 
-/** doctor: the due pages holding a fence (or fence rows) with whether the latest attempt marked them invalid, and the due segmented pages with no fence rows (0 when the count cannot run). */
+/** doctor: the due pages holding a fence (or fence rows) with whether the latest attempt marked them invalid, in (source, slug) byte order, and the due segmented pages with no fence rows (0 when the count cannot run). */
 export async function listFactsReconcileBacklog(raw: EngineRawRead): Promise<FactsReconcileBacklogRows> {
   const pattern = `%${FACTS_FENCE_BEGIN}%`;
   const backlog = renderFragment(sqlFragment`WITH due AS MATERIALIZED (
@@ -70,7 +70,7 @@ export async function listFactsReconcileBacklog(raw: EngineRawRead): Promise<Fac
             COALESCE(d.outcome = 'invalid' AND d.attempted_revision IS NOT DISTINCT FROM d.knowledge_revision, false) AS invalid
        FROM due d JOIN pages p ON p.id = d.id
       WHERE p.compiled_truth LIKE ${pattern} OR p.timeline LIKE ${pattern} OR ${trustedSql(OWNS_FENCE_ROWS)}
-      ORDER BY d.source_id, d.slug`);
+      ORDER BY d.source_id COLLATE "C", d.slug COLLATE "C"`);
   const rows = await raw<{ source_id: string; slug: string; invalid: boolean }>(backlog.text, backlog.params);
   const count = renderFragment(sqlFragment`SELECT COUNT(*)::int AS n FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
       WHERE p.deleted_at IS NULL AND ${trustedSql(DUE)} AND p.body_storage = 'segmented' AND NOT ${trustedSql(OWNS_FENCE_ROWS)}`);

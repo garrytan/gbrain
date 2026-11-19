@@ -24,6 +24,7 @@
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
 //! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`), read only.
+//! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -45,6 +46,7 @@ pub mod loops;
 mod page_purges;
 mod privacy;
 pub mod purge;
+pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
