@@ -6395,11 +6395,12 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - `listPages` with `listColumnsOnly`;
 - `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
   not have, so an empty answer would be wrong to give;
-- a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;
+- a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
 - a vector search with `where`, a date bound, `minTrust` or `suppressFlagged` (`rust/docs/store/vectors.md`);
 - a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy
   `requireSafeChunks`, `minTrust` or `suppressFlagged`, a date bound that is not an ISO date, a malformed `where`, or a
-  truthy `excludePrivate` on any member but `searchKeyword` (`rust/docs/store/keyword.md`, "Refusals"), and a link
+  truthy `excludePrivate` on `searchKeywordChunks`, `countKeywordPages` or `searchKeywordPages` (`searchKeyword` and
+  `searchTitles` serve it; `rust/docs/store/keyword.md`, "Refusals"), and a link
   batch that sets a link kind or resolution.
 
 A `putPage` that carries a `source_path` keeps it, and refuses `page_identity_changed` (detail
