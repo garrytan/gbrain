@@ -63,6 +63,7 @@ pub mod trust;
 pub mod trust_reads;
 pub mod withdrawal_discovery;
 mod widen;
+pub mod withdrawal_pages;
 
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub use crate::owner_only::OwnerOnlyForm;

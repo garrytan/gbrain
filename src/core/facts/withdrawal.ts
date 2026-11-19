@@ -125,16 +125,19 @@ export async function recordFactWithdrawal(
       }
       // Wave B (spec 11): a segmented page's withdrawn rows are struck in the segment holding the fence, a new
       // generation whose flip retires only the chunks of the occurrences it rewrote.
-      const segmented = affected.length ? await tx.listSegmentedPagesBySlug(sourceId, affected.map(page => page.slug)) : [];
+      const segmented = affected.length ? await tx.listSegmentedPages(sourceId, affected.map(page => page.slug)) : [];
       if (segmented.length) {
         const { rewriteLiveSegmentedFences } = await import('../page-body/segment-rewrite.ts');
         for (const page of segmented) await rewriteLiveSegmentedFences(tx, Number(page.id), fence => preserveWithdrawnFenceRows(tx, sourceId, fence, page.slug));
       }
       // Logical revision and projection invalidation commit with the withdrawal.
       // The revision trigger queues durable rebuild work even for unmanaged calls.
-      const inline = affected.length ? await tx.bumpWithdrawnPageRevisions(sourceId, affected.map(page => page.slug)) : [];
+      const inline = affected.length ? await tx.invalidateWithdrawnPages(sourceId, affected.map(page => page.slug)) : [];
       if (inline.length) await tx.deleteChunksForPages(inline.map(page => Number(page.id)));
-      const pages = [...inline, ...segmented.length ? await tx.readPageRevisions(segmented.map(page => page.id)) : []];
+      const rewritten = segmented.length
+        ? await tx.readWithdrawalDiscovery({ kind: 'target_pages', sourceId, ids: segmented.map(page => Number(page.id)) })
+        : [];
+      const pages = [...inline, ...rewritten.map(page => ({ id: page.page_id, slug: page.slug, knowledge_revision: page.revision }))];
       if (opts.requestId && !opts.publication) {
         await tx.insertWithdrawalEffects({ requestId: opts.requestId, sourceId, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })) });
       }

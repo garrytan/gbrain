@@ -384,6 +384,12 @@ pub(crate) fn reset_page_vectors(tx: &mut dyn KvWrite, page_id: u64, now_us: i64
     Ok(())
 }
 
+/// Clears a page's embedding signature (PGLite's `embedding_signature=NULL`), as a fact
+/// withdrawal does for each page it invalidates (`facts::withdrawal_pages`).
+pub(crate) fn clear_signature(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&signature_key(page_id))
+}
+
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&signature_key(page.id))?;

@@ -18,6 +18,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { recordFactWithdrawal } from '../../src/core/facts/withdrawal.ts';
+import { renderFactsTable } from '../../src/core/facts-fence.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -65,6 +66,32 @@ async function left(engine: BrainEngine, id: number, requestId: string, claim: {
   };
 }
 
+const PAGE = 'people/bob-example';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const fenced = (claims: string[]) => renderFactsTable(claims.map((claim, i) =>
+  ({ rowNum: i + 1, claim, visibility: 'world' as const, kind: 'fact' as const, confidence: 1, notability: 'medium' as const, active: true })));
+
+/** Inserts the world facts a page's fence holds, on that page and its entity, under the operator tier; returns their ids. */
+async function pageFacts(engine: BrainEngine, claims: string[]): Promise<number[]> {
+  let ids: number[] = [];
+  await engine.transaction(async (tx) => {
+    await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+      ['operator_curated', 'operator_curated', JSON.stringify({ channel: 'operator_curated' })]);
+    const out = await tx.insertFacts(claims.map((fact, i) => ({
+      fact, entity_slug: PAGE, source_markdown_slug: PAGE, row_num: i + 1, kind: 'fact',
+      visibility: 'world', source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1)),
+    })) as never, { source_id: 'default' });
+    ids = out.ids.map(Number);
+  });
+  return ids;
+}
+
+/** The page's knowledge revision and how many chunks it holds. */
+async function pageState(engine: BrainEngine, pageId: number) {
+  const [row] = await engine.readWithdrawalDiscovery({ kind: 'target_pages', sourceId: 'default', ids: [pageId] });
+  return { revision: row!.revision, chunks: (await engine.getChunks(PAGE, { includeUnsealed: true })).length };
+}
+
 const queued = (kind: string) => ({ kind, state: 'queued', error_code: null, outcome: null, recovering: false });
 
 describe('engine parity: a forget under a write request', () => {
@@ -103,6 +130,51 @@ describe('engine parity: a forget under a write request', () => {
         kept: { withdrawn: true, expired: true, review: [{ kind: 'withdraw', b_ref: '*' }],
           effects: [queued('embedding'), queued('git'), queued('withdrawal-mirror')] },
         dropped: { withdrawn: false, expired: false, review: [], effects: [] },
+      });
+      return out;
+    });
+
+  parityTest('invalidates the page that carries the claim with the withdrawal, and a throw after it leaves the page as it was',
+    { methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transaction', 'applyTransactionSettings', 'insertFacts',
+      'putPage', 'upsertChunks', 'getChunks', 'readWithdrawalDiscovery', 'lockSourceRow', 'readFactWithdrawalClaim', 'hasCoveringFactWithdrawal',
+      'listWithdrawalSlugs', 'lockPageKeys', 'insertFactWithdrawal', 'expireFactsByWithdrawal', 'listSegmentedPages', 'invalidateWithdrawnPages',
+      'deleteChunksForPages', 'insertWithdrawalEffects', 'readRequestEffects'] },
+    async (engine) => {
+      const kept = 'Bob keeps bees on the roof';
+      const dropped = 'Bob keeps a boat in the bay';
+      const page = await engine.putPage(PAGE, { type: 'person', title: 'Bob', compiled_truth: `Bob.\n\n${fenced([kept, dropped])}`, timeline: '', frontmatter: {} });
+      await engine.upsertChunks(PAGE, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Bob keeps bees.' }]);
+      const [keptId, droppedId] = await pageFacts(engine, [kept, dropped]);
+      const keptReq = await admit(engine, 'b0000000-0000-4000-8000-0000000000c1');
+      const droppedReq = await admit(engine, 'b0000000-0000-4000-8000-0000000000c2');
+      const before = await pageState(engine, page.id);
+
+      let refused = '';
+      try {
+        await engine.transaction(async (tx) => {
+          await recordFactWithdrawal(tx, droppedId!, 'default', false, { requestId: droppedReq, semanticReview: false });
+          throw new Error('the caller refused after the withdrawal');
+        });
+      } catch (e) { refused = (e as Error).message; }
+      const afterThrow = await pageState(engine, page.id);
+      const droppedEffects = await engine.readRequestEffects(droppedReq);
+
+      const result = await engine.transaction(tx => recordFactWithdrawal(tx, keptId!, 'default', false, { requestId: keptReq, semanticReview: false }));
+      const after = await pageState(engine, page.id);
+
+      const out = {
+        refused,
+        afterThrow: { revision: afterThrow.revision === before.revision, chunks: afterThrow.chunks, effects: droppedEffects },
+        result: { withdrawn: result.withdrawn, pages: result.pages.map(p => ({ sourceId: p.sourceId, slug: p.slug, revision: UUID.test(p.revision) })) },
+        after: { revisionChanged: after.revision !== before.revision, committed: result.pages[0]?.revision === after.revision, chunks: after.chunks },
+        effects: await engine.readRequestEffects(keptReq),
+      };
+      expect(out).toEqual({
+        refused: 'the caller refused after the withdrawal',
+        afterThrow: { revision: true, chunks: 1, effects: [] },
+        result: { withdrawn: true, pages: [{ sourceId: 'default', slug: PAGE, revision: true }] },
+        after: { revisionChanged: true, committed: true, chunks: 0 },
+        effects: [queued('embedding'), queued('git'), queued('withdrawal-mirror')],
       });
       return out;
     });

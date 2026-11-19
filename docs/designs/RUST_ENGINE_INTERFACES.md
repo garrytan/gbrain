@@ -917,6 +917,11 @@ Facts and their supersession chains.
     every kind from the `F 0x01` fact rows, the page records and the live segmented-body rows with facts slots
     (`facts/withdrawal_discovery.rs`, no new key prefix; rust/docs/store/facts.md). The member refuses a cursor, limit
     or id that is not a safe integer. Pinned by `test/engine-parity/withdrawal-discovery-reads.test.ts`.
+  - The page statements a fact withdrawal runs (`recordFactWithdrawal`, `facts/withdrawal.ts`) are two typed members
+    (capability `facts`, `engine-sql/withdrawal-pages.ts`): `listSegmentedPages(sourceId, slugs)` and
+    `invalidateWithdrawnPages(sourceId, slugs)`. PGLite and Postgres run the statement text the call site ran. The
+    store reads and rewrites page records (`facts/withdrawal_pages.rs`, no new key prefix; rust/docs/store/facts.md)
+    and clears the page's embedding signature. Pinned by `test/engine-parity/withdrawal-forget.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

@@ -951,6 +951,8 @@ export const RUST_ENGINE_MEMBERS = {
   ownerReachesFact: 'facts',
   readFactWithdrawalClaim: 'facts',
   readWithdrawalDiscovery: 'facts',
+  listSegmentedPages: 'facts',
+  invalidateWithdrawnPages: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

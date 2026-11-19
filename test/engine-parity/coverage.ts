@@ -200,6 +200,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // withdrawal_discovery: the reads discoverWithdrawalTargets makes to find every page that carries a withdrawn claim
   withdrawal_discovery: ['readWithdrawalDiscovery'],
 
+  // withdrawal_pages: the page statements a fact withdrawal runs on the pages that carry the claim
+  withdrawal_pages: ['listSegmentedPages', 'invalidateWithdrawnPages'],
+
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
     // group D (code-edge read)
