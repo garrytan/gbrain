@@ -4609,7 +4609,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
-- [Rust engine plan](docs/designs/RUST_ENGINE.md) — proposed design for a third storage engine, not built yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
+- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search and chunk reads, but nothing selects it yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
@@ -6317,7 +6317,7 @@ when the `rust` config value lands; no config value selects the Rust engine yet.
 addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
-  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags` and `schema`.
+  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags`, `schema` and `keyword_search`.
   Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
@@ -6354,11 +6354,16 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
 - Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
   `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
-- Versions, chunks, keyword search, links, graph and timeline: `createVersion`, `getVersions`, `upsertChunks`,
-  `sealChunks`, `getChunks`, `deleteChunks`, `searchKeyword`, `addLink`, `addLinksBatch`, `removeLink`, `getLinks`,
-  `getBacklinks`, `traverseGraph`, `traversePaths`, `traversePathsDetailed`, `addTimelineEntry`,
-  `addTimelineEntriesBatch`, `getTimeline`. These capabilities stay unreported, because other members of the same
-  capability (`revertToVersion`, `getChunkPage`, `searchTitles`, `getBacklinkCounts`, `getTimelineForDate`, ...) still refuse.
+- Versions, chunks, links, graph and timeline: `createVersion`, `getVersions`, `upsertChunks`, `sealChunks`,
+  `getChunks`, `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
+  `deleteChunks`, `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
+  `traversePaths`, `traversePathsDetailed`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`. These
+  capabilities stay unreported, because other members of the same capability (`revertToVersion`, `getBacklinkCounts`,
+  `getTimelineForDate`, ...) still refuse. Chunk reads are in `rust/docs/store/chunk_queries.md`.
+- Keyword and title search: `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
+  `searchTitles` and `findByTitleFuzzy`. They rank with a port of PostgreSQL's `ts_rank`, `ts_rank_cd` and
+  `websearch_to_tsquery` (english), so their answers match PGLite's (`rust/docs/store/keyword.md`). Every member of
+  `keyword_search` is served, so the capability is reported.
 - Segmented pages (a page over 1 MiB, stored in segments): `allocateBodyOccurrenceIds`, `stageSegmentTexts`,
   `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
@@ -6377,8 +6382,11 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - `listPages` with `listColumnsOnly`;
 - `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
   not have, so an empty answer would be wrong to give;
-- a `getChunks` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;
-- a keyword search with an offset, `where` or a date window, and a link batch that sets a link kind or resolution.
+- a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;
+- a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy
+  `requireSafeChunks`, `minTrust` or `suppressFlagged`, a date bound that is not an ISO date, a malformed `where`, or a
+  truthy `excludePrivate` on any member but `searchKeyword` (`rust/docs/store/keyword.md`, "Refusals"), and a link
+  batch that sets a link kind or resolution.
 
 A `putPage` that carries a `source_path` keeps it, and refuses `page_identity_changed` (detail
 `origin_already_claimed`) when another live page of the same source already records that path, as PGLite does.
@@ -6396,9 +6404,9 @@ A scope that names no source (an empty string `sourceId` or `sourceIds` entry) i
 
 Keyword search hides what PGLite hides: soft-deleted pages, archived sources, pages that carry a `quarantine` or
 `pinned_question` frontmatter key, whatever its value, and the slug prefixes `test/`, `attachments/` and `.raw/` plus any
-that `GBRAIN_SEARCH_EXCLUDE` names (`include_slug_prefixes` opts back in). Ranking-only options of `searchKeyword` are accepted and
-ignored, because Rust ranks with BM25 and this is not parity with PGLite (design D5). Its scores and tie order differ
-from PGLite's. The expected difference is listed in `test/rust-expected-divergence/` (one file per family).
+that `GBRAIN_SEARCH_EXCLUDE` names (`include_slug_prefixes` opts back in). Keyword and title search rank with a port of `ts_rank` and
+`ts_rank_cd` over a port of PostgreSQL's english text search, and match PGLite's scores and order. No keyword case is
+listed in `test/rust-expected-divergence/` (`search.tsv` is empty).
 
 The parity suite checks this: with `GBRAIN_TEST_RUST_ARM=1` each `test/engine-parity/` file adds a Rust arm. A case that
 reaches a member or an option Rust refuses must end on that typed refusal (a refusal the case caught on the way to
