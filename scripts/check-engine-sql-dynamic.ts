@@ -94,6 +94,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   conversationSlotSql: 'src/core/engine-sql/facts-trust.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
   savedFactCollapseColumns: 'src/core/engine-sql/facts-trust.ts: SAVED_FACT_COLLAPSE_COLUMNS, the constant select list the capture-dedup collapse reads; no values',
 
+  tokenGrantSelectList: 'src/core/engine-sql/persistence-journal.ts: the constant TOKEN_GRANT_ROW_COLUMNS names (grants/model.ts) this brain\'s access_tokens has, joined by commas; no values',
   openedFactRowSql: 'src/core/persistence/context.ts: constant opened-row predicate over caller-given constant aliases; the setting name is a module constant, the opened ids are read by the statement itself',
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',
   activationSuppressedSql: 'src/core/eligibility/sql.ts: constant activation-suppression predicate over a caller alias; tier ranks and reason families come from constant tables',

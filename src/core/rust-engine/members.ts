@@ -522,6 +522,9 @@ export const RUST_ENGINE_MEMBERS = {
   readWriteRequestProgress: 'persistence_journal',
   countOutstandingBySource: 'persistence_journal',
   ownsSchemaTables: 'persistence_journal',
+  readOAuthClientWriteGrant: 'persistence_journal',
+  readAccessTokenWriteGrant: 'persistence_journal',
+  shareLockWriteCredential: 'persistence_journal',
   readCounterRows: 'persistence_journal',
   readAdmissionRate: 'persistence_journal',
   lockPersistenceCounters: 'persistence_journal',
@@ -746,20 +749,6 @@ export const RUST_ENGINE_MEMBERS = {
   listDecideCalibrations: 'eval_capture',
   getDecideCalibration: 'eval_capture',
   setDecideCalibrationRetired: 'eval_capture',
-  // Group D (trust tier reads)
-  listCorePageRows: 'pages',
-  listTrustScanRows: 'facts',
-  countUnscannedTrustRows: 'facts',
-  readBeliefHistoryRows: 'belief_ledger',
-  listVisibleBeliefLifetimes: 'belief_ledger',
-  listVersionTrustTiers: 'page_versions',
-  listVersionReasonWriters: 'page_versions',
-  listValidTimeIdentities: 'pages',
-  pickValidTimeEdition: 'page_versions',
-  listAmendmentsNotApplied: 'links',
-  readPageVersionEdition: 'page_versions',
-  readCursorEdition: 'page_versions',
-  pageAwaitsRederive: 'pages',
   // jobs-tables group D
   getCodeTraversalCache: 'code_edges',
   putCodeTraversalCache: 'code_edges',
@@ -794,6 +783,10 @@ export const RUST_ENGINE_MEMBERS = {
   listVersionReasonWriters: 'page_versions',
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
+  listAmendmentsNotApplied: 'links',
+  readPageVersionEdition: 'page_versions',
+  readCursorEdition: 'page_versions',
+  pageAwaitsRederive: 'pages',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

@@ -53,6 +53,7 @@ import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint
 import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 import { upstreamBeforeFetch, upstreamRewriteReason } from '../git/upstream-history.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
+import { managesWorktrees } from '../rust-engine/errors.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -1222,6 +1223,7 @@ export const _refreshScanCacheSizeForTests = () => laggingSyncing.size + unreada
  * lock is taken, so a lagging row never holds it.
  */
 export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostId?: string } = {}): Promise<number> {
+  if (!managesWorktrees(engine)) return 0;
   const host = opts.hostId ?? hostIdFor(engine);
   const budgetMs = await configuredMs(engine, undefined, 'GBRAIN_REFRESH_SYNC_BUDGET_MS', 'sources.refresh_sync_budget_ms', SYNC_BUDGET_MS).catch(() => SYNC_BUDGET_MS);
   // #9649: a syncing row that has not moved for a whole sync budget is listed even while its members lag (completeSyncedOrphan).

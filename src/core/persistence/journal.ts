@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getCode } from '../retry-matcher.ts';
-import { requireTransactions } from '../rust-engine/errors.ts';
+import { requireManagedPersistence, requireTransactions } from '../rust-engine/errors.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -143,6 +143,7 @@ async function outstandingRefusal(tx: Pick<BrainEngine, 'countOutstandingBySourc
  * about to settle, keep their slots (#8759). Read only when the plain check would refuse.
  */
 async function heldBehindImport(tx: SqlEngine, principal: Principal | null, sourceId: string): Promise<{ count: number; bytes: number }> {
+  requireManagedPersistence(tx, 'heldBehindImport', 'it counts the writes held behind a managed import or refresh');
   const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(r.intent_bytes),0) AS bytes
     FROM persistence_requests r WHERE r.state='deferred' AND NOT ${RELEASED_DEFERRED('r')} AND ((r.deferred_import_from IS NOT NULL AND r.source_id=$1)
       OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NULL AND $1=ANY(f.source_ids)))${principal ? ' AND r.principal_kind=$2 AND r.principal_id=$3' : ''}`,
@@ -294,6 +295,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
   const stamp = writerStamp({ engine });
   const origin = resolveAdmissionOrigin(input.origin);
+  if (input.worktreeId) requireManagedPersistence(engine, 'admitWrite', 'a write to a managed worktree checks its refresh fence, owner and binding');
+  if (input.targetKind === 'skill_bundle') requireManagedPersistence(engine, 'admitWrite', 'a skill bundle write publishes to the protocol-2 canonical owner of a managed checkout');
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
   const barrier = !!input.worktreeId && deferrable(input) && await readRefreshBarrier(engine);
@@ -367,6 +370,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
 export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: WriteAdmission[], overrides?: Partial<JournalLimits>): Promise<WriteRequest[]> {
   const first = inputs[0];
   if (!first) return [];
+  requireManagedPersistence(tx, 'admitWriteGroupInTransaction', 'a grouped admission checks one worktree, source and counter set for the whole group');
   if (inputs.some(input => input.sourceId !== first.sourceId || input.sourceIncarnation !== first.sourceIncarnation || input.worktreeId !== first.worktreeId
     || String(input.topologyGeneration) !== String(first.topologyGeneration) || input.principal.kind !== first.principal.kind || input.principal.id !== first.principal.id
     || input.operation !== first.operation || (input.targetKind ?? 'page') !== 'page' || (input.protocolVersion ?? 1) !== 1 || digest(input.authority) !== digest(first.authority))) {
@@ -626,6 +630,7 @@ function deferrable(input: WriteAdmission): boolean {
 }
 /** PR B: whether the refresh barrier is on (docs/designs/REFRESH_WRITE_BARRIER.md). */
 async function readRefreshBarrier(engine: BrainEngine): Promise<boolean> {
+  requireManagedPersistence(engine, 'readRefreshBarrier', 'a write may wait behind a managed refresh');
   return writeSwitchOn(engine, 'refresh_barrier').catch(() => false);
 }
 /**
