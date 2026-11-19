@@ -1,0 +1,1 @@
+Landing note: two concurrent reissues: the second now fails with reissue_conflict instead of silently leaving a dead secret.
