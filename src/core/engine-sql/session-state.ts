@@ -38,6 +38,42 @@ export async function readSessionCursor(exec: SessionStateExec, sourceId: string
   return { standing_entities: r.standing_entities, surfaced_slugs: r.surfaced_slugs, last_wake_at: r.last_wake_at ?? null };
 }
 
+/** delta's view of a session row: the slug cursor as stored (jsonb), both arm cursors and the incomplete-wake counter. */
+export interface DeltaSessionRow {
+  surfaced_slugs: unknown;
+  last_wake_at: string | null;
+  facts_cursor_at: string | null;
+  facts_cursor_id: number | null;
+  degraded_wakes: number;
+}
+
+// Both times read back as microsecond ISO text (the ISO_US helper this read used in context/session-state.ts), spelled
+// out so the statement stays one constant.
+export const DELTA_SESSION_SQL = `SELECT surfaced_slugs, to_char(last_wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_wake_at,
+              to_char(facts_cursor_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS facts_cursor_at, facts_cursor_id, degraded_wakes
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`;
+
+/** delta's session row, or null when the session has none. `bigint` and `integer` read back as numbers. */
+export async function readDeltaSessionRow(exec: SessionStateExec, sourceId: string, clientId: string, sessionId: string): Promise<DeltaSessionRow | null> {
+  const rows = await exec.executeRaw<{
+    surfaced_slugs: unknown;
+    last_wake_at: string | null;
+    facts_cursor_at: string | null;
+    facts_cursor_id: string | number | null;
+    degraded_wakes: string | number | null;
+  }>(DELTA_SESSION_SQL, [sourceId, clientId, sessionId]);
+  if (!rows.length) return null;
+  const r = rows[0]!;
+  return {
+    surfaced_slugs: r.surfaced_slugs,
+    last_wake_at: r.last_wake_at ?? null,
+    facts_cursor_at: r.facts_cursor_at ?? null,
+    facts_cursor_id: r.facts_cursor_id == null ? null : Number(r.facts_cursor_id),
+    degraded_wakes: Number(r.degraded_wakes ?? 0),
+  };
+}
+
 /** One session cursor write. Each field mirrors a bound parameter of `UPSERT_SESSION_STATE_SQL`. */
 export interface SessionStateWrite {
   /** Stored on insert; replaces the stored set only when `replaceStanding`. */

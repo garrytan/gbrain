@@ -1630,6 +1630,7 @@ export class PGLiteEngine implements BrainEngine {
   // Session state runs through this engine's executeRaw, as context/session-state.ts did (engine-sql/session-state.ts).
   upsertSessionState(sourceId: string, clientId: string, sessionId: string, write: sessionStateImpl.SessionStateWrite) { return sessionStateImpl.upsertSessionState(this, sourceId, clientId, sessionId, write); }
   readSessionCursor(sourceId: string, clientId: string, sessionId: string) { return sessionStateImpl.readSessionCursor(this, sourceId, clientId, sessionId); }
+  readDeltaSessionRow(sourceId: string, clientId: string, sessionId: string) { return sessionStateImpl.readDeltaSessionRow(this, sourceId, clientId, sessionId); }
   listAppliedPolicyRevisions() { return accessControlImpl.listAppliedPolicyRevisions(unscopedExecutor(this.engineSql, 'access: applied revision read ran unscoped through executeRaw')); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return entityReadsImpl.readMentionLastPass(unscopedExecutor(this.engineSql, 'entities: mention pass time ran unscoped through executeRaw'), sourceId); }

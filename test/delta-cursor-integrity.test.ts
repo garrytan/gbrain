@@ -21,6 +21,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import {
   SESSION_CURSOR_SQL,
+  DELTA_SESSION_SQL,
   UPSERT_SESSION_STATE_SQL,
 } from '../src/core/engine-sql/session-state.ts';
 
@@ -43,6 +44,7 @@ interface Faults { failing: Set<string>; throwOnAccess: Set<string>; sql: RegExp
 const STATE_MEMBER_SQL: Record<string, string> = {
   upsertSessionState: UPSERT_SESSION_STATE_SQL,
   readSessionCursor: SESSION_CURSOR_SQL,
+  readDeltaSessionRow: DELTA_SESSION_SQL,
 };
 
 function faulty(engine: BrainEngine, faults: Faults): BrainEngine {

@@ -90,4 +90,29 @@ describe('engine parity: session state', () => {
       return { absent, first, kept, replaced, otherClient };
     },
   );
+
+  parityTest(
+    'readDeltaSessionRow reads both cursors and the counter; a null facts time keeps the stored keyset pair',
+    { methods: ['upsertSessionState', 'readDeltaSessionRow'] },
+    async (engine) => {
+      const absent = await engine.readDeltaSessionRow('default', 'local', 's');
+      await engine.upsertSessionState('default', 'local', 's', write('increment', {
+        surfacedSlugs: ['notes/a'], replaceCursorSlug: true, lastWakeAt: '2026-11-19T00:00:00.000001Z',
+        factsCursorAt: '2026-11-18T23:59:59.999999Z', factsCursorId: 41,
+      }));
+      const first = await engine.readDeltaSessionRow('default', 'local', 's');
+      // No facts time: the stored (time, id) pair stays even though an id is passed.
+      await engine.upsertSessionState('default', 'local', 's', write('increment', { factsCursorId: 99 }));
+      const keptPair = await engine.readDeltaSessionRow('default', 'local', 's');
+      await engine.upsertSessionState('default', 'local', 's', write('reset', { factsCursorAt: '2026-11-19T00:00:01Z', factsCursorId: 9007199254740991 }));
+      const moved = await engine.readDeltaSessionRow('default', 'local', 's');
+      expect(first).toEqual({
+        surfaced_slugs: ['notes/a'], last_wake_at: '2026-11-19T00:00:00.000001Z', facts_cursor_at: '2026-11-18T23:59:59.999999Z',
+        facts_cursor_id: 41, degraded_wakes: 1,
+      });
+      expect(keptPair).toEqual({ ...first!, degraded_wakes: 2 });
+      expect(moved).toEqual({ ...first!, facts_cursor_at: '2026-11-19T00:00:01.000000Z', facts_cursor_id: 9007199254740991, degraded_wakes: 0 });
+      return { absent, first, keptPair, moved };
+    },
+  );
 });

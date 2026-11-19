@@ -218,6 +218,29 @@ impl Store {
             })
         }))
     }
+
+    /// `readDeltaSessionRow(sourceId, clientId, sessionId)`: `{ surfaced_slugs, last_wake_at,
+    /// facts_cursor_at, facts_cursor_id, degraded_wakes }`, or `None` when there is no row.
+    pub fn read_delta_session_row(
+        &self,
+        source_id: &str,
+        client_id: &str,
+        session_id: &str,
+    ) -> Result<Option<Value>> {
+        check_key("readDeltaSessionRow", source_id, client_id, session_id)?;
+        let read = self.read()?;
+        let record: Option<SessionRecord> =
+            get_json(&*read, &session_key(source_id, client_id, session_id))?;
+        Ok(record.map(|r| {
+            json!({
+                "surfaced_slugs": jsonb(&r.surfaced_slugs),
+                "last_wake_at": r.last_wake_at_us.map(iso),
+                "facts_cursor_at": r.facts_cursor_at_us.map(iso),
+                "facts_cursor_id": r.facts_cursor_id,
+                "degraded_wakes": r.degraded_wakes,
+            })
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +341,29 @@ mod tests {
             })
         );
         assert_eq!(s.read_session_cursor("default", "c", "none").unwrap(), None);
+    }
+
+    #[test]
+    fn delta_row_keeps_the_facts_cursor_pair() {
+        let (s, _) = store();
+        let mut first = write("a", "keep");
+        first.facts_cursor_at = Some("2026-11-18T01:02:03.456789Z".into());
+        first.facts_cursor_id = Some(42.0);
+        s.upsert_session_state("default", "c", "s", &first).unwrap();
+        let mut next = write("a", "increment");
+        next.facts_cursor_id = Some(7.0);
+        s.upsert_session_state("default", "c", "s", &next).unwrap();
+        assert_eq!(
+            s.read_delta_session_row("default", "c", "s")
+                .unwrap()
+                .unwrap(),
+            json!({
+                "surfaced_slugs": ["a"],
+                "last_wake_at": "2026-11-19T00:00:00.123000Z",
+                "facts_cursor_at": "2026-11-18T01:02:03.456789Z",
+                "facts_cursor_id": 42,
+                "degraded_wakes": 1,
+            })
+        );
     }
 }

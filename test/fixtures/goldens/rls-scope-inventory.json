@@ -3142,6 +3142,17 @@
         ],
         "flagOnScopes": []
       },
+      "readDeltaSessionRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readEmbeddingStateCounts#full": {
         "flagOffLanes": [
           "pool"
@@ -5117,6 +5128,7 @@
         "readCounterRows": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
+        "readDeltaSessionRow": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingStateCounts": "direct",
         "readExtractionLagCounts": "none",

@@ -88,6 +88,14 @@ const PINS: Pin[] = [
        FROM session_context_state
        WHERE source_id = $1 AND client_id = $2 AND session_id = $3`],
   },
+  {
+    from: 'src/core/context/session-state.ts:148 readDeltaSessionState, at eb30f47b89',
+    case: { method: 'readDeltaSessionRow', variant: 'default', run: e => e.readDeltaSessionRow('default', 'local', 's') },
+    texts: [`SELECT surfaced_slugs, to_char(last_wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_wake_at,
+              to_char(facts_cursor_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS facts_cursor_at, facts_cursor_id, degraded_wakes
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

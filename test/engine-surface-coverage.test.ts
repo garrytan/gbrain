@@ -213,6 +213,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The session_context_state members (engine-sql/session-state.ts): the session cursor, the checkpoint manifest and their garbage collection.
   'upsertSessionState',
   'readSessionCursor',
+  'readDeltaSessionRow',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',

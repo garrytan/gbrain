@@ -467,6 +467,7 @@ describe('delta cursor lifecycle', () => {
     const stateMembers = new Set([
       'upsertSessionState',
       'readSessionCursor',
+      'readDeltaSessionRow',
     ]);
     const failing = new Proxy(engine, {
       get(t, k) {

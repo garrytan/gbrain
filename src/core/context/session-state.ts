@@ -122,8 +122,6 @@ export async function getSessionContextState(
   }
 }
 
-const ISO_US = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-
 export async function readDeltaSessionState(
   engine: BrainEngine,
   sourceId: string,
@@ -131,29 +129,16 @@ export async function readDeltaSessionState(
   sessionId: string,
 ): Promise<DeltaSessionRead> {
   try {
-    const rows = await engine.executeRaw<{
-      surfaced_slugs: unknown;
-      last_wake_at: string | null;
-      facts_cursor_at: string | null;
-      facts_cursor_id: string | number | null;
-      degraded_wakes: string | number | null;
-    }>(
-      `SELECT surfaced_slugs, ${ISO_US('last_wake_at')} AS last_wake_at,
-              ${ISO_US('facts_cursor_at')} AS facts_cursor_at, facts_cursor_id, degraded_wakes
-       FROM session_context_state
-       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId)],
-    );
-    if (!rows.length) return { status: 'absent' };
-    const r = rows[0];
+    const r = await engine.readDeltaSessionRow(sourceId, resolveClientId(clientId), normSession(sessionId));
+    if (!r) return { status: 'absent' };
     return {
       status: 'loaded',
       state: {
-        last_wake_at: r.last_wake_at ?? null,
+        last_wake_at: r.last_wake_at,
         cursor_slug: toStringArray(r.surfaced_slugs)[0],
-        facts_cursor_at: r.facts_cursor_at ?? null,
-        facts_cursor_id: r.facts_cursor_id == null ? null : Number(r.facts_cursor_id),
-        degraded_wakes: Number(r.degraded_wakes ?? 0),
+        facts_cursor_at: r.facts_cursor_at,
+        facts_cursor_id: r.facts_cursor_id,
+        degraded_wakes: r.degraded_wakes,
       },
     };
   } catch (e) {

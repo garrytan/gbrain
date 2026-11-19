@@ -1309,6 +1309,7 @@ export class PostgresEngine implements BrainEngine {
   // Session state runs through this engine's executeRaw, as context/session-state.ts did (engine-sql/session-state.ts).
   upsertSessionState(sourceId: string, clientId: string, sessionId: string, write: sessionStateImpl.SessionStateWrite) { return sessionStateImpl.upsertSessionState(this, sourceId, clientId, sessionId, write); }
   readSessionCursor(sourceId: string, clientId: string, sessionId: string) { return this.ownRawRead(exec => sessionStateImpl.readSessionCursor(exec, sourceId, clientId, sessionId)); }
+  readDeltaSessionRow(sourceId: string, clientId: string, sessionId: string) { return this.ownRawRead(exec => sessionStateImpl.readDeltaSessionRow(exec, sourceId, clientId, sessionId)); }
   listAppliedPolicyRevisions() { return this.preparationRead(exec => accessControlImpl.listAppliedPolicyRevisions(unscopedExecutor(exec, 'access: applied revision read ran unscoped through executeRaw'))); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }

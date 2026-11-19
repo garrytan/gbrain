@@ -537,6 +537,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFolderAccess': OOS.callerRawSql,
   'upsertSessionState': OOS.callerRawSql,
   'readSessionCursor': OOS.callerRawSql,
+  'readDeltaSessionRow': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1299,6 +1300,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['readers', (e) => e.readFolderAccess(['alice-example', 'group:team-a'])],
   ]),
   ...variants('readSessionCursor', [['default', (e) => e.readSessionCursor('default', 'local', 's')]]),
+  ...variants('readDeltaSessionRow', [['default', (e) => e.readDeltaSessionRow('default', 'local', 's')]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

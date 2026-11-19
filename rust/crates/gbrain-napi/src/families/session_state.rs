@@ -44,4 +44,18 @@ impl Brain {
             s.read_session_cursor(&source_id, &client_id, &session_id)
         })
     }
+
+    /// `readDeltaSessionRow(sourceId, clientId, sessionId)`: resolves delta's row or null.
+    #[napi]
+    pub fn read_delta_session_row<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        client_id: String,
+        session_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_delta_session_row(&source_id, &client_id, &session_id)
+        })
+    }
 }
