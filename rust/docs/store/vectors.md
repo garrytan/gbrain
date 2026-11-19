@@ -73,7 +73,10 @@ the shape `searchTakes` returns, with the cosine as `score`.
   set. The TypeScript member reads the bound as `$n::text::timestamptz` does under UTC (`search-filters.ts`
   `dateMicros`), for the ISO shapes; any other shape refuses with `engine_capability_missing`. The bounds apply per
   page before ranking, as the keyword members' do (`keyword::DateWindow`).
-- **Refused options.** The store applies neither `minTrust` nor `suppressFlagged`, so a set one refuses with
+- **`minTrust`.** A page whose stamped trust tier ranks below the floor drops per page before ranking
+  (`trustFloorSql`, the floor `buildVisibilityClause` adds), so a limit counts only kept pages. An unset or empty
+  floor keeps every tier; a name that is no tier refuses with `invalid_argument` (`keyword::parse_trust_floor`).
+- **Refused options.** The store does not apply `suppressFlagged`, so a set one refuses with
   `engine_capability_missing` and nothing runs, even beside `excludePrivate`. `searchTakesVector` refuses `excludePrivate`,
   `eligibility.floor` and `eligibility.suppressFlagged` the same way.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.

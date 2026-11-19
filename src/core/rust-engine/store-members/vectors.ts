@@ -25,13 +25,13 @@ import { dateMicros, whereFields } from './search-filters.ts';
 const VECTOR_FILTERS = [
   'limit', 'offset', 'type', 'types', 'exclude_slugs', 'exclude_slug_prefixes', 'include_slug_prefixes', 'detail',
   'language', 'symbolKind', 'sourceId', 'sourceIds', 'source_boosts', 'embeddingColumn', 'requireSafeChunks', 'excludePrivate',
-  'where', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive',
+  'where', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'minTrust',
 ] as const;
 
 /**
  * Keys the vector statement never reads, or reads only to steer its HNSW candidate pool (`vectorLegacyGuard`,
- * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. `minTrust` and `suppressFlagged` are
- * absent: the store applies neither, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
+ * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. `suppressFlagged` is absent: the
+ * store does not apply it, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
  */
 const VECTOR_IGNORED = [
   'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
@@ -105,6 +105,8 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     where: o.where ? whereFields('searchVector', o.where) : [],
     // `dateBound`: a truthy bound read as `timestamptz`, strict unless its `*Inclusive` flag is set.
     after_date: o.afterDate ? { micros: dateMicros('searchVector', o.afterDate), inclusive: Boolean(o.afterDateInclusive) } : null,
+    // `pageEligibleSql`'s floor: a truthy `minTrust` (an empty one adds no clause).
+    min_trust: o.minTrust ? String(o.minTrust) : null,
     before_date: o.beforeDate ? { micros: dateMicros('searchVector', o.beforeDate), inclusive: Boolean(o.beforeDateInclusive) } : null,
     hard_excludes: resolveHardExcludes(o.exclude_slug_prefixes, o.include_slug_prefixes),
     detail: o.detail === 'low' ? 'low' : null,

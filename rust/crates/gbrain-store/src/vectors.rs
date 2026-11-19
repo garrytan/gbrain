@@ -29,11 +29,12 @@ use crate::embeddings::{
 };
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::keyword::{DateBound, DateWindow, frontmatter_holds};
+use crate::keyword::{DateBound, DateWindow, frontmatter_holds, parse_trust_floor};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
 use crate::takes::{TakeRecord, all_takes, real_out};
+use crate::trust::TrustTier;
 use crate::{Store, env::iso};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -97,6 +98,9 @@ pub struct VectorSearchOptions {
     /// (`search-filters.ts` `dateMicros`).
     pub after_date: Option<DateBound>,
     pub before_date: Option<DateBound>,
+    /// `minTrust`: the trust floor (`trustFloorSql(p)`), a page's stamped tier at or above it.
+    /// `None` or empty keeps every tier; a name that is no tier refuses.
+    pub min_trust: Option<String>,
     /// `resolveHardExcludes(exclude_slug_prefixes, include_slug_prefixes)`. Absent: the defaults.
     pub hard_excludes: Option<Vec<String>>,
     pub detail: Option<String>,
@@ -389,6 +393,7 @@ fn source_factor(page: &PageRecord, factors: &[(String, f64)]) -> f64 {
 struct ScanBounds {
     hard_excludes: Vec<String>,
     dates: DateWindow,
+    floor: Option<TrustTier>,
 }
 
 impl ScanBounds {
@@ -402,6 +407,7 @@ impl ScanBounds {
         Ok(Self {
             hard_excludes,
             dates: DateWindow::parse(options.after_date.as_ref(), options.before_date.as_ref())?,
+            floor: parse_trust_floor(options.min_trust.as_deref())?,
         })
     }
 }
@@ -458,6 +464,15 @@ fn page_passes(
     }
     if let Some(policy) = &options.exclude_private
         && owner_only.page_hidden(read, page, policy)?
+    {
+        return Ok(false);
+    }
+    // `pageEligibleSql(p)`: the trust floor.
+    let tier = TrustTier::stored(page.trust_tier.as_deref());
+    if bounds
+        .floor
+        .as_ref()
+        .is_some_and(|floor| tier.rank() < floor.rank())
     {
         return Ok(false);
     }
@@ -1327,6 +1342,72 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("afterDate"), "{err}");
+    }
+
+    /// A page written in a transaction that declares `tier` as the writer's trust tier.
+    fn page_at(s: &Store, tier: &str, slug: &str) {
+        let tx = s.begin_transaction(false).unwrap();
+        let names = ["gbrain.write_trust_tier", "gbrain.write_origin"].map(String::from);
+        tx.apply_write_trust(
+            &names,
+            &[tier.to_string(), r#"{"channel":"test"}"#.to_string()],
+        )
+        .unwrap();
+        page(&tx, "default", slug, &[axis(0, 4)], json!({}));
+        tx.commit_transaction().unwrap();
+    }
+
+    /// `minTrust` (`trustFloorSql`): a page's stamped tier at or above the floor, applied before
+    /// the limit; an empty floor keeps every tier and a name that is no tier refuses.
+    #[test]
+    fn min_trust_keeps_the_pages_at_or_above_the_floor() {
+        let s = corpus();
+        page_at(&s, "operator_curated", "m-curated");
+        page_at(&s, "tool_observed", "n-observed");
+        page_at(&s, "agent_written", "o-agent");
+        page_at(&s, "external_untrusted", "p-outside");
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let exclude = json!(["a-exact", "b-tie1", "c-tie2", "d-multi", "e-opposite"]);
+        let tiered = ["m-curated", "n-observed", "o-agent", "p-outside"];
+        assert_eq!(top(json!({"exclude_slugs": exclude})), tiered);
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": ""})),
+            tiered
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": "external_untrusted"})),
+            tiered
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": "tool_observed"})),
+            ["m-curated", "n-observed"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": "agent_written"})),
+            ["m-curated", "n-observed", "o-agent"]
+        );
+        // The limit counts kept pages only: the dropped page ties at the top score and takes no slot.
+        assert_eq!(
+            top(
+                json!({"limit": 1, "offset": 1, "exclude_slugs": ["a-exact"], "min_trust": "operator_curated"})
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            top(
+                json!({"limit": 1, "exclude_slugs": ["a-exact", "m-curated"], "min_trust": "tool_observed"})
+            ),
+            ["n-observed"]
+        );
+        let err = s
+            .search_vector(&q(&axis(0, 4)), &opts(json!({"min_trust": "trusted"})))
+            .unwrap_err();
+        assert!(err.to_string().contains("names no trust tier"), "{err}");
     }
 
     /// The feeder's guard cases that edit `content_chunks` with SQL: a chunk's model label and its

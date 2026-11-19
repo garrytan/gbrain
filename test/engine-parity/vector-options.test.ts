@@ -1,19 +1,22 @@
 /**
  * BrainEngine parity — the page filters `searchVector` takes beside type, slug and source scope: the frontmatter
- * `where` filter and the `afterDate` / `beforeDate` bounds.
+ * `where` filter, the `afterDate` / `beforeDate` bounds and the trust floor (`minTrust`).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `searchVector` drops the pages a filter rejects inside its candidate scan, before it ranks and before
  *    LIMIT (`buildVectorSearchStatement`, search/vector-statement.ts): `where` keeps a page whose top-level frontmatter
  *    field equals one of a key's values or is a list holding one, with a numeric or boolean reading of a string value
  *    (`frontmatterWhereClauses`). A date bound compares the page's `effective_date`, else its `updated_at`, with the
- *    bound read as `timestamptz`, strictly unless its `*Inclusive` flag is set. Every engine arm returns the same rows
- *    and scores.
+ *    bound read as `timestamptz`, strictly unless its `*Inclusive` flag is set. Under `minTrust` it drops the pages
+ *    whose stamped trust tier ranks below the floor (`pageEligibleSql`, applied by `buildVisibilityClause` in the
+ *    inner CTE). Every engine arm returns the same rows and scores.
  *  - Regression: an engine that refuses the option, ignores it, applies it after LIMIT (a limited read comes back
  *    short), misses list containment or the numeric and boolean readings, ORs two keys, compares a bound off by its
- *    inclusive flag or its zone, or drops an undated page instead of reading its `updated_at`.
+ *    inclusive flag or its zone, or drops an undated page instead of reading its `updated_at`; one that ignores the
+ *    trust floor, reads an empty floor as a tier, or applies the floor after LIMIT.
  *  - Why existing coverage misses it: search.test.ts passes `where` and the date bounds to the keyword members and to
- *    hybrid search only; no case passes them to `searchVector`, so the Rust arm's refusal of them never ran.
+ *    hybrid search only, and keyword-visibility.test.ts passes the trust options to the keyword members only; no case
+ *    passes them to `searchVector`, so the Rust arm's refusal of them never ran.
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
@@ -53,6 +56,48 @@ async function seedRanked(engine: BrainEngine, pages: Array<[name: string, input
     });
   }
 }
+
+/** One page per trust case: [name, declared tier (none: the default), flag receipt reason families]. */
+const TRUSTED: Array<[name: string, tier: string | null, flag: string[] | null]> = [
+  ['curated', 'operator_curated', null],
+  ['curated-flagged', 'operator_curated', ['override']],
+  ['observed', 'tool_observed', null],
+  ['agent', 'agent_written', null],
+  ['agent-flagged', 'agent_written', ['override']],
+  ['agent-other-flag', 'agent_written', ['other']],
+  ['unknown-flagged', null, ['credential']],
+  ['outside', 'external_untrusted', null],
+];
+
+/** Writes each `TRUSTED` page under its tier, the less trusted pages nearer the query, so a filter must run before LIMIT. */
+async function trustFixture(engine: BrainEngine): Promise<void> {
+  for (const [i, [name, tier, flag]] of TRUSTED.entries()) {
+    const slug = `notes/${name}`;
+    const text = `vector trust page ${name}`;
+    const write = (e: BrainEngine) => seedPage(e, {
+      slug,
+      input: { type: 'note', title: name, compiled_truth: text, timeline: '' },
+      chunks: [chunk(0, text, { embedding: vectorAt(0.5 + i * 0.05, 200 + i) })],
+    });
+    if (tier) {
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+        await write(tx);
+      });
+    } else {
+      await write(engine);
+    }
+    if (flag) {
+      await engine.upsertPageWriteGateReceipt('default', slug, {
+        content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: flag,
+        reasons: flag, detector_error: false, request_id: null,
+      });
+    }
+  }
+}
+
+const TRUST_METHODS = ['transaction', 'applyTransactionSettings', 'putPage', 'sealChunks', 'upsertPageWriteGateReceipt',
+  'searchVector'] as const;
 
 async function search(engine: BrainEngine, opts: SearchOpts): Promise<string[]> {
   return view(await engine.searchVector(basisEmbedding(AXIS), { limit: 20, ...opts }));
@@ -144,6 +189,35 @@ describe('engine parity: searchVector page filters', () => {
       expect(out.undatedAfter).toEqual(out.all);
       expect(out.undatedBefore).toEqual([]);
       expect(out.inclusiveAlone).toEqual(out.all);
+      return out;
+    },
+  );
+
+  parityTest(
+    'searchVector drops pages below the trust floor before it ranks and limits',
+    { methods: TRUST_METHODS },
+    async (engine) => {
+      await trustFixture(engine);
+      const scopes: Record<string, SearchOpts> = {
+        none: {},
+        emptyFloor: { minTrust: '' as never },
+        curated: { minTrust: 'operator_curated' },
+        observed: { minTrust: 'tool_observed' },
+        agent: { minTrust: 'agent_written' },
+        any: { minTrust: 'external_untrusted' },
+      };
+      const out: Record<string, { top: string[]; all: string[] }> = {};
+      for (const [name, scope] of Object.entries(scopes)) {
+        out[name] = { top: await search(engine, { limit: 2, ...scope }), all: await search(engine, scope) };
+      }
+      const slugs = (name: string) => out[name]!.all.map((r) => r.split(':')[0]!).sort();
+      expect(out.none!.all.length).toBe(TRUSTED.length);
+      expect(out.emptyFloor).toEqual(out.none);
+      expect(out.any).toEqual(out.none);
+      expect(slugs('curated')).toEqual(['notes/curated', 'notes/curated-flagged']);
+      expect(slugs('agent')).toEqual(['notes/agent', 'notes/agent-flagged', 'notes/agent-other-flag', 'notes/curated',
+        'notes/curated-flagged', 'notes/observed']);
+      expect(out.curated!.top.map((r) => r.split(':')[0])).toEqual(['notes/curated-flagged', 'notes/curated']);
       return out;
     },
   );

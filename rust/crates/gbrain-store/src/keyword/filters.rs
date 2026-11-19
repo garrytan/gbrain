@@ -176,7 +176,13 @@ fn safe_chunks(page: &PageRecord) -> bool {
 /// The read's trust floor (`trustFloorSql`): none when unset or empty, and a refusal for a name
 /// that is no tier.
 fn trust_floor(o: &KeywordOptions) -> Result<Option<TrustTier>> {
-    match o.min_trust.as_deref() {
+    parse_trust_floor(o.min_trust.as_deref())
+}
+
+/// A `minTrust` name as a trust floor: none when unset or empty, and a refusal for a name that is
+/// no tier.
+pub(crate) fn parse_trust_floor(name: Option<&str>) -> Result<Option<TrustTier>> {
+    match name {
         None | Some("") => Ok(None),
         Some(name) => TrustTier::parse(name).map(Some).ok_or_else(|| {
             StoreError::invalid(format!("minTrust: \"{name}\" names no trust tier"))
