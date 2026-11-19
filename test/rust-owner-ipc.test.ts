@@ -17,7 +17,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -26,7 +26,7 @@ import { electOwner, type OwnerRole } from '../src/core/rust-engine/owner-ipc/el
 import { ownerWholeOperations } from '../src/core/rust-engine/owner-ipc/owner-ops.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
-import { ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { ownerLockPath, ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { EventEmitter } from 'node:events';
 import { decodeError, decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
@@ -129,6 +129,25 @@ describe('two or more client processes on one owner', () => {
 
   test('this process owns the brain', () => {
     expect(role.role).toBe('owner');
+  });
+
+  test('a symlink alias of the brain directory reaches the same owner as a client', async () => {
+    const alias = join(dir, 'alias.rust');
+    symlinkSync(db, alias, 'dir');
+    expect(ownerLockPath(alias)).toBe(ownerLockPath(db));
+    expect(ownerSocketPath(alias)).toBe(ownerSocketPath(db));
+    // A directory not created yet under a symlinked parent resolves through that parent.
+    const parentAlias = join(dir, 'parent-alias');
+    symlinkSync(dir, parentAlias, 'dir');
+    expect(ownerLockPath(join(parentAlias, 'new.rust'))).toBe(ownerLockPath(join(dir, 'new.rust')));
+    const second = await electOwner(owner, alias, { waitMs: 3_000 });
+    try {
+      expect(second.role).toBe('client');
+      if (second.role === 'client') expect(await second.connection.request('call', 'getPage', ['nothing-here'])).toBeNull();
+    } finally {
+      if (second.role === 'client') second.connection.close();
+      else { await second.server.close(); await second.lock.release(); }
+    }
   });
 
   // Skipped in this slice: needs the shared-TS wiring (import-file, persistence/local-client, the transaction member) that lands in the next slice.
@@ -241,6 +260,8 @@ describe('deadlines, cancel and permits', () => {
       expect(server.stats()).toMatchObject({ active: 2, queued: 2 });
       const errors = await Promise.all(calls);
       for (const error of errors) expect((error as OperationError).code).toBe('timeout');
+      // The two that ran may have done their work (the store does not see the abort); the two queued never ran.
+      expect(errors.map(e => (e as OperationError).reason)).toEqual(['outcome_unknown', 'outcome_unknown', 'not_started', 'not_started']);
       expect(Date.now() - started).toBeLessThan(2_000);
       expect(await settled()).toMatchObject({ active: 0, queued: 0 });
       // The pool still serves: a fast call after the timeouts completes.
@@ -301,6 +322,7 @@ describe('deadlines, cancel and permits', () => {
     });
     expect(reply.ok).toBe(false);
     expect((decodeError(reply.error as never) as OperationError).code).toBe('timeout');
+    expect((decodeError(reply.error as never) as OperationError).reason).toBe('not_started');
     expect(await owner.getPage('ipc/expired')).toBeNull();
     expect(await settled()).toMatchObject({ active: 0, queued: 0 });
   });

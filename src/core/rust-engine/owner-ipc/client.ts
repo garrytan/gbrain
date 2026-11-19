@@ -4,8 +4,8 @@
  * connection carries all of the process's calls at once.
  *
  * - A call carries the caller's deadline (the read deadline and the statement deadline of its async context) as
- *   `deadline_at`; the owner ends it there with `timeout`, queued or running. The client keeps a short grace timer of
- *   its own in case the owner is stuck.
+ *   `deadline_at`; the owner ends it there with `timeout`, queued (`not_started`) or running (`outcome_unknown`: a
+ *   running write is not interrupted). The client keeps a short grace timer of its own in case the owner is stuck.
  * - The caller's AbortSignals (the request signal of request-signal.ts and any signal argument) end the call at once
  *   with `cancelled`, or `timeout` when the signal's reason is a TimeoutError, and tell the owner to stop it.
  * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and every later
@@ -79,7 +79,7 @@ function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
 function abortError(member: string, signal: AbortSignal, startedAt: number, sent: boolean): Error {
   const reason = signal.reason as { name?: unknown } | undefined;
   return reason?.name === 'TimeoutError'
-    ? ownerCallTimeout(member, Date.now() - startedAt, false)
+    ? ownerCallTimeout(member, Date.now() - startedAt, sent ? 'sent' : 'not_sent')
     : ownerCallCancelled(member, sent);
 }
 
@@ -192,7 +192,7 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         }
         if (deadlineAt !== undefined) {
           const ms = Math.max(0, deadlineAt - Date.now());
-          grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, false)), ms + CLIENT_DEADLINE_GRACE_MS);
+          grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, 'sent')), ms + CLIENT_DEADLINE_GRACE_MS);
         }
         pending.set(id, { member, resolve: resolveCall, reject: rejectCall, callbacks, cleanup });
         refresh();

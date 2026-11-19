@@ -1092,7 +1092,8 @@ fn delete_for_page(tx: &mut dyn KvWrite, op: &str, args: &PageDeleteArgs) -> Res
 /// is the row's page or its entity hides the row.
 /// `facts.source` values written by page-extraction paths, whose context head is the source page
 /// slug (`PAGE_EXTRACTION_SOURCE_LIST`, `src/core/facts/gone-page-facts.ts`).
-const PAGE_EXTRACTION_SOURCES: [&str; 4] = ["mcp:put_page", "sync:import", "file_upload", "code_import"];
+const PAGE_EXTRACTION_SOURCES: [&str; 4] =
+    ["mcp:put_page", "sync:import", "file_upload", "code_import"];
 
 /// `split_part(context, ' — ', 1)`: the text before the first context-note separator.
 fn context_head(context: &str) -> &str {
@@ -1119,7 +1120,10 @@ pub(crate) fn expire_gone_page_facts(
         if old.expired_at_us.is_some() {
             continue;
         }
-        let filed = old.source_markdown_slug.as_deref().is_some_and(|s| gone.contains(s));
+        let filed = old
+            .source_markdown_slug
+            .as_deref()
+            .is_some_and(|s| gone.contains(s));
         let mut new = old.clone();
         if filed && old.dimension.is_none() {
             // EXPIRE_FILED_SQL
@@ -1131,7 +1135,10 @@ pub(crate) fn expire_gone_page_facts(
             new.dim_status = None;
         } else if old.source_markdown_slug.is_none()
             && PAGE_EXTRACTION_SOURCES.contains(&old.source.as_str())
-            && old.context.as_deref().is_some_and(|c| gone.contains(context_head(c)))
+            && old
+                .context
+                .as_deref()
+                .is_some_and(|c| gone.contains(context_head(c)))
         {
             // EXPIRE_EXTRACTED_SQL
         } else if old.entity_slug.as_deref().is_some_and(|e| gone.contains(e))
@@ -2414,7 +2421,11 @@ mod tests {
             ..crate::pages::PageInput::default()
         };
         store
-            .put_page("people/old", &input, &crate::pages::PutPageOptions::default())
+            .put_page(
+                "people/old",
+                &input,
+                &crate::pages::PutPageOptions::default(),
+            )
             .unwrap();
         let out = store
             .insert_facts(&InsertFactsArgs {
@@ -2432,13 +2443,24 @@ mod tests {
             })
             .unwrap();
         let ids: Vec<u64> = serde_json::from_value(out["ids"].clone()).unwrap();
-        assert_eq!(store.update_slug("people/old", "people/new", None).unwrap(), 1);
+        assert_eq!(
+            store.update_slug("people/old", "people/new", None).unwrap(),
+            1
+        );
         let read = store.read().unwrap();
         let row = read_fact(&*read, ids[0]).unwrap().unwrap();
         assert_eq!(row.entity_slug.as_deref(), Some("people/new"));
         assert_eq!(row.source_markdown_slug.as_deref(), Some("people/new"));
-        assert!(entity_rows(&*read, "default", "people/old").unwrap().is_empty());
-        assert!(page_rows(&*read, "default", "people/old").unwrap().is_empty());
+        assert!(
+            entity_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            page_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(page_rows(&*read, "default", "people/new").unwrap().len(), 1);
     }
 
@@ -2460,7 +2482,13 @@ mod tests {
         };
         put("people/alice-example");
         put("notes/holder");
-        let row = |fact: &str, source: &str, entity: Option<&str>, filed: Option<&str>, context: Option<&str>, dim: Option<&str>, row_num: Option<f64>| NewFactInput {
+        let row = |fact: &str,
+                   source: &str,
+                   entity: Option<&str>,
+                   filed: Option<&str>,
+                   context: Option<&str>,
+                   dim: Option<&str>,
+                   row_num: Option<f64>| NewFactInput {
             fact: Some(fact.into()),
             source: Some(source.into()),
             valid_from: Some("2026-01-01T00:00:00.000Z".into()),
@@ -2475,15 +2503,59 @@ mod tests {
         let a = Some("people/alice-example");
         let rows = vec![
             row("filed", "test", a, a, None, None, Some(1.0)),
-            row("held elsewhere", "test", a, Some("notes/holder"), None, None, Some(1.0)),
-            row("extracted", "sync:import", None, None, Some("people/alice-example \u{2014} note"), None, None),
+            row(
+                "held elsewhere",
+                "test",
+                a,
+                Some("notes/holder"),
+                None,
+                None,
+                Some(1.0),
+            ),
+            row(
+                "extracted",
+                "sync:import",
+                None,
+                None,
+                Some("people/alice-example \u{2014} note"),
+                None,
+                None,
+            ),
             row("about, unfiled", "test", a, None, None, None, None),
-            row("slot", "cli:extract-conversation-facts:x", a, a, None, Some("role"), Some(2.0)),
-            row("observation", "test", Some("people/bob-example"), a, None, Some("role"), None),
-            row("other page", "sync:import", None, None, Some("people/bob-example"), None, None),
+            row(
+                "slot",
+                "cli:extract-conversation-facts:x",
+                a,
+                a,
+                None,
+                Some("role"),
+                Some(2.0),
+            ),
+            row(
+                "observation",
+                "test",
+                Some("people/bob-example"),
+                a,
+                None,
+                Some("role"),
+                None,
+            ),
+            row(
+                "other page",
+                "sync:import",
+                None,
+                None,
+                Some("people/bob-example"),
+                None,
+                None,
+            ),
         ];
         let out = store
-            .insert_facts(&InsertFactsArgs { rows, source_id: "default".into(), delete_for_page_first: None })
+            .insert_facts(&InsertFactsArgs {
+                rows,
+                source_id: "default".into(),
+                delete_for_page_first: None,
+            })
             .unwrap();
         let ids: Vec<u64> = serde_json::from_value(out["ids"].clone()).unwrap();
         assert_eq!(ids.len(), 7);

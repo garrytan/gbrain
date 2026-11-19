@@ -980,13 +980,16 @@ impl Store {
         self.write(|tx| {
             let pages = select(&*tx, self.env.now_micros())?;
             let mut by_source: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            let mut texts = BTreeSet::new();
             for page in &pages {
+                texts.extend(crate::page_body::page_text_refs(&*tx, page.id)?);
                 remove_page(tx, page)?;
                 by_source
                     .entry(page.source_id.clone())
                     .or_default()
                     .push(page.slug.clone());
             }
+            crate::page_body::delete_purged_texts(tx, &texts)?;
             let now = self.env.now_micros();
             for (source, slugs) in &by_source {
                 scrub_purged_slugs(tx, source, slugs)?;
@@ -1457,12 +1460,20 @@ mod tests {
         store
             .upsert_chunks(
                 "notes/a/1",
-                &[chunk(0, None), chunk(1, Some([1.0, 0.0, 0.0])), chunk(2, Some([0.0, 1.0, 0.0]))],
+                &[
+                    chunk(0, None),
+                    chunk(1, Some([1.0, 0.0, 0.0])),
+                    chunk(2, Some([0.0, 1.0, 0.0])),
+                ],
                 &crate::chunks::UpsertChunksOptions::default(),
             )
             .unwrap();
         store
-            .upsert_chunks("notes/b/1", &[chunk(0, None)], &crate::chunks::UpsertChunksOptions::default())
+            .upsert_chunks(
+                "notes/b/1",
+                &[chunk(0, None)],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
             .unwrap();
         let a = page(&store, DEFAULT_SOURCE, "notes/a/1");
         let read = store.read().unwrap();
@@ -1476,12 +1487,20 @@ mod tests {
         let representatives = |rows: Vec<Value>| -> Vec<(String, Value)> {
             let mut out: Vec<(String, Value)> = rows
                 .iter()
-                .map(|r| (r["slug"].as_str().unwrap().to_string(), r["representative_chunk_id"].clone()))
+                .map(|r| {
+                    (
+                        r["slug"].as_str().unwrap().to_string(),
+                        r["representative_chunk_id"].clone(),
+                    )
+                })
                 .collect();
             out.sort_by(|x, y| x.0.cmp(&y.0));
             out
         };
-        let want = vec![("notes/a/1".to_string(), json!(first_embedded)), ("notes/b/1".to_string(), Value::Null)];
+        let want = vec![
+            ("notes/a/1".to_string(), json!(first_embedded)),
+            ("notes/b/1".to_string(), Value::Null),
+        ];
         let picked = store
             .list_prefix_sampled_pages(&PrefixSampleOptions {
                 prefixes: vec!["notes/a".into(), "notes/b".into()],
@@ -1490,7 +1509,11 @@ mod tests {
             .unwrap();
         assert_eq!(representatives(picked), want);
         let sample = store
-            .list_corpus_sample(&CorpusSampleOptions { n: 10.0, seed: Some(0.5), ..CorpusSampleOptions::default() })
+            .list_corpus_sample(&CorpusSampleOptions {
+                n: 10.0,
+                seed: Some(0.5),
+                ..CorpusSampleOptions::default()
+            })
             .unwrap();
         assert_eq!(representatives(sample), want);
     }

@@ -6,7 +6,8 @@
  *   client -> owner  { t: 'call', id, member, args, deadline_at?, read_deadline_at?, access? }  one BrainEngine member
  *   client -> owner  { t: 'fn', id, name, args, deadline_at?, read_deadline_at?, access? }     one whole operation (whole-op.ts)
  *
- * `deadline_at` (epoch ms) is the caller's deadline: the owner ends the call with `timeout` there, queued or running.
+ * `deadline_at` (epoch ms) is the caller's deadline: the owner ends the call with `timeout` there, queued or running;
+ * a running call is not interrupted, so that timeout's outcome is unknown.
  * `read_deadline_at` is the caller's read deadline (read-deadline.ts), restored around the call in the owner.
  * `access` is the caller's access record (search/private-visibility.ts CallerAccess), absent when it had none; the owner
  * runs the call under it, so a restricted caller (a labelled-only member, a remote grant) reads no more over the socket
@@ -20,7 +21,8 @@
  * `owner_unavailable`. Frames over OWNER_IPC_MAX_FRAME_BYTES are refused (`response_too_large` for a reply).
  */
 import type { Socket } from 'node:net';
-import { join, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { Wire } from './codec.ts';
 
 export const OWNER_IPC_VERSION = 1;
@@ -29,14 +31,30 @@ export const OWNER_IPC_MAX_FRAME_BYTES = 128 * 1024 * 1024;
 /** Calls the owner runs at once across every client; more wait in a FIFO queue within their own deadline. */
 export const OWNER_IPC_DEFAULT_PERMITS = 32;
 
+/**
+ * The store directory with symlinks resolved, so every alias of one brain names one owner lock and one socket. A
+ * directory not created yet resolves through its nearest existing ancestor (the rule of pglite-lock.ts `canonicalPath`,
+ * which keys the PGLite lock the same way).
+ */
+export function canonicalDatabasePath(databasePath: string): string {
+  const absolute = resolve(databasePath);
+  const missing: string[] = [];
+  for (let at = absolute; ; at = dirname(at)) {
+    try { return join(realpathSync(at), ...missing.reverse()); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(at) === at) return absolute;
+      missing.push(basename(at));
+    }
+  }
+}
+
 /** The owner lock: a kernel lock beside the store directory, dropped by the OS when the owner process dies. */
 export function ownerLockPath(databasePath: string): string {
-  return `${resolve(databasePath)}.gbrain-owner.lock`;
+  return `${canonicalDatabasePath(databasePath)}.gbrain-owner.lock`;
 }
 
 /** The discovery path of the owner socket (ipc-path.ts maps a path over the socket byte budget to a private one). */
 export function ownerSocketPath(databasePath: string): string {
-  return join(resolve(databasePath), '.gbrain-owner.sock');
+  return join(canonicalDatabasePath(databasePath), '.gbrain-owner.sock');
 }
 
 export interface OwnerHello {

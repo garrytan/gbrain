@@ -5,7 +5,9 @@
  * owner while the Rust store is still being built.
  *
  * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in a FIFO queue; at its
- *   `deadline_at` it ends with `timeout` (queued or running), and a `cancel` frame ends it with nothing more sent.
+ *   `deadline_at` it ends with `timeout`: reason `not_started` when it never left the queue, `outcome_unknown` when it
+ *   was running (the store does not observe the abort, so a running write can still commit). A `cancel` frame ends it
+ *   with nothing more sent.
  * - Every call runs under its own AbortController: the request signal of the call (request-signal.ts), any
  *   AbortSignal argument the client sent, and the read deadline of the caller are restored in the owner.
  * - A permit is released only when the engine call itself settles, never when its reply is sent early (a timeout or
@@ -123,7 +125,7 @@ export async function serveOwnerEngine(
 
   const expire = (call: PendingCall, queued: boolean) => {
     if (call.timer) clearTimeout(call.timer);
-    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued)) });
+    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
     call.controller.abort(timeoutReason());
   };
 
@@ -251,7 +253,7 @@ export async function serveOwnerEngine(
       call.timer = setTimeout(() => {
         if (call.done) return;
         const queued = call.queued;
-        call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued)) });
+        call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
         controller.abort(timeoutReason());
       }, ms);
       call.timer.unref?.();

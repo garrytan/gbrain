@@ -763,6 +763,50 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
+/// The `(source id, sha256)` of every text a page's manifest rows name. A retention purge reads
+/// them before `remove_page` deletes the rows, as PGLite's `purgeDeletedPages` selects them first.
+pub(crate) fn page_text_refs(read: &dyn KvRead, page_id: u64) -> Result<Vec<(String, Vec<u8>)>> {
+    manifest_rows(read, page_id)?
+        .into_iter()
+        .map(|(_, row)| Ok((row.source_id, from_hex(&row.sha256, "manifest sha256")?)))
+        .collect()
+}
+
+/// Retention purge: deletes each text in `refs` that no manifest row still names and no live
+/// staging recorded, in the purge's transaction, as PGLite's `purgeDeletedPages` deletes them
+/// (`NOT EXISTS` a manifest row, `NOT stagingNeedsTextSql`). A text another page shares stays.
+/// This store has no persistence requests, so a staging is live by its state alone.
+pub(crate) fn delete_purged_texts(
+    tx: &mut dyn KvWrite,
+    refs: &BTreeSet<(String, Vec<u8>)>,
+) -> Result<()> {
+    if refs.is_empty() {
+        return Ok(());
+    }
+    let mut needed: HashSet<(String, Vec<u8>)> = HashSet::new();
+    for (_, row) in collect::<ManifestRow>(&*tx, &kind_key(MANIFEST))? {
+        needed.insert((row.source_id, from_hex(&row.sha256, "manifest sha256")?));
+    }
+    let prefix = kind_key(STAGING_TEXT);
+    for (key, source_id) in collect::<String>(&*tx, &prefix)? {
+        let Some(split) = key.len().checked_sub(32).filter(|s| *s >= prefix.len()) else {
+            continue;
+        };
+        let staging = String::from_utf8_lossy(&key[prefix.len()..split]).into_owned();
+        let live = get_json::<StagingRecord>(&*tx, &staging_key(&staging))?
+            .is_some_and(|s| LIVE_STAGING_STATES.contains(&s.state.as_str()));
+        if live {
+            needed.insert((source_id, key[split..].to_vec()));
+        }
+    }
+    for (source_id, sha) in refs {
+        if !needed.contains(&(source_id.clone(), sha.clone())) {
+            tx.delete(&text_key(source_id, sha))?;
+        }
+    }
+    Ok(())
+}
+
 /// Deletes a staging with its client key, recorded texts and page index entry.
 fn delete_staging(tx: &mut dyn KvWrite, staging: &StagingRecord) -> Result<()> {
     tx.delete(&client_key(
@@ -2359,6 +2403,68 @@ mod segment_chunk_tests {
             .flip_body_generation(&flip(id, 0, STAGING, 8, extra))
             .unwrap();
         id
+    }
+
+    #[test]
+    fn a_retention_purge_deletes_the_texts_only_the_purged_page_needed() {
+        // PGLite's purgeDeletedPages deletes the purged pages' segment texts in the same
+        // transaction, keeping a text a live staging still recorded.
+        let store = crate::test_support::store();
+        let id = published(&store);
+        let other = store
+            .create_segmented_page_shell(
+                "notes/b",
+                &serde_json::from_value(json!({"type": "note", "title": "B"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        store
+            .open_body_staging(&staging(
+                STAGING_2,
+                other,
+                "55555555-5555-4555-8555-555555555555",
+            ))
+            .unwrap();
+        store
+            .stage_segment_texts(
+                "default",
+                &[text("two\n")],
+                &StageTextsOptions {
+                    staging_id: Some(STAGING_2.into()),
+                },
+            )
+            .unwrap();
+        let texts = |store: &Store| -> Vec<String> {
+            store
+                .read_segment_texts("default", &[sha("one\n"), sha("two\n")])
+                .unwrap()
+                .into_iter()
+                .map(|(s, _)| s)
+                .collect()
+        };
+        assert_eq!(texts(&store), vec![sha("one\n"), sha("two\n")]);
+        let at = store.env.now_micros() - 3_600_000_000;
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "notes/a")?.unwrap();
+                page.deleted_at_us = Some(at);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        let out = store
+            .purge_deleted_pages(0.0, &serde_json::from_value(json!({})).unwrap())
+            .unwrap();
+        assert_eq!(out["slugs"], json!(["notes/a"]));
+        assert!(
+            read_page_by_id(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(texts(&store), vec![sha("two\n")]);
     }
 
     #[test]

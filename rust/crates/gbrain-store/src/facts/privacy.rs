@@ -220,7 +220,14 @@ pub(crate) fn hidden_by_private_provenance(
 /// `NAME_KEY_PAGE_DIRS` (`src/core/entities/basename-dirs.ts`): the directories whose page at
 /// `<dir>/<key>` covers a bare name key's facts for privacy.
 const NAME_KEY_PAGE_DIRS: [&str; 8] = [
-    "people", "companies", "hosts", "projects", "concepts", "funds", "orgs", "organizations",
+    "people",
+    "companies",
+    "hosts",
+    "projects",
+    "concepts",
+    "funds",
+    "orgs",
+    "organizations",
 ];
 
 /// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
@@ -621,7 +628,11 @@ mod tests {
         let hidden = |row: &FactRecord| {
             let read = store.read().unwrap();
             let sources = OwnerOnlySources::read(&*read).unwrap();
-            let policy = PrivacyPolicy { honor_aliases: true, entity_privacy: true, owner_only: OwnerOnly::Lineage };
+            let policy = PrivacyPolicy {
+                honor_aliases: true,
+                entity_privacy: true,
+                owner_only: OwnerOnly::Lineage,
+            };
             hidden_by_private_provenance(&*read, row, &policy, &sources).unwrap()
         };
         assert!(hidden(&fact("alice-example")));

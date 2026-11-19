@@ -1682,7 +1682,8 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
   member is not classified. What each capability still lacks is under "What a Rust brain serves now".
-- **One owner process per brain.** `connect()` takes the kernel lock `<database_path>.gbrain-owner.lock`. The process
+- **One owner process per brain.** `connect()` takes the kernel lock `<database_path>.gbrain-owner.lock`, with
+  symlinks in the path resolved, so every alias of one brain names one lock. The process
   that holds it opens the store and serves its engine on `<database_path>/.gbrain-owner.sock`
   (`src/core/rust-engine/owner-ipc/`); `ownerRole` reads `'owner'`. Any other process becomes a client (`ownerRole`
   `'client'`): it never opens the store, forwards each member call over the socket, and reports the capabilities in
