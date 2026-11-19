@@ -165,6 +165,18 @@ pub(crate) struct PageRecord {
     /// `frontmatter` for an import-owned tag. A tag with no entry is a legacy unclaimed row.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tag_sources: BTreeMap<String, String>,
+    /// The page's trust tier (`pages.trust_tier`). `None` is `unknown`, the column default, and
+    /// what a record written before the store stamped pages reads as. [`write_page`] sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_tier: Option<String>,
+    /// The write origin JSON of the write that stamped the tier (`pages.write_origin`). `None` is
+    /// NULL. [`write_page`] sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_origin: Option<Value>,
+    /// When the page last lost version history (`pages.version_history_gap_at`): a version prune
+    /// (`version_prune`) or `createVersion` with `historyGap`. `None` is NULL. Not part of `to_page`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_history_gap_at_us: Option<i64>,
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -363,6 +375,30 @@ pub(crate) struct VersionRecord {
     pub knowledge_revision: String,
     pub is_deleted: bool,
     pub snapshot_at_us: i64,
+    /// `segmented` on the snapshot of a segmented page (`insertSegmentedVersion`), which references
+    /// the page's live body generation instead of copying the body; absent on an inline snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_storage: Option<String>,
+    /// The body generation a segmented snapshot references: a root of the segment sweep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_generation: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_bytes: Option<i64>,
+    /// The page's trust tier when the snapshot was taken (`snapshot_version_trust`); none is
+    /// `unknown`. Only `createVersion` returns it: `getVersions` reads no trust columns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_tier: Option<String>,
+    /// The page's write origin when the snapshot was taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_origin: Option<Value>,
+    /// The reason given for the write that replaced the snapshot (`page_versions.change_reason`),
+    /// set by `stamp_version_change_reason`; none when no reason was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_reason: Option<String>,
+    /// `page_versions.successor_pruned`: a prune deleted the version that came next, so a remote
+    /// reader is never shown this version's reason (`version_prune::mark_pruned_history`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub successor_pruned: bool,
 }
 
 impl VersionRecord {
@@ -493,6 +529,9 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// Stores a page record and its id key, keeps its origin key (`o`) in step with it, and calls the
 /// page index hook (`page_index::reindex_page`) and the page projection hook
 /// (`page_projection::queue_page_projection`) with the record as stored before and after.
+///
+/// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
+/// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     write_page_as(tx, record, false)
 }
@@ -507,6 +546,8 @@ pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecor
 
 fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
+    let stamped = stamp_page_trust(before.as_ref(), record)?;
+    let record = &stamped;
     // A write that sets the title or timeline fires PGLite's search vector trigger. It builds the vector before the
     // row is stored, and its error ("string is too long for tsvector") aborts the write. A write that does not set
     // them fires it only when they changed.
@@ -526,6 +567,61 @@ fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -
     index_origin(tx, before.as_ref(), Some(record))?;
     crate::page_index::reindex_page(tx, before.as_ref(), Some(record))?;
     crate::page_projection::queue_page_projection(tx, before.as_ref(), Some(record))
+}
+
+/// `record` with the trust tier and origin PGLite's `trust_tier_stamp` trigger would store, under
+/// the write trust context of the open write (`write_trust::stamp_context`).
+///
+/// A new page (no stored record under its id) is an INSERT: the record's own tier is what the
+/// caller supplied, kept only under backfill. A stored page is an UPDATE. No store writer sets a
+/// page's tier or origin itself (PGLite's `putPage` and the other page writes leave both columns
+/// out of their `SET`), so the update starts from the stored tier and origin, whatever the record
+/// carries: a record built before an earlier write in the same transaction restamped the page
+/// cannot lower or replace them. The content columns are `TrustTable::Pages.content_columns`, with
+/// the frontmatter compared without the trust-ephemeral keys.
+fn stamp_page_trust(before: Option<&PageRecord>, record: &PageRecord) -> Result<PageRecord> {
+    use crate::trust::{
+        OriginStamp, StampRow, TrustTable, TrustTier, page_frontmatter_content, stamp,
+    };
+    let context = crate::write_trust::stamp_context::current()?;
+    let tier_of = |page: &PageRecord| TrustTier::stored(page.trust_tier.as_deref());
+    let (row, stored_origin) = match before {
+        None => (
+            StampRow::Insert {
+                supplied: tier_of(record),
+            },
+            record.write_origin.clone(),
+        ),
+        Some(old) => {
+            let content_changed = old.source_id != record.source_id
+                || old.slug != record.slug
+                || old.page_type != record.page_type
+                || old.page_kind != record.page_kind
+                || old.title != record.title
+                || old.compiled_truth != record.compiled_truth
+                || old.timeline != record.timeline
+                || old.deleted_at_us != record.deleted_at_us
+                || page_frontmatter_content(&old.frontmatter)
+                    != page_frontmatter_content(&record.frontmatter);
+            (
+                StampRow::Update {
+                    old: tier_of(old),
+                    new: tier_of(old),
+                    content_changed,
+                    origin_set: false,
+                },
+                old.write_origin.clone(),
+            )
+        }
+    };
+    let stamped = stamp(&context, TrustTable::Pages, row)?;
+    let mut out = record.clone();
+    out.trust_tier = (stamped.tier != TrustTier::Unknown).then(|| stamped.tier.as_str().to_owned());
+    out.write_origin = match stamped.origin {
+        OriginStamp::Keep => stored_origin,
+        OriginStamp::Set(origin) => origin,
+    };
+    Ok(out)
 }
 
 /// An origin (`source_path`) in the form PGLite compares two of them: as stored, and on Windows
@@ -875,6 +971,9 @@ pub(crate) fn put_page_in(
             ingested_at_us: provenance.then_some(now),
             tags: Vec::new(),
             tag_sources: BTreeMap::new(),
+            trust_tier: None,
+            write_origin: None,
+            version_history_gap_at_us: None,
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -1448,6 +1547,15 @@ pub(crate) fn snapshot_in(
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
     tags.sort();
+    let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
+    // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
+    // caller supplies its own, so the backfill branch never applies.
+    let (tier, write_origin) = crate::trust::snapshot_version(
+        &crate::write_trust::stamp_context::current()?,
+        crate::trust::TrustTier::stored(page.trust_tier.as_deref()),
+        page.write_origin.as_ref(),
+        None,
+    );
     let row = VersionRecord {
         id,
         page_id: page.id,
@@ -1462,6 +1570,13 @@ pub(crate) fn snapshot_in(
         knowledge_revision: page.knowledge_revision.clone(),
         is_deleted: page.deleted_at_us.is_some(),
         snapshot_at_us: env.now_micros(),
+        body_storage: segmented.map(|_| "segmented".to_string()),
+        body_generation: segmented.map(|(generation, _)| generation),
+        body_bytes: segmented.and_then(|(_, bytes)| bytes),
+        trust_tier: (tier != crate::trust::TrustTier::Unknown).then(|| tier.as_str().to_owned()),
+        write_origin,
+        change_reason: None,
+        successor_pruned: false,
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     Ok(row)

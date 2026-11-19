@@ -38,6 +38,8 @@ import * as vectors from './vectors.ts';
 import * as embeddings from './embeddings.ts';
 import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
+// The persistence brain identity the store already keeps (rust/docs/store/journal.md).
+import * as persistenceIdentity from './persistence-identity.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -51,7 +53,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations, ...persistenceIdentity,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsSearchPages,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
