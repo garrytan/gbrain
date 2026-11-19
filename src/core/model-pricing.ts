@@ -214,16 +214,14 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // repair default (#6188) meters exactly; it is NOT a tier default yet
   // (openai-latest.ts METERED_ONLY keeps discovery on the gpt-5.6 family).
   'openai:gpt-6.1-sol':                   { input:  2.00, output: 10.00 },
-  // gpt-6.2-sol: list rate from developers.openai.com/api/docs/models/gpt-6.2-sol
-  // (checked 2026-11-22; standard tier). Priced so the
-  // skill resolver's model picker meters exactly; METERED_ONLY keeps it out of
-  // tier discovery.
+  // gpt-6.2 (2026-11-17): short-context standard-tier list rates; metered-only
+  // like gpt-6.1-sol (openai-latest.ts METERED_ONLY).
+  'openai:gpt-6.2-astra':                 { input:  8.00, output: 40.00 },
   'openai:gpt-6.2-sol':                   { input:  2.00, output: 10.00 },
   // gpt-6-astra and gpt-6.2-astra: list rates from developers.openai.com/api/docs/models/<id>
   // (checked 2026-11-22; standard tier). Priced so the skill resolver's model
   // picker meters exactly; METERED_ONLY keeps them out of tier discovery.
   'openai:gpt-6-astra':                   { input: 10.00, output: 50.00 },
-  'openai:gpt-6.2-astra':                 { input:  8.00, output: 40.00 },
   // gpt-6-luna: list rate from developers.openai.com/api/docs/models/gpt-6-luna
   // (checked 2026-11-22; standard tier). Priced so the skill resolver's model
   // picker meters exactly; METERED_ONLY keeps it out of tier discovery.
