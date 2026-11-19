@@ -13,6 +13,8 @@
  *    Chronicle origins.
  *  - Why existing coverage misses it: code-eval-salience.test.ts and stats.test.ts never pass `excludePrivate`, and the
  *    fact privacy cases in facts.test.ts judge fact rows, not the pages a page read returns.
+ *  - Caller policy: the last group reads as a member whose identity a page's readers name, then with a private-readable
+ *    grant on the source; the Rust store reads both from the policy the TypeScript member sends.
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
@@ -20,6 +22,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { createSource, pick, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -69,6 +72,26 @@ async function fixture(engine: BrainEngine, backend: Parameters<typeof createSou
   await engine.addLink('concepts/open-input', 'notes/open', '', 'synthesized_from', 'concept-provenance');
   await engine.addLink('concepts/open-input', 'notes/private', '', 'mentions', 'manual');
 }
+
+/**
+ * Two callers: member alice-example of group team-a, whose identity opens the page whose readers name it, and the
+ * same member with a private-readable grant on `default`, which also opens that source's private pages that are not
+ * pinned questions. Derived pages whose origin names readers stay hidden from both, as the page policy keeps them.
+ */
+const CALLERS = {
+  member: { identity: ['member:alice-example', 'group:team-a'], hidePrivate: true },
+  granted: { identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true },
+} as const;
+const asCaller = async <T>(read: () => Promise<T>) => ({
+  member: await withCallerAccess(CALLERS.member, read),
+  granted: await withCallerAccess(CALLERS.granted, read),
+});
+/** The pages each caller reads in `default`. */
+const CALLER_KEPT = {
+  member: sorted([...KEPT, 'notes/readers']),
+  granted: sorted(PAGES.map(([slug]) => slug)
+    .filter((slug) => !['notes/pinned', 'atoms/origin-readers', 'concepts/readers-input', 'notes/lineage-readers'].includes(slug))),
+};
 
 const ids = (rows: Array<{ source_id: string; slug: string }>) => sorted(rows.map((r) => `${r.source_id}:${r.slug}`));
 
@@ -183,6 +206,66 @@ describe('engine parity: excludePrivate and the safe-chunk fence on chunk reads'
         windowNoFence: await windowRead({ excludePrivate: true, requireSafeChunks: false }),
         windowFenceOnly: await windowRead({ requireSafeChunks: true }),
       };
+    },
+  );
+});
+
+describe('engine parity: excludePrivate for a caller with a reader identity and a private-readable grant', () => {
+  parityTest(
+    'getRecentSalience and getSalienceScores under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'setEmotionalWeightBatch', 'getRecentSalience', 'getSalienceScores'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      await engine.setEmotionalWeightBatch([{ slug: 'notes/private', source_id: 'default', weight: 1 }]);
+      const refs = [...PAGES.map(([slug]) => ({ slug, source_id: 'default' })), { slug: 'notes/private', source_id: 'other' }];
+      const recent = await asCaller(async () => ids(await engine.getRecentSalience({ days: 7, limit: 100, sourceId: 'default', excludePrivate: true })));
+      const scores = await asCaller(async () =>
+        sorted([...(await engine.getSalienceScores(refs, { sourceIds: ['default', 'other'], excludePrivate: true })).keys()]));
+      expect(recent.member).toEqual(CALLER_KEPT.member.map((s) => `default:${s}`));
+      expect(recent.granted).toEqual(CALLER_KEPT.granted.map((s) => `default:${s}`));
+      expect(scores.member).toEqual(CALLER_KEPT.member.map((s) => `default::${s}`));
+      expect(scores.granted).toEqual(CALLER_KEPT.granted.map((s) => `default::${s}`));
+      return { recent, scores };
+    },
+  );
+
+  parityTest(
+    'findAnomalies under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'addTag', 'getPage', 'findAnomalies'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      for (const [slug] of PAGES) await engine.addTag(slug, 'probe');
+      const today = new Date((await engine.getPage('notes/open'))!.updated_at).toISOString().slice(0, 10);
+      const probe = await asCaller(async () => sorted((await engine.findAnomalies({ since: today, lookback_days: 1, excludePrivate: true }))
+        .find((r) => r.cohort_value === 'probe')?.page_slugs ?? []));
+      expect(probe).toEqual(CALLER_KEPT);
+      return probe;
+    },
+  );
+
+  parityTest(
+    'getChunkPage and getChunkWindows under excludePrivate apply a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'sealChunks', 'getPage', 'getChunkPage', 'getChunkWindows'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      for (const [slug] of PAGES) await installChunks(engine, slug, [chunk(0, `About ${slug}.`)]);
+      const slugOf = new Map<number, string>();
+      for (const [slug] of PAGES) slugOf.set((await engine.getPage(slug))!.id, slug);
+      const pages = await asCaller(async () => {
+        const seen: string[] = [];
+        for (const [slug] of PAGES) {
+          const page = await engine.getChunkPage(slug, { sourceId: 'default', fromIndex: 0, limit: 10, excludePrivate: true });
+          if (page.total_chunks > 0) seen.push(slug);
+        }
+        return sorted(seen);
+      });
+      const requests = [...slugOf.keys()].map((page_id) => ({ page_id, from_index: 0, to_index: 5, priority: 0 }));
+      const windows = await asCaller(async () => sorted((await engine.getChunkWindows(requests, {
+        chunkSources: ['compiled_truth'], maxRows: 100, sourceIds: ['default'], excludePrivate: true,
+      })).map((p) => slugOf.get(p.page_id)!)));
+      expect(pages).toEqual(CALLER_KEPT);
+      expect(windows).toEqual(CALLER_KEPT);
+      return { pages, windows };
     },
   );
 });

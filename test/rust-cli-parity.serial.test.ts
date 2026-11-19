@@ -407,10 +407,13 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
         'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
+      // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
+      // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
+      // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
+      // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
-        'entity_link_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'graph_coverage', 'orphan_ratio',
-        'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness',
-        'timeline_coverage'],
+        'extract_atoms_backlog', 'fact_take_vectors', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
+        'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes.

@@ -71,8 +71,11 @@ coverage, so `folder_rule_ids IS NULL` and the `access_pending_coverage` clause 
 page before `getRecentSalience` ranks and limits.
 
 The member (`store-members/private-provenance.ts` `storePagePolicy`) renders `privatePagesFilterForCaller('p')` in
-the current context and outside any caller record. When the two differ (a caller whose member identity, folder grants,
-private-readable sources or lineage change the text), it refuses with `engine_capability_missing`. Otherwise it sends
+the current context and outside any caller record. Both reads opt in with `callerReaders`: when the two differ, the
+member renders the policy again for a record of only the caller's reader identity and private-readable grant, and when
+the caller's text equals that, it also sends `identity` and `privateReadableSources`, which `page_hidden` reads (a page
+whose readers name a principal of the identity, and a non-pinned page of a granted source, pass). Any other caller
+(folder grants, lineage, an owner read) refuses with `engine_capability_missing`. The member sends
 `honorAliases` (the text holds `privacyAliasSql('p')`, 791) and `entityPrivacy` (the text holds
 `privateSnapshotFilterFragment('p')`, 707, which is absent when privacy is relaxed).
 

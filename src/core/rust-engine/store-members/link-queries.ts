@@ -76,9 +76,12 @@ function int32Ids(member: string, ids: readonly number[], label?: string): numbe
   return ids as number[];
 }
 
+/** A caller's reader identity and private-readable grant ride along in the page policy (storePagePolicy). */
+const CALLER_READERS = { callerReaders: true } as const;
+
 /** The wire scope: the source filter and, under `excludePrivate`, the store page policy (null otherwise). */
 const scopeOf = (member: string, o: Record<string, unknown>) => ({
-  sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy(member, o.excludePrivate) ?? null,
+  sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy(member, o.excludePrivate, CALLER_READERS) ?? null,
   minTrust: (o.minTrust as string | undefined) || null, suppressFlagged: o.suppressFlagged === true,
 });
 
@@ -342,7 +345,7 @@ type OrphanRow = { slug: string; title: string; domain: string | null; type?: st
 export const findOrphanPages: StoreMember<[opts?: PageReadScope & { mode?: 'inbound' | 'islanded'; scopeInbound?: boolean }], OrphanRow[]> =
   (brain, opts) => {
     const options = takeOptions('findOrphanPages', opts, [...POLICY_SCOPE_KEYS, 'mode', 'scopeInbound']);
-    const wire = { ...options, excludePrivate: storePagePolicy('findOrphanPages', options.excludePrivate) ?? null };
+    const wire = { ...options, excludePrivate: storePagePolicy('findOrphanPages', options.excludePrivate, CALLER_READERS) ?? null };
     return storeCall({ member: 'findOrphanPages' }, () => brain.findOrphanPages(wire));
   };
 
@@ -435,7 +438,7 @@ export const listLivePageSummaries: StoreMember<[scope?: PageReadScope], LivePag
 /** The entity card's backlink count; `excludePrivate` is the page policy (storePagePolicy). */
 export const countInboundLinks: StoreMember<[slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }], number> =
   async (brain, slug, sourceId, opts) => {
-    const excludePrivate = storePagePolicy('countInboundLinks', opts.excludePrivate) ?? null;
+    const excludePrivate = storePagePolicy('countInboundLinks', opts.excludePrivate, CALLER_READERS) ?? null;
     return Number(await storeCall({ member: 'countInboundLinks' },
       () => brain.countInboundLinks({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource })));
   };

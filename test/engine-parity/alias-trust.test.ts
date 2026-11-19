@@ -19,7 +19,10 @@
  *    engine. `readAliases` sorts its text keys `COLLATE "C"`, so a Postgres database with a locale collation (which
  *    sorts `ábc` before `alpha` and `companies/ab` before `companies/a-c`) gives the same order as PGLite and the Rust
  *    store, and a caller that takes the first page takes the same one.
- *  - Seam: none. Real engines, typed methods only. The caller-policy case ends on the Rust store's typed refusal.
+ *  - Caller policy: a caller's reader identity (its member id and groups) opens a page whose `readable_by` names it,
+ *    and a private-readable grant opens a private page of a granted source that is not a pinned question. The Rust
+ *    store reads both from the policy the TypeScript member sends, so every engine returns the same pages.
+ *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -99,6 +102,28 @@ const PRIVACY: Row[] = [
   ['notes/acme-crm', 'Acme Example', { visibility: 'private' }, null, null, []],
 ];
 
+/** A member, alice-example, in group team-a. */
+const ALICE = ['member:alice-example', 'group:team-a'];
+
+/**
+ * Pages a reader identity and a private-readable grant open or keep closed. Readers normalize as
+ * gbrain_access_readers does: a bare id is a member, edge spaces trim and ASCII lower-cases; a value
+ * that is not a string list, or holds one invalid entry, reads as nobody.
+ */
+const CALLER: Row[] = [
+  ['companies/open', 'Open Co', {}, null, null, [['open name', 'frontmatter']]],
+  ['companies/private', 'Private Co', { visibility: 'private' }, null, null, [['private name', 'frontmatter']]],
+  ['companies/alice', 'Alice Co', { readable_by: ['alice-example'] }, null, null, [['alice name', 'frontmatter']]],
+  ['companies/team', 'Team Co', { readable_by: 'group:team-a' }, null, null, [['team name', 'frontmatter']]],
+  ['companies/mixed-case', 'Mixed Co', { readable_by: [' Member:Alice-Example '] }, null, null, [['mixed case name', 'frontmatter']]],
+  ['companies/bob', 'Bob Co', { readable_by: ['bob-example', 'group:team-b'] }, null, null, [['bob name', 'frontmatter'], ['bob declared name', 'declared']]],
+  ['companies/malformed', 'Malformed Co', { readable_by: [42] }, null, null, [['malformed name', 'frontmatter']]],
+  ['companies/bad-entry', 'Bad Entry Co', { readable_by: ['alice-example', 'not valid!'] }, null, null, [['bad entry name', 'frontmatter']]],
+  ['companies/empty-list', 'Empty List Co', { readable_by: [] }, null, null, [['empty list name', 'frontmatter']]],
+  ['companies/private-reader', 'Private Reader Co', { visibility: 'private', readable_by: ['alice-example'] }, null, null, [['private reader name', 'frontmatter']]],
+  ['companies/pinned', 'Pinned Co', { readable_by: ['alice-example'], pinned_question: true }, null, null, [['pinned name', 'frontmatter']]],
+];
+
 /** Aliases and slugs whose byte order differs from a locale collation's order. */
 const ORDER: Row[] = [
   ['companies/ab', 'Ab Co', {}, null, null, [['shared order', 'frontmatter'], ['zulu', 'frontmatter']]],
@@ -171,15 +196,20 @@ describe('engine parity: resolveAliases under the trust floor, the flagged-page 
   );
 
   parityTest(
-    'resolveAliases under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses',
+    'resolveAliases under excludePrivate applies a caller\'s reader identity and private-readable grant',
     { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'resolveAliases'] },
     async (engine) => {
-      await write(engine, PRIVACY);
-      const found = flat(await withCallerAccess({ identity: ['alice-example'], hidePrivate: true },
-        () => engine.resolveAliases(names(PRIVACY), { excludePrivate: true })));
-      expect(found['open name']).toEqual(['default:companies/open']);
-      expect(found['private name']).toBeUndefined();
-      return found;
+      await write(engine, CALLER);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access,
+        async () => flat(await engine.resolveAliases(names(CALLER), { excludePrivate: true })));
+      const member = await read({ identity: ALICE, hidePrivate: true });
+      const granted = await read({ identity: ALICE, privateReadableSources: ['default'], hidePrivate: true });
+      const empty = await read({ identity: [], hidePrivate: true });
+      expect(Object.keys(member)).toEqual(['alice name', 'mixed case name', 'open name', 'team name']);
+      expect(Object.keys(granted)).toEqual(['alice name', 'mixed case name', 'open name', 'private name', 'private reader name', 'team name']);
+      expect(Object.keys(empty)).toEqual(['open name']);
+      expect(member['alice name']).toEqual(['default:companies/alice']);
+      return { member, granted, empty };
     },
   );
 

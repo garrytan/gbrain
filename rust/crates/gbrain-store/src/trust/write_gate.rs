@@ -20,6 +20,7 @@ use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
+use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -443,6 +444,33 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
         failure.is_none()
     })?;
     failure.map_or(Ok(out), Err)
+}
+
+/// A released fact hold, as `listUnpreviewedTrustFacts` (src/core/engine-sql/facts-doctor.ts) joins
+/// it: the hold id, its source and slug, `payload->>'row_num'` and `request_id::text`.
+pub(crate) struct ReleasedFactHold {
+    pub id: u64,
+    pub source_id: String,
+    pub slug: String,
+    pub row_num: Option<String>,
+    pub request_id: Option<String>,
+}
+
+/// Every hold with `kind = 'fact'` and `status = 'released'`, in id order.
+pub(crate) fn released_fact_holds(read: &dyn KvRead) -> Result<Vec<ReleasedFactHold>> {
+    let mut out: Vec<ReleasedFactHold> = all_holds(read)?
+        .into_iter()
+        .filter(|h| h.kind == "fact" && h.status == "released")
+        .map(|h| ReleasedFactHold {
+            id: h.id,
+            row_num: h.payload.get("row_num").and_then(jsonb_field_text),
+            source_id: h.source_id,
+            slug: h.slug,
+            request_id: h.request_id,
+        })
+        .collect();
+    out.sort_by_key(|h| h.id);
+    Ok(out)
 }
 
 /// A hold id in `target_id` text form (`h.id::text = r.target_id`): only the canonical decimal

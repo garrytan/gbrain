@@ -4,11 +4,11 @@
  * page trust) and what each member answers for it: rust/docs/store/cli-reads-import.md.
  */
 import type {
-  GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, SourceIncarnationRow,
-  SourceRecordRow, StoredTimelineRow,
+  GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, RowTrustLookup, RowTrustRow,
+  SourceIncarnationRow, SourceRecordRow, StoredTimelineRow,
 } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brain) => {
   const rows: SourceRecordRow[] = await storeCall({ member: 'listSourceRecords' }, () => brain.listSourceRecords());
@@ -34,6 +34,15 @@ export const readPageTrustRows: StoreMember<[lookup: PageTrustLookup], PageTrust
   storeCall({ member: 'readPageTrustRows' }, () => brain.readPageTrustRows({
     ids: [...(lookup.ids ?? [])], keys: [...(lookup.keys ?? [])], includeDeleted: lookup.includeDeleted === true,
   }));
+
+/**
+ * Timeline rows read the tier, origin and activation flag their writes stamped. The store keeps no trust tier on a
+ * take and no supersede proposals for a fact, so `facts` and `takes` refuse before the store is called.
+ */
+export const readRowTrustRows: StoreMember<[lookup: RowTrustLookup], RowTrustRow[]> = async (brain, lookup) => {
+  if (lookup.table !== 'timeline_entries') refuseMember('readRowTrustRows', `table ${lookup.table}`);
+  return storeCall({ member: 'readRowTrustRows' }, () => brain.readRowTrustRows({ table: lookup.table, ids: [...lookup.ids] }));
+};
 
 export const readDatabaseClock: StoreMember<[], string> = (brain) =>
   storeCall({ member: 'readDatabaseClock' }, () => brain.readDatabaseClock());

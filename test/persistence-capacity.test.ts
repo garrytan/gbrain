@@ -40,7 +40,10 @@ test('doctor warns at 80% of a cumulative cap and the refusal names the key and 
 
 test('the one-year capacity hint uses the sampled interval, not a one-day floor', async () => {
   const { oneYearCapacity } = await import('../src/core/persistence/limits.ts');
-  const engine = { executeRaw: async (sql: string) => sql.includes('persistence_requests') ? [{ admissions: 1000, age_seconds: 8640 }] : [] };
+  const { readAdmissionRate } = await import('../src/core/engine-sql/persistence-journal.ts');
+  const engine: Record<string, unknown> = { executeRaw: async (sql: string) => sql.includes('persistence_requests') ? [{ admissions: 1000, age_seconds: 8640 }] : [] };
+  // The sample reads through the typed member; its statement runs on the fake executeRaw.
+  engine.readAdmissionRate = (principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) => readAdmissionRate(engine as never, principal, opts);
   expect(await oneYearCapacity(engine as never, 'principal:local_cli:example', 'LifetimeIds', 250_000, 250_000)).toBe(250_000 + 10_000 * 365);
 });
 
@@ -56,6 +59,8 @@ test('doctor emits one command per brain-wide key with the largest value any pri
   getConfigValues: async () => [] };
   // The forecast reads through the typed member; the real statements run on the fake executeRaw.
   engine.readCapacityForecastInputs = (opts?: { light?: boolean }) => readCapacityForecastInputs(engine as never, opts);
+  const { readAdmissionRate } = await import('../src/core/engine-sql/persistence-journal.ts');
+  engine.readAdmissionRate = (principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) => readAdmissionRate(engine as never, principal, opts);
   const check = await checkPersistenceCapacity(engine as never);
   expect(check.status).toBe('warn');
   expect((check.details as { commands: string[] }).commands).toEqual(['gbrain config set persistence.limits.principal_lifetime_ids 3650009']);

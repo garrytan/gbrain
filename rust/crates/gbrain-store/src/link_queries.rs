@@ -1206,7 +1206,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: options.scoped,
-            exclude_private: options.exclude_private,
+            exclude_private: options.exclude_private.clone(),
             min_trust: options.min_trust.clone(),
             suppress_flagged: options.suppress_flagged,
         };
@@ -1389,7 +1389,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
-            exclude_private: options.exclude_private,
+            exclude_private: options.exclude_private.clone(),
             min_trust: options.min_trust.clone(),
             suppress_flagged: options.suppress_flagged,
         };

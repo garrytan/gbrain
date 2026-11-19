@@ -19,13 +19,27 @@
  *    maps ids back to slugs before it returns. Seeded chunks go through
  *    sealChunks, so the text projection is sealed.
  */
-import { describe, expect } from 'bun:test';
+import { afterAll, describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { archiveSource, basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv } from '../helpers/with-env.ts';
+import { PACKS, SRC_X, SRC_Y, putTyped, writeEntityTypePacks } from '../helpers/entity-types-pack-fixture.ts';
+import { resolveEntityTypes } from '../../src/core/schema-pack/entity-types.ts';
+import { _resetPackCacheForTests } from '../../src/core/schema-pack/registry.ts';
+import { collectOnboardOpportunities } from '../../src/core/onboard/mcp-onboarding.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+/** Schema packs for the entity-type case, under a GBRAIN_HOME of its own. */
+const packHome = mkdtempSync(join(tmpdir(), 'gbrain-parity-packs-'));
+writeEntityTypePacks(packHome);
+afterAll(() => rmSync(packHome, { recursive: true, force: true }));
 
 async function put(engine: BrainEngine, slug: string, extra: Record<string, unknown> = {}, opts?: { sourceId?: string }) {
   const type = slug.startsWith('people/') ? 'person' : slug.startsWith('companies/') ? 'company' : 'note';
@@ -139,6 +153,32 @@ describe('engine parity: search reads', () => {
       expect(archivedOpen).toEqual(open);
       expect(archivedLive).toEqual([]);
       return { types, open, live, hidden, bag, federated, archivedOpen, archivedLive };
+    },
+  );
+
+  parityTest(
+    'aliasCanonicalRefs under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'updateSlug', 'aliasCanonicalRefs'] },
+    async (engine) => {
+      const pages: Array<[string, Record<string, unknown>]> = [
+        ['c/open', {}], ['c/private', { visibility: 'private' }], ['c/readers', { readable_by: ['alice-example'] }],
+        ['c/team', { readable_by: 'group:team-a' }], ['c/bob-only', { readable_by: ['bob-example'] }],
+        ['c/pinned', { visibility: 'private', pinned_question: true }],
+      ];
+      for (const [slug, frontmatter] of pages) {
+        await put(engine, `${slug}-old`, { frontmatter });
+        await engine.updateSlug(`${slug}-old`, slug);
+      }
+      const refs = pages.map(([slug]) => ({ slug, source_id: 'default' }));
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () =>
+        sorted((await engine.aliasCanonicalRefs(refs, { excludePrivate: true })).map(r => r.canonical_slug)));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:carol-example'], hidePrivate: true });
+      expect(stranger).toEqual(['c/open']);
+      expect(member).toEqual(['c/open', 'c/readers', 'c/team']);
+      expect(granted).toEqual(['c/open', 'c/private', 'c/readers']);
+      return { member, granted, stranger };
     },
   );
 
@@ -403,6 +443,43 @@ describe('engine parity: search reads', () => {
       expect(counts).toEqual({ stale_chunks: 1, entities: 3, linked_entities: 1, timeline_entities: 1, takes: 1, pages: 6 });
       return counts;
     },
+  );
+  parityTest(
+    'resolveEntityTypes brain-wide reads each source override, so the MCP onboarding coach counts entities',
+    { methods: ['putPage', 'setConfig', 'countOnboardSignal'] },
+    async (engine, backend) => withEnv({ GBRAIN_HOME: packHome, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      _resetPackCacheForTests();
+      try {
+        await createSource(engine, backend, SRC_X);
+        await createSource(engine, backend, SRC_Y);
+        // `widget` is an entity in X and a concept in Y; `gadget` the other way round.
+        await engine.setConfig(`schema_pack.source.${SRC_X}`, PACKS.widgetEntity);
+        await engine.setConfig(`schema_pack.source.${SRC_Y}`, PACKS.widgetConcept);
+        for (const src of [SRC_X, SRC_Y]) {
+          await putTyped(engine, 'widgets/one', 'widget', src);
+          await putTyped(engine, 'widgets/two', 'widget', src);
+          await putTyped(engine, 'gadgets/one', 'gadget', src);
+        }
+        await putTyped(engine, 'people/alice-example', 'person');
+        await engine.addLink('widgets/one', 'people/alice-example', 'mention', 'mentions', 'manual', undefined, undefined, { fromSourceId: SRC_X, toSourceId: 'default' });
+        const resolution = await resolveEntityTypes(engine, null);
+        const counts = await collectOnboardOpportunities(engine, new AbortController().signal);
+        const out = {
+          status: resolution.status,
+          overrides: resolution.filter.per_source.map(b => b.source_id),
+          entities: counts.entities, linkedEntities: counts.linkedEntities, pages: counts.pages,
+          partial: counts.partial, entityTypesStatus: counts.entityTypesStatus,
+        };
+        // X: two widgets; Y: one gadget; default: alice. A union of names would count 7.
+        expect(out).toEqual({
+          status: 'resolved', overrides: [SRC_X, SRC_Y], entities: 4, linkedEntities: 1, pages: 7,
+          partial: false, entityTypesStatus: 'resolved',
+        });
+        return out;
+      } finally {
+        _resetPackCacheForTests();
+      }
+    }),
   );
   parityTest(
     'supersedingPageSlugs: a policy adds the live filter on both pages and the origin page; the source rule always holds',

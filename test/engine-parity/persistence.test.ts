@@ -18,12 +18,13 @@
  *    sequence, time stamps, the source incarnation) are compared by shape or left out of the returned value.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
 import { assertPageRequestIdentity } from '../../src/core/persistence/journal.ts';
+import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -187,6 +188,165 @@ describe('engine parity: write journal', () => {
     expect(result.done).toMatchObject({ state: 'failed', errorCode: 'parity_error', completed: true, detail: { reason: 'parity' } });
     expect(result.released.brain).toMatchObject({ outstanding: 0, intentBytes: 0, lifetimeIds: 1 });
     return result;
+  });
+
+  parityTest('readWriteRequestProgress returns the progress columns of a queued, running and finished request, and null for an unknown id', {
+    methods: ['readWriteRequestProgress', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const id = await admitDirect(engine);
+    const progress = async () => {
+      const row = await engine.readWriteRequestProgress(id);
+      return row && { keys: Object.keys(row).sort(), state: row.state, errorCode: row.error_code ?? null, errorMessage: row.error_message ?? null,
+        outcome: row.outcome ?? null, blocked: row.blocked_reason ?? null, deferredRefresh: row.deferred_refresh_id ?? null,
+        deferredImport: row.deferred_import_from ?? null, completed: row.completed_at != null, updated: row.updated_at != null };
+    };
+    const queued = await progress();
+    await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const running = await progress();
+    await engine.completeWriteRow({
+      id, state: 'failed', outcome: null, errorCode: 'parity_error', errorMessage: 'parity', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: { reason: 'parity' }, resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 800,
+      terminalReservation: 4096, probePurges: false,
+    });
+    const finished = await progress();
+    const missing = await engine.readWriteRequestProgress('a0000000-0000-4000-8000-0000000000a9');
+    expect(queued).toMatchObject({ state: 'queued', completed: false, errorCode: null });
+    expect(queued?.keys).toEqual(['blocked_reason', 'completed_at', 'deferred_import_from', 'deferred_refresh_id', 'error_code', 'error_message', 'outcome', 'state', 'updated_at']);
+    expect(running).toMatchObject({ state: 'running', completed: false });
+    expect(finished).toMatchObject({ state: 'failed', errorCode: 'parity_error', errorMessage: 'parity', completed: true });
+    expect(missing).toBeNull();
+    return { queued, running, finished, missing };
+  });
+
+  parityTest('the consumer row members find no consumers of a host without one, a renewed row is gone after its delete, and the worktree stamp changes nothing', {
+    methods: ['listHostConsumerRows', 'probeLiveConsumerRows', 'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats'],
+  }, async (engine) => {
+    // The Rust store keeps no consumer rows (one process owns its brain), so the case compares no list taken between renew and delete.
+    const host = 'e0000000-0000-4000-8000-0000000000e7';
+    const key = { hostId: host, pid: 1, nonce: 'parity-nonce' };
+    const before = await engine.listHostConsumerRows(host);
+    const probe = await engine.probeLiveConsumerRows({ ...key, kinds: RESIDENT_CONSUMER_KINDS, liveMs: CONSUMER_LIVE_MS });
+    const renewed = await engine.renewConsumerRow({ ...key, pidNs: null, kind: 'serve', mode: 'full', restartRequired: false, rootBarrierAgeMs: null,
+      pool: null, hostJsonPath: '/parity/host.json', persistenceHome: '/parity', mintedUnder: null, version: 'parity', purgeMs: 60_000, bootId: null, processStart: null });
+    await engine.deleteConsumerRow(key);
+    const missingDelete = await engine.deleteConsumerRow(key);
+    await engine.stampWorktreeHeartbeats(host);
+    const after = await engine.listHostConsumerRows(host, { direct: true });
+    expect(before).toEqual([]);
+    expect(probe).toEqual([]);
+    expect(after).toEqual([]);
+    return { before, probe, renewed, missingDelete, after };
+  });
+
+  // PGLite admits one process, so its callers answer without an engine call; the Postgres and Rust arms reach every
+  // consumer row member. The row read after the stop goes to the engine on every arm.
+  parityTest('a consumer heartbeat renews and stops without a failure, and leaves the host with no live owner',
+    { methods: ['listHostConsumerRows'] }, async (engine) => {
+    const host = 'e0000000-0000-4000-8000-0000000000e8';
+    const listed = await listHostConsumers(engine, host);
+    const owner = await probeLiveFullConsumer(engine, host);
+    const heartbeat = startConsumerHeartbeat(engine, host, { kind: 'serve', mode: 'full', everyMs: 3_600_000,
+      report: () => ({ restart_required: false, root_barrier_age_ms: null }), paths: { host_json_path: '/parity/host.json', persistence_home: '/parity', minted_under: null } });
+    await heartbeat.renew();
+    const failures = heartbeat.failures;
+    await heartbeat.stop();
+    const afterStop = await listHostConsumers(engine, host);
+    const rowsAfterStop = await engine.listHostConsumerRows(host);
+    expect(listed).toEqual([]);
+    expect(owner).toBeNull();
+    expect(failures).toBe(0);
+    expect(afterStop).toEqual([]);
+    expect(rowsAfterStop).toEqual([]);
+    return { listed, owner, failures, afterStop, rowsAfterStop };
+  });
+
+  parityTest('countOutstandingBySource counts one principal\'s unfinished requests per source, most first and a tie in byte order', {
+    methods: ['countOutstandingBySource', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine, backend) => {
+    // `a-c` sorts before `ab` in byte order and after it in a linguistic collation, which skips the hyphen.
+    for (const id of ['ab', 'a-c']) await createSource(engine, backend, id);
+    const admit = async (sourceId: string, requestId: string, principalId = PRINCIPAL.id) => {
+      const source = await engine.readSourceMembership(sourceId);
+      const keys = [`principal:local_cli:${principalId}`, 'brain'];
+      await engine.lockPersistenceCounters(keys);
+      return (await engine.insertWriteRequest({ ...insertRow(source!.incarnation, requestId), sourceId, principalId, counterKeys: keys })).id;
+    };
+    const empty = await engine.countOutstandingBySource(PRINCIPAL.kind, PRINCIPAL.id);
+    await admit('ab', 'b0000000-0000-4000-8000-0000000000c1');
+    await admit('default', 'b0000000-0000-4000-8000-0000000000c2');
+    await admit('a-c', 'b0000000-0000-4000-8000-0000000000c3');
+    await admit('default', 'b0000000-0000-4000-8000-0000000000c4');
+    await admit('ab', 'b0000000-0000-4000-8000-0000000000c5', 'other-writer');
+    const finished = await admit('a-c', 'b0000000-0000-4000-8000-0000000000c6');
+    await engine.stampWriteClaim(finished, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    await engine.completeWriteRow({
+      id: finished, state: 'failed', outcome: null, errorCode: 'parity_error', errorMessage: 'parity', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: { reason: 'parity' }, resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 800,
+      terminalReservation: 4096, probePurges: false,
+    });
+    const result = {
+      empty,
+      writer: await engine.countOutstandingBySource(PRINCIPAL.kind, PRINCIPAL.id),
+      other: await engine.countOutstandingBySource(PRINCIPAL.kind, 'other-writer'),
+      otherKind: await engine.countOutstandingBySource('mcp', PRINCIPAL.id),
+    };
+    expect(result.empty).toEqual([]);
+    expect(result.writer).toEqual([{ source_id: 'default', n: 2 }, { source_id: 'a-c', n: 1 }, { source_id: 'ab', n: 1 }]);
+    expect(result.other).toEqual([{ source_id: 'ab', n: 1 }]);
+    expect(result.otherKind).toEqual([]);
+    return result;
+  });
+
+  parityTest('readCounterRows reads the existing counter rows in key byte order without creating or locking any', {
+    methods: ['readCounterRows', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const empty = await engine.readCounterRows(KEYS);
+    await admitDirect(engine);
+    // `principal:a-c` sorts before `principal:ab` in byte order and after it in a linguistic collation.
+    await engine.lockPersistenceCounters(['principal:ab', 'principal:a-c']);
+    const rows = await engine.readCounterRows([...KEYS, 'brain', 'principal:ab', 'principal:a-c', 'principal:local_cli:missing']);
+    const missing = await engine.readCounterRows(['principal:local_cli:missing']);
+    expect(empty).toEqual([]);
+    expect(rows.map(r => r.key)).toEqual(['brain', 'principal:a-c', 'principal:ab', 'principal:local_cli:parity-writer']);
+    expect(missing).toEqual([]);
+    return { empty, keys: rows.map(r => r.key), counters: counters(rows), missing };
+  });
+
+  parityTest('readAdmissionRate samples the latest admissions of one principal or the brain, with the brain\'s first request id', {
+    methods: ['readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const empty = await engine.readAdmissionRate(null);
+    const source = await engine.readSourceMembership('default');
+    const admit = async (requestId: string, principalId = PRINCIPAL.id, clientRequestId: string | null = null) => {
+      const keys = [`principal:local_cli:${principalId}`, 'brain'];
+      await engine.lockPersistenceCounters(keys);
+      return (await engine.insertWriteRequest({ ...insertRow(source!.incarnation, requestId), principalId, counterKeys: keys, clientRequestId })).id;
+    };
+    const first = await admit('b0000000-0000-4000-8000-0000000000d1');
+    await admit('b0000000-0000-4000-8000-0000000000d2', PRINCIPAL.id, 'client-d2');
+    const failed = await admit('b0000000-0000-4000-8000-0000000000d3', 'other-writer');
+    await engine.stampWriteClaim(failed, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    await engine.completeWriteRow({
+      id: failed, state: 'failed', outcome: null, errorCode: 'parity_error', errorMessage: 'parity', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: { reason: 'parity', step: 2 }, resultBytes: 0, counterKeys: ['principal:local_cli:other-writer', 'brain'],
+      intentBytes: 100, retainedBytes: 800, terminalReservation: 4096, probePurges: false,
+    });
+    const shape = (rate: Awaited<ReturnType<BrainEngine['readAdmissionRate']>>) => ({
+      first: rate.first_request_id === first, admissions: rate.admissions, gross: rate.gross, net: rate.net,
+      recent: rate.age_seconds !== null && rate.age_seconds >= 0 && rate.age_seconds < 3600,
+    });
+    const result = {
+      empty,
+      brain: shape(await engine.readAdmissionRate(null)),
+      writer: shape(await engine.readAdmissionRate(PRINCIPAL)),
+      other: shape(await engine.readAdmissionRate({ kind: PRINCIPAL.kind, id: 'other-writer' })),
+      nobody: await engine.readAdmissionRate({ kind: 'mcp', id: PRINCIPAL.id }),
+    };
+    expect(result.empty).toEqual({ first_request_id: null, admissions: 0, age_seconds: null, gross: null, net: null });
+    expect(result.brain).toMatchObject({ first: true, admissions: 3, recent: true });
+    expect(result.writer).toMatchObject({ first: true, admissions: 2, gross: 4096, recent: true });
+    expect(result.nobody).toMatchObject({ first_request_id: first, admissions: 0, age_seconds: null, gross: null, net: null });
+    return { ...result, nobody: { ...result.nobody, first_request_id: result.nobody.first_request_id === first } };
   });
 
   parityTest('readSourceMembership returns the incarnation and archive flag, locked or not, and null for an unknown source', { methods: ['readSourceMembership'] }, async (engine) => {
