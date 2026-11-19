@@ -165,6 +165,7 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-reads.test.ts
+test/engine-parity/page-read-options.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
