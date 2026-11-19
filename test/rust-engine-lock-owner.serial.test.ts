@@ -3,7 +3,7 @@
  * took a Rust brain's owner lock names itself, so an exclusive fix it offers starts by stopping that serve, as on
  * PGLite.
  *
- * Protects: an MCP `remember` on a Rust brain without embeddings rendered `gbrain init --force` as its fix while the
+ * Protects: an MCP `remember` on a Rust brain without embeddings rendered `gbrain embeddings enable` as its fix while the
  * serve answering it held the brain, where PGLite wraps that fix in the stop-the-serve step (the census's last
  * mcp remember difference).
  */
@@ -53,7 +53,7 @@ describe('lock owner of a Rust brain', () => {
     expect(typeof r.lock_owner?.started_at).toBe('string');
     const fix = r.entries.find(e => e.capability === 'embeddings')?.fix;
     expect(fix?.argv).toEqual(['kill', String(process.pid)]);
-    expect(fix?.then?.argv?.slice(0, 3)).toEqual(['gbrain', 'init', '--force']);
+    expect(fix?.then?.argv?.slice(0, 3)).toEqual(['gbrain', 'embeddings', 'enable']);
   });
 
   test('a process that is not a serve, or a released owner lock, names no owner', async () => {
