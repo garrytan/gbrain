@@ -143,6 +143,7 @@ test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/reads-privacy.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
@@ -150,6 +151,8 @@ test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/stats-vectors.test.ts
+test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
@@ -836,6 +839,7 @@ test/upgrade-foreign-oauth-table.test.ts
 test/url-source-origin.test.ts
 test/v273-validate-timeouts.test.ts
 test/valid-time-gbra217.test.ts
+test/vector-embedding-parity.test.ts
 test/vector-manifest-probe-bound.test.ts
 test/visibility-fail-closed-derived-writes.test.ts
 test/visibility-repair-scale.test.ts
