@@ -114,16 +114,17 @@ identity. Outside a caller record, and for every fact and origin test, the store
 `src/commands/access-serves.ts` (`gbrain access serves` and `sources unfederate`), `src/core/access/policy-migrate.ts`
 (the policy-store move), `src/core/access/policy-transfer.ts` (export) and `src/core/access/serves.ts` run fourteen
 typed BrainEngine members (`src/core/engine-sql/access-setup.ts` on PGLite and Postgres,
-`src/core/rust-engine/store-members/access-setup.ts` here). The store keeps no access tokens and no OAuth clients
-(minting and the bearer check are raw SQL this engine refuses), so the token members answer what PGLite and Postgres
-answer on a brain with none, and the two token writes match no token. The policy-store migration journal is
+`src/core/rust-engine/store-members/access-setup.ts` here). The token members read and write the store's
+`access_tokens` and `oauth_clients` ([access-tokens.md](access-tokens.md), [oauth-clients.md](oauth-clients.md)). No
+store member binds a token to a member yet (the binding write refuses, [access-members.md](access-members.md)), so
+every live token is unbound and no key reads a source; a client registered with a `member_id` is bound. The policy-store migration journal is
 `crates/gbrain-store/src/access_migrations.rs`; each write is one `Store::write`.
 
 | JS member | Rust answers | Mirrors |
 | --- | --- | --- |
-| `listUnboundTokenNames()` / `listUnboundClientIds()` | `[]` | `UNBOUND_TOKEN_NAMES_SQL`, `UNBOUND_CLIENT_IDS_SQL` |
-| `readLiveAccessToken(name)` / `listKeysReadingSource(sourceId)` | `null` / `[]` | `LIVE_TOKEN_SQL`, `KEYS_READING_SOURCE_SQL` |
-| `recordTokenSetupReads(name, reads)` / `revokeAccessTokenById(id)` | nothing | `RECORD_SETUP_READS_SQL`, `REVOKE_TOKEN_SQL` |
+| `listUnboundTokenNames()` / `listUnboundClientIds()` | the distinct names of the live tokens, and the ids of the live clients, bound to no member, in byte order (`brain.listUnboundTokenNames`, `brain.listUnboundClientIds`) | `UNBOUND_TOKEN_NAMES_SQL`, `UNBOUND_CLIENT_IDS_SQL` |
+| `readLiveAccessToken(name)` / `listKeysReadingSource(sourceId)` | the live token's `{ member_id, token_hash, source_grant, source_id, federated_read, permissions }` or `null` (`brain.readLiveAccessToken`); the live member-bound federated keys reading the source, by name in byte order (`brain.listKeysReadingSource`) | `LIVE_TOKEN_SQL`, `KEYS_READING_SOURCE_SQL` |
+| `recordTokenSetupReads(name, reads)` / `revokeAccessTokenById(id)` | sets `setup_reads` in the live token's permissions object (`brain.recordTokenSetupReads`); revokes the live token with the id (`brain.revokeAccessToken`) | `RECORD_SETUP_READS_SQL`, `REVOKE_TOKEN_SQL` |
 | `listUnarchivedSourceIds(ids)` | the ids of `ids` that name a source that is not archived (`listAllSources`) | `UNARCHIVED_SOURCE_IDS_SQL` |
 | `countCompanyPages(sourceId)` | `{ pages, calls }`: the live pages of the source and those under `company/calls/` (`listAccessPrefixSlugs`) | `COMPANY_PAGE_COUNTS_SQL` |
 | `listAccessPolicySources()` | every source with access state, archived ones too, by id in code-unit order | `POLICY_STATE_SOURCES_SQL` |

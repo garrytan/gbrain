@@ -657,6 +657,19 @@ impl Store {
         })
     }
 
+    /// `listUnboundClientIds()`: the ids of the clients not deleted and bound to no member, in byte order
+    /// (`ORDER BY client_id COLLATE "C"`).
+    pub fn list_unbound_client_ids(&self) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut ids: Vec<String> = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.deleted_at.is_none() && c.member_id.is_none())
+            .map(|c| c.client_id)
+            .collect();
+        ids.sort();
+        Ok(ids)
+    }
+
     /// `oauthClientLive(clientId)`: whether a client not deleted (`deleted_at IS NULL`) has this id.
     pub fn oauth_client_live(&self, client_id: &str) -> Result<bool> {
         let read = self.read()?;

@@ -1,32 +1,35 @@
 /**
  * The access setup and policy-store members outside access/policy.ts (listUnboundTokenNames through
- * countPeopleFolderPages; SQL in engine-sql/access-setup.ts). The store keeps no access tokens and no OAuth clients, so
- * the token reads answer what Postgres answers on a brain with none (no rows, no token) and the token writes match no
- * row. The source, page and access-state reads come from the store's sources, its live page slugs and its access
- * state; the migration journal is gbrain-store `access_migrations`. What each member answers:
- * rust/docs/store/access_rules.md.
+ * countPeopleFolderPages; SQL in engine-sql/access-setup.ts). The member-key setup reads and writes come from the
+ * store's `access_tokens` and `oauth_clients` (rust/docs/store/access-tokens.md, oauth-clients.md); no store member
+ * binds a token to a member yet, so every live token reads as unbound and no key reads a source. The source, page and
+ * access-state reads come from the store's sources, its live page slugs and its access state; the migration journal is
+ * gbrain-store `access_migrations`. What each member answers: rust/docs/store/access_rules.md.
  */
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
-/** The store keeps no access tokens, so no live token is unbound. */
-export const listUnboundTokenNames: StoreMember<[], string[]> = async () => [];
+export const listUnboundTokenNames: StoreMember<[], string[]> = (brain) =>
+  storeCall({ member: 'listUnboundTokenNames' }, () => brain.listUnboundTokenNames()) as Promise<string[]>;
 
-/** The store keeps no OAuth clients, so none is unbound. */
-export const listUnboundClientIds: StoreMember<[], string[]> = async () => [];
+export const listUnboundClientIds: StoreMember<[], string[]> = (brain) =>
+  storeCall({ member: 'listUnboundClientIds' }, () => brain.listUnboundClientIds()) as Promise<string[]>;
 
-/** The store keeps no access tokens, so no live token has any name. */
-export const readLiveAccessToken: StoreMember<[name: string], LiveAccessTokenRow | null> = async () => null;
+export const readLiveAccessToken: StoreMember<[name: string], LiveAccessTokenRow | null> = (brain, name) =>
+  storeCall({ member: 'readLiveAccessToken' }, () => brain.readLiveAccessToken(name)) as Promise<LiveAccessTokenRow | null>;
 
-/** The store keeps no access tokens: the write matches no live token, as on a brain with none. */
-export const recordTokenSetupReads: StoreMember<[name: string, reads: readonly string[]], void> = async () => undefined;
+export const recordTokenSetupReads: StoreMember<[name: string, reads: readonly string[]], void> = async (brain, name, reads) => {
+  await storeCall({ member: 'recordTokenSetupReads' }, () => brain.recordTokenSetupReads(name, [...reads]));
+};
 
-/** The store keeps no access tokens, so no key still reads a source. */
-export const listKeysReadingSource: StoreMember<[sourceId: string], MemberKeyReadingRow[]> = async () => [];
+export const listKeysReadingSource: StoreMember<[sourceId: string], MemberKeyReadingRow[]> = (brain, sourceId) =>
+  storeCall({ member: 'listKeysReadingSource', sourceId }, () => brain.listKeysReadingSource(sourceId)) as Promise<MemberKeyReadingRow[]>;
 
-/** The store keeps no access tokens: the write matches no live token, as on a brain with none. */
-export const revokeAccessTokenById: StoreMember<[id: string], void> = async () => undefined;
+/** The store's revoke of one live token by id (`revokeAccessToken`); the name it answers is not needed here. */
+export const revokeAccessTokenById: StoreMember<[id: string], void> = async (brain, id) => {
+  await storeCall({ member: 'revokeAccessTokenById' }, () => brain.revokeAccessToken(id));
+};
 
 async function sourceRows(brain: StoreBrain, member: string, includeArchived: boolean): Promise<Array<{ id: string }>> {
   return storeCall<Array<{ id: string }>>({ member }, () => brain.listAllSources(includeArchived ? { includeArchived: true } : {}));

@@ -65,7 +65,8 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 
 ## What the store does not do
 
-- Credentials: the store keeps no access tokens and no OAuth clients. `insertAccessMember` with a `bindTokenId`
+- Credential binding: the store keeps access tokens and OAuth clients ([access-tokens.md](access-tokens.md),
+  [oauth-clients.md](oauth-clients.md)), but binds neither to a member. `insertAccessMember` with a `bindTokenId`
   (`gbrain access member add --bind-token`) and the binding members (`readCredentialBindingForUpdate`,
   `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so `bindCredential` and `gbrain auth rescope --member`)
   refuse with `engine_capability_missing` before anything is written.

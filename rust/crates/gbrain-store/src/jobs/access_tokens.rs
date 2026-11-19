@@ -3,20 +3,22 @@
 //!
 //! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, and the credential members of
 //! `src/core/engine-sql/access-credentials.ts`: listAccessTokens, readActiveAccessTokenGrant, accessTokenLive,
-//! readActiveAccessTokenByHash (the bearer checks), revokeAccessTokensNamed and revokeAccessToken.
+//! readActiveAccessTokenByHash (the bearer checks), revokeAccessTokensNamed and revokeAccessToken; and the member-key
+//! setup members of `src/core/engine-sql/access-setup.ts`: listUnboundTokenNames, readLiveAccessToken (the one call that
+//! returns a hash: the setup compares it to the key file), recordTokenSetupReads and listKeysReadingSource.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
 //!
 //! Kept: the columns those members read or write (id, name, token_hash, scopes, permissions, the five grant
-//! columns, grant_revision, min_trust, revoked_at, created_at, last_used_at) and the table's constraints on them: the unique
+//! columns, grant_revision, min_trust, revoked_at, created_at, last_used_at, member_id) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
-//! Not kept: the member, attest and private columns, and the `trust_generation_update` trigger: a listed
-//! row reads them as the table's defaults (`member_id` NULL, `private_pages` and `private_facts`
-//! `'none'`). `last_used_at` is stamped by the bearer check (`touch_access_token_last_used`) and NULL before. No member
-//! returns `token_hash`. Setting
-//! the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
+//! Not kept: the attest and private columns, and the `trust_generation_update` trigger: a listed
+//! row reads them as the table's defaults (`private_pages` and `private_facts` `'none'`). `member_id` is kept, but no
+//! store member sets it yet (the credential binding write refuses on a Rust brain), so it reads NULL. `last_used_at` is
+//! stamped by the bearer check (`touch_access_token_last_used`) and NULL before. Only `readLiveAccessToken` returns
+//! `token_hash`. Setting the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
 use super::*;
@@ -61,6 +63,10 @@ struct TokenRecord {
     /// Stamped by the bearer check, at most once a minute; a record written before the field existed reads NULL.
     #[serde(default)]
     last_used_at: Option<i64>,
+    /// The member the token is bound to. No store member binds a token yet (the credential binding write refuses on a
+    /// Rust brain), so every record reads NULL; the member-key setup reads filter on it as the SQL does.
+    #[serde(default)]
+    member_id: Option<String>,
 }
 
 fn refuse_check(constraint: &str) -> StoreError {
@@ -179,6 +185,7 @@ impl Store {
                 revoked_at,
                 created_at: self.env.now_micros(),
                 last_used_at: None,
+                member_id: None,
             };
             record.check()?;
             if all_tokens(&*tx)?
@@ -237,7 +244,7 @@ impl TokenRecord {
             "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
             "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
             "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
-            "member_id": Value::Null, "may_act_for": Value::Null, "attest_actor": Value::Null,
+            "member_id": t.member_id, "may_act_for": Value::Null, "attest_actor": Value::Null,
             "attest_ops": Value::Null, "attest_sources": Value::Null, "attest_read": Value::Null,
             "reads_unscoped": Value::Null, "private_facts": "none",
         })
@@ -254,7 +261,7 @@ impl TokenRecord {
             "revoked_at": self.revoked_at.map(iso),
             "private_pages": "none",
             "private_facts": "none",
-            "member_id": Value::Null,
+            "member_id": self.member_id,
         })
     }
 }
@@ -393,5 +400,94 @@ impl Store {
             put_json(tx, &token_key(id), &t)?;
             Ok(Some(t.name))
         })
+    }
+}
+
+/// The member-key setup reads and writes of `gbrain access serves several` (`src/core/engine-sql/access-setup.ts`).
+impl Store {
+    /// `listUnboundTokenNames()`: the distinct names of the tokens not revoked and bound to no member, in byte order
+    /// (`SELECT DISTINCT name COLLATE "C" ... ORDER BY name`).
+    pub fn list_unbound_token_names(&self) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut names: Vec<String> = all_tokens(&*read)?
+            .into_iter()
+            .filter(|t| t.revoked_at.is_none() && t.member_id.is_none())
+            .map(|t| t.name)
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+
+    /// `readLiveAccessToken(name)`: `{ member_id, token_hash, source_grant, source_id, federated_read, permissions }` of
+    /// the token not revoked with this exact name, or None. The member-key setup compares the hash of the key file to
+    /// `token_hash`, so this is the one store call that returns a hash; the store still never logs one. The statement
+    /// has no order: when several live tokens share the name, the oldest (then the lowest id) answers, as a heap scan
+    /// of rows inserted in order finds it first.
+    pub fn read_live_access_token(&self, name: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(all_tokens(&*read)?
+            .into_iter()
+            .filter(|t| t.revoked_at.is_none() && t.name == name)
+            .min_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)))
+            .map(|t| {
+                json!({
+                    "member_id": t.member_id, "token_hash": t.token_hash, "source_grant": t.source_grant,
+                    "source_id": t.source_id, "federated_read": t.federated_read, "permissions": t.permissions,
+                })
+            }))
+    }
+
+    /// `recordTokenSetupReads(name, reads)`: sets `setup_reads` to `reads` in the `permissions` object of every token
+    /// not revoked with this exact name, keeping its other fields, in one write
+    /// (`COALESCE(permissions, '{}') || jsonb_build_object('setup_reads', reads)`). A token whose `permissions` is
+    /// neither NULL nor an object is left alone, as the statement's guard leaves it.
+    pub fn record_token_setup_reads(&self, name: &str, reads: &[String]) -> Result<()> {
+        self.write(|tx| {
+            for mut t in all_tokens(&*tx)? {
+                if t.revoked_at.is_some() || t.name != name {
+                    continue;
+                }
+                let mut fields = match t.permissions {
+                    Value::Null => serde_json::Map::new(),
+                    Value::Object(ref m) => m.clone(),
+                    _ => continue,
+                };
+                fields.insert("setup_reads".to_owned(), json!(reads));
+                t.permissions = Value::Object(fields);
+                put_json(tx, &token_key(&t.id), &t)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `listKeysReadingSource(sourceId)`: `[{ name, member_id, federated_read }]` of the tokens not revoked, bound to a
+    /// member, on the `federated` grant, whose write source is another source (a NULL one is not, as `<>` is not true
+    /// for NULL) and whose read list holds `sourceId`; by name in byte order (`ORDER BY name COLLATE "C"`), a tie by id.
+    pub fn list_keys_reading_source(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut rows: Vec<TokenRecord> = all_tokens(&*read)?
+            .into_iter()
+            .filter(|t| {
+                t.revoked_at.is_none()
+                    && t.member_id.is_some()
+                    && t.source_grant.as_deref() == Some("federated")
+                    && t.source_id.as_deref().is_some_and(|s| s != source_id)
+                    && t.federated_read
+                        .as_ref()
+                        .is_some_and(|f| f.iter().any(|s| s == source_id))
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            a.name
+                .as_bytes()
+                .cmp(b.name.as_bytes())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|t| json!({ "name": t.name, "member_id": t.member_id, "federated_read": t.federated_read }))
+                .collect(),
+        ))
     }
 }
