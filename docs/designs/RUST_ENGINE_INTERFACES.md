@@ -933,6 +933,13 @@ Facts and their supersession chains.
     ran. The store reads the withdrawal ledger (`t 0x01`) and the purge ledger (`F 0x0F`) with both fingerprints
     (`facts/withdrawal_fence.rs`, no new key prefix; rust/docs/store/facts.md). Pinned by
     `test/engine-parity/withdrawal-fence.test.ts`.
+  - Four owner-facing facts trust reads (`engine-sql/facts-trust.ts`) are served by the Rust engine
+    (`store-members/facts-trust-owner.ts`, `facts/trust_owner.rs`, no new key prefix): `readFactForOwnerAction`,
+    `countDerivedFactTaint`, `listLexicalContestCandidates` and `listStandingPreferences`. They read the stamped trust
+    columns and the write-gate receipts. `matchSavedFacts` is served too (`facts/saved_match.rs`), for the `english`
+    FTS language and the `CORRECTION_CUE` cue only. Pinned by `test/engine-parity/facts-trust-owner.test.ts`.
+    `listExtractorFactsForClassification` (`store-members/facts-repair.ts`, `facts/extractor_classify.rs`) reads its
+    receipts from the write journal's committed requests. Pinned by `test/engine-parity/facts-repair.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

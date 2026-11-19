@@ -9,8 +9,8 @@
  * journal's transaction and refuse, so on Rust every counted fact is ambiguous. listUnwithdrawnFacts reads the store's
  * derived generation ledger (facts/generations.rs), which no member writes on Rust either: the fence writer publishes
  * generations with raw SQL and refuses, so on Rust it lists nothing. loopFactDrift and closedLoopWithActiveFact are
- * served from open-loops.ts. Refused, because the store holds no such table: listExtractorFactsForClassification
- * (`persistence_requests`, the write journal).
+ * served from open-loops.ts. listExtractorFactsForClassification (facts/extractor_classify.rs) reads its receipts from
+ * the write journal's committed requests (`persistence_requests` on SQL), the requests the store's journal records.
  *
  * An id list binds as `bigint[]` on PGLite, so an id that is not an integer refuses rather than guess at its cast error.
  */
@@ -24,6 +24,13 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 function wholeIds(member: string, ids: readonly number[] | null): void {
   for (const id of ids ?? []) if (!Number.isSafeInteger(id)) refuseMember(member, 'a fact id that is not an integer');
 }
+
+/**
+ * `listExtractorFactsForClassification`: the expired fenceless extractor facts with their page, withdrawal, duplicate,
+ * fence and receipt evidence, by (source, page, id). `expired_at` is the UTC microsecond text the SQL's `to_char` gives.
+ */
+export const listExtractorFactsForClassification: Member<'listExtractorFactsForClassification'> = (brain, sourceIds, slug) =>
+  storeCall({ member: 'listExtractorFactsForClassification' }, () => brain.listExtractorFactsForClassification({ sourceIds, slug }));
 
 /** `listSessionFactsForClassification` (engine-sql/facts-repair.ts): by (source, id), as the SQL orders them. */
 export const listSessionFactsForClassification: Member<'listSessionFactsForClassification'> = (brain, sourceIds, lanes, ids) => {
