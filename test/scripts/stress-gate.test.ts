@@ -179,7 +179,7 @@ describe('race hunt plan', () => {
   });
 
   // Test run 44479724268: 1,078 importers of changed helpers joined the 837
-  // listed arms, the floor filled alphabetically and 167 listed arms never ran.
+  // listed arms, the floor filled alphabetically and 193 listed arms never ran.
   test('listed arms take the 3-iteration floor before helper importers that sort ahead of them', () => {
     const extras = Array.from({ length: 30 }, (_, i) => `test/aa-importer-${String(i).padStart(2, '0')}.test.ts`);
     const files: Record<string, string> = { 'test/postgres-unit-arms.txt': `${list(20).join('\n')}\n` };
