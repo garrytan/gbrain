@@ -213,6 +213,13 @@ const INTERFACE_METHODS: readonly string[] = [
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
   'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage',
+  // files commands and file operations (engine-sql/files-ops.ts)
+  'listFileRowsForSlug', 'listAllFileRows', 'hasFileWithHash', 'listFileRowsForVerify',
+  'readSourceLocalPathForVerify', 'upsertCliFileRow', 'upsertRawFileRow', 'upsertSyncFileRow',
+  'sourceIdExists', 'readPageIdInSource', 'readFileOwner', 'claimFilePage',
+  'upsertOpFileRow', 'listReadableFileRows', 'readReadableFileForUrl', 'readReadablePageId',
+  'countUnreadableFilesAt', 'countFilesRegisteredElsewhere', 'registerFileRow', 'readReadableFileForVerify',
+  'listReadableFilePaths',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',

@@ -89,6 +89,12 @@ const VETTED_BUILDERS: Record<string, string> = {
   expiryTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
   instantTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
 
+  // files-ops.ts builders
+  fileReadableSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE, or the constant files-readable NOT EXISTS predicate over the files alias f with the vetted caller private-pages filter spliced in; the choice is a boolean; no values',
+  pageReadableSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE, or the vetted caller private-pages filter over the pages alias fp; the choice is a boolean; no values',
+  fileListFilterSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE or the constant page filter with the hand-numbered $2 slug bound by the caller; the choice is whether a slug was given; no values',
+  fileListOrderSql: 'src/core/engine-sql/files-ops.ts: one of two constant ORDER BY column lists chosen by whether a slug was given; no values',
+
   // facts-trust.ts builders
   quarantinedProvenanceFilterFragment: 'src/core/quarantine.ts: constant fact-provenance quarantine predicate over a caller alias; no values',
   factsFtsDocument: 'src/core/fts-language.ts: constant facts full-text document expression over a caller alias; the language passes VALID_CONFIG_NAME or falls back to the default',
