@@ -99,9 +99,6 @@ async function trustFixture(engine: BrainEngine): Promise<void> {
   }
 }
 
-const TRUST_METHODS = ['transaction', 'applyTransactionSettings', 'putPage', 'sealChunks', 'upsertPageWriteGateReceipt',
-  'searchVector'] as const;
-
 async function search(engine: BrainEngine, opts: SearchOpts): Promise<string[]> {
   return view(await engine.searchVector(basisEmbedding(AXIS), { limit: 20, ...opts }));
 }
@@ -198,7 +195,8 @@ describe('engine parity: searchVector page filters', () => {
 
   parityTest(
     'searchVector drops pages below the trust floor before it ranks and limits',
-    { methods: TRUST_METHODS },
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'sealChunks', 'upsertPageWriteGateReceipt',
+      'searchVector'] },
     async (engine) => {
       await trustFixture(engine);
       const scopes: Record<string, SearchOpts> = {
@@ -227,7 +225,8 @@ describe('engine parity: searchVector page filters', () => {
 
   parityTest(
     'searchVector drops flagged pages before it ranks and limits',
-    { methods: TRUST_METHODS },
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'sealChunks', 'upsertPageWriteGateReceipt',
+      'searchVector'] },
     async (engine) => {
       await trustFixture(engine);
       const scopes: Record<string, SearchOpts> = {
