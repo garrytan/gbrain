@@ -78,7 +78,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	73	no	yes	yes	serves
+transaction	lifecycle	yes	75	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -86,7 +86,7 @@ getPage	pages	yes	87	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	343	yes	yes	yes	serves
+putPage	pages	yes	345	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
@@ -270,16 +270,16 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	31	yes	yes	yes	serves
+addTakesBatch	takes	yes	33	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
-listTakes	takes	yes	12	no	yes	yes	serves
+listTakes	takes	yes	14	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
-updateTake	takes	yes	1	no	yes	yes	serves
-supersedeTake	takes	yes	1	no	yes	yes	serves
+updateTake	takes	yes	2	no	yes	yes	serves
+supersedeTake	takes	yes	2	no	yes	yes	serves
 resolveTake	takes	yes	8	no	yes	yes	serves
 getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
@@ -365,7 +365,7 @@ readPersistenceBrainId	import_guards	yes	4	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	3	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	4	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	36	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	38	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -679,7 +679,7 @@ listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	6	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	8	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	12	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
@@ -698,7 +698,7 @@ readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	9	no	yes	yes	serves
-readRowTrustRows	cli_reads_import	yes	2	no	yes	yes	serves
+readRowTrustRows	cli_reads_import	yes	3	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	7	no	yes	yes	serves
@@ -749,8 +749,8 @@ readWriterSlugFence	page_visibility	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 readPageBodySizes	large_page	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
-listHeldRows	trust_fence	yes	1	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	5	no	yes	yes	serves
+listHeldRows	trust_fence	yes	2	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	8	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves

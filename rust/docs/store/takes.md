@@ -26,8 +26,8 @@ A take record also holds the `trust_tier` and `write_origin` PGLite's `trust_tie
 record stored before them decodes unchanged. Every takes writer stores through `store_take`: an insert takes the
 write's declared tier and origin; an update (`addTakesBatch` in place, `updateTake`, both `supersedeTake` rows,
 `resolveTake`) keeps the stored tier and origin unless `claim`, `kind` or `holder` changed, and then lowers them to
-the write's. Only `readRowTrustRows` ([cli-reads-import.md](cli-reads-import.md)) reads them; the take reads
-return neither column, as PGLite's `takeRowToTake` does. The embedding write changes no trust column and stores
+the write's. `readRowTrustRows` ([cli-reads-import.md](cli-reads-import.md)) and the fence guard's held-row read
+`listHeldRows` ([trust.md](trust.md)) read them; the take reads return neither column, as PGLite's `takeRowToTake` does. The embedding write changes no trust column and stores
 the record as it is.
 
 | JS | Resolves | Mirrors |
