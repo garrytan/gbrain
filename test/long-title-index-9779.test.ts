@@ -3,26 +3,36 @@
  * and transcript imports cap the titles they make. The Postgres twin is
  * test/e2e/long-title-index-9779-postgres.test.ts.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { renderSessionParts, TRANSCRIPT_TITLE_MAX_CHARS } from '../src/core/transcripts/render.ts';
 import type { RedactedSession } from '../src/core/transcripts/render.ts';
 import { expectReplacementPastV240, expectUpgradeFromBeforeV240, incompressibleTitle } from './helpers/long-title-index.ts';
 
-let engine: PGLiteEngine;
-
-describe('long page titles (#9779, PGLite)', () => {
-  beforeEach(async () => {
+// Each scenario rewinds the schema version, so each gets its own brain.
+describe('long page titles before v240 (#9779, PGLite)', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
   }, 120_000);
-  afterEach(async () => { await engine.disconnect(); }, 60_000);
+  afterAll(async () => { await engine.disconnect(); }, 60_000);
 
   test('a brain before v240 holding 3,000-byte and 100 KB titles upgrades, and the pages are found by title through the index', async () => {
     await expectUpgradeFromBeforeV240(engine);
   }, 120_000);
+});
+
+describe('long page titles past v240 (#9779, PGLite)', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); }, 60_000);
 
   test('a brain with the old title btree gets the hash index, then saves a 3,000-byte title; a rerun changes nothing', async () => {
     await expectReplacementPastV240(engine);
