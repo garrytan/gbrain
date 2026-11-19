@@ -201,4 +201,24 @@ describe('engine parity: export reads', () => {
       missing: view(await engine.readBodyManifestRows(pageId + 1000, null)),
     };
   });
+
+  // The entry state and protected regions a segmented read projects each segment with, read a batch of occurrences
+  // at a time: only the named occurrences of the named generation, none for a generation or page that has none.
+  parityTest('readBodyManifestMeta reads the entry state and protected regions of named occurrences', {
+    methods: ['readBodyManifestMeta', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts',
+      'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
+  }, async (engine) => {
+    const { pageId, occurrences } = await publishSegmented(engine, 'notes/big');
+    const toJson = (v: unknown) => typeof v === 'string' ? JSON.parse(v) as unknown : v;
+    const view = (rows: Awaited<ReturnType<typeof engine.readBodyManifestMeta>>) => rows.map(r => ({
+      occurrence: occurrences.indexOf(Number(r.occurrence_id)), entry_state: toJson(r.entry_state), protected_regions: toJson(r.protected_regions),
+    })).sort((a, b) => a.occurrence - b.occurrence);
+    return {
+      all: view(await engine.readBodyManifestMeta(pageId, occurrences, 1)),
+      some: view(await engine.readBodyManifestMeta(pageId, [occurrences[1]!], 1)),
+      none: view(await engine.readBodyManifestMeta(pageId, [], 1)),
+      gen0: view(await engine.readBodyManifestMeta(pageId, occurrences, 0)),
+      missing: view(await engine.readBodyManifestMeta(pageId + 1000, occurrences, 1)),
+    };
+  });
 });

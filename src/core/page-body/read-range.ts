@@ -245,9 +245,7 @@ async function* loadSegments(engine: BrainEngine, body: SegmentedBody, rows: rea
   const readText = (row: BodyRow) => { stop?.(); return engine.readSegmentTexts(body.sourceId, [row.sha256]); };
   for (let at = 0; at < rows.length; at += HEAVY_BATCH) {
     const batch = rows.slice(at, at + HEAVY_BATCH);
-    const [first, metaRows] = await Promise.all([readText(batch[0]!), engine.executeRaw<Record<string, unknown>>(`SELECT occurrence_id, entry_state, protected_regions
-      FROM page_body_manifest WHERE page_id=$1 AND occurrence_id=ANY($2::bigint[]) AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`,
-    [body.pageId, batch.map(r => r.occurrenceId), body.generation])]);
+    const [first, metaRows] = await Promise.all([readText(batch[0]!), engine.readBodyManifestMeta(body.pageId, batch.map(r => r.occurrenceId), body.generation)]);
     const meta = new Map(metaRows.map(m => [Number(m.occurrence_id), m]));
     for (const [i, row] of batch.entries()) {
       const m = meta.get(row.occurrenceId);

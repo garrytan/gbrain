@@ -142,3 +142,17 @@ export async function readBodyManifestRows(tx: Raw, pageId: number, generation: 
     JOIN page_body_manifest m ON m.page_id=$1 AND m.staging_id IS NULL AND m.gen_from<=g.generation AND (m.gen_to IS NULL OR m.gen_to>g.generation)
     ORDER BY m.seq`, [pageId, generation]);
 }
+
+/** One manifest row's entry state and protected regions (JSON: objects on PGLite and Postgres). Occurrence ids: numbers on PGLite, strings on Postgres. */
+export interface BodyManifestMeta {
+  occurrence_id: number | string;
+  entry_state: unknown;
+  protected_regions: unknown;
+}
+
+/** The published rows of generation `generation` of page `pageId` among `occurrenceIds`: their entry state and protected regions, in no set order. */
+export async function readBodyManifestMeta(tx: Raw, pageId: number, occurrenceIds: readonly number[], generation: number): Promise<BodyManifestMeta[]> {
+  return tx.executeRaw<BodyManifestMeta>(`SELECT occurrence_id, entry_state, protected_regions
+      FROM page_body_manifest WHERE page_id=$1 AND occurrence_id=ANY($2::bigint[]) AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`,
+  [pageId, [...occurrenceIds], generation]);
+}

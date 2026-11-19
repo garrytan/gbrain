@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -60,3 +60,7 @@ export const readBodyManifestRows: StoreMember<[pageId: number, generation: numb
     await storeCall({ member: 'readBodyManifestRows' }, () => brain.readBodyManifestRows(pageId, generation));
   return rows.map(row => ({ ...row, sha256: new Uint8Array(Buffer.from(row.sha256, 'hex')) }));
 };
+
+/** A segmented body read: the entry state and protected regions of the named occurrences in one generation (`cli_reads::export::read_body_manifest_meta`). */
+export const readBodyManifestMeta: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], BodyManifestMeta[]> = (brain, pageId, occurrenceIds, generation) =>
+  storeCall({ member: 'readBodyManifestMeta' }, () => brain.readBodyManifestMeta(pageId, [...occurrenceIds], generation));

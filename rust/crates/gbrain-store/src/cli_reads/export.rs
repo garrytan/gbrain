@@ -126,6 +126,14 @@ pub struct BodyManifestRow {
     pub generation: i64,
 }
 
+/// One row of `readBodyManifestMeta`: a manifest row's entry state and protected regions.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BodyManifestMeta {
+    pub occurrence_id: i64,
+    pub entry_state: Value,
+    pub protected_regions: Value,
+}
+
 /// `jsonb_array_length`: the stored columns are arrays (`NOT NULL DEFAULT '[]'`).
 fn array_len(value: &Value) -> i64 {
     value
@@ -428,6 +436,40 @@ impl Store {
         rows.sort_by_key(|row| row.seq);
         Ok(rows)
     }
+
+    /// `readBodyManifestMeta(pageId, occurrenceIds, generation)`: the published rows of generation
+    /// `generation` whose occurrence id is in `occurrence_ids`, with their entry state and
+    /// protected regions. Postgres sets no order; these come in seq order.
+    pub fn read_body_manifest_meta(
+        &self,
+        page_id: i64,
+        occurrence_ids: &[i64],
+        generation: i64,
+    ) -> Result<Vec<BodyManifestMeta>> {
+        let Some(page) = page_u64(page_id) else {
+            return Ok(Vec::new());
+        };
+        if occurrence_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut rows: Vec<_> = manifest_rows(&*read, page)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .filter(|row| {
+                in_generation(row, generation) && occurrence_ids.contains(&row.occurrence_id)
+            })
+            .collect();
+        rows.sort_by_key(|row| row.seq);
+        Ok(rows
+            .into_iter()
+            .map(|row| BodyManifestMeta {
+                occurrence_id: row.occurrence_id,
+                entry_state: row.entry_state,
+                protected_regions: row.protected_regions,
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -553,6 +595,12 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        assert!(
+            s.read_body_manifest_meta(id, &[1, 2], 1)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(s.read_body_manifest_meta(id, &[], 0).unwrap().is_empty());
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);
     }

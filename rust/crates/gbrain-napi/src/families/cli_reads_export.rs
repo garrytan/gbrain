@@ -97,4 +97,19 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_body_manifest_rows(page_id, generation))
     }
+
+    /// `readBodyManifestMeta(pageId, occurrenceIds, generation)`: the entry state and protected
+    /// regions of the named occurrences in one published generation.
+    #[napi]
+    pub fn read_body_manifest_meta<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrence_ids: Vec<i64>,
+        generation: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_body_manifest_meta(page_id, &occurrence_ids, generation)
+        })
+    }
 }
