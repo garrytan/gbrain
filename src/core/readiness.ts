@@ -38,6 +38,7 @@ import { detectCapabilities } from './capability.ts';
 import { embeddingProviderConfigured } from './brain-score-recommendations.ts';
 import { isEngineDegraded } from './degraded-marker.ts';
 import { heldLockFor, peekLock, type LockPeekResult } from './pglite-lock.ts';
+import { ownedBrainFor } from './rust-engine/owner-ipc/owned.ts';
 import { listRecipes, RECIPES } from './ai/recipes/index.ts';
 import type { Recipe } from './ai/types.ts';
 import { mergedProviderEnv } from './ai/provider-env.ts';
@@ -372,6 +373,7 @@ function isServeProcess(): boolean {
 }
 
 function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
+  if (cfg.engine === 'rust' && !cfg.remote_mcp && !cfg.database_url) return rustLockOwner(cfg);
   if (cfg.engine !== 'pglite' || cfg.remote_mcp || cfg.database_url) return null;
   const dataDir = cfg.database_path ?? gbrainPath('brain.pglite');
   const self = heldLockFor(dataDir);
@@ -384,6 +386,14 @@ function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
   if (!peek.held || !peek.isServe || peek.pid === undefined) return null;
   return { pid: peek.pid, transport: peek.http ? 'http' : 'stdio',
     ...(peek.acquiredAt ? { started_at: new Date(peek.acquiredAt).toISOString() } : {}), is_self: peek.pid === process.pid };
+}
+
+/** A Rust brain names only this serve as its owner (owner-ipc/owned.ts); another process's owner answers on its socket. */
+function rustLockOwner(cfg: GBrainConfig): LockOwner | null {
+  const self = cfg.database_path ? ownedBrainFor(cfg.database_path) : null;
+  if (!self || !isServeProcess()) return null;
+  return { pid: process.pid, transport: process.argv.includes('--http') ? 'http' : 'stdio',
+    started_at: new Date(self.acquiredAt).toISOString(), is_self: true };
 }
 
 // ── harness wiring ─────────────────────────────────────────────────────────
