@@ -3,7 +3,7 @@
  * publication records with its batch (`recordActivation`), the flip to `activated` inside the activation request, the
  * member gate (`assertMemberPending`), the settle of a member's pending mark (`settleMember`), and the two operator
  * lists (`listPendingMembers`, `listOrphanCandidates`). One SQL implementation for both engines; each statement is the
- * text managed.ts sent through `executeRaw`, byte for byte, with the same parameters, on the engine's own `executeRaw`.
+ * text managed.ts sent through `executeRaw`, with the same parameters and a total row order that sorts text by bytes (`COLLATE "C"`, as PGLite and the Rust engine sort it), on the engine's own `executeRaw`.
  * The generation key lock is `lockGenerationKey` (engine-sql/fence-holds.ts), the same statement. These are ledger
  * reads, not page reads, so they take no page read policy. The Rust engine serves them from its
  * `derived_generation_activations` rows (rust/crates/gbrain-store/src/generations/activations.rs).
@@ -50,7 +50,7 @@ const SETTLE_MEMBER_SQL = `UPDATE derived_generation_items SET pending=false
 
 const PENDING_MEMBERS_SQL = `SELECT g.source_id, g.kind, g.owner_key, g.id AS generation_id, g.activation_id, i.item_key AS slug, i.action AS item_action, i.identity_hash AS identity
        FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2) ORDER BY g.source_id, g.kind, g.owner_key, i.item_key`;
+      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2) ORDER BY g.source_id COLLATE "C", g.kind COLLATE "C", g.owner_key COLLATE "C", i.item_key COLLATE "C"`;
 
 const ORPHAN_CANDIDATES_SQL = `SELECT a.source_id, a.kind, a.owner_key, a.id AS activation_id, m->>'slug' AS slug, a.created_at::text AS created_at
        FROM derived_generation_activations a CROSS JOIN LATERAL jsonb_array_elements(a.members) m
@@ -59,10 +59,22 @@ const ORPHAN_CANDIDATES_SQL = `SELECT a.source_id, a.kind, a.owner_key, a.id AS 
         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=m->>'slug' AND p.deleted_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
           WHERE g.source_id=a.source_id AND g.kind=a.kind AND g.state='live' AND i.item_key=m->>'slug' AND i.action<>'retired')
-      ORDER BY a.source_id, a.kind, a.owner_key, slug`;
+      ORDER BY a.source_id COLLATE "C", a.kind COLLATE "C", a.owner_key COLLATE "C", (m->>'slug') COLLATE "C", a.id COLLATE "C"`;
 
-/** Inserts the pending activation row of `key` unless a row with its id exists. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Refuses an activation id that is not a uuid (8-4-4-4-12 hex digits) on every engine. The orphan list casts each
+ * pending activation id to `uuid` to match its request, so on Postgres one such row would fail that list for every
+ * caller; managed.ts always writes a request uuid (`activationRequestId`).
+ */
+export function checkActivationId(activationId: string): void {
+  if (!UUID.test(activationId)) throw new Error(`activation id must be a uuid (8-4-4-4-12 hex digits): ${JSON.stringify(activationId)}`);
+}
+
+/** Inserts the pending activation row of `key` unless a row with its id exists. Refuses an id that is not a uuid. */
 export async function recordGenerationActivation(raw: EngineRawRead, key: GenerationRowKey, row: GenerationActivationRecord): Promise<void> {
+  checkActivationId(row.activationId);
   await raw(RECORD_ACTIVATION_SQL, [row.activationId, key.sourceId, key.kind, key.ownerKey, row.expectedGeneration, row.inputPin, row.setHash,
     JSON.stringify(row.members.map(member => ({ slug: member.slug, action: member.action, identity: member.identity, before: member.before })))]);
 }

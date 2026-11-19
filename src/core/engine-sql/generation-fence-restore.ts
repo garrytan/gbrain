@@ -2,7 +2,7 @@
  * The ledger statements of generations/fence-restore.ts (a fence kind's restore through `gbrain repair generations`)
  * as typed engine members: the fence block each of two generations recorded, the item keys each still owns, and the
  * live generation id an apply rechecks. One SQL implementation for both engines; each statement is the text
- * fence-restore.ts sent through `executeRaw`, byte for byte, with the same parameters, on the engine's own
+ * fence-restore.ts sent through `executeRaw`, with the same parameters and a total row order that sorts text by bytes (`COLLATE "C"`, as PGLite and the Rust engine sort it), on the engine's own
  * `executeRaw`. These are ledger reads, not page reads, so they take no page read policy. The Rust engine serves them
  * from its `derived_generations` rows (rust/crates/gbrain-store/src/generations/fence_restore.rs).
  */
@@ -15,9 +15,9 @@ export interface GenerationFenceBlockRow { id: number | string; fence: { body: s
 /** An item key a generation still owns (any action but `retired`). `generation_id` is BIGINT (text on Postgres). */
 export interface GenerationOwnedItemRow { generation_id: number | string; item_key: string }
 
-const FENCE_BLOCKS_SQL = `SELECT id, completeness->'fence' AS fence FROM derived_generations WHERE id = ANY($1::bigint[])`;
+const FENCE_BLOCKS_SQL = `SELECT id, completeness->'fence' AS fence FROM derived_generations WHERE id = ANY($1::bigint[]) ORDER BY id`;
 
-const OWNED_ITEMS_SQL = `SELECT generation_id, item_key FROM derived_generation_items WHERE generation_id = ANY($1::bigint[]) AND action <> 'retired'`;
+const OWNED_ITEMS_SQL = `SELECT generation_id, item_key FROM derived_generation_items WHERE generation_id = ANY($1::bigint[]) AND action <> 'retired' ORDER BY generation_id, item_key COLLATE "C"`;
 
 const LIVE_ID_SQL = `SELECT id FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`;
 

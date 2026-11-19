@@ -4,7 +4,7 @@
  * batches of stored versions that carry a facts fence, and the move of kept fact rows off the numbers a fence row claims.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Protects: the four statements fence-evidence.ts always sent, byte for byte with the same parameters, now that they
+ *  - Protects: the four statements fence-evidence.ts always sent, with the same parameters and byte order, now that they
  *    are engine members (engine-sql/generation-fence-evidence.ts), and a Rust brain answers the same walk: a row is held
  *    when a generation of the page not held recorded its key (each key once, a superseded generation's too), when a stored version's fence carries it, or not at
  *    all; a version without the marker and a version above `before` are skipped; and the claimed kept rows move above
@@ -39,11 +39,12 @@ const required = process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1';
 const rustRun = existsSync(rustArmAddonPath()) || required ? test : test.skip;
 const postgresRun = testBackends().includes('postgres') ? test : test.skip;
 
-/** The statements fence-evidence.ts sent through executeRaw at 0120895e02, byte for byte. */
+/** The statements fence-evidence.ts sent through executeRaw at 0120895e02, plus a byte-order ORDER BY. */
 const OLD = {
-  recorded: `SELECT DISTINCT i.item_key FROM derived_generation_items i
+  recorded: `SELECT DISTINCT i.item_key COLLATE "C" AS item_key FROM derived_generation_items i
       JOIN derived_generations g ON g.id = i.generation_id
-     WHERE g.source_id = $1 AND g.kind = $2 AND g.owner_key = $3 AND g.state <> 'held' AND i.action <> 'retired' AND i.item_key = ANY($4::text[])`,
+     WHERE g.source_id = $1 AND g.kind = $2 AND g.owner_key = $3 AND g.state <> 'held' AND i.action <> 'retired' AND i.item_key = ANY($4::text[])
+     ORDER BY item_key`,
   bodyless: `SELECT 1 FROM page_versions v JOIN pages p ON p.id = v.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND v.compiled_truth IS NULL LIMIT 1`,
   versions: `SELECT v.id, v.compiled_truth, v.timeline FROM page_versions v

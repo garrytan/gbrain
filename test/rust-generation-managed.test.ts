@@ -3,7 +3,7 @@
  * record, the flip to activated, the member gate, the settle and the two operator lists as typed engine members.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Protects: the seven statements managed.ts always sent, byte for byte with the same parameters, now that they are
+ *  - Protects: the seven statements managed.ts always sent, with the same parameters and byte order, now that they are
  *    engine members (engine-sql/generation-activations.ts, and lockGenerationKey of engine-sql/fence-holds.ts for the
  *    key lock), and a Rust brain answers the same walk: a recorded activation keeps its first members, gates a member
  *    until its generation is live and the item is pending, lists the pending members in key order, settles one, and
@@ -40,7 +40,7 @@ const required = process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1';
 const rustRun = existsSync(rustArmAddonPath()) || required ? test : test.skip;
 const postgresRun = testBackends().includes('postgres') ? test : test.skip;
 
-/** The statements managed.ts sent through executeRaw at 0120895e02, byte for byte. */
+/** The statements managed.ts sent through executeRaw at 0120895e02, plus a byte-order ORDER BY. */
 const OLD = {
   record: `INSERT INTO derived_generation_activations (id, source_id, kind, owner_key, expected_generation, input_pin, item_set_hash, state, members)
     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8::text::jsonb) ON CONFLICT (id) DO NOTHING`,
@@ -54,7 +54,7 @@ const OLD = {
     WHERE generation_id=(SELECT generation_id FROM derived_generation_activations WHERE id=$1) AND item_key=$2`,
   pending: `SELECT g.source_id, g.kind, g.owner_key, g.id AS generation_id, g.activation_id, i.item_key AS slug, i.action AS item_action, i.identity_hash AS identity
        FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2) ORDER BY g.source_id, g.kind, g.owner_key, i.item_key`,
+      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2) ORDER BY g.source_id COLLATE "C", g.kind COLLATE "C", g.owner_key COLLATE "C", i.item_key COLLATE "C"`,
   orphans: `SELECT a.source_id, a.kind, a.owner_key, a.id AS activation_id, m->>'slug' AS slug, a.created_at::text AS created_at
        FROM derived_generation_activations a CROSS JOIN LATERAL jsonb_array_elements(a.members) m
       WHERE a.state='pending' AND a.source_id=ANY($1::text[]) AND ($2::text IS NULL OR a.kind=$2) AND m->>'action'='create'
@@ -62,7 +62,7 @@ const OLD = {
         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=m->>'slug' AND p.deleted_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
           WHERE g.source_id=a.source_id AND g.kind=a.kind AND g.state='live' AND i.item_key=m->>'slug' AND i.action<>'retired')
-      ORDER BY a.source_id, a.kind, a.owner_key, slug`,
+      ORDER BY a.source_id COLLATE "C", a.kind COLLATE "C", a.owner_key COLLATE "C", (m->>'slug') COLLATE "C", a.id COLLATE "C"`,
 };
 const NAME = new Map(Object.entries(OLD).map(([name, sql]) => [sql, name]));
 

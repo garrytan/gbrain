@@ -57,24 +57,30 @@ the key's counters as the Postgres statement does) and `derived_generation_valve
 window). An unknown source is `source_not_found` for a new attempt or valve row; an attempt or valve total past the
 `int4` range, and a fractional `retired`, are `invalid_argument`.
 
-The scrub reads the jsonb text Postgres prints (`cli_reads::pg_text::jsonb_text`) and lowers it as Postgres `lower()` does in a UTF-8 database with the C.UTF-8 ctype. One difference stays: a stored JSON `null` and an absent value are the same in the store, and numbers print in their shortest form (`1.0` reads `1`).
+The scrub reads the jsonb text Postgres prints and lowers it as Postgres `lower()` does in a UTF-8 database with the
+C.UTF-8 ctype. A ledger row keeps that text for `held_context`, `proposal` and `completeness->'fence'` beside the value
+(`held_context_text`, `proposal_text`, `fence_text`), read from the written JSON text by `cli_reads::pg_jsonb`: a number
+keeps the digits and scale `numeric` keeps (`1.0`, `1.50`, `100e-2` reads `1.00`, `1e2` reads `100`, `-0.0` reads
+`0.0`), and a JSON `null` stays a value apart from SQL NULL (`proposal IS NOT NULL` holds, `jsonb_array_length` of it
+is a scalar error). A row written before these fields renders its text from the value. One difference stays: a number
+`serde_json` does not parse (`1e400`, which `numeric` takes) is `invalid_argument` at write.
 
 The activation rows live under `h 0x08 id` with a reverse index `h 0x09 generation_id id`, so a deleted generation
 row sets its activations' `generation_id` to null (`ON DELETE SET NULL`). The orphan list reads the write journal and
-the page records. One difference stays: an activation id that is not a UUID matches no write request in the store,
-where Postgres's `a.id::uuid` cast may refuse the statement; managed.ts always writes UUIDs.
+the page records. Every engine refuses an activation id that is not a UUID (8-4-4-4-12 hex digits, any case) before
+it writes (`checkActivationId`), so Postgres's `a.id::uuid` cast never meets one.
 
 The repair lists take the filter `{ runId?, since?, ownerKey?, id? }` (`generations/repair.rs`): each present field
-narrows the rows as its SQL fragment does, a row with a null `run_id` never matches a run, and `since` must be an ISO
-instant (other text is `invalid_argument`, where Postgres's `::timestamptz` cast accepts more forms; repair.ts always
-passes a concrete ISO instant, `GenerationsSelection.since`). `listSourceIncarnations` is not a store
-method: the TypeScript member reads `readSourceIncarnation` once per distinct id and sorts by id in code-unit order.
+narrows the rows as its SQL fragment does, and a row with a null `run_id` never matches a run. `since` must be an ISO
+8601 instant with a zone; the TypeScript member on every engine checks it and binds it as `YYYY-MM-DDTHH:MM:SS.ffffffZ`
+(`repairSinceInstant`), so a bare date, a time with no zone or a word refuses on every engine. `listSourceIncarnations`
+is not a store method: the TypeScript member reads `readSourceIncarnation` once per distinct id and sorts by id in
+byte order, as the statement's `ORDER BY id COLLATE "C"` does.
 
 The fence evidence and restore reads (`generations/fence_evidence.rs`, `generations/fence_restore.rs`) and the kept row
 move (`facts/kept_rows.rs`) add no keys: they read the ledger rows and items, the page and version records, and the
-fact records. Ids read back as integers. Where the statement has no ORDER BY, the store answers in a fixed order (key
-order, id order); fence-evidence.ts and fence-restore.ts read the rows into sets and maps, so no caller depends on the
-order. As in the statement, the move does not name the page for the moving rows: a claimed row of another page of the
+fact records. Ids read back as integers. Every ledger read's statement orders its rows totally, text by bytes
+(`COLLATE "C"`), and the store answers in the same order (key order, id order). As in the statement, the move does not name the page for the moving rows: a claimed row of another page of the
 source moves too (fence-evidence.ts passes the page's own rows).
 
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete

@@ -5,7 +5,7 @@
  * preview hash binds, as typed engine members.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Protects: the six statements repair.ts always sent, byte for byte with the same parameters, now that they are
+ *  - Protects: the six statements repair.ts always sent, with the same parameters and byte order, now that they are
  *    engine members (engine-sql/generation-repair.ts). The selector was SQL text built by `selectorSql`; it is now a
  *    typed filter whose four fragments compose in the same order, so all 16 combinations of `--run`, `--since`,
  *    `--key` and `--generation` (or an entry id) render the old text and parameters. A Rust brain answers the same
@@ -19,15 +19,16 @@
  *    when DATABASE_URL is set (testBackends) and checks the database name first. The Rust half needs the addon: skipped
  *    without it unless GBRAIN_TEST_RUST_ADDON_REQUIRED=1.
  *  - Not covered: the restore and release apply paths themselves (test/generations-repair*.test.ts on the SQL engines;
- *    they also need the fence-restore and fence-evidence reads, which still go through executeRaw), and a `--since`
- *    that is not an ISO instant (Postgres casts other text; the Rust engine refuses it with invalid_argument).
+ *    they also need the fence-restore and fence-evidence reads, which still go through executeRaw). A `--since` that
+ *    is not an ISO instant with a zone refuses on every engine; test/engine-parity/generation-output-parity.test.ts
+ *    covers it.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { GenerationRepairFilter } from '../src/core/engine-sql/generation-repair.ts';
+import { repairSinceInstant, type GenerationRepairFilter } from '../src/core/engine-sql/generation-repair.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
@@ -40,20 +41,20 @@ const postgresRun = testBackends().includes('postgres') ? test : test.skip;
 
 interface Selection { run?: string; since?: string; key?: string; generation?: number }
 
-/** repair.ts's selectorSql at 0120895e02, verbatim. */
+/** repair.ts's selectorSql at 0120895e02, verbatim, except that `since` binds as the canonical instant every engine reads. */
 function selectorSql(selection: Selection, params: unknown[], alias: string): string {
   const parts: string[] = [];
   const add = (sql: string, value: unknown) => { params.push(value); parts.push(sql.replace('?', `$${params.length}`)); };
   if (selection.run) add(`${alias}.run_id = ?`, selection.run);
-  if (selection.since) add(`${alias}.created_at >= ?::timestamptz`, selection.since);
+  if (selection.since) add(`${alias}.created_at >= ?::timestamptz`, repairSinceInstant(selection.since));
   if (selection.key) add(`${alias}.owner_key = ?`, selection.key);
   if (selection.generation !== undefined) add(`${alias}.id = ?`, selection.generation);
   return parts.length ? ` AND ${parts.join(' AND ')}` : '';
 }
 
-/** The statements repair.ts sent through executeRaw at 0120895e02, byte for byte. */
+/** The statements repair.ts sent through executeRaw at 0120895e02, with the byte-order ORDER BY the items and incarnations reads now carry. */
 const OLD = {
-  items: 'SELECT generation_id, item_key, identity_hash, action, preimage FROM derived_generation_items WHERE generation_id = ANY($1::bigint[])',
+  items: 'SELECT generation_id, item_key, identity_hash, action, preimage FROM derived_generation_items WHERE generation_id = ANY($1::bigint[]) ORDER BY generation_id, item_key COLLATE "C"',
   unmatched: (where: string) => `SELECT g.id, g.source_id, g.owner_key, g.activation_id, g.completeness->'unmatched' AS unmatched FROM derived_generations g
       WHERE g.source_id = ANY($1::text[]) AND g.kind = $2 AND g.state = 'live' AND jsonb_typeof(g.completeness->'unmatched') = 'array'${where} ORDER BY g.id`,
   restorable: (where: string) => `SELECT g.id, g.source_id, g.owner_key, g.generation, p.id AS prev_id, p.generation AS prev_generation
@@ -61,7 +62,7 @@ const OLD = {
         WHERE g.source_id = ANY($1::text[]) AND g.kind = $2 AND g.state = 'live'${where} ORDER BY g.id`,
   held: (where: string) => `SELECT g.id, g.source_id, g.owner_key, g.held_reason, g.hold_id, g.input_pin, g.attempts, g.proposal_bytes, jsonb_array_length(g.proposal) AS items
        FROM derived_generations g WHERE g.source_id = ANY($1::text[]) AND g.kind = $2 AND g.state = 'held'${where} ORDER BY g.id`,
-  incarnations: 'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id',
+  incarnations: 'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"',
   proposal: `SELECT proposal, hold_id FROM derived_generations WHERE id=$1 AND state='held'`,
 };
 
