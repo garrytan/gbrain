@@ -216,10 +216,10 @@ const sourcesOf = (hits: Array<{ source_id?: unknown }>) => [...new Set(hits.map
           expect(seen.stale.length).toBeGreaterThan(0);
           expect(seen.stale.every(s => s === false)).toBe(true);
         });
-        // The owner reads timeline_entries, and Postgres keyword output is still stale=false, as on master.
+        // The owner reads timeline_entries, so Postgres keyword output marks the page stale (the newer entry), as PGLite does.
         const owner = [...await engine.searchKeyword(SOURCES['src-a']), ...await engine.searchKeywordChunks(SOURCES['src-a'])];
         expect(owner.length).toBeGreaterThan(0);
-        expect(owner.every(h => h.stale === false)).toBe(true);
+        expect(owner.map(h => h.stale)).toEqual(owner.map(() => true));
       } finally {
         await engine.executeRaw('DELETE FROM timeline_entries WHERE id = $1', [entry!.id]);
       }
