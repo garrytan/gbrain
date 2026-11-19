@@ -3,8 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, listAccessTokens, notifierCoverageRecorded, isFolderRestricted,
- *    listAppliedPolicyRevisions, readLiveMember, readFolderAccess,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, listAccessTokens, isFolderRestricted,
+ *    listAppliedPolicyRevisions, readLiveMember, readFolderAccess, readMayActFor, readAudiencePrincipals, readAccessMembers,
  *    readOpCheckpointKeys, writeOpCheckpointKeys, appendOpCheckpointPaths, deleteOpCheckpoint, deleteOpCheckpointPaths,
  *    purgeStaleCheckpoints,
  *    readHealthMemoClock, listSynopsisSourceIds,
@@ -12,20 +12,23 @@
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
- *    link policy accept a write; the rest decide the shared-skillpack screen, chronicle retirement, `access serves`
- *    and proposal upkeep.
+ *    link policy accept a write; the rest decide the shared-skillpack screen, chronicle retirement, `access serves`,
+ *    the folder rules a caller satisfies (a reader the rule does not name must stay refused) and proposal upkeep.
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
- *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, access tokens, notifier state, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
- *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). It keeps op checkpoints
+ *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. Folder rules,
+ *    pending prefixes and policy revisions come from the restrictFolder and seedAccessPolicy fixtures (the policy writes
+ *    have no typed member). The Rust store keeps no skillpacks, chronicle state, access members, access tokens, source
+ *    synopsis modes, writer bindings or memory proposals, so those cases compare the empty answer every arm gives on a fresh brain
+ *    (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md). It keeps op checkpoints
  *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
  *    since the store lists them in path order and the SQL engines in no stated order.
  */
 import { describe, expect } from 'bun:test';
-import type { FolderAccessRows } from '../../src/core/engine-sql/access-control.ts';
-import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
+import { archiveSource, createSource, parityArms, restrictFolder, seedAccessPolicy, sorted } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
+import { appliedAccessSummary, folderAccessFor, folderAccessForAll, memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { clearHealthMemo, memoizedHealth } from '../../src/core/health-memo.ts';
@@ -33,7 +36,6 @@ import {
   appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, purgeStaleCheckpoints, recordCompleted, resumeFilter,
 } from '../../src/core/op-checkpoint.ts';
 import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
-import { folderAccessFor, folderAccessForAll, memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
 import { proposeRevision } from '../../src/core/access/policy.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 
@@ -166,31 +168,6 @@ describe('engine parity: write misc', () => {
     const tokens = rows.map(r => ({ name: r.name, scopes: r.scopes, revoked: r.revoked_at !== null, id: UUID.test(String(r.id)) }));
     expect(tokens.map(t => t.name)).toEqual(['new-client', 'old-client']);
     return { tokens };
-  });
-
-  parityTest('notifierCoverageRecorded answers false on a fresh brain', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
-    const covered = await engine.notifierCoverageRecorded();
-    expect(covered).toBe(false);
-    return { covered };
-  });
-
-  // A notifier row is raw SQL here (the resident writes it); on Rust the seed refuses, because no Rust brain keeps
-  // notifier state, and the member answers false, as the fresh-brain case.
-  parityTest('notifierCoverageRecorded answers true once a source has an observed head', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw("INSERT INTO sync_notifier_sources (source_id, state) VALUES ('default', 'idle')");
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.notifierCoverageRecorded()).toBe(false);
-      throw seeded;
-    }
-    const unobserved = await engine.notifierCoverageRecorded();
-    await engine.executeRaw("UPDATE sync_notifier_sources SET observed_head = 'abc', observed_at = now() WHERE source_id = 'default'");
-    const observed = await engine.notifierCoverageRecorded();
-    expect({ unobserved, observed }).toEqual({ unobserved: false, observed: true });
-    return { unobserved, observed };
   });
 
   // loadOpCheckpoint catches a failed read, logs it and answers [], so its answer alone cannot tell a refused read from an
@@ -353,9 +330,7 @@ describe('engine parity: write misc', () => {
     return { ids, configured: (await readSynopsisTierConfig(engine)).configured };
   });
 
-  // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer
-  // true there; on Rust its folder-rule fixture is raw SQL and stops on the typed refusal, because no Rust brain can hold
-  // a folder rule.
+  // The restricted half (true under a folder rule or a pending prefix, on every arm) is import-path.test.ts's case.
   parityTest('isFolderRestricted answers false for every folder of a brain with no folder rules or pending covers', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     const answers = {
@@ -368,25 +343,22 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // isFolderRestricted is constant false on Rust only because no Rust brain can hold access state: the access-rule write
-  // (the restrictFolder fixture's raw SQL) must stop on the typed raw_sql refusal there and leave the folder open.
-  parityTest('restrictFolder, the access-rule write, refuses on Rust and restricts the folder on the SQL engines', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
+  parityTest('isFolderRestricted is true under a folder rule only in the rule\'s source and below its prefix', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
-    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.isFolderRestricted('work', 'private/diary')).toBe(false);
-      throw write;
-    }
-    expect(write).toBeNull();
-    const underRule = await engine.isFolderRestricted('work', 'private/diary');
-    expect(underRule).toBe(true);
-    return { underRule };
+    await restrictFolder(engine, backend, 'work', 'private/', 'rule');
+    const answers = {
+      underRule: await engine.isFolderRestricted('work', 'private/diary'),
+      prefixOnly: await engine.isFolderRestricted('work', 'private'),
+      sibling: await engine.isFolderRestricted('work', 'privateer/log'),
+      otherSource: await engine.isFolderRestricted('default', 'private/diary'),
+    };
+    expect(answers).toEqual({ underRule: true, prefixOnly: false, sibling: false, otherSource: false });
+    return answers;
   });
 
-  // readFolderAccess answers no rules and no coverage on Rust (folder access opens) only because no Rust brain can hold a
-  // folder rule: the production rule write (`gbrain access rule add` runs proposeRevision) must stop on a typed refusal
-  // there, never record nothing and report success, and the caller's folder access must stay empty afterwards.
+  // While the production rule write (`gbrain access rule add` runs proposeRevision) has no typed path on Rust, it must
+  // stop on a typed refusal there, never record nothing and report success, and the caller's folder access must stay
+  // empty afterwards.
   parityTest('the folder-rule write (proposeRevision) refuses typed on Rust and applies the rule on the SQL engines',
     { methods: ['readFolderAccess', 'isFolderRestricted'] }, async (engine, backend) => {
       await createSource(engine, backend, 'work');
@@ -413,26 +385,11 @@ describe('engine parity: write misc', () => {
     return { revisions };
   });
 
-  // listAppliedPolicyRevisions is constant empty on Rust only because no Rust brain can hold access state: the policy
-  // state write (raw SQL here, the access commands' statements in production) must stop on the typed raw_sql refusal.
   parityTest('listAppliedPolicyRevisions gives each source with access state its newest applied revision, null when none is applied', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await createSource(engine, backend, 'quiet');
-    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.listAppliedPolicyRevisions()).toEqual([]);
-      throw write;
-    }
-    expect(write).toBeNull();
-    await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1)', ['quiet']);
-    const revision = (source: string, rev: number, applied: boolean) => engine.executeRaw(
-      `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
-       VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${applied ? 'now()' : 'NULL'})`, [source, rev]);
-    await revision('work', 1, true);
-    await revision('work', 2, true);
-    await revision('work', 3, false);
-    await revision('quiet', 1, false);
+    await seedAccessPolicy(engine, backend, 'work', [{ revision: 1, applied: true }, { revision: 2, applied: true }, { revision: 3, applied: false }]);
+    await seedAccessPolicy(engine, backend, 'quiet', [{ revision: 1, applied: false }]);
     const revisions = await engine.listAppliedPolicyRevisions();
     expect(revisions).toEqual([{ source_id: 'quiet', rev: null }, { source_id: 'work', rev: 2 }]);
     return { revisions };
@@ -522,36 +479,197 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  parityTest('readFolderAccess reads the rules the readers meet and every pending prefix, and folderAccessForAll keeps the rules every identity meets', { methods: ['readFolderAccess'] }, async (engine, backend) => {
-    const seeded = await engine.executeRaw("INSERT INTO access_policy_state (source_id) VALUES ('default') ON CONFLICT (source_id) DO NOTHING").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.readFolderAccess(['member:alice-example'])).toEqual({ rules: [], coverage: [] });
-      throw seeded;
-    }
-    expect(seeded).toBeNull();
-    await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES
-      ('default', 'team', 'team/', ARRAY['member:alice-example', 'group:team-a'], 1), ('default', 'bob', 'bob/', ARRAY['member:bob-example'], 1)`);
-    await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ('default', 'drafts/', 'pending'), ('default', 'drafts/', 'invalid')");
-    const byRule = (r: FolderAccessRows): FolderAccessRows => ({ ...r, rules: [...r.rules].sort((a, b) => a.rule_id.localeCompare(b.rule_id)) });
-    const answers = {
-      alice: byRule(await engine.readFolderAccess(['member:alice-example'])),
-      both: byRule(await engine.readFolderAccess(['member:alice-example', 'member:bob-example'])),
-      noReaders: await engine.readFolderAccess([]),
-      audience: await folderAccessForAll(engine, [['member:alice-example'], ['member:bob-example', 'group:team-a']]),
-      bob: await folderAccessFor(engine, ['member:bob-example']),
-    };
-    const team = { source_id: 'default', rule_id: 'team', readable_by: ['member:alice-example', 'group:team-a'] };
-    const bob = { source_id: 'default', rule_id: 'bob', readable_by: ['member:bob-example'] };
-    const coverage = [{ source_id: 'default', prefix: 'drafts/' }];
-    expect(answers).toEqual({
-      alice: { rules: [team], coverage },
-      both: { rules: [bob, team], coverage },
-      noReaders: { rules: [], coverage },
-      audience: { satisfiedRuleIds: ['default:team'], folderCoverage: coverage },
-      bob: { satisfiedRuleIds: ['default:bob'], folderCoverage: coverage },
+  // caller.ts:376: `access serves` and whoami report the newest applied revision of each source the caller can see.
+  parityTest('appliedAccessSummary reports the newest applied policy revision of each visible source', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await createSource(engine, backend, 'quiet');
+    await seedAccessPolicy(engine, backend, 'work', [{ revision: 1, applied: true }, { revision: 2, applied: true }, { revision: 3, applied: false }]);
+    await seedAccessPolicy(engine, backend, 'quiet', [{ revision: 1, applied: false }]);
+    const summary = await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => appliedAccessSummary(engine));
+    expect(summary.policy_rev).toEqual({ work: 2 });
+    expect(summary.member).toBe('alice-example');
+    return { policyRev: summary.policy_rev, member: summary.member };
+  });
+
+  parityTest('readFolderAccess reads the folder rules naming any reader and every distinct pending prefix', { methods: ['readFolderAccess'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await restrictFolder(engine, backend, 'work', 'team/', 'rule', { ruleId: 'team', readers: ['group:team-a'] });
+    await restrictFolder(engine, backend, 'work', 'alice/', 'rule', { ruleId: 'alice', readers: ['member:alice-example', 'member:bob-example'] });
+    await restrictFolder(engine, backend, 'work', 'bob/', 'rule', { ruleId: 'bob', readers: ['member:bob-example'] });
+    await restrictFolder(engine, backend, 'work', 'queued/', 'pending');
+    await restrictFolder(engine, backend, 'default', 'later/', 'pending');
+    const view = (rows: Awaited<ReturnType<BrainEngine['readFolderAccess']>>) => ({
+      rules: sorted(rows.rules.map(r => `${r.source_id}:${r.rule_id}:${[...r.readable_by].join(',')}`)),
+      coverage: rows.coverage.map(c => `${c.source_id}:${c.prefix}`),
     });
+    const readers = view(await engine.readFolderAccess(['member:alice-example', 'group:team-a']));
+    const none = view(await engine.readFolderAccess([]));
+    const stranger = view(await engine.readFolderAccess(['member:carol-example']));
+    expect(readers).toEqual({
+      rules: ['work:alice:member:alice-example,member:bob-example', 'work:team:group:team-a'],
+      coverage: ['default:later/', 'work:queued/'],
+    });
+    expect(none).toEqual({ rules: [], coverage: ['default:later/', 'work:queued/'] });
+    expect(stranger).toEqual({ rules: [], coverage: ['default:later/', 'work:queued/'] });
+    return { readers, none, stranger };
+  });
+
+  // caller.ts:170: an audience satisfies a rule only when every identity meets its readers.
+  parityTest('folderAccessForAll satisfies a rule for a member reader, intersects an audience and lists pending coverage', { methods: ['readFolderAccess'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await restrictFolder(engine, backend, 'work', 'team/', 'rule', { ruleId: 'team', readers: ['group:team-a'] });
+    await restrictFolder(engine, backend, 'work', 'alice/', 'rule', { ruleId: 'alice', readers: ['member:alice-example'] });
+    await restrictFolder(engine, backend, 'work', 'queued/', 'pending');
+    const alice = await folderAccessFor(engine, ['member:alice-example', 'group:team-a']);
+    const audience = await folderAccessForAll(engine, [['member:alice-example', 'group:team-a'], ['member:bob-example', 'group:team-a']]);
+    const withGuest = await folderAccessForAll(engine, [['member:alice-example', 'group:team-a'], []]);
+    expect(alice).toEqual({ satisfiedRuleIds: ['work:alice', 'work:team'], folderCoverage: [{ source_id: 'work', prefix: 'queued/' }] });
+    expect(audience.satisfiedRuleIds).toEqual(['work:team']);
+    expect(withGuest.satisfiedRuleIds).toEqual([]);
+    return { alice, audience, withGuest };
+  });
+
+  // Leak case: a caller the folder's readers do not name satisfies no rule, and the folder's pages stay hidden from it.
+  parityTest('a private folder refuses a caller its rule does not name: no rule is satisfied and its pages stay hidden', { methods: ['readFolderAccess', 'putPage', 'findPagesByTitles'] }, async (engine, backend) => {
+    await restrictFolder(engine, backend, 'default', 'private/', 'rule', { ruleId: 'diary', readers: ['member:alice-example'] });
+    for (const slug of ['private/acme-diary', 'people/acme-open']) {
+      await engine.putPage(slug, { type: 'person', title: 'Acme Example', compiled_truth: `body of ${slug}`, timeline: '' });
+    }
+    const outsider = await folderAccessFor(engine, ['member:carol-example']);
+    expect(outsider).toEqual({ satisfiedRuleIds: [], folderCoverage: [] });
+    const read = (excludePrivate: boolean) => withCallerAccess({ identity: ['member:carol-example'], hidePrivate: true, ...outsider }, async () =>
+      (await engine.findPagesByTitles(['acme example'], ['default'], ['person'], { excludePrivate })).map(r => r.slug).sort());
+    const served = await read(true);
+    const unfiltered = await read(false);
+    expect(served).toEqual(['people/acme-open']);
+    expect(unfiltered).toEqual(['people/acme-open', 'private/acme-diary']);
+    return { outsider, served, unfiltered };
+  });
+
+  parityTest('readMayActFor reads a stdio server\'s may_act_for as stored and answers null for an unset key', { methods: ['readMayActFor'] }, async (engine) => {
+    const unset = await engine.readMayActFor('stdio_config', 'mcp.stdio_may_act_for');
+    await engine.setConfig('mcp.stdio_may_act_for', ' member:alice-example,guest ');
+    const stored = await engine.readMayActFor('stdio_config', 'mcp.stdio_may_act_for');
+    const other = await engine.readMayActFor('stdio_config', 'mcp.stdio_member');
+    expect({ unset, stored, other }).toEqual({ unset: null, stored: ' member:alice-example,guest ', other: null });
+    return { unset, stored, other };
+  });
+
+  parityTest('readMayActFor permits nothing for a token or a client with no live row', { methods: ['readMayActFor'] }, async (engine) => {
+    const token = await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000aa');
+    const client = await engine.readMayActFor('oauth_client', 'client-absent');
+    expect({ token, client }).toEqual({ token: null, client: null });
+    return { token, client };
+  });
+
+  // Leak case: a revoked token or a deleted client must permit nothing, and one credential's list never answers for
+  // another. The Rust store keeps no tokens or clients (null above), so the token write stops on the raw_sql refusal.
+  parityTest('readMayActFor reads only the live row it names: a revoked token, a deleted client and another credential permit nothing', { methods: ['readMayActFor'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_tokens (id, name, token_hash, may_act_for, revoked_at) VALUES
+         ('00000000-0000-4000-8000-0000000000a1', 'live', 'h1', ARRAY['member:alice-example'], NULL),
+         ('00000000-0000-4000-8000-0000000000a2', 'revoked', 'h2', ARRAY['member:bob-example'], now()),
+         ('00000000-0000-4000-8000-0000000000a3', 'bare', 'h3', NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')).toBeNull();
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, may_act_for, deleted_at) VALUES
+         ('client-live', 'live', ARRAY['group:team-a'], NULL), ('client-gone', 'gone', ARRAY['member:bob-example'], now())`);
+    const read = async (via: 'legacy_token' | 'oauth_client', key: string) => await engine.readMayActFor(via, key);
+    const lists = {
+      live: await read('legacy_token', '00000000-0000-4000-8000-0000000000a1'),
+      revoked: await read('legacy_token', '00000000-0000-4000-8000-0000000000a2'),
+      bare: await read('legacy_token', '00000000-0000-4000-8000-0000000000a3'),
+      tokenAsClient: await read('oauth_client', '00000000-0000-4000-8000-0000000000a1'),
+      clientLive: await read('oauth_client', 'client-live'),
+      clientGone: await read('oauth_client', 'client-gone'),
+      clientAsToken: await read('legacy_token', 'client-live'),
+    };
+    expect(lists).toEqual({ live: ['member:alice-example'], revoked: null, bare: null, tokenAsClient: null, clientLive: ['group:team-a'], clientGone: null, clientAsToken: null });
+    return lists;
+  });
+
+  parityTest('readAudiencePrincipals reads nothing for an empty audience and finds no member or group on a brain with none', { methods: ['readAudiencePrincipals'] }, async (engine) => {
+    const empty = await engine.readAudiencePrincipals([], []);
+    const absent = await engine.readAudiencePrincipals(['alice-example'], ['team-a']);
+    expect({ empty, absent }).toEqual({ empty: { members: [], groups: [] }, absent: { members: [], groups: [] } });
+    return { empty, absent };
+  });
+
+  // Leak case: only enabled, untombstoned members answer, each with its own groups only, and only existing groups;
+  // a member id never matches as a group or a group id as a member. The Rust store keeps no members or groups (empty
+  // above), so the member write stops on the raw_sql refusal.
+  parityTest('readAudiencePrincipals answers only enabled members with their own groups and only existing groups', { methods: ['readAudiencePrincipals'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_members (id, disabled_at, tombstoned_at) VALUES
+         ('alice-example', NULL, NULL), ('bob-example', now(), NULL), ('carol-example', NULL, now()), ('dave-example', NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readAudiencePrincipals(['alice-example'], ['team-a'])).toEqual({ members: [], groups: [] });
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-a'), ('team-b'), ('team-c')`);
+    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
+      ('team-b', 'alice-example'), ('team-a', 'alice-example'), ('team-c', 'dave-example'), ('team-a', 'bob-example')`);
+    const rows = await engine.readAudiencePrincipals(['alice-example', 'bob-example', 'carol-example', 'nobody-example', 'team-a'], ['team-a', 'alice-example', 'team-z']);
+    const view = { members: [...rows.members].sort((a, b) => a.id.localeCompare(b.id)), groups: [...rows.groups].sort() };
+    expect(view).toEqual({ members: [{ id: 'alice-example', groups: ['team-a', 'team-b'] }], groups: ['team-a'] });
+    const lone = await engine.readAudiencePrincipals(['dave-example'], []);
+    expect(lone).toEqual({ members: [{ id: 'dave-example', groups: ['team-c'] }], groups: [] });
+    return { view, lone };
+  });
+
+  parityTest('readAccessMembers finds no member by id and lists none on a brain with none', { methods: ['readAccessMembers'] }, async (engine) => {
+    const answers = {
+      byId: await engine.readAccessMembers({ id: 'alice-example' }),
+      live: await engine.readAccessMembers({ includeRemoved: false }),
+      all: await engine.readAccessMembers({ includeRemoved: true }),
+    };
+    expect(answers).toEqual({ byId: [], live: [], all: [] });
     return answers;
+  });
+
+  // Leak case: a removed (tombstoned) member is filtered out of the list in the statement unless asked for; each row
+  // carries only its own groups; an id matches exactly one member, never a group id, another case or an injected
+  // predicate. The Rust store keeps no members (empty above), so the member write stops on the raw_sql refusal.
+  parityTest('readAccessMembers lists live members with their own groups, removed ones only when asked, and matches ids exactly', { methods: ['readAccessMembers'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_members (id, display_name, email, kind, labelled_only, disabled_at, tombstoned_at) VALUES
+         ('alice-example', 'Alice', 'alice@example.com', 'audience', true, NULL, NULL), ('bob-example', NULL, NULL, 'person', false, now(), NULL),
+         ('carol-example', NULL, NULL, 'person', false, NULL, now()), ('dave-example', NULL, NULL, 'person', false, NULL, NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readAccessMembers({ includeRemoved: true })).toEqual([]);
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-a'), ('team-b'), ('team-c')`);
+    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
+      ('team-b', 'alice-example'), ('team-a', 'alice-example'), ('team-c', 'carol-example'), ('team-a', 'bob-example')`);
+    const view = (rows: Awaited<ReturnType<BrainEngine['readAccessMembers']>>) => rows.map(r => ({
+      id: r.id, display_name: r.display_name, email: r.email, kind: r.kind, labelled_only: r.labelled_only,
+      disabled: r.disabled_at != null, removed: r.tombstoned_at != null, created: r.created_at != null, groups: r.groups,
+    }));
+    const live = view(await engine.readAccessMembers({ includeRemoved: false }));
+    const all = view(await engine.readAccessMembers({ includeRemoved: true }));
+    expect(live.map(r => [r.id, r.groups])).toEqual([['alice-example', ['team-a', 'team-b']], ['bob-example', ['team-a']], ['dave-example', []]]);
+    expect(all.map(r => [r.id, r.groups])).toEqual([['alice-example', ['team-a', 'team-b']], ['bob-example', ['team-a']], ['carol-example', ['team-c']], ['dave-example', []]]);
+    expect(live[0]).toEqual({ id: 'alice-example', display_name: 'Alice', email: 'alice@example.com', kind: 'audience', labelled_only: true, disabled: false, removed: false, created: true, groups: ['team-a', 'team-b'] });
+    expect(live[1]!.disabled).toBe(true);
+    const byId = {
+      removed: view(await engine.readAccessMembers({ id: 'carol-example' })).map(r => [r.id, r.removed, r.groups]),
+      group: await engine.readAccessMembers({ id: 'team-a' }),
+      otherCase: await engine.readAccessMembers({ id: 'Alice-Example' }),
+      injected: await engine.readAccessMembers({ id: "x' OR '1'='1" }),
+      unknown: await engine.readAccessMembers({ id: 'nobody-example' }),
+    };
+    expect(byId).toEqual({ removed: [['carol-example', true, ['team-c']]], group: [], otherCase: [], injected: [], unknown: [] });
+    return { live, all, byId };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {

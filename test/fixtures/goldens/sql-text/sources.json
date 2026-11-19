@@ -49,6 +49,16 @@
           }
         ]
       },
+      "countRepoBoundSources": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT count(*)::int AS n FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''",
+            "textSha256": "9fabf9b72a59d5c4f620b34b5a5b2f3e4445b06c71da3fe79e0d2b71d9182cf2"
+          }
+        ]
+      },
       "countSourcePages": {
         "default": [
           {

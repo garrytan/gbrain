@@ -309,6 +309,15 @@ impl Store {
         Ok(read_source(&*self.read()?, id)?.map(SourceDetailRow::from))
     }
 
+    /// `countRepoBoundSources()`: how many sources that are not archived have a non-empty
+    /// local path. Mirrors `countRepoBoundSources`.
+    pub fn count_repo_bound_sources(&self) -> Result<u64> {
+        Ok(all_sources(&*self.read()?)?
+            .into_iter()
+            .filter(|r| !r.archived && r.local_path.as_deref().is_some_and(|p| !p.is_empty()))
+            .count() as u64)
+    }
+
     /// `listSourceLocalPaths()`: the local path of every source that has a non-empty one,
     /// archived sources included, in id order. Mirrors `listSourceLocalPaths`.
     pub fn list_source_local_paths(&self) -> Result<Vec<String>> {

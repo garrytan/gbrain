@@ -15,6 +15,9 @@
 //! | `d 0x03 <principal_id> 0x00 <request_id>` | one `persistence_topology_changes` row (`topology.rs`), JSON |
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
 //! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//! | `d 0x08 0x01 <host_id>` | one `sync_notifier_leases` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
 //!
 //! `d 0x05` and `d 0x06` are taken by the `persistence_effects` rows and their claim-order index
 //! (`effects.rs`) on the branches that hold them; no other family here uses them.
@@ -53,10 +56,15 @@ use serde_json::{Map, Value, json};
 
 mod effect_scans;
 mod housekeeping;
+mod notifier;
 mod op_checkpoint;
 mod projection_queue;
 mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
+pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
+pub use notifier::{
+    NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
@@ -74,6 +82,9 @@ const QUEUE: u8 = 0x04;
 /// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
 /// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
 const CHECKPOINT_PATH: u8 = 0x07;
+/// The byte after `keys::PERSISTENCE` of a commit notifier row (persistence/notifier.rs). 0x05 to
+/// 0x07 are reserved for effect rows and operation checkpoint paths.
+const NOTIFIER: u8 = 0x08;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[

@@ -40,10 +40,16 @@ import { countEmbeddingHeld, type CoverageRelevance } from '../../src/core/searc
 import { runReindexSearchVector } from '../../src/commands/reindex-search-vector.ts';
 import { LINK_EXTRACTION_GENERATION_KEY } from '../../src/core/line-grammar.ts';
 import { resetFtsLanguageCache } from '../../src/core/fts-language.ts';
-import { parityArms, sorted } from './harness.ts';
+import { createSource, parityArms, sorted } from './harness.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { primeRelationSemantics } from '../../src/core/link-semantics-pack.ts';
+import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
+import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -340,6 +346,101 @@ describe('engine parity: link temporal state', () => {
       expect(member.meta).toContain(JSON.stringify({ slug: 'decisions/open', page_status: 'accepted', supersedes: [{ slug: 'decisions/readers' }] }));
       expect(stranger.meta).toContain(JSON.stringify({ slug: 'decisions/open', page_status: 'accepted' }));
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'relationship notes, evidence origins, page status and record metadata under excludePrivate hide an owner-only source, and under the closed form every page while one exists',
+    { methods: ['putPage', 'addLink', 'linkRelationshipKeysForPages', 'readLinkRelationshipEvidence', 'listRelationshipNoteRows',
+      'listPageStatusByRef', 'listRecordMetadataRows'] },
+    async (engine, backend) => {
+      await seedCompanies(engine);
+      await engine.putPage(ALICE, page('Alice', { type: 'person' }));
+      for (const slug of ['decisions/open', 'decisions/old']) await engine.putPage(slug, page(slug, { frontmatter: { status: 'accepted' } }));
+      await engine.putPage('concepts/synthesis', page('Synthesis', { type: 'concept', frontmatter: { status: 'accepted' } }));
+      await engine.addLink(ALICE, ACME, 'works at Acme', 'works_at', 'manual');
+      await engine.addLink('decisions/open', 'decisions/old', 'replaces old', 'supersedes', 'manual');
+      // An owner-only source: a company Alice works at, a person who works at Acme, a decision, and the concept's lineage input.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await engine.putPage('companies/chat-co', page('Chat Co', { type: 'company' }), { sourceId: 'chat' });
+      await engine.putPage('people/chat-bob', page('Chat Bob', { type: 'person' }), { sourceId: 'chat' });
+      await engine.putPage('decisions/chat', page('Chat decision', { frontmatter: { status: 'accepted' } }), { sourceId: 'chat' });
+      await engine.addLink(ALICE, 'companies/chat-co', 'works at Chat Co', 'works_at', 'manual', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      await engine.addLink('people/chat-bob', ACME, 'works at Acme', 'works_at', 'manual', undefined, undefined, { fromSourceId: 'chat', toSourceId: 'default' });
+      await engine.addLink('decisions/open', 'decisions/chat', 'replaces chat', 'supersedes', 'manual', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      await engine.addLink('concepts/synthesis', 'decisions/chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      const slugs = [ALICE, ACME, WIDGET, 'people/chat-bob', 'companies/chat-co', 'decisions/open', 'decisions/old', 'decisions/chat', 'concepts/synthesis'];
+      const ids = new Map<number, string>();
+      for (const slug of slugs) ids.set(Number((await engine.getPage(slug, { sourceId: slug.includes('chat') && !slug.startsWith('concepts') && slug !== 'decisions/open' ? 'chat' : 'default' }))!.id), slug);
+      const refs = [['default', 'decisions/open'], ['default', 'decisions/old'], ['default', 'concepts/synthesis'], ['chat', 'decisions/chat']]
+        .map(([source_id, slug]) => ({ source_id, slug }));
+      const keys = await relationshipKeysForPages(engine, [...ids.keys()]);
+      const read = async () => {
+        const evidence = await engine.readLinkRelationshipEvidence(keys);
+        return {
+          notes: (await noteRows(engine, true)).map(r => `${r.to_slug}:${r.link_type}`),
+          assertions: sorted(evidence.assertions.map(a => `${ids.get(Number(a.from_page_id))}>${ids.get(Number(a.to_page_id))}:${a.link_type}:${ids.get(Number(a.origin_id))}:${a.origin_public}`)),
+          status: [...(await readPageStatusByRef(engine, refs, { excludePrivate: true })).entries()].sort(),
+          meta: sorted([...(await readRecordMetadata(engine, [...ids.keys()], { referrerSources: ['default', 'chat'], excludePrivate: true })).entries()]
+            .map(([id, m]) => JSON.stringify({ slug: ids.get(id), ...m }))),
+        };
+      };
+      const unfiltered = {
+        notes: (await noteRows(engine)).map(r => `${r.to_slug}:${r.link_type}`),
+        status: (await readPageStatusByRef(engine, refs, { excludePrivate: false })).size,
+      };
+      const closed = await read();
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, read);
+      expect(unfiltered).toEqual({ notes: ['companies/acme-example:works_at', 'companies/chat-co:works_at'], status: 4 });
+      expect(closed.notes).toEqual([]);
+      expect(closed.status).toEqual([]);
+      expect(closed.assertions.every(a => a.endsWith(':false'))).toBe(true);
+      expect(fn.notes).toEqual([`${ACME}:works_at`]);
+      expect(fn.status).toEqual([['default:decisions/old', 'accepted'], ['default:decisions/open', 'accepted']]);
+      expect(fn.assertions).toContain(`${ALICE}>${ACME}:works_at:${ALICE}:true`);
+      expect(fn.assertions).toContain(`people/chat-bob>${ACME}:works_at:people/chat-bob:false`);
+      expect(fn.meta).toContain(JSON.stringify({ slug: 'decisions/open', page_status: 'accepted', supersedes: [{ slug: 'decisions/old' }] }));
+      return { unfiltered, closed, fn };
+    },
+  );
+
+  parityTest(
+    'listAmendmentsNotApplied under excludePrivate skips amending pages of an owner-only source, and under the closed form every amending page while one exists',
+    { methods: ['setConfig', 'putPage', 'getPage', 'addLinksBatch', 'listAmendmentsNotApplied'] },
+    async (engine, backend) => {
+      const restorePack = useExamplePack();
+      try {
+        await engine.setConfig('schema_pack', EXAMPLE_PACK);
+        await primeRelationSemantics(engine);
+        await engine.putPage('vt/amended', { type: 'contract', title: 'Amended', compiled_truth: 'The agreement.', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+        const amend = async (slug: string, since: string, sourceId = 'default') => {
+          const written = await engine.putPage(slug, { type: 'contract', title: slug, compiled_truth: 'An amendment.', timeline: '',
+            frontmatter: { amends: [{ name: 'Amended', since }] } }, { sourceId });
+          const rows: LinkBatchInput[] = [{ from_slug: slug, to_slug: 'vt/amended', link_type: 'amends', context: 'frontmatter.amends: Amended',
+            link_source: 'frontmatter', origin_slug: slug, origin_field: 'amends', from_source_id: sourceId, to_source_id: 'default', origin_source_id: sourceId }];
+          await engine.addLinksBatch(rows);
+          await applyTemporalEvidence(engine, written, rows, await relationshipKeysForOrigin(engine, Number(written.id)));
+        };
+        await amend('vt/amend-open', '2026-03-01');
+        const spec = async () => ({ pageId: (await engine.getPage('vt/amended', { sourceId: 'default' }))!.id,
+          editionFrom: '2026-01-01', asOf: '2026-07-01', sourceIds: null, limit: 20 });
+        const read = async (excludePrivate: boolean) =>
+          (await engine.listAmendmentsNotApplied({ ...(await spec()), excludePrivate })).map(r => `${r.source_id}:${r.slug}:${r.since}`);
+        const before = await read(true);
+        // An owner-only source whose contract amends the default-source page.
+        await createSource(engine, backend, 'chat', { kind: 'imessage' });
+        await amend('vt/amend-chat', '2026-04-01', 'chat');
+        const unfiltered = await read(false);
+        const closed = await read(true);
+        noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+        const fn = await withEngineScope(engine, () => read(true));
+        expect(before).toEqual(['default:vt/amend-open:2026-03-01']);
+        expect(unfiltered).toEqual(['chat:vt/amend-chat:null', 'default:vt/amend-open:2026-03-01']);
+        expect(closed).toEqual([]);
+        expect(fn).toEqual(['default:vt/amend-open:2026-03-01']);
+        return { before, unfiltered, closed, fn };
+      } finally { setPackRelationSemantics(new Map()); restorePack(); }
     },
   );
 

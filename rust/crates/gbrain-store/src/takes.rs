@@ -27,6 +27,7 @@ use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
+use crate::trust::{RowTrust, TrustTable, stamp_row};
 use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,10 @@ pub(crate) struct TakeRecord {
     /// Goes up by one each time the claim changes.
     #[serde(default)]
     pub claim_rev: u64,
+    /// `trust_tier` and `write_origin`, stamped by [`store_take`]. Absent in a record stored before
+    /// them, and omitted while the tier is `unknown` with no origin.
+    #[serde(default, skip_serializing_if = "RowTrust::is_empty")]
+    pub trust: RowTrust,
     /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
     /// while every column is null. [`write_take`] stamps it.
     #[serde(default, skip_serializing_if = "WriteReceipt::is_empty")]
@@ -544,7 +549,8 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
 
 /// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed),
 /// stamped with the open write's receipt as the PGLite attribution trigger stamps it
-/// (`write_receipt.rs`): an insert when no record is stored under its id, else an update.
+/// (`write_receipt.rs`): an insert when no record is stored under its id, else an update. A write
+/// that changes no trust column (the embedding) uses it; a takes writer uses [`store_take`].
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let old = read_take(&*tx, take.id)?;
     let mut stamped = take.clone();
@@ -557,8 +563,27 @@ pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> 
     put_json(tx, &take_key(take.id), &stamped)
 }
 
+/// Writes `take` with the trust tier and write origin PGLite's `trust_tier_stamp` trigger gives it
+/// (`trust::stamp_row`): an insert when no row with its id is stored, else an update of the stored
+/// row, restamped only when `claim`, `kind` or `holder` changed. A refused raise is the trigger's
+/// error; the caller's write then rolls back.
+fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
+    let content_changed = old
+        .as_ref()
+        .is_some_and(|o| (&o.claim, &o.kind, &o.holder) != (&take.claim, &take.kind, &take.holder));
+    let mut stamped = take.clone();
+    stamped.trust = stamp_row(
+        TrustTable::Takes,
+        old.as_ref().map(|o| &o.trust),
+        &take.trust,
+        content_changed,
+    )?;
+    write_take(tx, &stamped)
+}
+
 fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    write_take(tx, take)?;
+    store_take(tx, take)?;
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
 }
 
@@ -935,7 +960,7 @@ impl Store {
                     existing.superseded_by = *superseded_by;
                     existing.active = active;
                     existing.updated_at_us = now;
-                    write_take(tx, &existing)?;
+                    store_take(tx, &existing)?;
                 } else {
                     let source_id = match read_page_by_id(&*tx, page)? {
                         Some(p) => p.source_id,
@@ -971,6 +996,7 @@ impl Store {
                             updated_at_us: now,
                             claim_rev: 0,
                             receipt: WriteReceipt::default(),
+                            trust: RowTrust::default(),
                         },
                     )?;
                 }
@@ -1219,7 +1245,7 @@ impl Store {
                 take.source = Some(s.clone());
             }
             take.updated_at_us = self.env.now_micros();
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok(true)
         })
     }
@@ -1309,12 +1335,13 @@ impl Store {
                     updated_at_us: now,
                     claim_rev: 0,
                     receipt: WriteReceipt::default(),
+                    trust: RowTrust::default(),
                 },
             )?;
             old.active = false;
             old.superseded_by = Some(new_row);
             old.updated_at_us = now;
-            write_take(tx, &old)?;
+            store_take(tx, &old)?;
             Ok(json!({ "status": "ok", "old_row": old_row, "new_row": new_row }))
         })
     }
@@ -1379,7 +1406,7 @@ impl Store {
             take.resolved_source = resolution.source.clone();
             take.resolved_by = resolution.resolved_by.clone();
             take.updated_at_us = now;
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok("ok".into())
         })
     }

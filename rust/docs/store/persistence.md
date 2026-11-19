@@ -21,6 +21,7 @@ PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/
 | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row, empty (op_checkpoint.rs). Not `d 0x05` or `d 0x06`, which hold the `persistence_effects` rows and their claim-order index |
 | `d 0x03 <principal id> 0x00 <request id>` | one `persistence_topology_changes` row (a lifecycle receipt), JSON (topology.rs) |
 | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row `{ revision, reason, updated_at_us }`, JSON (projection_queue.rs) |
+| `d 0x08 0x01 <host id>` | one `sync_notifier_leases` row `{ owner_id, fence, resident_kind, pid, renewed_at_us, expires_at_us }`, JSON (notifier.rs) |
 
 A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`).
 
@@ -29,6 +30,9 @@ The `J` record is a superset of `journal::RequestRecord`, by design. A request r
 reads are named fields, the others are in the record's `extra` map with their table defaults. The
 native write path decodes the named fields and keeps `extra` as it found it, so both writers share one
 key and one record. A record the native write path stored reads back with those defaults filled in.
+
+`d 0x05` to `d 0x07` are kept for effect rows, effect order and operation checkpoint paths. The commit
+notifier owns `d 0x08`; a unit test in notifier.rs checks that its key range stays clear of them.
 
 A queue key holds the incarnation as its 36-byte lower-case UUID text, so key order is
 `(source_incarnation, slug)` order, the order of the Postgres primary key.
@@ -140,6 +144,43 @@ Differences from the SQL engines:
 - The other `op_checkpoints` writers (sync delete tombstones, sync identity downgrades, sync holds,
   fence repair, the persistence receipts) are still raw SQL. Their rows are not in this store, so
   the store's unit test is the only check of the tombstone and downgrade exemptions on this engine.
+## Commit notifier
+
+The resident commit notifier's host lease, host source list, per-source rows and freshness reads
+(`src/core/engine-sql/notifier.ts`; `notifier/store.ts` `claimLease`, `readLease`, `holdsLease`,
+`releaseLease`, `readNotifierSources`, `writeState`, `writeCoverage` and `recordSyncerHost`;
+`notifier/resident.ts` `listHostSources`; `notifier/status.ts` `readSourceFreshness` and the
+`gbrain sync status` notifier block), and its wanted markers (`notifier/store.ts` `upsertMarker`,
+`attachMarkerJob`, `readMarkers`, `readDueMarkers`, `pruneSatisfiedMarkers`, `clearMarker` and
+`settleMarkers`). With these typed, a resident on this engine starts the notifier and records each
+source's state and coverage, a sync request records its marker, and search reports each source's
+freshness, as on Postgres.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.claimNotifierLease({ hostId, ownerId, kind, pid, leaseMs })` | `{ owner: true, fence }` when the host has no lease row, the row is the caller's (a renewal keeps the fence) or the row expired (a takeover adds 1 to the fence); the row then holds the caller with an expiry `leaseMs` (rounded, at least 1) from now. Otherwise `{ owner: false, holder: { owner_id, fence, resident_kind, pid, expires_at, live } }`. `invalid_argument` for a host id with NUL | `claimNotifierLease` |
+| `brain.readNotifierLease(hostId)` | the host's lease row `{ owner_id, fence, resident_kind, pid, expires_at, live }`, or `null` when it has none. `invalid_argument` for a host id with NUL | `readNotifierLease` |
+| `brain.holdsNotifierLease(hostId, ownerId, fence)` | `true` only when the host's row is `ownerId`'s, with `fence`, and not expired: the fencing check before a start | `holdsNotifierLease` |
+| `brain.releaseNotifierLease(hostId, ownerId)` | sets the row's expiry to now when the row is `ownerId`'s, in one write; another owner's row, or no row, is left as it is | `releaseNotifierLease` |
+| `brain.listNotifierHostSourceRows()` | every source that is not archived, in id order: `{ id, local_path, last_commit, bound, owner, root, syncer, config }`. This engine keeps no managed worktree binding and no source `last_commit`, so `bound` is `false` and `last_commit`, `owner` and `root` are `null`; `syncer` is the host `recordNotifierSyncerHost` recorded, else `null` | `listNotifierHostSourceRows` |
+| `brain.readNotifierSources(ids \| null)` | the per-source notifier row of each listed source (every source when `null`) that has one, in id order: the `sync_notifier_sources` columns, timestamps as ISO strings | `readNotifierSources` |
+| `brain.writeNotifierState(sourceId, { state, reason, firstDue, attempts, nextRetryInMs, progress, errorGiven, error })` | one write. A first write makes the row (`first_due_at` only for `firstDue: 'keep'`, `attempts` 0 when not given); a later one keeps `first_due_at` (set when null) unless `'clear'`, keeps `attempts` and `last_progress_at` unless given, and replaces the error fields only when `errorGiven`. Nothing for a source that does not exist. `invalid_argument` for a state or number outside the Postgres CHECK and `int` range | `writeNotifierState` |
+| `brain.writeNotifierCoverage(sourceId, { head, mode, ownerHostId, ownerKind, ownerPid })` | one write: the observed head, the detection mode and the owner, each with now as its time. Nothing for a source that does not exist | `writeNotifierCoverage` |
+| `brain.recordNotifierSyncerHost(sourceId, hostId)` | one write that records the host when it changed; the same host, or a source that does not exist, writes nothing | `recordNotifierSyncerHost` |
+| `brain.readNotifierStatusRows(ids \| null)` | each listed source (every source when `null`) that is not archived, in id order, at most 200, with its row (null fields when it has none), `lease_live` (the owner host's lease has not expired) and `lease_expires_at`. `last_commit` is `null` (this engine keeps no source `last_commit`) and `due_markers` counts the source's due wanted markers | `readNotifierStatusRows` |
+| `brain.hasNotifierCoverage()` | `true` when some source's row has an observed time | `hasNotifierCoverage` |
+| `brain.upsertWantedMarker({ sourceId, intent, wantedHead, requestedBy, jobId })` | one write. A first upsert makes the marker at generation 1 with `first_due_at` now; a later one bumps the generation, takes the new `wanted_head` and requester, keeps `job_id` when none is given, and keeps `first_due_at` unless the source was re-created. The marker `{ source_id, intent, wanted_head, generation, first_due_at, updated_at, requested_by, job_id }`, or `null` for a source that does not exist. `invalid_argument` for an intent other than `freshness`, `pull` or `full` | `upsertWantedMarker` |
+| `brain.attachWantedMarkerJob(sourceId, intent, generation, jobId)` | sets the job id only while the marker is still at `generation`, in one write | `attachWantedMarkerJob` |
+| `brain.readWantedMarkers(ids \| null)` | the markers of the listed sources (every source when `null`), ordered by `first_due_at`, source id and intent, at most 1000 | `readWantedMarkers` |
+| `brain.readDueWantedMarkers(ids \| null)` | the same read, limited to sources that exist. Every such marker is due: with no source `last_commit`, a freshness marker that names a head never matches it, as on Postgres with a null `last_commit` | `readDueWantedMarkers` |
+| `brain.pruneSatisfiedWantedMarkers(ids)` | writes nothing: a marker is satisfied only when its head equals the source's `last_commit`, which this engine does not keep | `pruneSatisfiedWantedMarkers` |
+| `brain.clearWantedMarker(sourceId, intent, generation)` | deletes the marker only at `generation`, in one write; `true` when it deleted one | `clearWantedMarker` |
+| `brain.settleFreshnessMarker(sourceId, generation, checkoutHead)` | deletes the source's freshness marker only at `generation` and only when its `wanted_head` is null, in one write | `settleFreshnessMarker` |
+| `brain.listSourceWantedMarkers(sourceId)` | the source's markers `{ intent, wanted_head, first_due_at, requested_by }`, ordered by `first_due_at` and intent, for the `gbrain sync status` notifier block | `listSourceWantedMarkers` |
+
+The drain lease still refuses with `engine_capability_missing`; the notifier logs the refusal once
+and keeps running. A source delete removes its notifier row and its wanted markers. A freshness
+marker that names a head stays due on this engine until a drain clears it by generation.
 
 ## Effect scans
 

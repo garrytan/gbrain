@@ -33,6 +33,9 @@ import {
   __resetProjectionReadinessCacheForTests, PROJECTION_READINESS_CACHE_ENV, probeProjectionReadiness, type ProjectionReadinessScope,
 } from '../../src/core/search/projection-readiness.ts';
 import { archiveSource, createSource, parityArms } from './harness.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -343,6 +346,42 @@ describe('engine parity: retrieval coverage', () => {
       expect(member.count?.total).toBe(3);
       expect(granted.count?.total).toBe(3);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'search/retrieval-coverage: under excludePrivate the pending count, the rebuild and the probe skip an owner-only source, and under the closed form every page while one exists',
+    { methods: ['putPage', 'addLink', 'countPendingProjectionPages', 'projectionRebuildProgress', 'readProjectionReadiness'] },
+    async (engine, backend) => {
+      await engine.putPage('notes/open-a', page('Open a'));
+      await engine.putPage('notes/open-b', page('Open b'));
+      await engine.putPage('concepts/synthesis', page('Synthesis', { type: 'concept' }));
+      await sealed(engine, 'notes/sealed', page('Sealed'));
+      const scope: ProjectionReadinessScope = { excludePrivate: true };
+      const read = async () => {
+        __resetProjectionReadinessCacheForTests();
+        return {
+          count: await countPendingProjections(engine, scope, ALL),
+          rebuild: await countProjectionRebuild(engine, scope),
+          probe: await withEnv({ [PROJECTION_READINESS_CACHE_ENV]: '0' }, () => probe(engine, scope)),
+        };
+      };
+      const before = await read();
+      // An owner-only source: two unsealed pages, one sealed, and the concept's lineage input.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await engine.putPage('notes/chat-a', page('Chat a'), { sourceId: 'chat' });
+      await engine.putPage('notes/chat-b', page('Chat b'), { sourceId: 'chat' });
+      await sealed(engine, 'notes/chat-sealed', page('Chat sealed'), 'chat');
+      await engine.addLink('concepts/synthesis', 'notes/chat-a', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      const unfiltered = await countPendingProjections(engine, {}, ALL);
+      const closed = await read();
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, read);
+      expect(before.count?.total).toBe(3);
+      expect(unfiltered?.total).toBe(5);
+      expect(closed.count?.total).toBe(0);
+      expect(fn.count?.total).toBe(2);
+      return { before, unfiltered, closed, fn };
     },
   );
 });

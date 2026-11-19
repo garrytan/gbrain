@@ -31,6 +31,24 @@ impl Brain {
         })
     }
 
+    /// `readWriteVisibilityProbe(sourceId, slug, policy)`: the opening read of a remote page write's visibility check.
+    #[napi]
+    pub fn read_write_visibility_probe<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        policy: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_write_visibility_probe(
+                &source_id,
+                &slug,
+                &required(policy, "readWriteVisibilityProbe policy")?,
+            )
+        })
+    }
+
     /// `readCallerPageAccess(pages, policy)`: the pairs that name a page row, and whether each reads.
     #[napi]
     pub fn read_caller_page_access<'env>(

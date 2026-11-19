@@ -631,7 +631,7 @@ fn links_of(read: &dyn KvRead, key: &RelationshipKey) -> Result<Vec<LinkRecord>>
         .collect())
 }
 
-fn iso_ms(micros: i64) -> String {
+pub(crate) fn iso_ms(micros: i64) -> String {
     let full = iso(micros);
     format!("{}Z", &full[..full.len() - 4])
 }
@@ -695,7 +695,7 @@ fn check_no_nul(field: &str, value: &str) -> Result<()> {
     }
 }
 
-fn today(now_us: i64) -> String {
+pub(crate) fn today(now_us: i64) -> String {
     iso(now_us)[..10].to_string()
 }
 
@@ -785,8 +785,18 @@ pub(crate) fn canonical_multirange(text: &str) -> Result<String> {
     Ok(format!("{{{}}}", parts.join(",")))
 }
 
+/// `valid_ranges && daterange(from, until)`: some range overlaps `[from, until)`. An empty
+/// multirange overlaps nothing.
+pub(crate) fn multirange_overlaps(text: &str, from: &str, until: &str) -> bool {
+    parse_multirange(text).is_ok_and(|ranges| {
+        ranges.iter().any(|(lo, hi)| {
+            lo.as_deref().is_none_or(|l| l < until) && hi.as_deref().is_none_or(|h| h > from)
+        })
+    })
+}
+
 /// `valid_ranges @> date`.
-fn multirange_contains(text: &str, date: &str) -> bool {
+pub(crate) fn multirange_contains(text: &str, date: &str) -> bool {
     parse_multirange(text).is_ok_and(|ranges| {
         ranges.iter().any(|(lo, hi)| {
             lo.as_deref().is_none_or(|l| l <= date) && hi.as_deref().is_none_or(|h| date < h)

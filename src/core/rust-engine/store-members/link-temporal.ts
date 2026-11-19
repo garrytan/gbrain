@@ -20,17 +20,22 @@ import type * as LinkTemporalSql from '../../engine-sql/link-temporal.ts';
 import { DERIVED_TRANSITION_PRODUCERS } from '../../engine-sql/link-temporal.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from '../../link-relationships.ts';
 import { temporalLinkTypes } from '../../link-validity.ts';
-import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { privacyAliasSql, privatePagesFilterFragment, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
 import type { VectorBackfillOpts } from '../../search-vector-backfill.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
+import { ownerOnlyFormIn, storePagePolicy } from './private-provenance.ts';
 
 type PageRef = { slug: string; source_id: string };
 
 /** The no-caller page policy of `privatePagesFilterFragment`, which decides whether an evidence origin is public. */
 function originPolicy() {
-  return pagePolicyFlags(privatePagesFilterFragment('p'));
+  const fragment = privatePagesFilterFragment('p');
+  return {
+    honorAliases: fragment.includes(privacyAliasSql('p')),
+    entityPrivacy: fragment.includes(privateSnapshotFilterFragment('p')),
+    ownerOnly: ownerOnlyFormIn(fragment, 'pages', 'p'),
+  };
 }
 
 const ids = (pageIds: readonly number[]) => pageIds.map(Number);

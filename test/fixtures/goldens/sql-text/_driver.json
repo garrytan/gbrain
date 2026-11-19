@@ -3158,6 +3158,19 @@
       }
     },
     "pages": {
+      "bumpLastRetrieved": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countPagesBy": {
         "grouped+since+remote": [
           {
@@ -5005,6 +5018,19 @@
         ]
       },
       "countDefaultSourceSplit": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "countRepoBoundSources": {
         "default": [
           {
             "paramCount": 0,

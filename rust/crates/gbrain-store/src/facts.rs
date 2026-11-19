@@ -51,10 +51,11 @@ pub mod saved_match;
 pub mod trust;
 pub mod trust_reads;
 
+pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FenceContext, FenceTarget};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
+pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub use privacy::{OwnerOnlyForm, PrivacyPolicy};
 pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};
 
 use crate::chunks::embedding_dimensions;
@@ -177,9 +178,6 @@ impl FactRecord {
         TrustTier::stored(Some(&self.trust_tier))
     }
 
-    /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
-    /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
-    /// value, event_type, dimension and context.
     /// The content tuple the attribution trigger compares
     /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
     /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
@@ -253,6 +251,9 @@ impl FactRecord {
             || float_distinct(a.claim_value, b.claim_value)
     }
 
+    /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
+    /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
+    /// value, event_type, dimension and context.
     fn trust_content_changed(&self, new: &FactRecord) -> bool {
         let float = |a: Option<f64>, b: Option<f64>| match (a, b) {
             (Some(a), Some(b)) => !(a == b || (a.is_nan() && b.is_nan())),
@@ -656,6 +657,20 @@ fn rows_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<FactRecord>> {
         }
     }
     Ok(out)
+}
+
+/// Facts in every source with no `expired_at` (`expired_at IS NULL`).
+pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
+    let mut count = 0u64;
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, ROW], false, &mut |_, v| {
+        match serde_json::from_slice::<FactRecord>(v) {
+            Ok(row) => count += u64::from(row.expired_at_us.is_none()),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(count), Err)
 }
 
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {

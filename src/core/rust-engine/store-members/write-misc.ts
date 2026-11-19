@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember and readFolderAccess; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
- * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
+import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, LiveMemberRow, MayActForVia, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -75,12 +75,6 @@ export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
 
 /**
- * The store keeps no notifier state (a resident notifier refuses to start on this engine, notifier/store.ts), so no
- * source has recorded coverage and search carries the freshness notice only when `sync.on_commit` is on.
- */
-export const notifierCoverageRecorded: StoreMember<[], boolean> = async () => false;
-
-/**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
  * among them, so a memoized health answer is reused only while nothing was written since it was read.
  */
@@ -94,26 +88,36 @@ export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
 export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
 
 /**
- * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that
- * state is raw SQL, which this engine refuses). A slug is restricted under none of them, so the answer is false, as
- * PGLite answers for a brain with no folder rules and no pending covers (engine-sql/access-control.ts).
+ * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug
+ * under a rule of its source or a pending prefix is restricted; the store has no row-level security, so the unreadable
+ * part is always false.
  */
-export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], boolean> = async () => false;
+export const isFolderRestricted: StoreMember<[sourceId: string, slug: string], boolean> = (brain, sourceId, slug) =>
+  storeCall({ member: 'isFolderRestricted', sourceId }, () => brain.isFolderRestricted(sourceId, slug));
 
-/** No source holds folder access state on this engine (see isFolderRestricted), so no revision is applied anywhere. */
-export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = async () => [];
+/** Each source with folder access state and its newest applied revision, by source id (gbrain-store `access_rules`). */
+export const listAppliedPolicyRevisions: StoreMember<[], AppliedPolicyRevision[]> = (brain) =>
+  storeCall({ member: 'listAppliedPolicyRevisions' }, () => brain.listAppliedPolicyRevisions());
+
+/**
+ * The rules whose readers name any of `readers` and the distinct pending prefixes, by source (gbrain-store
+ * `access_rules`). No row-level security hides them, so no `'!unreadable'` row appears.
+ */
+export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderAccessRows> = (brain, readers) =>
+  storeCall({ member: 'readFolderAccess' }, () => brain.readFolderAccess([...readers]));
+
+/**
+ * A stdio server's may_act_for is a config value, which the store keeps. The store keeps no access tokens and no OAuth
+ * clients, so a token or a client has no live row and permits nothing, as a revoked token or a deleted client does.
+ */
+export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
+  via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
 
 /**
  * The store keeps no access members (see listActiveAccessMembers), so no key names a live member through any binding:
  * the answer is null, as PGLite answers for a brain with no members. access/caller.ts reads that as unbound.
  */
 export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async () => null;
-
-/**
- * No folder rule or folder coverage exists on this engine (see isFolderRestricted), so no rule is satisfied and no
- * prefix reads as nobody; a seed of access_rules or access_pending_coverage refuses as raw SQL.
- */
-export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderAccessRows> = async () => ({ rules: [], coverage: [] });
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;
@@ -123,3 +127,12 @@ export const listAwaitingMemoryProposals: StoreMember<[limit: number], Array<Rec
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so upkeep purges nothing. */
 export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> = async () => 0;
+
+/**
+ * The store keeps no access members and no groups (see listActiveAccessMembers), so no audience entry names an enabled
+ * member or an existing group: each reads as unknown, as on a brain with none.
+ */
+export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], groupIds: readonly string[]], AudiencePrincipalRows> = async () => ({ members: [], groups: [] });
+
+/** The store keeps no access members (see listActiveAccessMembers), so no id names a member and the list is empty. */
+export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async () => [];

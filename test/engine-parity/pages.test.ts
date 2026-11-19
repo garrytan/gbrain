@@ -892,17 +892,40 @@ describe('engine parity: pages', () => {
     return { prefixedView, sampleSlugs };
   });
 
-  parityTest('bumpPageRetrievals records a retrieval that the samplers read and staleBias ranks behind a never-retrieved page', { methods: ['bumpPageRetrievals', 'listPrefixSampledPages', 'listCorpusSample'] }, async (engine) => {
+  parityTest('bumpLastRetrieved stamps pages once per 5 minutes and steers the stale bias',
+    { methods: ['bumpLastRetrieved', 'listPrefixSampledPages'] }, async (engine) => {
+      await seed(engine, [['wiki/vc/linked', NOTE], ['wiki/vc/quiet', NOTE], ['notes/a', NOTE]]);
+      await engine.addLink('notes/a', 'wiki/vc/linked', '', 'mentions');
+      const linked = (await engine.getPage('wiki/vc/linked'))!.id;
+      const sample = async (staleBias: boolean) => {
+        const [row] = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'], staleBias });
+        return { slug: row!.slug, retrieved: row!.last_retrieved_at };
+      };
+      const before = await sample(false);
+      expect(before).toEqual({ slug: 'wiki/vc/linked', retrieved: null });
+      await engine.bumpLastRetrieved([linked, 987654]);
+      const first = await sample(false);
+      expect(first.retrieved).toBeInstanceOf(Date);
+      await engine.bumpLastRetrieved([linked]);
+      const again = await sample(false);
+      const unmoved = again.retrieved!.getTime() === first.retrieved!.getTime();
+      expect(unmoved).toBe(true);
+      const biased = await sample(true);
+      expect(biased).toEqual({ slug: 'wiki/vc/quiet', retrieved: null });
+      return { before, stamped: first.slug, unmoved, biased };
+    });
+
+  parityTest('bumpLastRetrieved records a retrieval that the samplers and listCorpusSample read and staleBias ranks behind a never-retrieved page', { methods: ['bumpLastRetrieved', 'listPrefixSampledPages', 'listCorpusSample'] }, async (engine) => {
     await seed(engine, [['wiki/vc/a', NOTE], ['wiki/vc/b', NOTE]]);
     const a = Number((await engine.getPage('wiki/vc/a'))!.id);
-    await engine.bumpPageRetrievals([]);
-    await engine.bumpPageRetrievals([a, a, 987654]);
+    await engine.bumpLastRetrieved([]);
+    await engine.bumpLastRetrieved([a, a, 987654]);
     const plain = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'] });
     const stale = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'], staleBias: true });
     const first = plain[0]?.last_retrieved_at;
     expect(first).toBeInstanceOf(Date);
     // A second bump inside the 5-minute window leaves the recorded time alone.
-    await engine.bumpPageRetrievals([a]);
+    await engine.bumpLastRetrieved([a]);
     const again = (await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'] }))[0]?.last_retrieved_at;
     const sample = sorted((await engine.listCorpusSample({ n: 10, seed: 3 })).map((r) => `${r.slug}:${r.last_retrieved_at instanceof Date}`));
     const view = {

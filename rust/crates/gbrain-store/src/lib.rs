@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+pub mod access_rules;
 mod cascade;
 pub mod chunks;
 pub mod cli_reads;
@@ -20,6 +21,7 @@ pub mod journal;
 pub mod keys;
 pub mod kv;
 pub mod links;
+mod owner_only;
 mod page_columns;
 mod page_index;
 mod page_projection;
@@ -40,6 +42,7 @@ pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
+pub mod embedding_catalog;
 pub mod embeddings;
 pub mod entity_identities;
 pub mod eval_capture;

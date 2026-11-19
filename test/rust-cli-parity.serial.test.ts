@@ -179,6 +179,30 @@ function withAgeDecayCompared(args: string[], ref: unknown, rust: unknown): unkn
   });
 }
 
+/**
+ * The one intended difference in the embeddings readiness fix: a Rust brain names `gbrain embeddings enable`, which
+ * keeps the Rust engine, where a PGLite brain names `gbrain init --force ... --path <db>` (it would rebuild a Rust
+ * store as PGLite; test/rust-engine-readiness-fix.test.ts pins both). Where the Rust answer holds exactly that Rust
+ * form and the reference holds the PGLite form with the same model and width, the Rust answer takes the reference
+ * value; the datastore label ("the Rust brain at") is mapped the same way. Anything else still differs.
+ */
+function withEnableFixCompared(ref: unknown, rust: unknown): unknown {
+  if (typeof rust === 'string' && typeof ref === 'string') {
+    return rust.replace(/for the Rust brain at /g, 'for the PGLite brain at ') === ref ? ref : rust;
+  }
+  if (Array.isArray(rust) && Array.isArray(ref)) {
+    const rustForm = rust.length === 7 && rust.slice(0, 3).join(' ') === 'gbrain embeddings enable';
+    const refForm = ref.length === 9 && ref.slice(0, 3).join(' ') === 'gbrain init --force' && ref[7] === '--path';
+    if (rustForm && refForm && JSON.stringify(rust.slice(3)) === JSON.stringify(ref.slice(3, 7))) return ref;
+    return rust.map((item, i) => withEnableFixCompared(ref[i], item));
+  }
+  if (rust && ref && typeof rust === 'object' && typeof ref === 'object') {
+    const r = ref as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(rust as Record<string, unknown>).map(([k, v]) => [k, withEnableFixCompared(r[k], v)]));
+  }
+  return rust;
+}
+
 /** stdout parsed as JSON, or undefined when it is not JSON. */
 function parseJson(text: string): unknown {
   try { return JSON.parse(text); } catch { return undefined; }
@@ -333,7 +357,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       const refJson = parseJson(ref.stdout);
       const rustJson = parseJson(rust.stdout);
       const want = { exitCode: ref.exitCode, json: asJson(ref, refBrain, refJson) };
-      const got = { exitCode: rust.exitCode, json: asJson(rust, brains.rust, rustJson === undefined ? undefined : withAgeDecayCompared(args, refJson, rustJson)) };
+      const rustSide = asJson(rust, brains.rust, rustJson === undefined ? undefined : withAgeDecayCompared(args, refJson, rustJson));
+      const got = { exitCode: rust.exitCode, json: withEnableFixCompared(want.json, rustSide) };
       const equal = got.exitCode === want.exitCode && same(got.json, want.json);
       const notes = [useMirror ? 'vs mirror' : '', equal && ref.exitCode !== 0 ? `both exit ${ref.exitCode}` : '', equal ? '' : `exit ${rust.exitCode}`].filter(Boolean);
       table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: notes.join(', ') });
@@ -413,7 +438,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
+      // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
+      // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
+      untypedWarnings: ['canonical_content_writes', 'child_table_orphans',
         'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack

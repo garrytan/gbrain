@@ -33,6 +33,9 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
 import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
 import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -120,6 +123,52 @@ describe('engine parity: typed trust tier reads', () => {
       expect(plainEligible.find(r => r.slug === 'core/unknown')).toMatchObject({ trust_tier: 'unknown', write_origin: null });
       expect(slugs(narrow)).toEqual(['default:core/agent', 'default:core/agent-flagged']);
       return { all, scoped, excluded, floor, caller, agent, curated, suppressed, plainEligible, narrow };
+    },
+  );
+
+  parityTest(
+    'listCorePageRows under excludePrivate drops the pages of an owner-only source: every page while one exists with no schema version, only that source\'s and its concept lineage under the function form',
+    { methods: ['putPage', 'addLink', 'listCorePageRows'] },
+    async (engine, backend) => {
+      const core = (slug: string, type: 'note' | 'concept', sourceId: string) =>
+        engine.putPage(slug, { type, title: `T ${slug}`, compiled_truth: `body ${slug}`, timeline: '', frontmatter: { always_load: true } }, { sourceId });
+      const reads = async () => {
+        const slugs = async (spec: Parameters<BrainEngine['listCorePageRows']>[0]) =>
+          (await engine.listCorePageRows(spec)).map(r => `${r.source_id}:${r.slug}`);
+        return {
+          floor: await slugs({ excludePrivate: true, limit: 50 }),
+          caller: await slugs({ excludePrivate: true, forCaller: true, limit: 50 }),
+          unfiltered: await slugs({ limit: 50 }),
+        };
+      };
+      await createSource(engine, backend, 'work');
+      await core('core/open', 'note', 'default');
+      await core('core/from-chat', 'concept', 'default');
+      await core('core/work', 'note', 'work');
+      // Before any owner-only source exists every page is listed: the case is not vacuous.
+      const before = await reads();
+      const all = ['default:core/from-chat', 'default:core/open', 'work:core/work'];
+      expect(before).toEqual({ floor: all, caller: all, unfiltered: all });
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await core('core/chat', 'note', 'chat');
+      await core('core/vault', 'note', 'vault');
+      await engine.addLink('core/from-chat', 'core/chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+
+      // No schema version in context: while an owner-only source exists the non-owner policy hides every page.
+      const closed = await reads();
+      expect(closed).toEqual({
+        floor: [], caller: [],
+        unfiltered: ['chat:core/chat', ...all.slice(0, 2), 'vault:core/vault', 'work:core/work'],
+      });
+
+      // Schema version 320 or later: only the owner-only sources' pages, and the concept synthesized from one, are hidden.
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, reads);
+      const open = ['default:core/open', 'work:core/work'];
+      expect(fn).toEqual({ floor: open, caller: open, unfiltered: closed.unfiltered });
+      return { before, closed, fn };
     },
   );
 
@@ -318,6 +367,64 @@ describe('engine parity: typed trust tier reads', () => {
       expect(hidden.map(r => r.source_id)).toEqual(['alpha', 'beta']);
       expect(missing).toEqual([]);
       return { all, one, granted, hidden, missing };
+    },
+  );
+
+  parityTest(
+    'listValidTimeIdentities and pickValidTimeEdition apply the page policy to an owner-only source: every page while one exists with no schema version, only that source\'s and its concept lineage under the function form',
+    { methods: ['putPage', 'addLink', 'getPage', 'listValidTimeIdentities', 'pickValidTimeEdition'] },
+    async (engine, backend) => {
+      const put = (slug: string, type: 'note' | 'concept', sourceId: string) =>
+        engine.putPage(slug, { type, title: slug, compiled_truth: `body ${slug}`, timeline: '', frontmatter: { valid_from: '2026-01-01' } }, { sourceId });
+      const reads = async (pickSources: string[]) => {
+        const identities = async (slug: string, excludePrivate: boolean) =>
+          (await engine.listValidTimeIdentities({ slug, sourceId: null, sourceIds: null, excludePrivate })).map(r => `${r.source_id}:${r.world ? 'world' : 'hidden'}`);
+        const visible = async (slug: string, sourceId: string) => {
+          const page = (await engine.getPage(slug, { sourceId }))!;
+          const row = await engine.pickValidTimeEdition({ pageId: page.id, asOf: '2026-07-01', excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 });
+          return `${sourceId}:${slug}:${row?.visible}`;
+        };
+        return {
+          shared: await identities('vt/shared', true),
+          sharedUnfiltered: await identities('vt/shared', false),
+          synth: await identities('vt/synth', true),
+          picks: [...await Promise.all(pickSources.map(src => visible('vt/shared', src))), await visible('vt/synth', 'default')],
+        };
+      };
+      await createSource(engine, backend, 'work');
+      await put('vt/shared', 'note', 'default');
+      await put('vt/shared', 'note', 'work');
+      await put('vt/synth', 'concept', 'default');
+      // Before any owner-only source exists every page is listed and visible: the case is not vacuous.
+      const before = await reads(['default', 'work']);
+      expect(before).toEqual({
+        shared: ['default:world', 'work:world'], sharedUnfiltered: ['default:world', 'work:world'], synth: ['default:world'],
+        picks: ['default:vt/shared:true', 'work:vt/shared:true', 'default:vt/synth:true'],
+      });
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await put('vt/shared', 'note', 'chat');
+      await put('vt/shared', 'note', 'vault');
+      await put('vt/synth', 'note', 'chat');
+      await engine.addLink('vt/synth', 'vt/synth', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+      const sources = ['default', 'work', 'chat', 'vault'];
+
+      const closed = await reads(sources);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, () => reads(sources));
+      // No schema version in context: while an owner-only source exists the non-owner policy hides every page, and the
+      // `world` mark of an unfiltered listing is false for every page.
+      expect(closed).toEqual({
+        shared: [], sharedUnfiltered: ['chat:hidden', 'default:hidden', 'vault:hidden', 'work:hidden'], synth: [],
+        picks: ['default:vt/shared:false', 'work:vt/shared:false', 'chat:vt/shared:false', 'vault:vt/shared:false', 'default:vt/synth:false'],
+      });
+      // Schema version 320 or later: only the owner-only sources' pages, and the concept synthesized from one, are hidden.
+      expect(fn).toEqual({
+        shared: ['default:world', 'work:world'], sharedUnfiltered: ['chat:hidden', 'default:world', 'vault:hidden', 'work:world'], synth: [],
+        picks: ['default:vt/shared:true', 'work:vt/shared:true', 'chat:vt/shared:false', 'vault:vt/shared:false', 'default:vt/synth:false'],
+      });
+      return { before, closed, fn };
     },
   );
 

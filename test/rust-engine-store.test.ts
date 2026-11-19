@@ -8,6 +8,7 @@
  * no addon.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,10 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { readSourceFreshness } from '../src/core/notifier/status.ts';
+import { startResidentNotifier } from '../src/core/notifier/resident.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { getMember, listMembers } from '../src/core/access/members.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -261,8 +266,8 @@ describe('Rust engine on the store', () => {
     const [row] = await engine.getRawData('notes/a');
     expect(row!.data).toEqual({ keep: 1, at: '1970-01-01T00:00:00.000Z' });
     expect(row!.fetched_at).toBeInstanceOf(Date);
-    // excludePrivate applies the page policy: a public page keeps its raw data.
-    expect((await engine.getRawData('notes/a', undefined, { excludePrivate: true })).map((r) => r.data)).toEqual([row!.data]);
+    // excludePrivate is served for a caller with no reader grants: a page that is not private keeps its row.
+    expect(await engine.getRawData('notes/a', undefined, { excludePrivate: true })).toEqual([row!]);
     // A size past 2^31 crosses N-API as a double and comes back whole.
     const spec = { page_id: created.id, filename: 'a.png', storage_path: 'f/a.png', content_hash: 'h', size_bytes: 5_000_000_000 };
     expect((await engine.upsertFile(spec)).created).toBe(true);
@@ -276,6 +281,61 @@ describe('Rust engine on the store', () => {
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
     const { engine } = await open();
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+  });
+
+  withAddon('search on a Rust brain carries the freshness notice once the brain opts in, and none before', async () => {
+    const { engine } = await open();
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    const unwatched = { source_id: 'default', state: 'not_monitored' as const, observed_head: null, observed_at: null, mode: null, held_count: 0 };
+    try {
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([]);
+      await engine.setConfig('sync.on_commit', 'true');
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([unwatched]);
+      expect(await readSourceFreshness(engine, {})).toEqual([unwatched]);
+    } finally { console.error = original; }
+    expect(errors.filter(line => line.includes('[notifier]'))).toEqual([]);
+  });
+
+  withAddon('a resident on a Rust brain starts the commit notifier, owns the host lease and lists its sources', async () => {
+    const { engine } = await open();
+    const repo = mkdtempSync(join(tmpdir(), 'rust-notifier-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      await engine.openStore('test').brain.upsertSource({ id: 'watched', name: 'watched', config: {}, local_path: repo });
+      const host = '00000000-0000-4000-8000-00000000b001';
+      const lines: string[] = [];
+      const notifier = startResidentNotifier(engine, {
+        resident: 'serve', log: line => lines.push(line), hostId: host, env: { GBRAIN_NOTIFIER_CLASSIC_SOURCES: 'watched' },
+        // The test drives the pass itself; no background tick, poll or watcher.
+        setTimeout: () => 'timer', clearTimeout: () => {}, setInterval: () => 'interval', clearInterval: () => {}, watch: () => null,
+      });
+      expect(notifier).not.toBeNull();
+      try {
+        await notifier!.tick();
+        expect(notifier!.owner).toBe(true);
+        expect(notifier!.snapshot().sources.map(s => s.source_id)).toEqual(['watched']);
+        // A second resident on the host sees this one's live lease.
+        const other = await engine.claimNotifierLease({ hostId: host, ownerId: 'another-resident', kind: 'jobs-worker', pid: 2, leaseMs: 60_000 });
+        expect(other).toMatchObject({ owner: false, holder: { fence: 1, resident_kind: 'serve', pid: process.pid, live: true } });
+      } finally { await notifier!.stop(); }
+      expect(lines.filter(line => line.includes(' off ('))).toEqual([]);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  withAddon('a withdrawal on a Rust brain moves the hot-memory withdrawal watermark of its source only', async () => {
+    const { engine } = await open();
+    await engine.openStore('test').brain.upsertSource({ id: 'work', name: 'work', config: {} });
+    const before = await engine.readFactCacheWatermark('default');
+    const otherBefore = await engine.readFactCacheWatermark('work');
+    await engine.insertFactWithdrawal('default', 'private', 'claim one', 'people/x', '2026-03-09T10:00:00.000Z');
+    const after = await engine.readFactCacheWatermark('default');
+    // facts/meta-hook.ts keys the hot-memory cache on these fields; a watermark that stays put serves a forgotten fact.
+    expect(after).not.toEqual(before);
+    expect(after.withdrawals).toBe(before.withdrawals + 1);
+    expect(after.latest_withdrawn_at).toBe('2026-03-09T10:00:00.000000Z');
+    expect(await engine.readFactCacheWatermark('work')).toEqual(otherBefore);
   });
 });
 
@@ -364,6 +424,67 @@ describe('Rust store members', () => {
     expect(await code(() => count(brain, ['default'], 2, { ...args, labelLine: line('Da.e') }))).toBe('engine_capability_missing');
     for (const contextLike of ['seg%', '%se_g%', '%a%b%', '%a\\b%']) expect(await code(() => count(brain, ['default'], 2, { ...args, contextLike }))).toBe('engine_capability_missing');
     expect(sent).toHaveLength(2);
+  });
+});
+
+// MCP dispatch decides the caller's access before any work (access/caller.ts). On a Rust brain every read it makes must
+// be a typed member: a raw read the engine refuses is swallowed as "permits nothing" and reads as a false refusal.
+describe('MCP dispatch caller access on a Rust brain', () => {
+  const stdio = (header?: string) => ({ remote: true, transport: 'stdio', sourceId: 'default', ...(header ? { onBehalfOf: { header } } : {}) }) as never;
+  const dispatch = async (engine: RustEngine, op: string, opts: never) => {
+    const out = await dispatchToolCall(engine as never, op, {}, opts);
+    const text = out.content.map(c => c.text).join('\n');
+    let code: unknown;
+    try { code = (JSON.parse(text) as { code?: unknown }).code; } catch { /* a result, not an error */ }
+    return { isError: out.isError === true, code };
+  };
+
+  withAddon('a stdio audience its config mcp.stdio_may_act_for lists passes caller access, and one it does not list is refused', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.setConfig('mcp.stdio_may_act_for', 'guest');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: false, code: undefined });
+    expect(await dispatch(engine, 'whoami', stdio('guest'))).toEqual({ isError: false, code: undefined });
+    // Leak case: the list bounds the audience on Rust as on PGLite; an unlisted entry reads nothing.
+    await engine.setConfig('mcp.stdio_may_act_for', 'member:alice-example');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
+    await engine.unsetConfig('mcp.stdio_may_act_for');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
+    expect(await dispatch(engine, 'get_stats', stdio())).toEqual({ isError: false, code: undefined });
+  });
+
+  withAddon('an audience of members and groups is checked with no raw read: the store has none, so each entry is unknown', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.setConfig('mcp.stdio_may_act_for', 'member:alice-example,group:team-a');
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    for (const header of ['member:alice-example', 'group:team-a']) {
+      expect(await dispatch(engine, 'get_stats', stdio(header))).toEqual({ isError: true, code: 'on_behalf_of_unknown_member' });
+    }
+    expect(raw).toEqual([]);
+  });
+});
+
+// `gbrain access member add|list` and `access owner set` read members first (access/members.ts getMember, listMembers).
+// On a Rust brain that read is a typed member, so it answers "no members" instead of stopping on raw SQL.
+describe('access member reads on a Rust brain', () => {
+  withAddon('getMember and listMembers read no raw SQL and find no member: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    expect(await getMember(engine as never, 'alice-example')).toBeNull();
+    expect(await listMembers(engine as never)).toEqual([]);
+    expect(await listMembers(engine as never, { includeRemoved: true })).toEqual([]);
+    expect(raw).toEqual([]);
   });
 });
 

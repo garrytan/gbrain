@@ -56,7 +56,7 @@ their own page (`page_hidden`; see [salience.md](salience.md#private-pages-exclu
 | Snapshot: `visibility` (a derived page defaults to private, others to world) must be `world`, `pinned_question` must not be true, and with `honorAliases` an absent `visibility` with an `access` or `confidentiality` alias (`PRIVACY_ALIASES`, 777; trimmed of edge space, lowercased) is private. | `privateSnapshotFilterFragment`, 707; `privacyAliasSql`, 791; `honorAliases`, 816; `derivedPageSql`, 68 |
 | Derived origin: an atom whose `source_slug` page is explicitly private; a derived page with an input whose `visibility` (atom default private) is not world, or whose input origin is explicitly private; a `life-chronicle` event whose `event.depth` is missing, has no page, or names a private page (fail closed). | `derivedOriginPrivateSql`, 733 (the `gbrain_concept_inputs_private` form from `CONCEPT_INPUTS_PRIVATE_SINCE` = 311, `src/core/schema-migrations/v311-concept-inputs-private.ts:23`); `chronicleOriginNotVisibleSql`, 759 |
 | Declared lineage: any `derived_from` slug (string or array, `.md` stripped, nulls skipped) whose page is explicitly private. | `declaredLineagePrivateSql`, 687 |
-| Owner-only rule (non-owner callers only): while a source is owner-only (`config.kind` is `imessage`, or `config.owner_only` is `true`), the lineage form hides a fact held in that source, a fact whose provenance, entity or holding page is in that source, and a concept or question page with a `concept-provenance` / `synthesized_from` input page there. The closed form hides every row. With no owner-only source, nothing is hidden. | `ownerOnlyAllowedSql`, `src/core/access/owner-only.ts` (`ownerOnlyPageSql`, `ownerOnlyFactSql`); `gbrain_owner_only_lineage`, `src/core/schema-migrations/v320-owner-only-lineage.ts` |
+| Owner-only test (any caller but the owner): in the `closed` form a row is hidden while any source is owner-only; in the `fn` form a row is hidden when its own source is owner-only. The provenance, entity and holding pages pass the page form of the same test (see [page-visibility.md](page-visibility.md#differences-from-pglite)). The member sends the form as `ownerOnly` (`ownerOnlyFormIn`). | `ownerOnlyFactAllowedSql`, `ownerOnlyAllowedSql`; `src/core/access/owner-only.ts` |
 
 The member sends `{ honorAliases, entityPrivacy }` when the policy text PGLite would render
 now equals its no-caller rendering (`withoutCallerAccess`, 443), the concept-input branch
@@ -90,13 +90,6 @@ the identity's principals pass the member-access part (`access_readers`, the twi
 migration v282: trimmed of edge spaces and ASCII lower-cased, a bare id read as `member:<id>`, a malformed value read
 as `!nobody`), and a page of a granted source that is not a pinned question pass the privacy part
 (`orPrivateReadableSource`). The fact policy sends them as described above.
-
-The owner-only rule rides on both policies as `ownerOnly`. The member reads it from the rendered text
-(`ownerOnlyFormOf`): `lineage` when the text holds the `gbrain_owner_only_lineage` conjunct (a recorded schema version of
-at least `OWNER_ONLY_LINEAGE_SINCE` = 320, which the CLI's connect gate records on a Rust brain too), `closed` when it
-holds the closed `EXISTS` form, and none for the owner, whose rendering has no conjunct. The store's lineage form
-follows the source and the concept inputs only: `gbrain_owner_only_lineage` also walks `derivation_inputs`, which only
-raw SQL writes, so a Rust brain has none to walk.
 
 Aliases and renames: each origin slug of the origin rule (atom `source_slug`, concept input
 `source_slug` under the input's source, chronicle `event.depth`, each `derived_from` slug) also
@@ -215,6 +208,7 @@ reads refuse their `hasAttempts: true` form.
 | `countFactRelinkOutcomes` | refused | the `fact_relink_attempts` table |
 | `listUnlinkedConversationSlugs` | served for `hasAttempts: false` | `hasAttempts: true` reads the `fact_relink_attempts` table |
 | `countFactEmbeddingCoverage` | served | |
+| `countStaleFactEmbeddings` | served | the same eligibility as `countFactEmbeddingCoverage`; `chars` counts code points |
 
 - With no attempts table nothing was tried or paid, so the served unlinked reads return
   `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,

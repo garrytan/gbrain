@@ -8,9 +8,10 @@ import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from './engine-sql/access-control.ts';
+import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, LiveMemberRow, MayActForVia, MemberBindingVia } from './engine-sql/access-control.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
+import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -31,7 +32,7 @@ import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOpt
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import type { GeneratedPageRow, PageCollapseFactRow } from './engine-sql/search-reads.ts';
-import type { OnboardSignal } from './engine-sql/health.ts';
+import type { BrainMaturityRow, OnboardSignal } from './engine-sql/health.ts';
 import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
@@ -52,11 +53,15 @@ import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
-import type { CallerPageAccessRow, PagePolicyPart } from './engine-sql/page-visibility.ts';
+import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type {
+  Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
+  PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
+} from './engine-sql/notifier.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
@@ -1358,6 +1363,82 @@ export interface BrainEngine {
    */
   listSourceLocalPaths(): Promise<string[]>;
 
+  /** How many sources that are not archived have a non-empty local path (the readiness sync probe). */
+  countRepoBoundSources(): Promise<number>;
+
+  /**
+   * Claims or renews this host's commit notifier lease (SQL and contract in engine-sql/notifier.ts): the fencing token
+   * when the caller owns it (a takeover bumps it), else the current holder. notifier/store.ts claimLease.
+   */
+  claimNotifierLease(l: NotifierLeaseClaimInput): Promise<NotifierLeaseClaim>;
+
+  /** This host's commit notifier lease row (owner, fence, kind, pid, expiry, live), or null when it has none. notifier/store.ts readLease. */
+  readNotifierLease(hostId: string): Promise<NotifierLeaseHolder | null>;
+
+  /** The commit notifier's fencing check: the host's lease is still `ownerId`'s, with `fence`, and unexpired. notifier/store.ts holdsLease. */
+  holdsNotifierLease(hostId: string, ownerId: string, fence: number): Promise<boolean>;
+
+  /** Expires the host's commit notifier lease now, only while `ownerId` holds it (a clean stop). notifier/store.ts releaseLease. */
+  releaseNotifierLease(hostId: string, ownerId: string): Promise<void>;
+
+  /** Every source that is not archived, in id order, as the commit notifier's host source list reads it (notifier/resident.ts). */
+  listNotifierHostSourceRows(): Promise<NotifierHostSourceRow[]>;
+
+  /** The commit notifier's per-source rows of `sourceIds` (every row when null), in source id order. notifier/store.ts readNotifierSources. */
+  readNotifierSources(sourceIds: string[] | null): Promise<NotifierSourceRow[]>;
+
+  /** One commit notifier state transition of a source; nothing when the source does not exist. notifier/store.ts writeState. */
+  writeNotifierState(sourceId: string, patch: NotifierStatePatch): Promise<void>;
+
+  /** A source's commit notifier coverage record (observed HEAD, detection mode, owner). notifier/store.ts writeCoverage. */
+  writeNotifierCoverage(sourceId: string, coverage: NotifierCoverage): Promise<void>;
+
+  /** Records the host that advanced a classic source; writes nothing when it did not change. notifier/store.ts recordSyncerHost. */
+  recordNotifierSyncerHost(sourceId: string, hostId: string): Promise<void>;
+
+  /**
+   * Each source of `sourceIds` (every source when null) that is not archived, in id order, at most 200, with its notifier
+   * row, whether the owner host's lease is live and how many wanted markers are still due (notifier/status.ts).
+   */
+  readNotifierStatusRows(sourceIds: string[] | null): Promise<NotifierStatusRow[]>;
+
+  /** Whether a resident has recorded commit notifier coverage for any source (notifier/status.ts, the freshness notice). */
+  hasNotifierCoverage(): Promise<boolean>;
+
+  /**
+   * Records (or re-records) a wanted marker: what a source should reach, for one intent class. A re-record bumps
+   * generation and keeps first_due_at unless the source was re-created. Null when the source does not exist.
+   * notifier/store.ts upsertMarker.
+   */
+  upsertWantedMarker(marker: WantedMarkerInput): Promise<WantedMarker | null>;
+
+  /** Names the queued job that drains a wanted marker, only while the marker is still at `generation`. notifier/store.ts attachMarkerJob. */
+  attachWantedMarkerJob(sourceId: string, intent: MarkerIntent, generation: number, jobId: number): Promise<void>;
+
+  /** The wanted markers of `sourceIds` (every marker when null), oldest first_due_at first, at most 1000. notifier/store.ts readMarkers. */
+  readWantedMarkers(sourceIds: string[] | null): Promise<WantedMarker[]>;
+
+  /**
+   * The wanted markers that still ask for work: pull and full markers, and freshness markers whose wanted_head is null or
+   * differs from the source's last_commit. Oldest first_due_at first, at most 1000. notifier/store.ts readDueMarkers.
+   */
+  readDueWantedMarkers(sourceIds: string[] | null): Promise<WantedMarker[]>;
+
+  /** Deletes the freshness and pull markers of `sourceIds` that name the head the source already reached. notifier/store.ts pruneSatisfiedMarkers. */
+  pruneSatisfiedWantedMarkers(sourceIds: string[]): Promise<void>;
+
+  /** Deletes a wanted marker only at `generation`; true when a row went. notifier/store.ts clearMarker. */
+  clearWantedMarker(sourceId: string, intent: MarkerIntent, generation: number): Promise<boolean>;
+
+  /**
+   * Deletes the source's freshness marker at `generation` when a run satisfied it (no head named, the head last_commit
+   * holds, or `checkoutHead` equal to last_commit). notifier/store.ts settleMarkers.
+   */
+  settleFreshnessMarker(sourceId: string, generation: number, checkoutHead: string | null): Promise<void>;
+
+  /** The source's wanted markers as the sync status notifier block lists them, oldest first. notifier/status.ts readNotifierBlock. */
+  listSourceWantedMarkers(sourceId: string): Promise<PendingWantedMarker[]>;
+
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
   /** The registered path, last commit and config of a source that is not archived, or null (plain-directory sync). */
@@ -1426,12 +1507,6 @@ export interface BrainEngine {
   listActiveAccessMembers(): Promise<string[]>;
   /** Every legacy access token (`auth list`), revoked ones too, newest first. */
   listAccessTokens(): Promise<AccessTokenRow[]>;
-  /**
-   * Whether a resident notifier recorded coverage for some source (freshnessReported). A schema from before the
-   * notifier tables rejects with the missing-table error its caller catches; a Rust brain keeps no notifier state and
-   * answers false.
-   */
-  notifierCoverageRecorded(): Promise<boolean>;
   /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
   readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
   /** A resumable op's checkpoint parent with `keys` (sorted by the caller) as its completed keys, stamped now (op-checkpoint.ts recordCompleted). */
@@ -1501,11 +1576,10 @@ export interface BrainEngine {
   listCorpusSample(opts: CorpusSampleOpts): Promise<DomainBankRow[]>;
 
   /**
-   * Records now as the retrieval time of each page id that names a page (last-retrieved.ts bumpLastRetrievedAt),
-   * unless its record is under 5 minutes old. The samplers above read it as `last_retrieved_at`. An empty list
-   * writes nothing.
+   * Sets `last_retrieved_at` to now for each page id that names a page and was not bumped in the
+   * last 5 minutes (`last-retrieved.ts`, the LSD stale signal). Ids of pages that do not exist are skipped.
    */
-  bumpPageRetrievals(pageIds: number[]): Promise<void>;
+  bumpLastRetrieved(pageIds: number[]): Promise<void>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
@@ -1570,6 +1644,10 @@ export interface BrainEngine {
   pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
   /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** Live pages brain-wide, or null when unreadable (backup coverage; SQL in engine-sql/health.ts). */
+  countBrainLivePages(): Promise<number | null>;
+  /** Live pages, active facts and the earliest source or page timestamp, brain-wide (backup coverage; engine-sql/health.ts). */
+  readBrainMaturity(): Promise<BrainMaturityRow | null>;
   /** Graph counts and endpoint reads of doctor, orphans, graph-query, the entity card, link preparation and search (SQL and contracts in engine-sql/link-reads.ts). */
   inboundLinkCoverage(opts?: { sourceIds?: string[] }): Promise<{ livePages: number; linkedPages: number }>;
   listJunkEntityHubs(opts: { edgeThreshold: number; maxChunks: number; limit: number }): Promise<JunkEntityHubRow[]>;
@@ -3116,6 +3194,8 @@ export interface BrainEngine {
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
   /** For each (source_id, slug) that names a page row, whether a live row of it passes the current caller's policy; in no set order. */
   readCallerPageAccess(pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]>;
+  /** The opening read of a remote page write's visibility check: labelled-only members, what a reader identity could open on the page the empty-identity policy hides, owner-only sources. */
+  readWriteVisibilityProbe(sourceId: string, slug: string): Promise<WriteVisibilityProbe | undefined>;
   /** A stored writer's slug fence now (an OAuth client's bound prefixes, a local writer's grant ceiling), or null. */
   readWriterSlugFence(principal: { kind: string; id: string }): Promise<unknown>;
   /** A live page's stored body size (segmented `body_bytes`, else the UTF-8 bytes of its body columns), or null (engine-sql/large-page.ts). */
@@ -3314,6 +3394,19 @@ export interface BrainEngine {
   listUnlinkedConversationSlugs(opts: { sourceId: string; auditSources: string[]; windowPerSource: number; fix: FactsDoctorSql.ConversationFixKind; hasAttempts: boolean }): Promise<Array<{ slug: string }>>;
   /** fact_take_vectors: per source, the embeddable facts with no vector, with a vector not current for `model` and `dims` or the text, and the partially embedded ones. */
   countFactEmbeddingCoverage(opts: { sourceId?: string | null; model: string; dims: number }): Promise<FactsDoctorSql.FactEmbeddingCoverageRow[]>;
+  /** The embeddable facts whose vector is not current for `model` and `dims` or the text, over every source or `sourceId`, with the sum of their lengths in characters. */
+  countStaleFactEmbeddings(opts: { model: string; dims: number; sourceId?: string | null }): Promise<{ count: number; chars: number }>;
+
+  // Embedding catalog (engine-sql/embedding-catalog.ts): what the embedding commands read about the vector columns. Postgres
+  // and PGLite read their catalog; the Rust engine reads its per-vector records (an empty store has no column yet).
+  /** A `content_chunks` vector column: whether it exists and its width (null when the type is not a vector type). */
+  readChunkVectorColumn(column: string): Promise<EmbeddingCatalogSql.ChunkVectorColumn>;
+  /** The stored embedding identity (model and width of `content_chunks.embedding`); null when the brain has no vector column. Postgres and PGLite throw when the width is unknown. */
+  readEmbeddingIdentity(): Promise<EmbeddingCatalogSql.EmbeddingIdentity | null>;
+  /** The tables that carry an `embedding` vector column, in PRIMARY_EMBEDDING_TABLES order. */
+  listEmbeddingStores(): Promise<EmbeddingCatalogSql.EmbeddingStore[]>;
+  /** Whether any row of `store` holds a vector. */
+  hasStoredVectors(store: EmbeddingCatalogSql.EmbeddingStore): Promise<boolean>;
 
   // Facts relink attempts (engine-sql/fact-relink-attempts.ts): the `fact_relink_attempts` writes and reads relink ran through executeRaw.
   /** Records a fact's latest relink attempt (`attempted_at` now), replacing its stored one; `keepModelAndRun` keeps the stored `model` and `run_id` on a conflict. */
@@ -3577,11 +3670,19 @@ export interface BrainEngine {
   readLiveMember(via: MemberBindingVia, key: string): Promise<LiveMemberRow | null>;
 
   /**
-   * The applied folder rules any of `readers` meets (none read when `readers` is empty) and every folder prefix that
-   * reads as nobody, `!unreadable` included when this database role cannot read the folder access tables. Runs through
-   * this engine's executeRaw; a failure throws (access/caller.ts folderAccessForAll counts it as fail closed).
+   * The stored may_act_for of one caller (`via` names where it is stored; `key` is the token id, the client id or the
+   * config key): a live token's or client's list, null when the row is revoked, deleted or absent; the stdio config text as stored.
    */
+  readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null>;
+
+  /** Which of `memberIds` are enabled members (with their groups) and which of `groupIds` exist; an empty list reads nothing. */
+  readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows>;
+
+  /** Applied folder rules whose readers name any of `readers` (none when empty) and every pending prefix; throws on failure. */
   readFolderAccess(readers: readonly string[]): Promise<FolderAccessRows>;
+
+  /** Access member rows with their groups: one by exact id (any status), or all by id, removed ones only when asked. */
+  readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
@@ -3902,6 +4003,8 @@ export interface BrainEngine {
   readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
   /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
   readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** How many jobs wait; `excludeFactsAbsorb` leaves out the `facts-absorb` jobs PGLite's facts drain owns. */
+  countWaitingJobs(excludeFactsAbsorb: boolean): Promise<number>;
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 
@@ -4217,6 +4320,10 @@ export interface BrainEngine {
   hasFactWithdrawalForSubject(sourceId: string, subject: string): Promise<boolean>;
   /** The source's withdrawal keys by visibility, fingerprint and subject, at most `limit`. */
   listFactWithdrawalKeys(sourceId: string, limit: number): Promise<TrustWithdrawalsSql.WithdrawalKeyRow[]>;
+  /** The hot-memory cache watermark of the source: withdrawal count, newest withdrawal (UTC ISO) and the folder access rules digest. It changes on any forget or rulebook install. */
+  readFactCacheWatermark(sourceId: string): Promise<TrustWithdrawalsSql.FactCacheWatermarkRow>;
+  /** The trust policy generation as decimal text; it moves whenever cached proactive content could turn wrong. Throws when it cannot be read. */
+  readTrustGeneration(): Promise<string>;
 
   // Open loops (engine-sql/open-loops.ts). Each runs the statement loops-store.ts ran through executeRaw and returns
   // the raw rows; loops-store.ts normalizes them.

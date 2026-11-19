@@ -32,6 +32,9 @@
     },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "bumpLastRetrieved#default": {
+      "raw": 1
+    },
     "clearCodeTraversalCache#allSources": {
       "raw": 1
     },
@@ -46,6 +49,9 @@
     },
     "countPagesBy#grouped+since+remote": {},
     "countPagesBy#totals": {},
+    "countRepoBoundSources#default": {
+      "raw": 1
+    },
     "countSourcePages#default": {
       "raw": 1
     },

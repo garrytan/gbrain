@@ -11,13 +11,14 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { hostIdFor } from '../persistence/identity.ts';
 import { missingTable, type DetectionMode, type NotifierState } from './store.ts';
+import type { NotifierStatusRow, PendingWantedMarker } from '../engine-sql/notifier.ts';
 import { residentNotifier } from './resident.ts';
 import { parseOnCommit } from '../commit-notifier.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
 import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readLiveDrainLease, type DrainHolder } from '../persistence/sync-lease.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw' | 'kind'>;
-type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig' | 'notifierCoverageRecorded'>;
+type Exec = Pick<BrainEngine, 'readNotifierStatusRows' | 'kind'>;
+type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig' | 'hasNotifierCoverage'>;
 
 export type FreshnessState = 'current' | 'behind' | 'syncing' | 'unknown' | 'not_monitored';
 
@@ -59,27 +60,13 @@ export interface NotifierBlock {
   fix: Action | null;
 }
 
-interface Row {
-  id: string; last_commit: string | null; state: NotifierState | null; reason: string | null; first_due_at: unknown; attempts: unknown;
-  next_retry_at: unknown; last_error_code: string | null; last_error: string | null; last_error_at: unknown; trace_path: string | null;
-  observed_head: string | null; observed_at: unknown; detection_mode: DetectionMode | null; owner_host_id: string | null; owner_kind: string | null;
-  owner_pid: unknown; owner_seen_at: unknown; lease_live: unknown; lease_expires_at: unknown; due_markers: unknown;
-}
+type Row = NotifierStatusRow;
 
 const iso = (v: unknown): string | null => v === null || v === undefined ? null : v instanceof Date ? v.toISOString() : new Date(String(v)).toISOString();
 const truthy = (v: unknown) => v === true || v === 't' || v === 1;
 
 async function readRows(engine: Exec, sourceIds: string[] | null): Promise<Row[]> {
-  return engine.executeRaw<Row>(
-    `SELECT s.id, s.last_commit, n.state, n.reason, n.first_due_at, n.attempts, n.next_retry_at, n.last_error_code, n.last_error, n.last_error_at,
-            n.trace_path, n.observed_head, n.observed_at, n.detection_mode, n.owner_host_id, n.owner_kind, n.owner_pid, n.owner_seen_at,
-            EXISTS (SELECT 1 FROM sync_notifier_leases l WHERE l.host_id = n.owner_host_id AND l.expires_at > now()) AS lease_live,
-            (SELECT l.expires_at FROM sync_notifier_leases l WHERE l.host_id = n.owner_host_id) AS lease_expires_at,
-            (SELECT count(*) FROM sync_wanted_markers m WHERE m.source_id = s.id
-               AND (m.intent <> 'freshness' OR m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit)) AS due_markers
-       FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id
-      WHERE NOT s.archived AND ($1::text[] IS NULL OR s.id = ANY($1::text[]))
-      ORDER BY s.id LIMIT 200`, [sourceIds]);
+  return engine.readNotifierStatusRows(sourceIds);
 }
 
 function ownerLive(engine: Exec, row: Pick<Row, 'owner_host_id' | 'owner_pid' | 'lease_live'>): boolean {
@@ -105,7 +92,7 @@ function freshnessOf(engine: Exec, row: Row, held: number): SourceFreshness {
  * once the notice is on, a source nobody watches still reads not_monitored.
  */
 async function freshnessReported(engine: FreshnessExec): Promise<boolean> {
-  const [flag, covered] = await Promise.all([engine.getConfig(SYNC_ON_COMMIT_KEY), engine.notifierCoverageRecorded()]);
+  const [flag, covered] = await Promise.all([engine.getConfig(SYNC_ON_COMMIT_KEY), engine.hasNotifierCoverage()]);
   return parseOnCommit(flag) || covered;
 }
 
@@ -137,10 +124,10 @@ const syncNowFix = (sourceId: string, why: string): Action => ({ argv: ['gbrain'
  */
 export async function readNotifierBlock(engine: BrainEngine, sourceId: string, opts: { remote?: boolean } = {}): Promise<NotifierBlock | null> {
   let row: Row | undefined;
-  let markers: Array<{ intent: string; wanted_head: string | null; first_due_at: unknown; requested_by: string }> = [];
+  let markers: PendingWantedMarker[] = [];
   try {
     [row] = await readRows(engine, [sourceId]);
-    markers = await engine.executeRaw('SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent', [sourceId]);
+    markers = await engine.listSourceWantedMarkers(sourceId);
   } catch (error) { if (missingTable(error)) return null; throw error; }
   if (!row) return null;
   const remote = opts.remote === true;
@@ -170,7 +157,7 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
     next_retry_at: iso(row.next_retry_at),
     last_error: row.last_error_code || row.last_error ? { code: row.last_error_code, message: row.last_error, at: iso(row.last_error_at), ...(remote ? {} : { trace_path: row.trace_path }) } : null,
     observed_head: row.observed_head, observed_at: iso(row.observed_at),
-    pending_markers: markers.map(m => ({ intent: m.intent, wanted_head: m.wanted_head, first_due_at: iso(m.first_due_at)!, requested_by: m.requested_by })),
+    pending_markers: markers.map(m => ({ intent: m.intent, wanted_head: m.wanted_head, first_due_at: m.first_due_at, requested_by: m.requested_by })),
     stalled, drain_holder: remote ? publicDrainHolder(holder) : holder, recorded_resident: recorded, fix,
   };
 }

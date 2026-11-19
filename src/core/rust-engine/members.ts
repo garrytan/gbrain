@@ -56,6 +56,7 @@ export const RUST_ENGINE_MEMBERS = {
   readLivePageBody: 'pages',
   readPageHiddenFromCaller: 'pages',
   readCallerPageAccess: 'pages',
+  readWriteVisibilityProbe: 'pages',
   readStoredBodyBytes: 'pages',
   readAdmittedPageRefs: 'pages',
   readPageSynopses: 'pages',
@@ -81,12 +82,12 @@ export const RUST_ENGINE_MEMBERS = {
   listAllPageRefs: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
+  bumpLastRetrieved: 'pages',
   // schema detect --fields (engine-sql/field-usage.ts; rust/docs/store/field-usage.md).
   readFieldUsageSamples: 'pages',
   getPageTimestamps: 'pages',
   getEffectiveDates: 'pages',
   getContentFlagsByPageIds: 'pages',
-  bumpPageRetrievals: 'pages',
   getUnverifiedExtractionPageIds: 'pages',
   countStalePagesForExtraction: 'pages',
   listStalePagesForExtraction: 'pages',
@@ -115,6 +116,9 @@ export const RUST_ENGINE_MEMBERS = {
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',
+  countRepoBoundSources: 'sources',
+  // The commit notifier's host source list (engine-sql/notifier.ts).
+  listNotifierHostSourceRows: 'sources',
   listLocalPathSources: 'sources',
   readPlainSyncSource: 'sources',
   readOwnerOnlySourcesPresent: 'sources',
@@ -146,7 +150,6 @@ export const RUST_ENGINE_MEMBERS = {
   attachSourcePath: 'sources',
   sharedSkillPackTablePresent: 'sources',
   listSharedSkillPackRoots: 'sources',
-  notifierCoverageRecorded: 'sources',
   // A resumable op's checkpoint (op-checkpoint.ts): the parent and path rows are persistence_journal's.
   readOpCheckpointKeys: 'persistence_journal',
   writeOpCheckpointKeys: 'persistence_journal',
@@ -372,6 +375,13 @@ export const RUST_ENGINE_MEMBERS = {
   countFactRelinkOutcomes: 'facts',
   listUnlinkedConversationSlugs: 'facts',
   countFactEmbeddingCoverage: 'facts',
+  countStaleFactEmbeddings: 'facts',
+
+  // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
+  readChunkVectorColumn: 'embeddings',
+  readEmbeddingIdentity: 'embeddings',
+  listEmbeddingStores: 'embeddings',
+  hasStoredVectors: 'embeddings',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
@@ -470,6 +480,8 @@ export const RUST_ENGINE_MEMBERS = {
   getRecentSalience: 'salience',
   // health
   countOnboardSignal: 'health',
+  countBrainLivePages: 'health',
+  readBrainMaturity: 'health',
   getStats: 'health',
   getHealth: 'health',
   listEnrichCandidates: 'health',
@@ -521,6 +533,8 @@ export const RUST_ENGINE_MEMBERS = {
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
+  readFactCacheWatermark: 'facts',
+  readTrustGeneration: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',
@@ -600,6 +614,25 @@ export const RUST_ENGINE_MEMBERS = {
   deleteConsumerRow: 'persistence_journal',
   stampWorktreeHeartbeats: 'persistence_journal',
   claimHousekeepingTurn: 'persistence_journal',
+  // The commit notifier's host lease (engine-sql/notifier.ts), a per-host lease like the housekeeping turn.
+  claimNotifierLease: 'persistence_journal',
+  readNotifierLease: 'persistence_journal',
+  holdsNotifierLease: 'persistence_journal',
+  releaseNotifierLease: 'persistence_journal',
+  readNotifierSources: 'persistence_journal',
+  writeNotifierState: 'persistence_journal',
+  writeNotifierCoverage: 'persistence_journal',
+  recordNotifierSyncerHost: 'persistence_journal',
+  readNotifierStatusRows: 'persistence_journal',
+  hasNotifierCoverage: 'persistence_journal',
+  upsertWantedMarker: 'persistence_journal',
+  attachWantedMarkerJob: 'persistence_journal',
+  readWantedMarkers: 'persistence_journal',
+  readDueWantedMarkers: 'persistence_journal',
+  pruneSatisfiedWantedMarkers: 'persistence_journal',
+  clearWantedMarker: 'persistence_journal',
+  settleFreshnessMarker: 'persistence_journal',
+  listSourceWantedMarkers: 'persistence_journal',
   completeHousekeepingTurn: 'persistence_journal',
   readReceiptBudget: 'persistence_journal',
   listCompactableReceipts: 'persistence_journal',
@@ -614,8 +647,11 @@ export const RUST_ENGINE_MEMBERS = {
   // access_control
   isFolderRestricted: 'access_control',
   listAppliedPolicyRevisions: 'access_control',
-  readLiveMember: 'access_control',
+  readMayActFor: 'access_control',
+  readAudiencePrincipals: 'access_control',
   readFolderAccess: 'access_control',
+  readAccessMembers: 'access_control',
+  readLiveMember: 'access_control',
   listActiveAccessMembers: 'access_control',
   listAccessTokens: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
@@ -701,6 +737,7 @@ export const RUST_ENGINE_MEMBERS = {
   listPrivateQueueHealth: 'minion_queue',
   readWedgeSignals: 'minion_queue',
   readOldestWaitingAge: 'minion_queue',
+  countWaitingJobs: 'minion_queue',
   listStuckActiveJobsByName: 'minion_queue',
   // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
   readLastAutopilotCycles: 'minion_queue',
