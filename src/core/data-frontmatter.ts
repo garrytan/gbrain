@@ -1,6 +1,5 @@
 import { load, dump, Type, DEFAULT_SCHEMA, type Schema } from 'js-yaml';
 import { NAIVE_DATETIME } from './effective-date.ts';
-import { withoutNulJson } from './text-safe.ts';
 
 // js-yaml's timestamp type builds `2024-02-30` as March 1 (Date.UTC rolls the
 // day over). A calendar-invalid timestamp stays the string the author wrote,
@@ -127,6 +126,27 @@ export function scanDataFrontmatter(input: string): {
       content: closing ? rest.slice(closing.index + closing[0].length) : null,
     },
   };
+}
+
+/**
+ * GST-3170: every string and plain-object key inside `value` without U+0000, every other character as written. Values
+ * that are not strings, arrays or plain objects (a frontmatter Date) and anything holding no U+0000 come back unchanged.
+ */
+function withoutNulJson<T>(value: T): T {
+  if (typeof value === 'string') return (value.includes('\u0000') ? value.replaceAll('\u0000', '') : value) as T;
+  if (Array.isArray(value)) {
+    const out = value.map(withoutNulJson);
+    return (out.some((item, i) => item !== value[i]) ? out : value) as T;
+  }
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  const entries = Object.entries(value);
+  const out = entries.map(([key, item]) => [withoutNulJson(key), withoutNulJson(item)] as const);
+  const keys = new Set<string>();
+  for (const [key] of out) {
+    if (keys.has(key)) throw new Error(`Frontmatter key ${JSON.stringify(key)} appears twice once U+0000 is removed`);
+    keys.add(key);
+  }
+  return (out.some(([key, item], i) => key !== entries[i]![0] || item !== entries[i]![1]) ? Object.fromEntries(out) : value) as T;
 }
 
 /** Parse data only. There is deliberately no pluggable engine or evaluator. */

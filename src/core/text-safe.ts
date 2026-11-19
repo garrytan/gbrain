@@ -71,27 +71,6 @@ export function jsonbSafeJson<T>(value: T): T {
   return value;
 }
 
-/**
- * GST-3170: every string and plain-object key inside `value` without U+0000, every other character as written. Values
- * that are not strings, arrays or plain objects (a frontmatter Date) and anything holding no U+0000 come back unchanged.
- */
-export function withoutNulJson<T>(value: T): T {
-  if (typeof value === 'string') return (value.includes('\u0000') ? value.replaceAll('\u0000', '') : value) as T;
-  if (Array.isArray(value)) {
-    const out = value.map(withoutNulJson);
-    return (out.some((item, i) => item !== value[i]) ? out : value) as T;
-  }
-  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
-  const entries = Object.entries(value);
-  const out = entries.map(([key, item]) => [withoutNulJson(key), withoutNulJson(item)] as const);
-  const keys = new Set<string>();
-  for (const [key] of out) {
-    if (keys.has(key)) throw new Error(`Frontmatter key ${JSON.stringify(key)} appears twice once U+0000 is removed`);
-    keys.add(key);
-  }
-  return (out.some(([key, item], i) => key !== entries[i]![0] || item !== entries[i]![1]) ? Object.fromEntries(out) : value) as T;
-}
-
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }
