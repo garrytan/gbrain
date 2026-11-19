@@ -351,6 +351,59 @@ describe('engine parity: trust floor and flag suppression on reads', () => {
     },
   );
   parityTest(
+    'the fact list reads under a read eligibility drop a fact below the floor, a flagged agent-written one and one from a quarantined page',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFact', 'insertFacts', 'upsertWriteGateReceipt',
+      'listFactsByEntity', 'listFactsSince', 'listFactsKeyset', 'listFactsBySession'] },
+    async (engine) => {
+      await engine.putPage('people/a-example', { type: 'person', title: 'A', compiled_truth: 'A', timeline: '' });
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '' });
+      const facts: Array<{ fact: string; tier: string | null; flag?: string[] }> = [
+        { fact: 'curated fact', tier: 'operator_curated' },
+        { fact: 'observed fact', tier: 'tool_observed' },
+        { fact: 'agent fact', tier: 'agent_written' },
+        { fact: 'agent flagged fact', tier: 'agent_written', flag: ['exfiltration'] },
+        { fact: 'agent other-flag fact', tier: 'agent_written', flag: ['other'] },
+        { fact: 'unknown flagged fact', tier: null, flag: ['override'] },
+        { fact: 'outside fact', tier: 'external_untrusted' },
+      ];
+      for (const [i, f] of facts.entries()) {
+        const { id } = await declared(engine, f.tier, tx => tx.insertFact({
+          fact: f.fact, entity_slug: 'people/a-example', visibility: 'world', source: 'mcp:remember', embedding: null,
+          source_session: 'session-a', valid_from: new Date(Date.UTC(2026, 4, 1 + i)),
+        } as never, { source_id: 'default' }));
+        if (f.flag) await engine.upsertWriteGateReceipt({ target_table: 'facts', target_id: String(id), source_id: 'default', ...receipt(f.flag) });
+      }
+      // A curated fact whose provenance page is quarantined: only a read with an eligibility policy hides it.
+      await declared(engine, 'operator_curated', tx => tx.insertFacts([{
+        fact: 'held page fact', entity_slug: 'people/a-example', source_markdown_slug: 'notes/held', row_num: 1, kind: 'fact',
+        visibility: 'world', source: 'fence', source_session: 'session-a', valid_from: new Date(Date.UTC(2026, 4, 20)),
+      }] as never, { source_id: 'default' }));
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '', frontmatter: { quarantine: { reason: 'test' } } });
+      const read = async (eligibility?: NonNullable<Parameters<BrainEngine['listFactsByEntity']>[2]>['eligibility']) => {
+        const opts = eligibility === undefined ? {} : { eligibility };
+        const facts = (rows: Array<{ fact: string }>) => sorted(rows.map(r => r.fact));
+        return {
+          entity: facts(await engine.listFactsByEntity('default', 'people/a-example', opts)),
+          since: facts(await engine.listFactsSince('default', new Date(Date.UTC(2000, 0, 1)), opts)),
+          keyset: facts(await engine.listFactsKeyset('default', null, opts)),
+          session: facts(await engine.listFactsBySession('default', 'session-a', opts)),
+        };
+      };
+      const out: Record<string, Awaited<ReturnType<typeof read>>> = { none: await read(), plain: await read({}) };
+      for (const [name, policy] of Object.entries(POLICIES)) {
+        const floor = policy.minTrust || undefined;
+        out[name] = await read({ ...(floor ? { floor } : {}), ...(policy.suppressFlagged ? { suppressFlagged: true } : {}) });
+      }
+      expect(out.none.entity).toContain('held page fact');
+      for (const list of Object.values(out.plain)) expect(list).not.toContain('held page fact');
+      for (const list of Object.values(out.agentSuppressed)) {
+        expect(list).toEqual(['agent fact', 'agent other-flag fact', 'curated fact', 'observed fact']);
+      }
+      for (const list of Object.values(out.confirmedOnly)) expect(list).toEqual([]);
+      return out;
+    },
+  );
+  parityTest(
     'listSingleFactMetadata reads the stored trust tier, fence position and claim slot of the named facts of one source',
     { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFact', 'insertFacts', 'listSingleFactMetadata'] },
     async (engine, backend) => {

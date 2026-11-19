@@ -300,6 +300,17 @@ pub struct ReadScope {
     pub preserve_exact_identity: bool,
 }
 
+/// Options of `getTags`: the scope, `liveOnly` (a soft-deleted page has no tags) and the page
+/// policy `excludePrivate` names (a page it hides has no tags), as `engine-sql/tags.ts` reads them.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TagsQuery {
+    pub source_id: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+    pub live_only: bool,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
+}
+
 /// Options of `addTag` and `addPageTagsById`: the page's source and who claims the tags.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -1547,6 +1558,30 @@ impl Store {
             true,
         )?;
         let mut tags = page.map(|p| p.tags).unwrap_or_default();
+        tags.sort();
+        Ok(tags)
+    }
+
+    /// `getTags(slug, { sourceId?, sourceIds?, liveOnly?, excludePrivate? })`, sorted: no tags for
+    /// a page `liveOnly` or the page policy drops.
+    pub fn get_tags_query(&self, slug: &str, query: &TagsQuery) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let page = find_in_scope(
+            &*read,
+            &slug.to_lowercase(),
+            &query.source_id,
+            &query.source_ids,
+            !query.live_only,
+        )?;
+        let Some(page) = page else {
+            return Ok(Vec::new());
+        };
+        if let Some(policy) = &query.exclude_private
+            && crate::facts::page_hidden(&*read, &page, policy)?
+        {
+            return Ok(Vec::new());
+        }
+        let mut tags = page.tags;
         tags.sort();
         Ok(tags)
     }
