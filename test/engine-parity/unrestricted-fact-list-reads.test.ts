@@ -9,8 +9,9 @@
  *    (facts/meta-hook.ts) show a fact whose entity page is private to a caller with a private-readable grant on that
  *    page's source, hide it from a plain caller and a caller granted another source, and hide a fact
  *    whose provenance page is private from every one of them. The four reads agree with each other on every engine arm.
- *    A caller with a member identity on such a brain still refuses on Rust (judgeWidenedCaller serves an anonymous
- *    caller only), so it has no case here.
+ *    A member caller reads as a plain one, a fact from its own private member page included, with no visibility list
+ *    and in the hot-memory shape: the short form reads no identity, and no page names readers, so neither the provenance
+ *    gate nor the visibility list's member-page rule (memberFactAdmitSql) admits that fact.
  *  - Regression: the Rust arm compared the short form with the full no-caller text, found them different and refused
  *    every one of these reads, so hot memory (meta-hook.ts) got a typed refusal for every stdio MCP caller on a Rust
  *    brain.
@@ -31,8 +32,9 @@ const { parityTest } = parityArms(testBackends());
 const ENTITY = 'people/a-example';
 const PRIVATE_ENTITY = 'people/b-example';
 const SESSION = 'session-unrestricted';
+const MEMBER = { restricted: false, identity: ['member:alice-example'], hidePrivate: true } as const;
 
-/** Open and private pages and two private member pages, with one world fact on each. */
+/** Two open pages, two private pages and two private member pages, with one world fact on each kind, and one private fact on the member's own page. */
 async function fixture(engine: BrainEngine) {
   await engine.putPage(ENTITY, { type: 'person', title: 'A', compiled_truth: 'A', timeline: '' });
   await engine.putPage(PRIVATE_ENTITY, { type: 'person', title: 'B', compiled_truth: 'B', timeline: '', frontmatter: { visibility: 'private' } });
@@ -47,9 +49,10 @@ async function fixture(engine: BrainEngine) {
     { fact: 'private entity fact', entity_slug: PRIVATE_ENTITY, source_markdown_slug: 'notes/open' },
     { fact: 'own member page fact', entity_slug: ENTITY, source_markdown_slug: `${MEMBER_PAGE_PREFIX}alice-example` },
     { fact: 'other member page fact', entity_slug: ENTITY, source_markdown_slug: `${MEMBER_PAGE_PREFIX}bob-example` },
+    { fact: 'own private member fact', entity_slug: ENTITY, source_markdown_slug: `${MEMBER_PAGE_PREFIX}alice-example`, visibility: 'private' },
   ];
   await engine.insertFacts(rows.map((r, i) => ({
-    ...r, row_num: i + 1, kind: 'fact', visibility: 'world', source: 'fence', source_session: SESSION,
+    visibility: 'world', ...r, row_num: i + 1, kind: 'fact', source: 'fence', source_session: SESSION,
     valid_from: new Date(Date.UTC(2026, 4, 1 + i)),
   })) as never, { source_id: 'default' });
 }
@@ -101,4 +104,35 @@ describe('engine parity: the fact list reads for a remote caller on a brain that
     },
   );
 
+
+  parityTest(
+    'a member caller reads the four fact list reads as a plain caller does, with and without a visibility list',
+    { methods: ['putPage', 'insertFacts', 'listFactsByEntity', 'listFactsSince', 'listFactsKeyset', 'listFactsBySession'] },
+    async (engine: BrainEngine) => {
+      await fixture(engine);
+      const shapes = {
+        plainShape: { activeOnly: true, limit: 30, excludePrivate: true },
+        hotMemory: { activeOnly: true, limit: 30, visibility: ['world' as const], fingerprint: true, excludePrivate: true },
+        worldOnly: { activeOnly: true, limit: 30, visibility: ['world' as const] },
+      };
+      const read = async (shape: (typeof shapes)[keyof typeof shapes]) => ({
+        byEntity: sorted([...await engine.listFactsByEntity('default', ENTITY, shape), ...await engine.listFactsByEntity('default', PRIVATE_ENTITY, shape)].map(r => r.fact)),
+        since: sorted((await engine.listFactsSince('default', new Date(Date.UTC(2000, 0, 1)), shape)).map(r => r.fact)),
+        keyset: sorted((await engine.listFactsKeyset('default', null, shape)).map(r => r.fact)),
+        bySession: sorted((await engine.listFactsBySession('default', SESSION, shape)).map(r => r.fact)),
+      });
+      const out: Record<string, { plain: unknown; member: unknown }> = {};
+      for (const [name, shape] of Object.entries(shapes)) {
+        const plain = await withCallerAccess(CALLERS.plain, () => read(shape));
+        const member = await withCallerAccess(MEMBER, () => read(shape));
+        expect(member).toEqual(plain);
+        for (const facts of Object.values(member)) expect(facts).not.toContain('own private member fact');
+        out[name] = { plain, member };
+      }
+      // The short form reads no identity: the member's own private member page stays hidden, as every other private page.
+      expect((out.plainShape!.plain as { since: string[] }).since).toEqual(['open fact']);
+      expect((out.hotMemory!.plain as { since: string[] }).since).toEqual(['open fact']);
+      return out;
+    },
+  );
 });

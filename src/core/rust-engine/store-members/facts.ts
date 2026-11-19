@@ -8,7 +8,7 @@
  * store cannot answer exactly refuses with `engine_capability_missing` (a read eligibility policy goes to the store on
  * the four list reads and `listSupersessions`): `excludePrivate` for a
  * caller other than the one the store's policy models (private-provenance.ts), the keyword arm in an FTS language other
- * than `english`, a visibility list that the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
+ * than `english`, a visibility list widened for a caller the store does not model (fact-visibility.ts), and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
  *
  * A read eligibility policy goes to the store on the list reads and `listSupersessions`: it hides the facts of a
@@ -20,11 +20,12 @@
 import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts, type RecallFactReadOpts } from '../../engine.ts';
 import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
-import { factVisibilitySql } from '../../access/member-facts.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
+import { storeVisibility } from './fact-visibility.ts';
+import { factVisibilitySql } from '../../access/member-facts.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
 
@@ -58,18 +59,6 @@ const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug'] as 
 const wellFormed = <T>(s: T): T => (typeof s === 'string' ? ensureWellFormed(s) as T : s);
 const iso = (d: Date | null | undefined): string | null | undefined => (d == null ? d : d.toISOString());
 
-/**
- * `visibility` as the store reads it: null for no filter (an empty list), else the list. A list without 'private'
- * that the caller's member pages or grants widen (access/member-facts.ts) refuses: the store has no such rule.
- */
-function visibilityFilter(member: string, visibility: readonly string[] | undefined): string[] | undefined {
-  if (!visibility || visibility.length === 0) return undefined;
-  const known = (['world', 'private'] as const).filter((v) => visibility.includes(v));
-  const listed = known.length ? `facts.visibility IN (${known.map((v) => `'${v}'`).join(', ')})` : 'FALSE';
-  if (factVisibilitySql('facts', visibility) !== listed) refuseMember(member, 'visibility widened by member pages or grants');
-  return [...visibility];
-}
-
 function grepPattern(grep: unknown): string | undefined {
   return typeof grep === 'string' && grep.trim() ? '%' + escapeLikePattern(grep.trim()) + '%' : undefined;
 }
@@ -99,7 +88,7 @@ function listQuery(member: string, sourceId: string, opts: FactListOpts | Recall
     activeOnly: o.activeOnly !== false,
     unconsolidatedOnly: o.unconsolidatedOnly === true,
     kinds: kindsOf(o.kinds),
-    visibility: visibilityFilter(member, o.visibility),
+    ...storeVisibility(member, o.visibility),
     excludeAuditRows: o.excludeAuditRows === true,
     grep: grepPattern(o.grep),
     fingerprint: o.fingerprint === true,
@@ -226,7 +215,7 @@ export const listSupersessions: Member<'listSupersessions'> = async (brain, sour
   const o = takeOptions('listSupersessions', opts, ['since', 'limit', 'visibility', 'excludePrivate', 'eligibility']) as NonNullable<typeof opts>;
   const rows: Row[] = await storeCall({ member: 'listSupersessions' }, () => brain.listSupersessions({
     sourceId, since: o.since ? o.since.toISOString() : undefined, limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
-    visibility: visibilityFilter('listSupersessions', o.visibility),
+    ...storeVisibility('listSupersessions', o.visibility),
     excludePrivate: factPolicy('listSupersessions', o.excludePrivate),
     ...eligibilityOf(o.eligibility),
   }));
