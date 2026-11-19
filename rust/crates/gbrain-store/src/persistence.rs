@@ -55,6 +55,7 @@ mod noop_settle;
 mod owner_scans;
 mod projection_queue;
 mod topology;
+pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};

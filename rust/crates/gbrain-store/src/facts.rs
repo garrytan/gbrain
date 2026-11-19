@@ -56,6 +56,7 @@ mod privacy;
 pub mod purge;
 pub mod purge_ledger;
 pub mod purge_plan;
+pub(crate) mod purge_probe;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;

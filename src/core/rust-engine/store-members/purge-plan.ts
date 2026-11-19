@@ -8,9 +8,10 @@
  * - `setPurgeProbeTimeout`: a store read has no statement deadline to set.
  *
  * The inventory probes (`countPurgeProbe`, `listPurgeProbeItems`) send the probe's shape (purgeProbeShape). The store
- * answers `links`, `timeline_entries`, `raw_data` and `wanted_links`; a table the store does not keep at all holds no
- * row (0, or no item); a table the store keeps but cannot probe yet refuses. A named `raw_data` probe that matches
- * refuses its item list, because the store keeps no `raw_data.id` to name a row by.
+ * answers the named probes (`links`, `timeline_entries`, `raw_data`) and the whole-table probes of every inventory
+ * table it keeps (facts/purge_probe.rs `table_rows`, plus `wanted_links`); a table the store does not keep at all
+ * holds no row (0, or no item). A named `raw_data` probe that matches refuses its item list, because the store keeps
+ * no `raw_data.id` to name a row by.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { purgeProbeShape, type PurgeProbe } from '../../facts/purge-plan-statements.ts';
@@ -18,8 +19,13 @@ import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-/** The inventory tables the store probes (facts/purge_plan.rs `PurgeProbeArgs::hits`). */
-const STORE_PROBED_TABLES: ReadonlySet<string> = new Set(['links', 'timeline_entries', 'raw_data', 'wanted_links']);
+/** The inventory tables the store probes (facts/purge_plan.rs `PurgeProbeArgs::hits`, facts/purge_probe.rs). */
+const STORE_PROBED_TABLES: ReadonlySet<string> = new Set([
+  'links', 'timeline_entries', 'raw_data', 'wanted_links', 'calibration_profiles', 'decision_receipts', 'dream_verdicts',
+  'eval_candidates', 'eval_contradictions_cache', 'eval_contradictions_runs', 'fact_relink_attempts', 'ingest_log',
+  'mcp_request_log', 'minion_attachments', 'minion_inbox', 'minion_jobs', 'persistence_topology_changes',
+  'subagent_messages', 'subagent_tool_executions',
+]);
 
 /** Inventory tables the store keeps no rows of: a probe of one finds nothing. */
 const STORE_ABSENT_PROBE_TABLES: ReadonlySet<string> = new Set([
@@ -35,10 +41,10 @@ function probeRoute(member: string, probe: PurgeProbe): ProbeRoute {
   const shape = purgeProbeShape(probe);
   if (!shape) return { kind: 'none' };
   if (STORE_ABSENT_PROBE_TABLES.has(shape.table)) return { kind: 'none' };
-  if (!STORE_PROBED_TABLES.has(shape.table) || shape.binary) refuseMember(member, `the ${shape.table} probe`);
+  if (!STORE_PROBED_TABLES.has(shape.table)) refuseMember(member, `the ${shape.table} probe`);
   return { kind: 'store', args: {
-    table: shape.table, sourceId: shape.sourceId, columns: [...shape.bare],
-    needles: shape.needles.map(n => ({ lower: n.toLowerCase(), escaped: JSON.stringify(n).slice(1, -1).toLowerCase() })),
+    table: shape.table, sourceId: shape.sourceId, columns: [...shape.bare], scoped: shape.scoped, binary: shape.binary,
+    needles: shape.needles.map(n => ({ text: n, lower: n.toLowerCase(), escaped: JSON.stringify(n).slice(1, -1).toLowerCase() })),
   } };
 }
 

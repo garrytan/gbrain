@@ -38,13 +38,14 @@ A claim matches as the SQL does: `strpos(lower(text), needle) > 0`, with `lower`
   edges. `setPurgeProbeTimeout` does nothing: a store read has no statement deadline.
 - The probes (`store-members/purge-plan.ts`): the store probes `links` (context of links from or to the source's
   pages, item `link:<id> <from> -> <to>`), `timeline_entries` (summary and detail, item `timeline:<id> <slug> <date>`),
-  `raw_data` (the data's JSON text; no item, so naming its rows refuses) and `wanted_links`. A table the store keeps
-  no rows of answers 0 and `[]`. A table the store keeps but does not probe yet, and a bytea probe, refuse with
-  `engine_capability_missing`.
+  `raw_data` (the data's JSON text; no item, so naming its rows refuses) and `wanted_links`. Every other inventory
+  table the store keeps is probed whole from its own records (`facts/purge_probe.rs` `table_rows`, one row reader per
+  store): text columns match lowercased, JSON columns as Postgres prints them, text arrays as an array literal, and the
+  bytea `minion_attachments.content` by its raw bytes. A table the store keeps no rows of answers 0 and `[]`.
 
 ## Not modeled
 
 Withdrawal discovery is the typed member `readWithdrawalDiscovery` (rust/docs/store/facts.md), so a purge plan completes
-on Rust; its dry run refuses at a table the store keeps but does not probe yet. The purge commit and its post-commit
-work still run through `executeRaw`. Pinned by `test/engine-parity/purge-plan.test.ts`; the Postgres text is
-pinned by `test/purge-plan-sql-pin.test.ts`.
+on Rust, and its dry run reports every store the same as PGLite. The purge commit and its post-commit work still run
+through `executeRaw`. Pinned by `test/engine-parity/purge-plan.test.ts` and
+`test/engine-parity/purge-dry-run.test.ts`; the Postgres text is pinned by `test/purge-plan-sql-pin.test.ts`.

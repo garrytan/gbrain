@@ -396,6 +396,21 @@ impl Store {
     }
 }
 
+/// The attempt rows of `source_id` a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(source_attempts(read, source_id)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: Some(source_id.to_string()),
+            cells: vec![("reason", ProbeCell::opt_text(r.reason.as_deref()))],
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

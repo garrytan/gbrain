@@ -279,7 +279,7 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
     return named;
   });
 
-  parityTest('countPurgeProbe of a table the Rust store keeps but does not probe yet refuses on Rust', {
+  parityTest('countPurgeProbe of a whole table the store keeps (minion_jobs, none carrying the claim) counts 0 on every engine', {
     methods: ['countPurgeProbe'],
   }, async (engine) => {
     const n = await engine.countPurgeProbe({ kind: 'table', table: 'minion_jobs', sourceId: SRC, needles: [CLAIM] }, 1000);

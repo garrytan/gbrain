@@ -910,10 +910,11 @@ Facts and their supersession chains.
     post-commit work (`facts/purge.ts`) and the forget's post-commit chunk rebuild (`page-state/projections.ts`).
   - The purge plan, dry run and `--match` reads are typed (`engine-sql/facts-purge-plan.ts`, 17 members from
     `hasLivePageSlug` to `listPurgeProbeItems`; statement texts in `facts/purge-plan-statements.ts`). The store serves
-    them in `facts/purge_plan.rs` and `page_body/purge_scan.rs` (rust/docs/store/purge-plan.md); it probes `links`,
-    `timeline_entries`, `raw_data` and `wanted_links`, answers 0 for the tables it keeps no rows of, and refuses the
-    tables it keeps but does not probe yet, bytea probes and naming `raw_data` rows. On Rust a purge plan completes;
-    its dry run refuses at a table the store keeps but does not probe yet. Pinned by `test/engine-parity/purge-plan.test.ts` and
+    them in `facts/purge_plan.rs`, `facts/purge_probe.rs` and `page_body/purge_scan.rs` (rust/docs/store/purge-plan.md);
+    it probes `links`, `timeline_entries`, `raw_data`, `wanted_links` and every other inventory table it keeps (bytea
+    `minion_attachments.content` included), answers 0 for the tables it keeps no rows of, and refuses only naming
+    `raw_data` rows. On Rust a purge plan and its dry run complete and equal PGLite. Pinned by
+    `test/engine-parity/purge-plan.test.ts`, `test/engine-parity/purge-dry-run.test.ts` and
     `test/purge-plan-sql-pin.test.ts`.
   - The reads withdrawal discovery makes (`discoverWithdrawalTargets`, `facts/withdrawal-discovery.ts`) are one typed
     member, `readWithdrawalDiscovery(read)` (`engine-sql/withdrawal-discovery.ts`), tagged by `kind`: `claim_keys`,

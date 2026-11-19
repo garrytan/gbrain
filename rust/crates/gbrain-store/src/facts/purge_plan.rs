@@ -12,6 +12,7 @@
 //! the rest.
 
 use super::embedding::{cosine_distance, parse_vector, to_halfvec};
+use super::purge_probe::{ProbeCell, table_rows};
 use super::{fact_normalize, invalid, source_rows};
 use crate::Store;
 use crate::cli_reads::pg_text::{jsonb_text, pg_lower};
@@ -158,10 +159,11 @@ pub struct NeighbourArgs {
     pub claim: String,
 }
 
-/// One needle of a probe: lowered, and its JSON-escaped form lowered.
+/// One needle of a probe: as given (a `bytea` store matches these bytes), lowered, and its JSON-escaped form lowered.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProbeNeedle {
+    pub text: String,
     pub lower: String,
     pub escaped: String,
 }
@@ -175,6 +177,10 @@ pub struct PurgeProbeArgs {
     /// The probed columns without a table alias.
     pub columns: Vec<String>,
     pub needles: Vec<ProbeNeedle>,
+    /// The table has a `source_id`: only the rows of `source_id` are searched (otherwise every row is).
+    pub scoped: bool,
+    /// A `bytea` store: matched byte for byte, case and all.
+    pub binary: bool,
     /// `countPurgeProbe` counts at most `rows + 1`; absent for `listPurgeProbeItems`.
     pub rows: Option<i64>,
 }
@@ -186,20 +192,37 @@ struct ProbeHit {
 
 impl PurgeProbeArgs {
     fn hit(&self, texts: &[(&str, Option<String>)]) -> Result<bool> {
+        let cells: Vec<(&str, ProbeCell)> = texts
+            .iter()
+            .map(|(name, text)| (*name, ProbeCell::opt_text(text.as_deref())))
+            .collect();
+        self.hit_cells(&cells)
+    }
+
+    /// Whether a probed column carries a needle: text as `strpos(lower(col::text), needle) > 0` on the lowered
+    /// needle or its lowered JSON-escaped form; bytes as `position(convert_to(needle, 'UTF8') in col) > 0`.
+    fn hit_cells(&self, cells: &[(&str, ProbeCell)]) -> Result<bool> {
         for column in &self.columns {
-            let Some((_, text)) = texts.iter().find(|(name, _)| name == column) else {
+            let Some((_, cell)) = cells.iter().find(|(name, _)| name == column) else {
                 return Err(invalid(format!(
                     "purge probe: {} has no column {column}",
                     self.table
                 )));
             };
-            let Some(text) = text else { continue };
-            let lowered = pg_lower(text);
-            if self
-                .needles
-                .iter()
-                .any(|n| lowered.contains(&n.lower) || lowered.contains(&n.escaped))
-            {
+            let found = match cell {
+                ProbeCell::Null => false,
+                ProbeCell::Text(text) => {
+                    let lowered = pg_lower(text);
+                    self.needles
+                        .iter()
+                        .any(|n| lowered.contains(&n.lower) || lowered.contains(&n.escaped))
+                }
+                ProbeCell::Bytes(bytes) => self.needles.iter().any(|n| {
+                    let needle = n.text.as_bytes();
+                    !needle.is_empty() && bytes.windows(needle.len()).any(|w| w == needle)
+                }),
+            };
+            if found {
                 return Ok(true);
             }
         }
@@ -298,9 +321,23 @@ impl PurgeProbeArgs {
                 }
             }
             other => {
-                return Err(invalid(format!(
-                    "purge probe: this store does not probe {other}"
-                )));
+                let Some(rows) = table_rows(read, other, &self.source_id)? else {
+                    return Err(invalid(format!(
+                        "purge probe: this store does not probe {other}"
+                    )));
+                };
+                for row in rows {
+                    if out.len() >= cap {
+                        break;
+                    }
+                    if self.scoped && row.source_id.as_deref() != Some(self.source_id.as_str()) {
+                        continue;
+                    }
+                    if self.hit_cells(&row.cells)? {
+                        // A whole-table probe only counts; it names no row.
+                        out.push(ProbeHit { item: None });
+                    }
+                }
             }
         }
         Ok(out)
