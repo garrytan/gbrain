@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, TrigramCandidateQuery, TrigramCandidateRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -71,6 +71,16 @@ export const readLivePageTypes: StoreMember<[sourceId: string, slugs: readonly s
     const policy = retirementHopPolicy(privacy, 'readLivePageTypes');
     return storeCall({ member: 'readLivePageTypes', sourceId }, () => brain.readLivePageTypes(sourceId, [...slugs], policy ?? null)) as Promise<LivePageTypeRow[]>;
   };
+
+/** entities/resolve.ts: the prefix candidates with their connection counts; one pattern caps at five, a list at ten. */
+export const readPrefixCandidates: StoreMember<[sourceId: string, q: PrefixCandidateQuery], PrefixCandidateRow[]> = (brain, sourceId, q) => {
+  const taken = takeOptions('readPrefixCandidates', q, ['patterns', 'pattern']);
+  const patterns = 'patterns' in taken ? [...(taken.patterns as readonly string[])] : [taken.pattern as string];
+  const limit = 'patterns' in taken ? 10 : 5;
+  if (('patterns' in taken) === ('pattern' in taken)) refuseMember('readPrefixCandidates', 'one of pattern or patterns');
+  return storeCall({ member: 'readPrefixCandidates', sourceId }, () =>
+    brain.readPrefixCandidates(sourceId, patterns, limit)) as Promise<PrefixCandidateRow[]>;
+};
 
 /** entities/resolve.ts: the title-similarity candidates of one resolver arm, under its privacy (retirementHopPolicy). */
 export const readTrigramCandidates: StoreMember<[sourceId: string, q: TrigramCandidateQuery], TrigramCandidateRow[]> = (brain, sourceId, q) => {

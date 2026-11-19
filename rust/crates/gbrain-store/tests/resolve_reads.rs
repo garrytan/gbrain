@@ -237,3 +237,39 @@ fn the_trigram_candidate_read_ranks_live_non_retired_pages_and_scores_only_the_f
             .is_err()
     );
 }
+
+#[test]
+fn the_prefix_candidate_read_counts_ranking_links_and_chunks() {
+    let dir = TempDir::new("resolve-prefix");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/alice-retired",
+        page("person", "Alice Retired", json!({"canonical": "no"})),
+    );
+    put(
+        &store,
+        "default",
+        "people/aliceberg",
+        page("person", "Aliceberg", json!({})),
+    );
+    let read = |patterns: &[&str], limit: usize| -> Vec<(String, i64)> {
+        store
+            .read_prefix_candidates("default", &strings(patterns), limit)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.slug, r.connection_count))
+            .collect()
+    };
+    // put_page writes one body chunk per page; the retired page and people/aliceberg (no hyphen)
+    // stay out.
+    assert_eq!(
+        read(&["people/alice", "people/alice-%", "companies/alice-%"], 10),
+        [
+            ("companies/alice-example".to_string(), 1),
+            ("people/alice-example".to_string(), 1),
+        ]
+    );
+    assert_eq!(read(&["people/alice-%", "companies/alice-%"], 1).len(), 1);
+}

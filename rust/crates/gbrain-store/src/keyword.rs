@@ -60,7 +60,7 @@ pub(crate) use tsearch::{
     setweight, to_tsvector, ts_matches, websearch_to_tsquery,
 };
 
-pub(crate) use title_fuzzy::{real_to_js, sql_ilike};
+pub(crate) use title_fuzzy::{real_to_js, sql_ilike, sql_like};
 
 #[allow(unused_imports)]
 pub(crate) use trgm::{

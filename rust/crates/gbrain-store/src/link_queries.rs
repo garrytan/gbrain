@@ -361,7 +361,7 @@ impl<'a> Pages<'a> {
 }
 
 /// `rankingLinkSql`: the link may feed a ranking signal.
-fn ranks(link: &LinkRecord) -> bool {
+pub(crate) fn ranks(link: &LinkRecord) -> bool {
     !NON_RANKING_LINK_TYPES.contains(&link.link_type.as_str())
 }
 

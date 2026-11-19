@@ -15,6 +15,7 @@ import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
+import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
@@ -307,6 +308,38 @@ const PINS: Pin[] = [
          )
        ORDER BY score DESC, slug ASC
        LIMIT 5`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:686 findPrefixCandidates',
+    case: { method: 'readPrefixCandidates', variant: 'patterns', run: e => e.readPrefixCandidates('default', { patterns: ['people/alice', 'people/alice-%'] }) },
+    texts: () => [`SELECT p.slug,
+              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
+               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                AS connection_count
+       FROM pages p
+       WHERE p.source_id = $1
+         AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}
+         AND p.slug LIKE ANY($2::text[])
+       ORDER BY connection_count DESC, p.slug ASC
+       LIMIT 10`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:769 tryPrefixExpansion',
+    case: { method: 'readPrefixCandidates', variant: 'pattern', run: e => e.readPrefixCandidates('default', { pattern: 'people/alice-%' }) },
+    texts: () => [`SELECT p.slug,
+                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
+                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                  AS connection_count
+         FROM pages p
+         WHERE p.source_id = $1
+           AND p.deleted_at IS NULL
+           AND NOT ${retiredPageSql('p')}
+           AND p.slug LIKE $2
+         ORDER BY connection_count DESC, p.slug ASC
+         LIMIT 5`],
   },
 ];
 

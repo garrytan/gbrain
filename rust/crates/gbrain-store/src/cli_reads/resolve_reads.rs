@@ -3,11 +3,14 @@
 //! `->>` reads them (`cli_reads::reads::retired`).
 
 use crate::Store;
+use crate::chunks::read_chunks;
 use crate::cli_reads::pg_text::pg_lower;
 use crate::cli_reads::reads::retired;
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::keyword::{TRGM_SIMILARITY_THRESHOLD, real_to_js, sql_ilike, trgm_similarity};
+use crate::keyword::{TRGM_SIMILARITY_THRESHOLD, real_to_js, sql_ilike, sql_like, trgm_similarity};
+use crate::link_queries::ranks;
+use crate::links::{in_links, out_links};
 use crate::pages::{all_pages, read_page};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -29,6 +32,13 @@ pub struct TrigramCandidateRow {
     pub page_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
+}
+
+/// One `readPrefixCandidates` row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PrefixCandidateRow {
+    pub slug: String,
+    pub connection_count: i64,
 }
 
 impl Store {
@@ -154,5 +164,44 @@ impl Store {
                 .then_with(|| a.1.slug.as_bytes().cmp(b.1.slug.as_bytes()))
         });
         Ok(rows.into_iter().take(limit).map(|(_, row)| row).collect())
+    }
+
+    /// `readPrefixCandidates(sourceId, { patterns } | { pattern })`: the live, non-retired pages of
+    /// the source whose slug matches any of the LIKE `patterns`, with their connection count
+    /// (inbound plus outbound ranking links, `rankingLinkSql`, plus every content chunk), most
+    /// connected first, ties by slug bytes, at most `limit`.
+    pub fn read_prefix_candidates(
+        &self,
+        source_id: &str,
+        patterns: &[String],
+        limit: usize,
+    ) -> Result<Vec<PrefixCandidateRow>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.source_id != source_id
+                || page.deleted_at_us.is_some()
+                || retired(&page.frontmatter)
+                || !patterns.iter().any(|p| sql_like(&page.slug, p))
+            {
+                continue;
+            }
+            let ranked =
+                |links: Vec<crate::links::LinkRecord>| links.iter().filter(|l| ranks(l)).count();
+            let count = ranked(in_links(&*read, page.id)?)
+                + ranked(out_links(&*read, page.id)?)
+                + read_chunks(&*read, page.id)?.len();
+            rows.push(PrefixCandidateRow {
+                slug: page.slug,
+                connection_count: i64::try_from(count).unwrap_or(i64::MAX),
+            });
+        }
+        rows.sort_by(|a, b| {
+            b.connection_count
+                .cmp(&a.connection_count)
+                .then_with(|| a.slug.as_bytes().cmp(b.slug.as_bytes()))
+        });
+        rows.truncate(limit);
+        Ok(rows)
     }
 }

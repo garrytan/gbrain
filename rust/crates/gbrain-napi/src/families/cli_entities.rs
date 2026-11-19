@@ -122,6 +122,21 @@ impl Brain {
         })
     }
 
+    /// `readPrefixCandidates(sourceId, patterns, limit)`: the prefix candidates with their
+    /// connection counts, most connected first.
+    #[napi]
+    pub fn read_prefix_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_prefix_candidates(&source_id, &patterns, limit as usize)
+        })
+    }
+
     /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
     /// target, or `null`; a `null` policy reads every page.
     #[napi]

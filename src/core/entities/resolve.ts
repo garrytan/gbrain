@@ -32,7 +32,6 @@ const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonica
   (await import('../mentions/siblings.ts')).siblingCanonical(...args);
 import { isMissingSchemaObject } from '../utils.ts';
 import { privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
-import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { BASENAME_DIRS, PREFIX_EXPANSION_DIRS } from './basename-dirs.ts';
 
@@ -668,25 +667,7 @@ export async function findPrefixCandidates(
     patterns.push(`${dir}/${token}-%`);
   }
   try {
-    const rows = await engine.executeRaw<{
-      slug: string;
-      connection_count: number;
-    }>(
-      `SELECT p.slug,
-              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
-               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
-               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
-                AS connection_count
-       FROM pages p
-       WHERE p.source_id = $1
-         AND p.deleted_at IS NULL
-         AND NOT ${retiredPageSql('p')}
-         AND p.slug LIKE ANY($2::text[])
-       ORDER BY connection_count DESC, p.slug ASC
-       LIMIT 10`,
-      [source_id, patterns],
-    );
-    return rows;
+    return await engine.readPrefixCandidates(source_id, { patterns });
   } catch {
     // Defensive: any SQL hiccup returns "no candidates" so the caller's
     // ambiguity gate doesn't crash the cycle. The downstream
@@ -751,41 +732,24 @@ async function tryPrefixExpansion(
   for (const dir of PREFIX_EXPANSION_DIRS) {
     const pattern = `${dir}/${token}-%`;
     try {
-      const rows = await engine.executeRaw<{
-        slug: string;
-        connection_count: number;
-      }>(
-        // Connection count is a simple proxy for canonicality:
-        // (incoming links) + (outgoing links) + (content chunks).
-        //
-        // SQL shape: correlated subqueries scoped to the slug-LIKE
-        // candidates. The pre-v0.34.5 version used derived-table JOINs
-        // (SELECT FROM links GROUP BY to_page_id, etc.) which forced the
-        // planner to aggregate the FULL links + content_chunks tables on
-        // every prefix-expansion call — O(N) per call where N is total
-        // links/chunks in the brain. On a 100K-link / 50K-chunk brain
-        // that's slow.
-        //
-        // The slug LIKE filter is already selective in practice (typical
-        // brain has 0-5 pages per prefix), so the correlated subqueries
-        // run N=3 times per matched row, hitting the indexes on
-        // links.to_page_id, links.from_page_id, and content_chunks.page_id
-        // directly. Even on a pathological prefix matching 1000+ pages,
-        // work is bounded per-candidate, not whole-table.
-        `SELECT p.slug,
-                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
-                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
-                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
-                  AS connection_count
-         FROM pages p
-         WHERE p.source_id = $1
-           AND p.deleted_at IS NULL
-           AND NOT ${retiredPageSql('p')}
-           AND p.slug LIKE $2
-         ORDER BY connection_count DESC, p.slug ASC
-         LIMIT 5`,
-        [source_id, pattern],
-      );
+      // Connection count is a simple proxy for canonicality:
+      // (incoming links) + (outgoing links) + (content chunks).
+      //
+      // SQL shape: correlated subqueries scoped to the slug-LIKE
+      // candidates. The pre-v0.34.5 version used derived-table JOINs
+      // (SELECT FROM links GROUP BY to_page_id, etc.) which forced the
+      // planner to aggregate the FULL links + content_chunks tables on
+      // every prefix-expansion call — O(N) per call where N is total
+      // links/chunks in the brain. On a 100K-link / 50K-chunk brain
+      // that's slow.
+      //
+      // The slug LIKE filter is already selective in practice (typical
+      // brain has 0-5 pages per prefix), so the correlated subqueries
+      // run N=3 times per matched row, hitting the indexes on
+      // links.to_page_id, links.from_page_id, and content_chunks.page_id
+      // directly. Even on a pathological prefix matching 1000+ pages,
+      // work is bounded per-candidate, not whole-table.
+      const rows = await engine.readPrefixCandidates(source_id, { pattern });
       if (rows.length === 0) continue;
       // Single unambiguous match: return it.
       if (rows.length === 1) return rows[0].slug;

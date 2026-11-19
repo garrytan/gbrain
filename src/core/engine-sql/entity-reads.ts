@@ -10,6 +10,7 @@ import { retiredPageSql } from '../entities/resolve.ts';
 import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
+import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { ignoredPrivacyLabelSql, NOTICE_READ_TIMEOUT_MS, privacyLabelKeySql, SCAN_CAP } from '../search/ignored-privacy-labels.ts';
 
 /**
@@ -289,4 +290,46 @@ export async function readTrigramCandidates(exec: LegacyUnscopedRead, sourceId: 
   const { text, params } = renderFragment(fragment);
   if (params.length !== 0) throw new Error('readTrigramCandidates: a fragment bound a value ahead of the hand-numbered parameters');
   return exec.executeRaw<TrigramCandidateRow>(text, [sourceId, q.titleLc, q.slugFragment]);
+}
+
+/** Which prefix read of the entity resolver: `patterns` (findPrefixCandidates, `LIKE ANY`, ten) or `pattern` (tryPrefixExpansion, one `LIKE`, five). */
+export type PrefixCandidateQuery = { patterns: readonly string[] } | { pattern: string };
+
+/** A prefix candidate with its connection count: inbound plus outbound ranking links plus content chunks. */
+export interface PrefixCandidateRow { slug: string; connection_count: number }
+
+/**
+ * The live, non-retired pages of the source whose slug matches the LIKE pattern (or any of the patterns), most connected
+ * first (inbound and outbound ranking links, `rankingLinkSql`, plus every content chunk), then by slug.
+ */
+export async function readPrefixCandidates(exec: LegacyUnscopedRead, sourceId: string, q: PrefixCandidateQuery): Promise<PrefixCandidateRow[]> {
+  const inbound = trustedSql(rankingLinkSql('l'));
+  const retired = trustedSql(retiredPageSql('p'));
+  const fragment = 'patterns' in q
+    ? sqlFragment`SELECT p.slug,
+              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${inbound})
+               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${inbound})
+               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                AS connection_count
+       FROM pages p
+       WHERE p.source_id = ${sourceId}
+         AND p.deleted_at IS NULL
+         AND NOT ${retired}
+         AND p.slug LIKE ANY(${[...q.patterns]}::text[])
+       ORDER BY connection_count DESC, p.slug ASC
+       LIMIT 10`
+    : sqlFragment`SELECT p.slug,
+                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${inbound})
+                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${inbound})
+                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                  AS connection_count
+         FROM pages p
+         WHERE p.source_id = ${sourceId}
+           AND p.deleted_at IS NULL
+           AND NOT ${retired}
+           AND p.slug LIKE ${q.pattern}
+         ORDER BY connection_count DESC, p.slug ASC
+         LIMIT 5`;
+  const { text, params } = renderFragment(fragment);
+  return exec.executeRaw<PrefixCandidateRow>(text, params);
 }

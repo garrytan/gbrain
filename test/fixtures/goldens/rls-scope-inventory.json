@@ -5469,6 +5469,7 @@
         "readPageVersionEdition": "none",
         "readPersistenceBrainId": "none",
         "readPlainSyncSource": "none",
+        "readPrefixCandidates": "none",
         "readPrivateQueueState": "none",
         "readProjectionReadiness": "none",
         "readProjectionReadinessGeneration": "none",

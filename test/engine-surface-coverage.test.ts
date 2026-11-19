@@ -157,7 +157,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPageSynopses',
   'readSeedTitleSlugs',
   // The entity resolver's page reads (engine-sql/entity-reads.ts, entities/resolve.ts).
-  'readLiveSlugs', 'readLivePageTypes', 'readTrigramCandidates',
+  'readLiveSlugs', 'readLivePageTypes', 'readTrigramCandidates', 'readPrefixCandidates',
   // Lane 9's trust review members: page retrievals, notifier coverage, contradiction queue, allow rules.
   'bumpPageRetrievals', 'notifierCoverageRecorded', 'listPendingContradictions', 'listTrustAllowRuleRows',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).

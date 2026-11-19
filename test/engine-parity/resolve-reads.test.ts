@@ -128,4 +128,52 @@ describe('engine parity: entity resolver reads', () => {
       expect(result.none).toEqual([]);
       return result;
     });
+
+  parityTest('readPrefixCandidates ranks live, non-retired prefix pages by inbound, outbound ranking links and chunks',
+    { methods: ['readPrefixCandidates'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      const pages: Array<[string, PageInput]> = [
+        ['people/alice', page('person', 'Alice')],
+        ['people/alice-other', page('person', 'Alice Other')],
+        ['people/alice-retired', page('person', 'Alice Retired', { canonical: 'no' })],
+        ['people/aliceberg', page('person', 'Aliceberg')],
+        ['people/alice_x', page('person', 'Alice X')],
+        ['companies/alice-co', page('company', 'Alice Co')],
+      ];
+      for (const [slug, input] of pages) await engine.putPage(slug, input, { sourceId: 'default' });
+      // people/alice-other: 1 inbound + 1 outbound ranking link + 2 chunks = 4; an amends link counts for nothing.
+      await engine.addLink('people/alice-example', 'people/alice-other', '', 'mentions');
+      await engine.addLink('people/alice-other', 'companies/acme', '', 'works_at');
+      await engine.addLink('companies/acme', 'people/alice-other', '', 'amends');
+      await engine.upsertChunks('people/alice-other', [
+        { chunk_index: 0, chunk_text: 'Alice Other body.', chunk_source: 'compiled_truth' },
+        { chunk_index: 1, chunk_text: 'More of Alice Other.', chunk_source: 'compiled_truth' },
+      ], { sourceId: 'default' });
+      // companies/alice-co: one chunk; people/alice-example: one outbound link.
+      await engine.upsertChunks('companies/alice-co', [{ chunk_index: 0, chunk_text: 'Alice Co body.', chunk_source: 'compiled_truth' }], { sourceId: 'default' });
+      const patterns = ['people', 'companies', 'hosts', 'projects'].flatMap(dir => [`${dir}/alice`, `${dir}/alice-%`]);
+      const result = {
+        any: await engine.readPrefixCandidates('default', { patterns }),
+        dir: await engine.readPrefixCandidates('default', { pattern: 'people/alice-%' }),
+        // `_` stays a LIKE wildcard: it matches the hyphen of people/alice-other.
+        wildcard: await engine.readPrefixCandidates('default', { pattern: 'people/alice_other' }),
+        other: await engine.readPrefixCandidates('other', { pattern: 'orgs/%' }),
+      };
+      expect(result).toEqual({
+        any: [
+          { slug: 'people/alice-other', connection_count: 4 },
+          { slug: 'companies/alice-co', connection_count: 1 },
+          { slug: 'people/alice-example', connection_count: 1 },
+          { slug: 'companies/alice-example', connection_count: 0 },
+          { slug: 'hosts/alice-example', connection_count: 0 },
+          { slug: 'people/alice', connection_count: 0 },
+        ],
+        dir: [
+          { slug: 'people/alice-other', connection_count: 4 },
+          { slug: 'people/alice-example', connection_count: 1 },
+        ],
+        wildcard: [{ slug: 'people/alice-other', connection_count: 4 }],
+        other: [{ slug: 'orgs/widget', connection_count: 0 }],
+      });
+    });
 });
