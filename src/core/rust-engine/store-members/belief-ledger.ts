@@ -38,8 +38,10 @@ export const insertBeliefEvents: Member<'insertBeliefEvents'> = (brain, rows) =>
 export const markBeliefCommits: Member<'markBeliefCommits'> = (brain, publicationIds) =>
   storeCall({ member: 'markBeliefCommits' }, () => brain.markBeliefCommits([...publicationIds]));
 
+// The interface types each pair as { incarnation, slug }; callers (resolveLifetimes) pass wider page needs, so only the
+// two named fields cross to the store, which refuses an unknown one.
 export const readOpenBeliefLifetimes: Member<'readOpenBeliefLifetimes'> = (brain, pairs) =>
-  storeCall({ member: 'readOpenBeliefLifetimes' }, () => brain.readOpenBeliefLifetimes([...pairs]));
+  storeCall({ member: 'readOpenBeliefLifetimes' }, () => brain.readOpenBeliefLifetimes(pairs.map(({ incarnation, slug }) => ({ incarnation, slug }))));
 
 export const endBeliefLifetime: Member<'endBeliefLifetime'> = (brain, lifetime) =>
   storeCall({ member: 'endBeliefLifetime' }, () => brain.endBeliefLifetime(lifetime));

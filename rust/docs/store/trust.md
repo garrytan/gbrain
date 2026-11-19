@@ -228,9 +228,9 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 - The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
-- The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) are not store members yet and
-  refuse for every input. The store keeps the ledger's rows ("The belief ledger", below); these two reads of them are
-  still to come (TODOS.md `rust-belief-ledger`).
+- The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) are store members over the
+  ledger's rows (`trust::belief_history`, "The belief ledger", below). Their members refuse only a labelled-only
+  caller, whose floor the page policy cannot carry.
 - `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
   whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
   (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
@@ -241,12 +241,12 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   `version_history_gap_at`.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
 
-## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`)
+## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`, `trust::belief_history`)
 
 The store keeps the belief ledger's four tables (src/core/belief/schema.ts) and serves the eleven statements of
-src/core/engine-sql/belief-ledger.ts as store members (src/core/rust-engine/store-members/belief-ledger.ts). The
-history reads, `readSourcePurgeEpoch` and the `belief_ledger` capability itself are not served yet, so a brain still
-reports the capability missing.
+src/core/engine-sql/belief-ledger.ts as store members (src/core/rust-engine/store-members/belief-ledger.ts), the
+history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) and the source probes (`readLedgerSource`,
+`listCoveredSources`). The history and source reads keep no keys of their own (`trust::belief_history`).
 
 | Key | Value | PGLite row or index |
 | --- | --- | --- |
@@ -277,8 +277,8 @@ carries `subject_kind`, as `belief_events_subject` does; and `t 0x09 0x04` is ne
   (a null `ord` last). Each row takes an id, a skipped one too, as the `BIGSERIAL` default runs before
   `ON CONFLICT DO NOTHING`; a key already recorded, by an earlier row of the same call included, is skipped. A row
   fails on its first NOT NULL column, then on the `subject_kind`, `origin` and `tier_basis` checks, and the call
-  writes nothing. One difference: Postgres does not roll back a sequence, so after a failed call its next id is
-  higher than the store's.
+  writes nothing. The ids its rows took stay used, as a Postgres sequence's do: a failed call outside a store
+  transaction raises the counter past them in a write of its own, so the next call's ids match Postgres's.
 - `markBeliefCommits` reads the clock once and marks each listed publication whose newest event is not after it,
   unless it has a mark.
 - `mintBeliefLifetime` answers the lifetime already open at the pair, or fails on the primary key for a lifetime id
@@ -290,6 +290,19 @@ carries `subject_kind`, as `belief_events_subject` does; and `t 0x09 0x04` is ne
 - `readBeliefTombstones` reads the take half from the take purge ledger (`facts.md`, "The take purge ledger"). The
   store does not yet read a fact purge tombstone by fingerprint: when fact fingerprints are asked and the source has
   a fact purge tombstone, the answer says so (`factPathUnread`) and the member refuses.
+- `readBeliefHistoryRows` reads the source's current incarnation by id, ascending or descending, in batches, with
+  the slug, subject key, recorded-time window, subject key list and `beforeId` filters. Each row carries
+  `stream_visible` (the stream lifetime is open, its page live at the same source and slug, the same page when the
+  lifetime names one, and the page passes the caller's floor; for facts and takes it is not quarantined; null with no
+  live page), `later_private` (a later private event of the same claim fingerprint and kind) and `take_holder` (the
+  event's own holder, else the newest earlier one of the key). A key with a `derived.hidden` event in any incarnation
+  hides its events below that marker and its backfill events. `listVisibleBeliefLifetimes` answers each listed
+  lifetime once, in uuid text order, when it is open and its page is live and passes the floor.
+- `readLedgerSource` reads the newest coverage event of the current incarnation that is not `coverage.restored`, and
+  answers `purgesPossible` from the purge epoch and the fact, take and page purge ledgers. In batch mode it adds the
+  store's one managed-mode row and the plan mode it would replace, which the store does not change.
+  `listCoveredSources` lists, in byte order, the sources with a coverage event about the key in their current
+  incarnation.
 - No table has a foreign key, so a source delete keeps the ledger's rows, as Postgres does; a source created again
   has another incarnation, and the reads by incarnation do not see the old rows. The suppression and claim reads are
   by source id and do see them, as on Postgres.

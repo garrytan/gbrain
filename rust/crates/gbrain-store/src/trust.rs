@@ -25,6 +25,8 @@
 //! - `t 0x0a`: the belief ledger's page lifetimes ([`belief_lifetimes`]).
 //! - `t 0x0c`: the belief ledger's suppressions ([`belief_redactions`]).
 //!
+//! The belief ledger's history and source reads ([`belief_history`]) have no keys of their own.
+//!
 //! A page's trust tier and write origin have no key of their own: they are fields of the page
 //! record (`pages::PageRecord`, stamped by `pages::write_page`) and of each version record (copied
 //! by `pages::snapshot_in`). No read looks a page up by its tier, so no tier index exists; a later
@@ -41,6 +43,7 @@
 mod stamp;
 
 pub mod belief_events;
+pub mod belief_history;
 pub mod belief_lifetimes;
 pub mod belief_redactions;
 mod eligibility;

@@ -5,8 +5,11 @@
  *  - Contract: the page lifetimes (mint, open read, moved read, rename, end), the event append and its commit marks,
  *    the redaction copies and releases, the tombstone read and the purge-epoch read return the same observable result
  *    on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1). The
- *    Rust store serves every write and the append's reads; it still refuses the history read (readBeliefHistoryRows)
- *    and a tombstone read whose fact half needs a fact purge tombstone read by fingerprint.
+ *    Rust store serves every write, the append's reads and the history, visible-lifetime, ledger-source and
+ *    covered-source reads; it still refuses a tombstone read whose fact half needs a fact purge tombstone read by
+ *    fingerprint. A failed event insert keeps the ids its rows took, as a Postgres sequence does, so the ids after it
+ *    match. One case fills the ledger through the real writers (resolveLifetimes, appendBeliefEvents with a take
+ *    tombstone, a redaction and an owner release, markBeliefCommits) and compares every read over it.
  *  - Regression: an engine that mints a second open lifetime at one (incarnation, slug), that reports a renamed page's
  *    lifetime as moved, that re-inserts an event key, that drops a redaction's release, or that answers 0 instead of
  *    null for an unknown source's purge epoch: the ledger would fork a page's history or lose a suppression.
@@ -19,6 +22,10 @@ import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { BeliefEventInsertRow } from '../../src/core/engine-sql/belief-ledger.ts';
+import { appendBeliefEvents, markBeliefCommits, type BeliefEventDraft } from '../../src/core/belief/append.ts';
+import { renameLifetime, resolveLifetimes } from '../../src/core/belief/lifetimes.ts';
+import { readBeliefHistory } from '../../src/core/belief/history.ts';
+import { COVERAGE_KEY, fieldHash } from '../../src/core/belief/keys.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -27,6 +34,7 @@ const L2 = '00000000-0000-4000-8000-0000000000a2';
 const PUB1 = '00000000-0000-4000-8000-0000000000b1';
 const PUB2 = '00000000-0000-4000-8000-0000000000b2';
 const PURGE = '00000000-0000-4000-8000-0000000000c1';
+const PUB3 = '00000000-0000-4000-8000-0000000000b3';
 
 async function incarnationOf(engine: BrainEngine): Promise<string> {
   const source = await engine.readLedgerSource('default');
@@ -112,6 +120,113 @@ describe('engine parity: belief ledger writes', () => {
       const bySubject = clean(await engine.readBeliefHistoryRows({ ...base, subjectKeys: ['fact:2', 'fact:1'], descending: true }));
       expect({ inserted, repeated, none, count: history.length }).toEqual({ inserted: 2, repeated: 1, none: 0, count: 3 });
       return { inserted, repeated, none, history, bySubject };
+    },
+  );
+
+  parityTest(
+    'a failed insertBeliefEvents keeps the ids its rows took, as a sequence does, so the next insert ids match',
+    { methods: ['readLedgerSource', 'insertBeliefEvents', 'readBeliefHistoryRows'] },
+    async (engine) => {
+      const inc = await incarnationOf(engine);
+      await engine.insertBeliefEvents([event(inc, 'cc01', 0)]);
+      // Row ord 1 takes an id, row ord 2 takes one and fails its check, row ord 3 never runs.
+      const checkFailed = await engine.insertBeliefEvents([event(inc, 'cc02', 1), event(inc, 'cc03', 2, { origin: 'nope' }), event(inc, 'cc04', 3)])
+        .then(() => 'ok', () => 'failed');
+      // A cast failure fails before any row takes an id.
+      const castFailed = await engine.insertBeliefEvents([event(inc, 'cc05', 0, { source_incarnation: 'not-a-uuid' })])
+        .then(() => 'ok', () => 'failed');
+      const after = await engine.insertBeliefEvents([event(inc, 'cc06', 1), event(inc, 'cc07', 2)]);
+      const history = await engine.readBeliefHistoryRows({ sourceId: 'default', slug: null, subjectKey: null, afterId: 0, limit: 10,
+        recordedAfter: null, recordedUntil: null, subjectKeys: null, beforeId: null, descending: false });
+      const ids = history.map(r => Number(r.id));
+      // Ids relative to the first row, so a Postgres sequence left by an earlier test does not matter.
+      const relative = ids.map(id => id - ids[0]!);
+      expect({ checkFailed, castFailed, after, relative }).toEqual({ checkFailed: 'failed', castFailed: 'failed', after: 2, relative: [0, 3, 4] });
+      return { checkFailed, castFailed, after, relative };
+    },
+  );
+
+  parityTest(
+    'the real writers fill the ledger, and the history, visible-lifetime, ledger-source and covered-source reads answer the same',
+    { methods: ['putPage', 'getPage', 'updateSlug', 'deletePage', 'readLedgerSource', 'insertTakePurge', 'insertBeliefRedaction', 'readBeliefRedactions',
+      'releaseBeliefRedactions', 'readBeliefTombstones', 'mintBeliefLifetime', 'readOpenBeliefLifetimes', 'readMovedBeliefLifetimes', 'renameBeliefLifetime',
+      'endBeliefLifetime', 'insertBeliefEvents', 'markBeliefCommits', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes', 'listCoveredSources'] },
+    async (engine) => {
+      const put = async (slug: string, frontmatter: Record<string, unknown> = {}) => {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '', frontmatter });
+        return (await engine.getPage(slug))!.id;
+      };
+      const inc = await incarnationOf(engine);
+      const need = (slug: string, pageId: number) => ({ sourceId: 'default', incarnation: inc, slug, pageId });
+      const one = async (slug: string, pageId: number) => (await resolveLifetimes(engine, [need(slug, pageId)])).get(pageId)!;
+      // A rename: the page moves, its writer renames the lifetime, and a caller that read the old slug still finds it (the moved read).
+      const a = await put('notes/a');
+      const la = await one('notes/a', a);
+      await engine.updateSlug('notes/a', 'notes/a2');
+      await renameLifetime(engine, la, 'notes/a2', a);
+      const renamed = { kept: await one('notes/a2', a) === la, moved: await one('notes/a', a) === la };
+      // A recreate: a new page at the slug ends the old lifetime and mints a new one.
+      const lc1 = await one('notes/c', await put('notes/c'));
+      await engine.deletePage('notes/c');
+      const lc2 = await one('notes/c', await put('notes/c'));
+      const lp = await one('notes/p', await put('notes/p', { visibility: 'private' }));
+      const lq = await one('notes/q', await put('notes/q', { quarantine: { reason: 'parity' } }));
+      const label = new Map([[la, 'LA'], [lc1, 'LC1'], [lc2, 'LC2'], [lp, 'LP'], [lq, 'LQ']]);
+
+      await engine.insertTakePurge({ sourceId: 'default', subject: '*', claimHash: 'tp1', requestId: PURGE });
+      await engine.insertBeliefRedaction({ sourceId: 'default', subjectKey: 'fact:r', field: 'context', purgeRequest: PURGE, fieldHash: fieldHash('secret ctx') });
+      const draft = (lifetime: string | null, slug: string, subjectKind: BeliefEventDraft['subjectKind'], subjectKey: string, eventType: string,
+        over: Partial<BeliefEventDraft> = {}): BeliefEventDraft => ({ sourceId: 'default', incarnation: inc, lifetime, slug, subjectKind, subjectKey, eventType,
+        trustTier: 'agent_written', visibility: 'world', value: { claim: subjectKey }, stateHash: `s-${subjectKey}-${eventType}`, cause: { op: 'parity' }, ...over });
+      const live = { publicationId: PUB1, origin: 'live' as const, writerTier: 'agent_written', remote: false };
+      const first = await appendBeliefEvents(engine, [
+        draft(la, 'notes/a2', 'page', 'page:a', 'page.created', { value: { title: 'A' } }),
+        draft(la, 'notes/a2', 'fact', 'fact:a1', 'fact.asserted', { claimFp: 'fpa1', value: { claim: 'a1', context: 'ctx a' } }),
+        draft(lc1, 'notes/c', 'fact', 'fact:c1', 'fact.asserted', { claimFp: 'fpc1' }),
+        draft(lp, 'notes/p', 'fact', 'fact:p1', 'fact.asserted', { claimFp: 'fpp1' }),
+        draft(lq, 'notes/q', 'page', 'page:q', 'page.created', { value: { title: 'Q' } }),
+        draft(lq, 'notes/q', 'fact', 'fact:q1', 'fact.asserted', { claimFp: 'fpq1' }),
+        draft(la, 'notes/a2', 'take', 'take:a1', 'take.asserted', { claimFp: 'tp1', value: { holder: 'world', claim: 'purged take' } }),
+        draft(la, 'notes/a2', 'take', 'take:a2', 'take.asserted', { claimFp: 'tp2', value: { holder: 'people/x', claim: 'held take' } }),
+        draft(la, 'notes/a2', 'fact', 'fact:r', 'fact.asserted', { claimFp: 'fpr', value: { claim: 'r', context: 'secret ctx' } }),
+        draft(la, 'notes/a2', 'fact', 'fact:w', 'fact.asserted', { claimFp: 'fpw' }),
+        draft(la, 'notes/a2', 'fact', 'fact:h', 'fact.asserted', { claimFp: 'fph' }),
+        draft(lc2, 'notes/c', 'fact', 'fact:c2', 'fact.asserted', { claimFp: 'fpc2' }),
+        draft(null, 'notes/a2', 'coverage', COVERAGE_KEY, 'coverage.started', { value: null }),
+      ], live);
+      const second = await appendBeliefEvents(engine, [
+        draft(la, 'notes/a2', 'take', 'take:a2', 'take.removed', { claimFp: 'tp2', value: null }),
+        draft(la, 'notes/a2', 'fact', 'fact:w2', 'fact.asserted', { claimFp: 'fpw', visibility: 'private' }),
+        draft(la, 'notes/a2', 'fact', 'fact:h', 'derived.hidden', { value: null }),
+        draft(null, 'notes/a2', 'coverage', COVERAGE_KEY, 'coverage.restored', { value: null }),
+      ], { ...live, publicationId: PUB2 });
+      // An owner edit of the redacted field releases the suppression and records the release.
+      const third = await appendBeliefEvents(engine, [
+        draft(la, 'notes/a2', 'fact', 'fact:r', 'fact.revised', { claimFp: 'fpr', trustTier: 'user_confirmed', value: { claim: 'r', context: 'new ctx' } }),
+      ], { publicationId: PUB3, origin: 'live', writerTier: 'user_confirmed', remote: false, ownerEdit: true });
+      await markBeliefCommits(engine, [PUB1, PUB2, PUB3]);
+
+      const base = { sourceId: 'default', slug: null, subjectKey: null, afterId: 0, limit: 100, recordedAfter: null, recordedUntil: null, subjectKeys: null, beforeId: null };
+      const all = await engine.readBeliefHistoryRows({ ...base, descending: false });
+      const firstId = Number(all[0]!.id);
+      const clean = (list: Array<Record<string, unknown>>) => list.map(({ recorded_at: _at, ...rest }) => Object.fromEntries(Object.entries(rest).map(([k, v]) =>
+        [k, k === 'id' ? Number(v) - firstId : k === 'page_lifetime' && typeof v === 'string' ? label.get(v) ?? v : v instanceof Date ? v.toISOString() : v])));
+      const history = clean(all);
+      const window = clean(await engine.readBeliefHistoryRows({ ...base, subjectKeys: ['take:a2', 'fact:w', 'fact:r'], beforeId: firstId + 15, descending: true }));
+      const bySlug = clean(await engine.readBeliefHistoryRows({ ...base, slug: 'notes/c', afterId: firstId, descending: false }));
+      const byKey = clean(await engine.readBeliefHistoryRows({ ...base, subjectKey: 'take:a2', limit: 1, descending: true }));
+      const keys = (rows: Array<{ subject_key: string; event_type: string }>) => rows.map(r => `${r.subject_key} ${r.event_type}`);
+      const local = keys(await readBeliefHistory(engine, { sourceId: 'default', remote: false }));
+      const remote = keys(await readBeliefHistory(engine, { sourceId: 'default', remote: true }));
+      const visible = (await engine.listVisibleBeliefLifetimes([lq, lp, lc2, lc1, la, lc2, '00000000-0000-4000-8000-0000000000ff'])).map(l => label.get(l) ?? l).sort();  // lifetime order is uuid order, and the uuids are random
+      const { incarnation: _inc, ...source } = (await engine.readLedgerSource('default'))!;
+      const covered = { coverage: await engine.listCoveredSources(COVERAGE_KEY), other: await engine.listCoveredSources('["other"]') };
+      expect({ renamed, ended: lc1 !== lc2, appended: [first, second, third], count: history.length, source, covered })
+        .toEqual({ renamed: { kept: true, moved: true }, ended: true, appended: [13, 4, 2], count: 18, source: { purgeEpoch: 0, coverage: 'coverage.started', purgesPossible: true },
+          covered: { coverage: ['default'], other: [] } });
+      expect(local).not.toContain('fact:h fact.asserted');
+      expect(remote).not.toContain('fact:w fact.asserted');
+      return { renamed, history, window, bySlug, byKey, local, remote, visible, source, covered };
     },
   );
 

@@ -15,26 +15,27 @@
 //!
 //! Ids come from the `belief_events` counter and start at 1. A row whose event key is already
 //! recorded still takes an id, as the `BIGSERIAL` default does before `ON CONFLICT DO NOTHING`
-//! decides. `recorded_at` is the store clock at each row (`clock_timestamp()`). The table has no
+//! decides, and a call that fails keeps the ids its rows took, as the sequence does. `recorded_at`
+//! is the store clock at each row (`clock_timestamp()`). The table has no
 //! foreign key: deleting a source keeps its events, and a source created again has another
 //! incarnation, so its reads never see them.
 
 use super::belief_lifetimes::{canonical_uuid, cast_uuid};
 use crate::env::parse_iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvWrite, scan_prefix};
 use crate::pages::next_id;
 use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 pub(crate) const EVENTS: u8 = 0x09;
 pub(crate) const CLAIMS: u8 = 0x0b;
-const EVENT: u8 = 0x00;
+pub(crate) const EVENT: u8 = 0x00;
 const EVENT_KEY: u8 = 0x01;
 const COMMIT_MARK: u8 = 0x02;
-const SUBJECT: u8 = 0x03;
+pub(crate) const SUBJECT: u8 = 0x03;
 const PUBLICATION: u8 = 0x04;
 
 const TABLE: &str = "belief_events";
@@ -142,7 +143,7 @@ pub struct Tombstones {
     pub fact_path_unread: bool,
 }
 
-fn part_key(head: &[u8], parts: &[&str], id: Option<u64>) -> Vec<u8> {
+pub(crate) fn part_key(head: &[u8], parts: &[&str], id: Option<u64>) -> Vec<u8> {
     let mut key = head.to_vec();
     for part in parts {
         key.extend_from_slice(part.as_bytes());
@@ -154,7 +155,7 @@ fn part_key(head: &[u8], parts: &[&str], id: Option<u64>) -> Vec<u8> {
     key
 }
 
-fn event_key_of(source: &str, incarnation: &str, id: u64) -> Vec<u8> {
+pub(crate) fn event_key_of(source: &str, incarnation: &str, id: u64) -> Vec<u8> {
     part_key(
         &[keys::TRUST, EVENTS, EVENT],
         &[source, incarnation],
@@ -336,10 +337,15 @@ impl Store {
         let mut cast_rows = rows.iter().map(cast).collect::<Result<Vec<_>>>()?;
         // `ORDER BY r.ord`: a null ord sorts last (and then fails NOT NULL).
         cast_rows.sort_by_key(|c| (c.row.ord.is_none(), c.row.ord));
-        self.write(|tx| {
+        // Each row takes its id before its checks run, and a failed call keeps the ids it took,
+        // as the `BIGSERIAL` sequence does: the next call's ids are PGLite's.
+        let taken = std::cell::Cell::new(None::<u64>);
+        let outcome = self.write(|tx| {
+            taken.set(None);
             let mut inserted = 0;
             for c in cast_rows.iter().cloned() {
                 let id = next_id(tx, TABLE)?;
+                taken.set(Some(id + 1));
                 let (unique, rec) = record(c, id, self.env.now_micros())?;
                 let mut by_key = vec![keys::TRUST, EVENTS, EVENT_KEY];
                 by_key.extend_from_slice(&unique);
@@ -350,7 +356,12 @@ impl Store {
                 inserted += 1;
             }
             Ok(inserted)
-        })
+        });
+        // A bound transaction's ids never roll back with a statement (`transactions.rs`).
+        if let (Err(_), Some(end), None) = (&outcome, taken.get(), &self.bound) {
+            self.write(|tx| tx.raise_counter(&keys::meta(TABLE), end))?;
+        }
+        outcome
     }
 
     /// `markBeliefCommits`: one clock reading for the call; each listed publication with an event
@@ -401,17 +412,14 @@ impl Store {
     }
 }
 
-/// The events of one source incarnation in id order (for the history read and the tests).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "readBeliefHistoryRows reads it in push 3")
-)]
+/// The events of one source incarnation in id order (for the tests).
+#[cfg(test)]
 pub(crate) fn source_events(
-    read: &dyn KvRead,
+    read: &dyn crate::kv::KvRead,
     source: &str,
     incarnation: &str,
-) -> Result<BTreeMap<u64, EventRecord>> {
-    let mut out = BTreeMap::new();
+) -> Result<std::collections::BTreeMap<u64, EventRecord>> {
+    let mut out = std::collections::BTreeMap::new();
     let mut failure = None;
     let prefix = part_key(&[keys::TRUST, EVENTS, EVENT], &[source, incarnation], None);
     scan_prefix(read, &prefix, false, &mut |_, v| {
@@ -428,7 +436,10 @@ pub(crate) fn source_events(
 
 /// Whether the publication has a commit mark (for the tests).
 #[cfg(test)]
-pub(crate) fn commit_mark_at(read: &dyn KvRead, publication: &str) -> Result<Option<i64>> {
+pub(crate) fn commit_mark_at(
+    read: &dyn crate::kv::KvRead,
+    publication: &str,
+) -> Result<Option<i64>> {
     let key = part_key(&[keys::TRUST, EVENTS, COMMIT_MARK], &[publication], None);
     Ok(crate::get_json::<CommitMark>(read, &key)?.map(|m| m.observed_at_us))
 }
@@ -526,6 +537,35 @@ mod tests {
         assert!(code(json!({"event_key": "f"})).1.contains("hexadecimal"));
         let read = store.read().unwrap();
         assert_eq!(source_events(&*read, "default", INC).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_failed_insert_keeps_the_ids_its_rows_took() {
+        for store in [store(), crate::test_support::occ_store()] {
+            let bad = [
+                row("a1", 1, json!({})),
+                row("a2", 2, json!({"origin": "nope"})),
+                row("a3", 3, json!({})),
+            ];
+            assert!(store.insert_belief_events(&bad).is_err());
+            // A cast failure fails before any row takes an id.
+            let cast = [row("a4", 1, json!({"source_incarnation": "x"}))];
+            assert!(store.insert_belief_events(&cast).is_err());
+            assert_eq!(
+                store
+                    .insert_belief_events(&[row("a5", 1, json!({}))])
+                    .unwrap(),
+                1
+            );
+            let read = store.read().unwrap();
+            let ids: Vec<u64> = source_events(&*read, "default", INC)
+                .unwrap()
+                .keys()
+                .copied()
+                .collect();
+            // Ids 1 and 2 went to the failed call's first two rows, as `nextval` gives them.
+            assert_eq!(ids, vec![3]);
+        }
     }
 
     #[test]

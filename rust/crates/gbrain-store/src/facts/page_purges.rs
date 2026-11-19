@@ -5,7 +5,8 @@
 //! `{"slug": <text>, "request_id": <uuid text or null>, "purged_at_us": <i64>}`; the key is the
 //! table's primary key `(source_id, content_hash)`.
 //!
-//! The store reads the ledger (`countPurgedPageFacts`, facts/repair.rs). No member writes it: the
+//! The store reads the ledger (`countPurgedPageFacts`, facts/repair.rs, and the belief ledger's
+//! purge probe, trust/belief_history.rs). No member writes it: the
 //! page purge sweep (`persistence/page-purge.ts`) and the restore replay (`belief/purge-mirror.ts`)
 //! write it with raw SQL inside the write journal's transaction, so on Rust they stop on the typed
 //! `raw_sql` refusal and the ledger stays empty. A writer that binds here must also add `F 0x0C` to
@@ -33,6 +34,17 @@ fn source_prefix(source_id: &str) -> Vec<u8> {
     let mut prefix = keys::text(keys::FACT, &[source_id, ""]);
     prefix.insert(1, PURGE);
     prefix
+}
+
+/// Whether the source has any page purge tombstone (`EXISTS (SELECT 1 FROM page_purges WHERE
+/// source_id = $1)`), for the belief ledger's purge probe.
+pub(crate) fn has_page_purges(read: &dyn KvRead, source_id: &str) -> Result<bool> {
+    let mut found = false;
+    scan_prefix(read, &source_prefix(source_id), false, &mut |_, _| {
+        found = true;
+        false
+    })?;
+    Ok(found)
 }
 
 /// The `(slug, purged_at_us)` of every tombstone of a source, in content-hash order.

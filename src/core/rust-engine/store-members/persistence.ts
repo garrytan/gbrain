@@ -240,24 +240,19 @@ export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], Topo
   topologyRow(await storeCall({ member: 'insertTopologyChange' }, () => brain.insertTopologyChange(row)))!;
 
 /**
- * The belief ledger's view of a source. Belief events, the purge epoch and take and page purges are written only
- * through `executeRaw`, which this engine refuses, so the epoch is 0 and coverage is null; a purge is possible when the
- * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the one unmanaged brain row and the
- * plan-cache mode PGLite reports, which it never changes here.
+ * The belief ledger's view of a source (trust/belief_history.rs): its incarnation, purge epoch and newest coverage
+ * event, and whether a fact, take or page purge tombstone or a raised epoch makes a purge possible. A batch also
+ * returns the one unmanaged brain row and the plan-cache mode PGLite reports, which it never changes here.
  */
 export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: boolean }], LedgerSource | null> = async (brain, sourceId, opts) => {
-  const membership = await storeCall({ member: 'readLedgerSource' }, () => brain.readSourceMembership(sourceId)) as SourceMembership | null;
-  if (!membership) return null;
-  const purgesPossible = await storeCall({ member: 'readLedgerSource' }, () => brain.hasFactPurges(sourceId)) as boolean;
-  return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible,
-    ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
+  const row = await storeCall({ member: 'readLedgerSource' }, () => brain.readLedgerSource(sourceId)) as LedgerSource | null;
+  if (!row) return null;
+  return { ...row, ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
 };
 
-/**
- * The store records no belief events (they are written only through `executeRaw`, which this engine refuses), so no
- * source is covered for any subject, as `readLedgerSource` answers `coverage: null`.
- */
-export const listCoveredSources: StoreMember<[subjectKey: string], string[]> = async () => [];
+/** The sources with a coverage event about the subject in their current incarnation, by id. */
+export const listCoveredSources: StoreMember<[subjectKey: string], string[]> = (brain, subjectKey) =>
+  storeCall({ member: 'listCoveredSources' }, () => brain.listCoveredSources(subjectKey));
 
 /** `current_setting('plan_cache_mode')` on a PGLite brain that never set it. */
 const PLAN_CACHE_MODE = 'auto';

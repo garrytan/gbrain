@@ -99,7 +99,7 @@ pub(crate) fn cast_uuid(text: &Option<String>) -> Result<Option<String>> {
     text.as_deref().map(canonical_uuid).transpose()
 }
 
-fn record_key(lifetime: &str) -> Vec<u8> {
+pub(crate) fn record_key(lifetime: &str) -> Vec<u8> {
     let mut key = vec![keys::TRUST, LIFETIMES, RECORD];
     key.extend_from_slice(lifetime.as_bytes());
     key

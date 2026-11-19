@@ -1,5 +1,6 @@
 //! The belief ledger's writes and the reads its append makes: events, commit marks, page
-//! lifetimes, suppressions and purge tombstones (src/core/engine-sql/belief-ledger.ts).
+//! lifetimes, suppressions and purge tombstones (src/core/engine-sql/belief-ledger.ts); and its
+//! history and source reads (engine-sql/trust-tier-reads.ts, engine-sql/belief.ts).
 //!
 //! One `#[napi] impl Brain` block; each method decodes its JSON arguments, runs one
 //! `gbrain_store::trust::belief_*` call on the pool through `Brain::run` and resolves plain JSON.
@@ -14,6 +15,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::trust::belief_events::{EventInsert, TombstoneQuery};
+use gbrain_store::trust::belief_history::{HistoryQuery, VisibleLifetimesQuery};
 use gbrain_store::trust::belief_lifetimes::{LifetimeMint, LifetimePair};
 use gbrain_store::trust::belief_redactions::{RedactionInsert, RedactionQuery, RedactionRelease};
 
@@ -166,5 +168,51 @@ impl Brain {
             let a: Vec<i32> = required(ids, "readMovedBeliefLifetimes pageIds")?;
             s.read_moved_belief_lifetimes(&a)
         })
+    }
+
+    /// `readBeliefHistoryRows(query)`: resolves one page of history rows.
+    #[napi]
+    pub fn read_belief_history_rows<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: HistoryQuery = required(query, "readBeliefHistoryRows query")?;
+            s.read_belief_history_rows(&q)
+        })
+    }
+
+    /// `listVisibleBeliefLifetimes({ lifetimes, floor })`: resolves the visible lifetimes.
+    #[napi]
+    pub fn list_visible_belief_lifetimes<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: VisibleLifetimesQuery = required(args, "listVisibleBeliefLifetimes args")?;
+            s.list_visible_belief_lifetimes(&q)
+        })
+    }
+
+    /// `readLedgerSource(sourceId)`: resolves the source's ledger view, or null.
+    #[napi]
+    pub fn read_ledger_source<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_ledger_source(&source_id))
+    }
+
+    /// `listCoveredSources(subjectKey)`: resolves the covered source ids.
+    #[napi]
+    pub fn list_covered_sources<'env>(
+        &self,
+        env: &'env Env,
+        subject_key: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_covered_sources(&subject_key))
     }
 }
