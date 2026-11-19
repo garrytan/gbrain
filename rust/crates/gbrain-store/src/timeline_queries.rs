@@ -328,7 +328,7 @@ fn write_jsonb(value: &Value, out: &mut String) {
         }
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_by(|a, b| (a.len(), a.as_bytes()).cmp(&(b.len(), b.as_bytes())));
+            keys.sort_by(|a, b| crate::jsonb::key_cmp(a, b));
             out.push('{');
             for (i, key) in keys.into_iter().enumerate() {
                 if i > 0 {

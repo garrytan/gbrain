@@ -92,7 +92,7 @@ fn write_jsonb(value: &Value, out: &mut String) {
         }
         Value::Object(map) => {
             out.push('{');
-            for (i, (key, item)) in jsonb_key_order(map).into_iter().enumerate() {
+            for (i, (key, item)) in crate::jsonb::sorted_entries(map).into_iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
@@ -121,30 +121,6 @@ fn number_text(n: &serde_json::Number) -> String {
     }
 }
 
-fn jsonb_key_order(map: &Map<String, Value>) -> Vec<(&String, &Value)> {
-    let mut entries: Vec<(&String, &Value)> = map.iter().collect();
-    entries.sort_by(|a, b| {
-        a.0.len()
-            .cmp(&b.0.len())
-            .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
-    });
-    entries
-}
-
-/// A JSON value as jsonb stores it: object keys in jsonb order, at every depth.
-pub(crate) fn jsonb_value(value: &Value) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(items.iter().map(jsonb_value).collect()),
-        Value::Object(map) => Value::Object(
-            jsonb_key_order(map)
-                .into_iter()
-                .map(|(k, v)| (k.clone(), jsonb_value(v)))
-                .collect(),
-        ),
-        other => other.clone(),
-    }
-}
-
 /// `frontmatter ->> key`: the string itself, the jsonb text of any other value, `None` for a
 /// missing key or JSON null.
 pub(crate) fn fm_text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
@@ -157,7 +133,9 @@ pub(crate) fn fm_text(frontmatter: &Map<String, Value>, key: &str) -> Option<Str
 
 /// `frontmatter -> key`: the value in jsonb form, JSON null for a missing key.
 pub(crate) fn fm_value(frontmatter: &Map<String, Value>, key: &str) -> Value {
-    frontmatter.get(key).map_or(Value::Null, jsonb_value)
+    frontmatter
+        .get(key)
+        .map_or(Value::Null, |v| crate::jsonb::order(v.clone()))
 }
 
 /// `timestamptz::text` with TimeZone UTC: `2026-11-18 02:37:05.215+00`, trailing fraction zeros

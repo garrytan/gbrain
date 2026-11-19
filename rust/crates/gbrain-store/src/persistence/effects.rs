@@ -39,6 +39,7 @@ pub(crate) struct EffectRecord {
     pub request_id: String,
     pub kind: String,
     pub revision: Option<String>,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub state: String,
     pub execution_token: Option<String>,
@@ -50,9 +51,12 @@ pub(crate) struct EffectRecord {
     pub next_attempt_at_us: i64,
     pub attempts: i64,
     pub error_code: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub outcome: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub recovery: Option<Value>,
     pub recovery_bytes: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub claim_owner: Option<Value>,
 }
 

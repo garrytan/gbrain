@@ -24,6 +24,7 @@ use crate::write_trust::stamp_context;
 #[serde(default)]
 pub(crate) struct TimelineTrust {
     pub trust_tier: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub write_origin: Option<Value>,
 }
 
@@ -40,7 +41,10 @@ impl TimelineTrust {
     /// The two columns of a `TimelineEntry` row.
     pub(crate) fn extend_json(&self, row: &mut Map<String, Value>) {
         row.insert("trust_tier".into(), json!(self.tier().as_str()));
-        row.insert("write_origin".into(), json!(self.write_origin));
+        row.insert(
+            "write_origin".into(),
+            json!(self.write_origin.clone().map(crate::jsonb::order)),
+        );
     }
 }
 

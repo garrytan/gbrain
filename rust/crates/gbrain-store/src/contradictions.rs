@@ -50,7 +50,9 @@ struct RunRecord {
     judge_errors_total: i32,
     cost_usd_total: f32,
     duration_ms: i32,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     source_tier_breakdown: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     report_json: Value,
 }
 
@@ -78,6 +80,7 @@ impl RunRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheRecord {
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     verdict: Value,
     created_at_us: i64,
     expires_at_us: i64,

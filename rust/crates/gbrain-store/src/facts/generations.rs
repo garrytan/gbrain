@@ -44,6 +44,7 @@ pub struct UnwithdrawnArgs {
 pub(crate) struct ItemRecord {
     pub item_key: String,
     pub action: String,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub preimage: Option<Value>,
 }
 

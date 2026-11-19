@@ -158,15 +158,15 @@ pub struct ManifestRow {
     pub line_start: i64,
     pub line_count: i64,
     pub cut_kind: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub entry_state: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub protected_regions: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub facts_slots: Value,
     pub static_proj_bytes: i64,
     pub static_proj_lines: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub outline: Value,
     #[serde(default)]
     pub date_min: Option<String>,
@@ -197,7 +197,7 @@ pub(crate) struct BodyState {
     pub(crate) truth_lead: Option<String>,
     #[serde(default)]
     pub(crate) timeline_lead: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub(crate) body_flags: Option<Value>,
     #[serde(default)]
     pub(crate) chunker_version: Option<i64>,
@@ -280,7 +280,9 @@ struct DerivationRecord {
     segment_sha256: String,
     context_hash: String,
     state: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     output: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     receipt: Value,
     created_at_us: i64,
     updated_at_us: i64,

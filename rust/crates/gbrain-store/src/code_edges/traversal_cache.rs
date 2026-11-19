@@ -50,6 +50,7 @@ pub(crate) struct CacheRecord {
     pub symbol_qualified: String,
     pub depth: i32,
     pub source_id: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub response_json: Value,
     pub max_chunk_updated_at_us: i64,
     pub xmin_max: i64,

@@ -109,6 +109,7 @@ pub(crate) struct EdgeRecord {
     pub from_symbol_qualified: String,
     pub to_symbol_qualified: String,
     pub edge_type: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub edge_metadata: Value,
     pub source_id: Option<String>,
     pub created_at_us: i64,

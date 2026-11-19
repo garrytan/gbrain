@@ -265,8 +265,10 @@ pub struct JobRecord {
     pub queue: String,
     pub status: String,
     pub priority: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub submission_authority: Option<Value>,
     pub claim_generation: i64,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub max_attempts: i32,
     pub attempts_made: i32,
@@ -284,9 +286,12 @@ pub struct JobRecord {
     pub tokens_input: i32,
     pub tokens_output: i32,
     pub tokens_cache_read: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub result: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub progress: Option<Value>,
     pub error_text: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub stacktrace: Option<Value>,
     pub depth: i32,
     pub max_children: Option<i32>,
@@ -303,11 +308,13 @@ pub struct JobRecord {
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub updated_at: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub quiet_hours: Option<Value>,
     pub stagger_key: Option<String>,
     pub budget_remaining_cents: Option<i32>,
     pub budget_owner_job_id: Option<i64>,
     pub budget_root_owner_id: Option<i64>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub spend_authorization: Option<Value>,
     pub spend_claim_token: Option<i64>,
 }
@@ -425,6 +432,7 @@ struct InboxRecord {
     id: i64,
     job_id: i64,
     sender: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
     sent_at: i64,
     read_at: Option<i64>,

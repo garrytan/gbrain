@@ -15,7 +15,7 @@
 //! - Id counter: `M next_file_id`. A refused insert takes no id; an update keeps the row's id.
 //!
 //! `data` and `metadata` are JSONB in Postgres, which stores object keys ordered by length, then
-//! bytes. The store keeps that order (`jsonb_order`), so rows come back as Postgres returns them.
+//! bytes. The store keeps that order (`crate::jsonb::order`), so rows come back as Postgres returns them.
 //!
 //! Cascades:
 //! - Page hard delete (`remove_page_rows`): deletes the page's raw data (`ON DELETE CASCADE`) and
@@ -33,7 +33,7 @@ use crate::pages::{PageRecord, next_id, read_page, read_page_by_id, scope_source
 use crate::sources::{all_sources, read_source};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;
@@ -77,6 +77,7 @@ fn file_page_key(page_id: u64, file_id: u64) -> Vec<u8> {
 pub(crate) struct RawRecord {
     pub page_id: u64,
     pub source: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub fetched_at_us: i64,
 }
@@ -103,6 +104,7 @@ pub(crate) struct FileRecord {
     #[serde(default)]
     pub size_bytes: Option<i64>,
     pub content_hash: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub metadata: Value,
     pub created_at_us: i64,
 }
@@ -158,25 +160,6 @@ pub struct UpsertFileResult {
     pub created: bool,
 }
 
-/// A JSON value as Postgres's jsonb keeps it: object keys ordered by length, then bytes (the
-/// last of duplicate keys wins, which a parsed `Map` already did).
-pub(crate) fn jsonb_order(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
-            entries.sort_by(|(a, _), (b, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(k, v)| (k, jsonb_order(v)))
-                    .collect::<Map<String, Value>>(),
-            )
-        }
-        Value::Array(items) => Value::Array(items.into_iter().map(jsonb_order).collect()),
-        other => other,
-    }
-}
-
 fn has_nul(value: &Value) -> bool {
     match value {
         Value::String(s) => s.contains('\0'),
@@ -199,7 +182,7 @@ fn jsonb(op: &str, column: &str, text: &str) -> Result<Value> {
             "{op}: unsupported Unicode escape sequence in {column} (\\u0000 cannot be converted to text)"
         )));
     }
-    Ok(jsonb_order(value))
+    Ok(crate::jsonb::order(value))
 }
 
 fn not_null(table: &str, column: &str) -> StoreError {
@@ -625,16 +608,6 @@ mod tests {
             metadata: Some("{}".into()),
             ..FileSpec::default()
         }
-    }
-
-    #[test]
-    fn jsonb_orders_keys_by_length_then_bytes() {
-        let value =
-            jsonb_order(json!({"bb": 1, "a": {"zz": 1, "b": 2}, "ab": [{"cc": 1, "c": 2}]}));
-        assert_eq!(
-            serde_json::to_string(&value).unwrap(),
-            r#"{"a":{"b":2,"zz":1},"ab":[{"c":2,"cc":1}],"bb":1}"#
-        );
     }
 
     #[test]

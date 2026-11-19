@@ -82,6 +82,7 @@ fn days_before(env: &dyn Env, days: f64) -> i64 {
 /// One housekeeping `op_checkpoints` row: `completed_keys` and `updated_at`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HousekeepingRow {
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     completed_keys: Value,
     updated_at_us: i64,
 }

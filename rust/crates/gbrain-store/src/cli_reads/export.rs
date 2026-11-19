@@ -9,7 +9,7 @@
 //!
 //! Keys: none of its own. It reads the page, page-id, page-body, raw-data and withdrawal records.
 
-use super::pg_text::{is_pg_space, jsonb_text, jsonb_value, pg_lower, timestamptz_text};
+use super::pg_text::{is_pg_space, jsonb_text, pg_lower, timestamptz_text};
 use super::reads::pages_after;
 use crate::Store;
 use crate::env::iso;
@@ -336,11 +336,9 @@ impl Store {
             }
             let mut tags = page.tags.clone();
             tags.sort();
-            // The export writes frontmatter keys in the row's order: jsonb's, at every depth.
-            let mut row = page.to_page_with_columns(&*read)?;
-            if let Some(frontmatter) = row.get_mut("frontmatter") {
-                *frontmatter = jsonb_value(frontmatter);
-            }
+            // The page record decodes its frontmatter in jsonb key order (crate::jsonb), the order the
+            // export writes the keys in.
+            let row = page.to_page_with_columns(&*read)?;
             rows.push(ExportPageRow { page: row, tags });
         }
         Ok(rows)

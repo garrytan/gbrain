@@ -27,16 +27,16 @@ pub const DREAM_VERDICT_TTL_SECONDS: i64 = 30 * 86_400;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DreamRecord {
     worth_processing: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     reasons: Option<Value>,
     judged_at_us: i64,
     #[serde(default)]
     score: Option<f64>,
     #[serde(default)]
     content_type: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     segments: Option<Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     entities: Option<Value>,
     #[serde(default)]
     model: Option<String>,

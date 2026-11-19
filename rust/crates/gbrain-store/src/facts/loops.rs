@@ -20,7 +20,7 @@ use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::raw_files::jsonb_order;
+use crate::jsonb;
 use crate::sources::require_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,7 @@ struct LoopRecord {
     counterparty_source_id: Option<String>,
     counterparty_email: Option<String>,
     summary: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     evidence: Value,
     thread_id: Option<String>,
     page_slug: Option<String>,
@@ -270,7 +271,7 @@ impl Store {
                     counterparty_source_id: input.counterparty_source_id.clone(),
                     counterparty_email: input.counterparty_email.clone(),
                     summary: input.summary.clone(),
-                    evidence: jsonb_order(input.evidence.clone()),
+                    evidence: jsonb::order(input.evidence.clone()),
                     thread_id: input.thread_id.clone(),
                     page_slug: input.page_slug.clone(),
                     due_at_us,
@@ -324,7 +325,7 @@ impl Store {
             r.counterparty_slug = input.counterparty_slug.clone().or(r.counterparty_slug);
             r.counterparty_email = input.counterparty_email.clone().or(r.counterparty_email);
             r.summary = input.summary.clone();
-            r.evidence = jsonb_order(input.evidence.clone());
+            r.evidence = jsonb::order(input.evidence.clone());
             r.page_slug = input.page_slug.clone().or(r.page_slug);
             r.due_at_us = due_at_us.or(r.due_at_us);
             r.confidence = confidence;

@@ -213,11 +213,13 @@ pub(crate) struct RequestRecord {
     pub(crate) page_id: Option<u64>,
     pub(crate) slug: String,
     pub(crate) digest: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub(crate) intent: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub(crate) authority: Value,
     pub(crate) sequence: u64,
     pub(crate) state: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub(crate) outcome: Option<Value>,
     #[serde(default)]
     pub(crate) error_code: Option<String>,
@@ -798,6 +800,7 @@ struct WriterRecord {
     id: String,
     lane: String,
     credential_hash: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     grant_ceiling: Value,
     created_at_us: i64,
     #[serde(default)]

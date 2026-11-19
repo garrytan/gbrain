@@ -118,7 +118,10 @@ pub(crate) fn fill_request_columns(row: &mut Map<String, Value>, extra: &Map<Str
         "transient_interruptions",
     ];
     let mut put = |column: &str, default: Value| {
-        row.insert(column.into(), extra.get(column).cloned().unwrap_or(default));
+        // The jsonb columns (recovery, error_detail, claim_phase) read in jsonb key order; ordering
+        // a scalar changes nothing.
+        let value = extra.get(column).cloned().map(crate::jsonb::order);
+        row.insert(column.into(), value.unwrap_or(default));
     };
     for column in NULLS {
         put(column, Value::Null);

@@ -104,6 +104,7 @@ struct MessageRecord {
     job_id: i64,
     message_idx: i64,
     role: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     content_blocks: Value,
     tokens_in: Option<i64>,
     tokens_out: Option<i64>,
@@ -140,6 +141,7 @@ struct ToolRecord {
     ordinal: Option<i64>,
     tool_use_id: String,
     tool_name: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     input: Value,
     status: String,
     output: Option<String>,

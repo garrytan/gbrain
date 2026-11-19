@@ -101,7 +101,9 @@ struct ProposalRecord {
     target_id: i64,
     related_table: Option<String>,
     related_id: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     before_state: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     after_state: Value,
     proposer: String,
     status: String,

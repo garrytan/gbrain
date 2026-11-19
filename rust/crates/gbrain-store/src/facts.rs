@@ -169,6 +169,7 @@ pub(crate) struct FactRecord {
     /// written before the store kept the column, reads as `unknown` ([`TrustTier::stored`]).
     pub trust_tier: String,
     /// `write_origin`: the provenance JSON of the write that stamped the row (NULL: none).
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub write_origin: Option<Value>,
 }
 
@@ -269,7 +270,10 @@ impl FactRecord {
             out.insert("attributed_to".into(), json!(who));
         }
         out.insert("trust_tier".into(), json!(self.tier().as_str()));
-        out.insert("write_origin".into(), json!(self.write_origin));
+        out.insert(
+            "write_origin".into(),
+            json!(self.write_origin.clone().map(crate::jsonb::order)),
+        );
         if let Some(m) = self.claim_metric.as_deref().filter(|s| !s.is_empty()) {
             out.insert("claim_metric".into(), json!(m));
         }
