@@ -633,6 +633,7 @@ test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-sync-lease.test.ts
 test/persistence-sync-metafile-pages.test.ts
+test/persistence-topology-recovery-unmanaged.test.ts
 test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
