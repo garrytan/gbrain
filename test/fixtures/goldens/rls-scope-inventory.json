@@ -133,6 +133,28 @@
         ],
         "flagOnScopes": []
       },
+      "clearCodeTraversalCache#allSources": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "clearCodeTraversalCache#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "consolidateFact#default": {
         "flagOffLanes": [
           "pool"
@@ -1026,6 +1048,17 @@
         "flagOnScopes": []
       },
       "getChunksWithEmbeddings#sourceId+includeUnsealed": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "getCodeTraversalCache#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2655,6 +2688,17 @@
         ],
         "flagOnScopes": []
       },
+      "putCodeTraversalCache#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "putContradictionCacheEntry#default": {
         "flagOffLanes": [
           "pool"
@@ -3867,6 +3911,7 @@
         "autocommitSql": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
+        "clearCodeTraversalCache": "none",
         "connRetry": "none",
         "connect": "none",
         "connectedDatabaseUrl": "none",
@@ -3892,6 +3937,7 @@
         "deleteFactsForPage": "none",
         "deletePage": "none",
         "deletePages": "none",
+        "deleteTakeRows": "none",
         "directEngineSql": "none",
         "disconnect": "none",
         "disconnectInternal": "none",
@@ -3927,6 +3973,7 @@
         "getChunkWindows": "direct",
         "getChunks": "direct",
         "getChunksWithEmbeddings": "none",
+        "getCodeTraversalCache": "none",
         "getConfig": "none",
         "getConfigValues": "none",
         "getContentFlagsByPageIds": "none",
@@ -4004,11 +4051,13 @@
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "lockPageKeys": "none",
+        "lockRegisteredSourceIds": "none",
         "logEvalCandidate": "none",
         "logEvalCaptureFailure": "none",
         "logIngest": "none",
         "markPagesAttendanceBlocked": "none",
         "markPagesExtractedBatch": "none",
+        "matchTakeRows": "none",
         "mergeOntologyFact": "none",
         "migrateFactsToCanonical": "none",
         "moveChunkIndexes": "none",
@@ -4020,6 +4069,7 @@
         "preparationRead": "none",
         "pruneFrontmatterTags": "none",
         "purgeDeletedPages": "none",
+        "putCodeTraversalCache": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",
         "putPage": "none",
@@ -4048,9 +4098,11 @@
         "removeLink": "none",
         "removeLinksByPagesAndSource": "none",
         "removeTag": "none",
+        "removeTimelineRows": "none",
         "replaceDerivedAliases": "none",
         "replaceDerivedLinks": "none",
         "replaceDerivedLinksBatch": "none",
+        "replaceWantedLinkRows": "none",
         "resolveAliases": "none",
         "resolveFactsEmbeddingCast": "none",
         "resolveSlugWithAlias": "none",
@@ -4108,6 +4160,7 @@
         "updateSourceConfig": "none",
         "updateTake": "none",
         "updateTakeEmbeddings": "none",
+        "updateTimelineDetails": "none",
         "upsertChunks": "via:_upsertChunksOnce",
         "upsertEventProjection": "none",
         "upsertFile": "none",

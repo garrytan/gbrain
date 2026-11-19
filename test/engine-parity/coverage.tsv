@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 242/242
+# covered: 251/251
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -15,10 +15,10 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 8/8
+# timeline: 10/10
 # ontology: 4/4
 # raw_files: 5/5
-# takes: 15/15
+# takes: 17/17
 # dream: 3/3
 # contradictions: 5/5
 # facts: 14/14
@@ -30,9 +30,10 @@
 # import_guards: 9/9
 # cycle_locks: 6/6
 # raw_sql: 4/4
-# code_edges: 5/5
+# code_edges: 8/8
 # eval_capture: 5/5
 # owner_only: 1/1
+# wanted_links: 2/2
 # salience_enrich: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -44,11 +45,11 @@ transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	35	yes	yes	yes	serves
+getPage	pages	yes	38	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	137	yes	yes	yes	serves
+putPage	pages	yes	142	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -149,14 +150,16 @@ removeTag	tags	yes	1	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	1	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	2	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	9	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	12	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
-getTimeline	timeline	yes	3	yes	yes	yes	serves
+getTimeline	timeline	yes	6	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	4	no	yes	yes	refuses:timeline
+upsertEventProjection	timeline	yes	6	no	yes	yes	refuses:timeline
+removeTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
+updateTimelineDetails	timeline	yes	1	no	yes	yes	refuses:timeline
 mergeOntologyFact	ontology	yes	4	no	yes	yes	refuses:ontology
 getOntology	ontology	yes	2	no	yes	yes	refuses:ontology
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	refuses:ontology
@@ -166,9 +169,9 @@ getRawData	raw_files	yes	2	yes	yes	yes	refuses:raw_data
 upsertFile	raw_files	yes	2	no	yes	yes	refuses:files
 getFile	raw_files	yes	2	no	yes	yes	refuses:files
 listFilesForPage	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	21	yes	yes	yes	serves
+addTakesBatch	takes	yes	23	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
-listTakes	takes	yes	12	no	yes	yes	serves
+listTakes	takes	yes	13	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -179,8 +182,10 @@ supersedeTake	takes	yes	1	no	yes	yes	serves
 resolveTake	takes	yes	5	no	yes	yes	serves
 getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
-addSynthesisEvidence	takes	yes	1	no	yes	yes	serves
+addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	2	no	yes	yes	serves
+matchTakeRows	takes	yes	1	no	yes	yes	refuses:takes
+deleteTakeRows	takes	yes	1	no	yes	yes	refuses:takes
 getDreamVerdict	dream	yes	1	yes	yes	yes	refuses:dream_verdicts
 putDreamVerdict	dream	yes	1	yes	yes	yes	refuses:dream_verdicts
 sweepDreamVerdicts	dream	yes	1	no	yes	yes	refuses:dream_verdicts
@@ -266,12 +271,17 @@ deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	refuses:code_edges
 getCallersOf	code_edges	yes	3	no	yes	yes	refuses:code_edges
 getCalleesOf	code_edges	yes	2	yes	yes	yes	refuses:code_edges
 getEdgesByChunk	code_edges	yes	2	no	yes	yes	refuses:code_edges
+getCodeTraversalCache	code_edges	yes	4	no	yes	yes	refuses:code_edges
+putCodeTraversalCache	code_edges	yes	4	no	yes	yes	refuses:code_edges
+clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	refuses:code_edges
 logEvalCandidate	eval_capture	yes	2	no	yes	yes	refuses:eval_capture
 listEvalCandidates	eval_capture	yes	2	no	yes	yes	refuses:eval_capture
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	refuses:eval_capture
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
+lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
+replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
 setEmotionalWeightBatch	salience_enrich	yes	4	yes	yes	yes	serves
 getRecentSalience	salience_enrich	yes	1	yes	yes	yes	serves

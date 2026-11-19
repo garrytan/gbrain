@@ -41,6 +41,7 @@ import type {
   FactRow, FactInsertStatus,
   NewFact, FactListOpts, RecallFactReadOpts, FactsHealth,
   SourceRow,
+  WantedLinkRowsReplacement,
 } from './engine.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
@@ -141,6 +142,7 @@ import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.t
 import * as factsImpl from './engine-sql/facts.ts';
 import * as takesImpl from './engine-sql/takes.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
+import * as codeTraversalCache from './engine-sql/code-traversal-cache.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
 import * as pageLookupImpl from './engine-sql/page-lookup.ts';
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
@@ -153,6 +155,7 @@ import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.t
 import * as identityDecisionsImpl from './engine-sql/identity-decisions.ts';
 import * as tagsImpl from './engine-sql/tags.ts';
 import * as linksImpl from './engine-sql/links.ts';
+import * as wantedLinksImpl from './engine-sql/wanted-links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
@@ -1888,6 +1891,13 @@ export class PostgresEngine implements BrainEngine {
     return replaceDerivedLinksBatch(this, items);
   }
 
+  // Wanted-link writes (engine-sql/wanted-links.ts), on the current connection: the caller's transaction when there is
+  // one. autocommitSql retries a statement a read-only session default refused, as the executeRaw calls they replace did.
+  lockRegisteredSourceIds(sourceIds: readonly string[]) { return wantedLinksImpl.lockRegisteredSourceIds(this.autocommitSql, sourceIds); }
+  replaceWantedLinkRows(origin: { pageId: number; sourceId: string }, replacement: WantedLinkRowsReplacement) {
+    return wantedLinksImpl.replaceWantedLinkRows(this.autocommitSql, origin, replacement);
+  }
+
   // #3674 — see BrainEngine.removeLinksByPagesAndSource JSDoc. Identical SQL
   // shape in PGLiteEngine (parity). JSONB recordset binding (never
   // JSON.stringify into ::jsonb — executeRawJsonb passes raw objects).
@@ -2067,6 +2077,9 @@ export class PostgresEngine implements BrainEngine {
   async upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }> {
     return timelineImpl.upsertEventProjection(this.engineSql, opts);
   }
+
+  removeTimelineRows(pageId: number, rows: readonly timelineImpl.TimelineRowRemoval[]) { return timelineImpl.removeTimelineRows(this.autocommitSql, pageId, rows); }
+  updateTimelineDetails(pageId: number, rows: readonly timelineImpl.TimelineDetailRefresh[]) { return timelineImpl.updateTimelineDetails(this.autocommitSql, pageId, rows); }
 
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sql = this.sql;
@@ -2562,6 +2575,9 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<Map<number, Take[]>> {
     return takesImpl.listActiveTakesForPages(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), pageIds, opts);
   }
+
+  matchTakeRows(pageId: number, rows: readonly takesImpl.TakeFenceRow[], limit: number) { return this.preparationRead(exec => takesImpl.matchTakeRows(unscopedExecutor(exec, 'page write: fence take collision read ran unscoped through executeRaw'), pageId, rows, limit)); }
+  deleteTakeRows(pageId: number, rowNums: readonly number[]) { return takesImpl.deleteTakeRows(this.autocommitSql, pageId, rowNums); }
 
   async writeContradictionsRun(row: {
     run_id: string;
@@ -3251,6 +3267,11 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<import('./types.ts').CodeEdgeResult[]> {
     return codeEdgesImpl.getEdgesByChunk(unscopedExecutor(this.engineSql, 'code-edges: unscoped on master (EO4 inventory)'), chunkId, opts);
   }
+
+  // jobs-tables group D: the code_traversal_cache table (./engine-sql/code-traversal-cache.ts).
+  async getCodeTraversalCache(key: codeTraversalCache.CodeTraversalCacheKey) { return codeTraversalCache.getCodeTraversalCache(this, key); }
+  async putCodeTraversalCache(key: codeTraversalCache.CodeTraversalCacheKey, response: unknown, maxChunkUpdatedAt: string, xminMax: number) { return codeTraversalCache.putCodeTraversalCache(this, key, response, maxChunkUpdatedAt, xminMax); }
+  async clearCodeTraversalCache(opts: codeTraversalCache.CodeTraversalCacheClear) { return codeTraversalCache.clearCodeTraversalCache(this, opts); }
 
   // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
