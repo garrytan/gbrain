@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 650/650
+# covered: 652/652
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 41/41
+# persistence_journal: 43/43
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -348,7 +348,7 @@ getConfigValues	config	yes	5	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
-readLocalWriterRow	import_guards	yes	4	no	yes	yes	serves
+readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	5	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	30	no	yes	yes	serves
@@ -359,7 +359,7 @@ declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	4	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	6	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	5	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
@@ -367,11 +367,12 @@ countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	18	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	20	no	yes	yes	serves
 insertWriteRequest	persistence_journal	yes	18	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	13	no	yes	yes	serves
-lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
+lockWriteRequest	persistence_journal	yes	4	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	10	no	yes	yes	serves
+cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
 readSourceMembership	persistence_journal	yes	19	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
@@ -396,6 +397,7 @@ selectProjectionWindowJobs	persistence_journal	yes	3	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	1	no	yes	yes	serves
+listRequestEffects	persistence_journal	yes	2	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	3	no	yes	yes	serves

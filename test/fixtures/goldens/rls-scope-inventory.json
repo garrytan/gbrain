@@ -133,6 +133,17 @@
         ],
         "flagOnScopes": []
       },
+      "cancelWriteRow#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "claimHousekeepingTurn#default": {
         "flagOffLanes": [
           "pool"
@@ -2653,6 +2664,17 @@
           "src-a,src-b"
         ]
       },
+      "listRequestEffects#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listReservationsAfter#default": {
         "flagOffLanes": [
           "pool"
@@ -4592,6 +4614,7 @@
         "beginSnapshotRead": "none",
         "bindPageOrigin": "none",
         "cancelJobs": "none",
+        "cancelWriteRow": "none",
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",
@@ -4907,6 +4930,7 @@
         "listRecordMetadataRows": "none",
         "listRelationshipNoteRows": "none",
         "listRelinkCandidateRows": "none",
+        "listRequestEffects": "none",
         "listReservationsAfter": "none",
         "listRestatedPrivateCopies": "none",
         "listRetiredDeactivations": "none",
