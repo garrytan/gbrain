@@ -5,7 +5,7 @@ test/engine-parity/chunk-reads.test.ts	9	0
 test/engine-parity/chunks.test.ts	13	1
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-import.test.ts	13	1
-test/engine-parity/cli-reads-ops.test.ts	13	5
+test/engine-parity/cli-reads-ops.test.ts	19	1
 test/engine-parity/code-eval-salience.test.ts	12	0
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
@@ -34,7 +34,7 @@ test/engine-parity/jobs-status.test.ts	11	0
 test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	15	0
 test/engine-parity/jobs.test.ts	13	1
-test/engine-parity/keyword-visibility.test.ts	5	0
+test/engine-parity/keyword-visibility.test.ts	6	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-reads.test.ts	9	0
 test/engine-parity/link-temporal.test.ts	13	0
@@ -66,6 +66,7 @@ test/engine-parity/trust-tier-reads.test.ts	11	4
 test/engine-parity/trust-withdrawals.test.ts	4	0
 test/engine-parity/trust-write-gate.test.ts	4	0
 test/engine-parity/typed-config-reads.test.ts	2	0
+test/engine-parity/unrestricted-caller-reads.test.ts	2	0
 test/engine-parity/versions-raw.test.ts	9	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/write-guards.test.ts	7	0

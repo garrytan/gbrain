@@ -82,12 +82,15 @@ The store reproduces how PGLite (PostgreSQL 18.6, libc provider, ctype `C.UTF-8`
 Each answer below is what Postgres gives for a brain that never wrote the missing data, or a typed refusal
 (`engine_capability_missing`) where no such answer is exact.
 
-- **Private visibility.** The store has no visibility filter. `scanExactBatch` with `excludePrivate`,
-  `listExactIdentityCandidates` and `rankEntities` with `remote.excludePrivate` refuse. The store method also rejects
-  `remote.excludePrivate` with `invalid_argument` as a backstop.
+- **Private visibility.** `listExactIdentityCandidates` and `rankEntities` with `remote.excludePrivate` read
+  `remote.policy`, the caller's page policy (`storePagePolicy` with caller readers), and leave out each page it hides.
+  `rankEntities` drops a hidden page from the ranked set and from every edge count. With `excludePrivate` and no
+  policy the store method rejects the call with `invalid_argument`. `scanExactBatch` with `excludePrivate` reads the
+  same policy as `excludePrivate` and leaves hidden pages out of the batch.
 - **Trust tiers.** `scanExactBatch` with `minTrust` refuses.
-- **The safe-chunk fence.** The store keeps no `chunker_version`, so it cannot tell a sealed page from an `unsealed`
-  one. `scanExactBatch` with `remote: true` refuses.
+- **The safe-chunk fence.** `scanExactBatch` with `remote: true` matches only chunks of a page whose
+  `chunker_version` is at the fence (4) or above, and reports a page below it with no match as `unsealed`. A record
+  with no version is below the fence, as Postgres stores 1 for it.
 - **Body storage.** The store has no `body_storage` or `body_bytes`. A page has a body when `compiled_truth` or
   `timeline` is non-empty, which is the Postgres answer for an inline body.
 - **Page aliases.** The store has no `page_aliases` table, so the alias probe (`aliasKeys`) finds nothing, as Postgres
