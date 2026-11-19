@@ -537,4 +537,24 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       return { title: version.title, count: versions.length };
     },
   );
+
+  // Review finding specialist-batched#2: updateSlug versions the page before it moves it. SQL versions a segmented page as
+  // a reference to its live body generation; the Rust store keeps no such reference, so it must refuse the rename (as
+  // createVersion does) instead of writing a version with no body and moving the page.
+  parityTest(
+    'updateSlug of a segmented page versions it by reference on PGLite and is a typed refusal on the Rust store',
+    { methods: ['updateSlug', 'getVersions', 'getPage'] },
+    async (engine) => {
+      await publishApart(engine, 'notes/renamed-big');
+      // Rust: the typed refusal ends the case, and nothing was renamed or versioned (checked in the store's unit test).
+      const moved = await engine.updateSlug('notes/renamed-big', 'notes/renamed-big-2');
+      const versions = await engine.getVersions('notes/renamed-big-2');
+      const page = await engine.getPage('notes/renamed-big-2');
+      return {
+        moved,
+        page: page ? { slug: page.slug, title: page.title } : null,
+        versions: versions.map((v) => ({ title: v.title, compiled_truth: v.compiled_truth, timeline: v.timeline, content_hash: v.content_hash ?? null })),
+      };
+    },
+  );
 });

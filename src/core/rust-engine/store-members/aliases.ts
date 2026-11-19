@@ -12,6 +12,7 @@
  */
 import type { PageReadPolicy, PageReadScope } from '../../types.ts';
 import { validateSlug, warnOncePerProcess } from '../../utils.ts';
+import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -44,7 +45,13 @@ export const updateSlug: StoreMember<[oldSlug: string, newSlug: string, opts?: {
   const slug = validateSlug(newSlug);
   const o = takeOptions('updateSlug', opts, ['sourceId']);
   const sourceId = o.sourceId as string | undefined;
-  return storeCall({ member: 'updateSlug', slug: oldSlug, sourceId }, () => brain.updateSlug(oldSlug, slug, sourceId ?? null));
+  // A segmented page is refused (the store answers `invalid_state` before it writes): the SQL engines version it as a
+  // reference to its live body generation before the move, which the Rust store does not keep (see createVersion).
+  return storeCall({ member: 'updateSlug', slug: oldSlug, sourceId }, () => brain.updateSlug(oldSlug, slug, sourceId ?? null)
+    .catch((error: unknown) => {
+      if (storeErrorCode(error) === 'invalid_state') refuseMember('updateSlug', 'a segmented page');
+      throw error;
+    }));
 };
 
 export const resolveSlugWithAliasDetailed: StoreMember<
