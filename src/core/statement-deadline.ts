@@ -31,6 +31,7 @@ import { ReadDeadlineError, withReadDeadline } from './read-deadline.ts';
 import { DOCTOR_READ_MEMBERS } from './engine-sql/doctor-reads.ts';
 import { DOCTOR_DERIVED_MEMBERS } from './engine-sql/doctor-derived.ts';
 import { DOCTOR_PERSISTENCE_MEMBERS } from './engine-sql/doctor-persistence.ts';
+import { DOCTOR_PAGES_MEMBERS } from './engine-sql/doctor-pages.ts';
 
 export interface StatementDeadline {
   startedAt: number;
@@ -94,7 +95,7 @@ const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows'
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
 /** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-reads.ts), which also replaced bounded statements. */
 const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([
-  ...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS,
+  ...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS,
 ]);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;

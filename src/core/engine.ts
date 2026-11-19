@@ -14,6 +14,7 @@ import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
 import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
+import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -4308,4 +4309,43 @@ export interface BrainEngine {
   listLocalEditAdoptions(): Promise<DoctorPersistenceSql.LocalEditAdoptionRow[]>;
   /** The recorded derivation-result sweeps of fact purges, oldest first. */
   listDerivationPurgeSweeps(): Promise<DoctorPersistenceSql.DerivationPurgeSweepRow[]>;
+  // Doctor page reads (engine-sql/doctor-pages.ts): the page-table statements doctor checks ran through executeRaw.
+  /** Live pages without an `embed_skip` marker whose body and timeline are over `minBytes` bytes, largest first (at most 101). */
+  listOversizedPages(minBytes: number): Promise<DoctorPagesSql.OversizedPageRow[]>;
+  /** Live pages with title, body and timeline heads and frontmatter, newest update first (`limit` of them), or all of them (`null`). */
+  listScraperJunkCandidates(limit: number | null): Promise<DoctorPagesSql.ScraperJunkRow[]>;
+  /** Live pages whose frontmatter holds the key `marker` (`quarantine` or `content_flag`). */
+  countMarkedPages(marker: DoctorPagesSql.PageMarker): Promise<number>;
+  /** Live `always_load` pages stored in segments with more than `maxBytes` body bytes. */
+  countOversizedCorePages(maxBytes: number): Promise<number>;
+  /** Synthesized pages with no raw trace, raw data, evidence or exemption: their count and five slugs. */
+  readRawProvenanceGaps(): Promise<DoctorPagesSql.RawProvenanceGaps>;
+  /** Live unverified auto-extracted pages created more than `days` days ago (in `sourceId` when given). */
+  countUnverifiedExtractions(days: number, sourceId: string | null): Promise<number>;
+  /** Groups of live pages sharing a content hash within a source (at most 51). */
+  listContentHashDuplicates(): Promise<DoctorPagesSql.ContentHashDuplicateRow[]>;
+  /** Live conversation pages imported from a transcript. */
+  countTranscriptImportPages(): Promise<number>;
+  /** Every page row, soft-deleted pages included. */
+  countPageRows(): Promise<number>;
+  /** Page rows (soft-deleted included) whose slug starts with `prefix`, taken literally. */
+  countPagesBySlugPrefix(prefix: string): Promise<number>;
+  /** Live page rows. */
+  countLivePages(): Promise<number>;
+  /** The earliest `created_at` of any page row (soft-deleted included), or null. */
+  readOldestPageCreatedAt(): Promise<string | Date | null>;
+  /** Page rows per stored `trust_tier`. */
+  countPageTrustTiers(): Promise<DoctorPagesSql.TrustTierCount[]>;
+  /** Live pages with at least one outgoing `mentions` link. */
+  countPagesWithMentionLinks(): Promise<number>;
+  /** Image-asset chunks with an image vector whose modality is not `image`. */
+  countImageModalityMismatches(): Promise<number>;
+  /** Live image pages, those with no image vector and those with no recorded `source_path`. */
+  readImagePageCoverage(): Promise<DoctorPagesSql.ImagePageCoverage>;
+  /** Live `facts` pages in (source, slug) order with the bounded body prefix. */
+  listFactsPageBodies(): Promise<DoctorPagesSql.FactsPageBody[]>;
+  /** Live pages whose `source_path` has a bracket or a control character. */
+  listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
+  /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
+  listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
 }

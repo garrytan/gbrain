@@ -172,6 +172,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listConsumerOwners', 'listOverwriteCandidates', 'listCallerRefusalRows', 'countCompactedCallerRefusals',
     'listLocalEditAdoptions', 'listDerivationPurgeSweeps',
   ],
+  // doctor_pages: the page-table statements doctor checks ran through executeRaw (engine-sql/doctor-pages.ts)
+  doctor_pages: ['listOversizedPages', 'listScraperJunkCandidates', 'countMarkedPages', 'countOversizedCorePages', 'readRawProvenanceGaps', 'countUnverifiedExtractions', 'listContentHashDuplicates', 'countTranscriptImportPages', 'countPageRows', 'countPagesBySlugPrefix', 'countLivePages', 'readOldestPageCreatedAt', 'countPageTrustTiers', 'countPagesWithMentionLinks', 'countImageModalityMismatches', 'readImagePageCoverage', 'listFactsPageBodies', 'listBracketPathPages', 'listSlugPathCandidates'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],
