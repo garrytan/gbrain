@@ -296,7 +296,7 @@ src/core/chronicle/campaign.ts	execute_raw	3
 src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5
-src/core/chronicle/ledger.ts	execute_raw	9
+src/core/chronicle/ledger.ts	execute_raw	10	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
 src/core/chronicle/publish.ts	execute_raw	4
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
@@ -713,7 +713,6 @@ src/core/persistence/group-publish.ts	execute_raw	11
 src/core/persistence/head-blocker.ts	execute_raw	2
 src/core/persistence/held-reads.ts	execute_raw	1
 src/core/persistence/hosted-repo.ts	execute_raw	4
-src/core/persistence/housekeeping-turn.ts	execute_raw	2
 src/core/persistence/identity.ts	execute_raw	4
 src/core/persistence/import-deferral.ts	execute_raw	1
 src/core/persistence/import-mutations.ts	execute_raw	3
@@ -975,7 +974,6 @@ src/core/schema-pack/sync.ts	execute_raw	3
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
-src/core/search/alias-fanout.ts	execute_raw	4
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	4
 src/core/search/entity-facts.ts	execute_raw	1

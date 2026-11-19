@@ -2276,6 +2276,28 @@
         ],
         "flagOnScopes": []
       },
+      "listEntityKeyRows#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEntityKeyRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactsByEntity#allFilters": {
         "flagOffLanes": [
           "pool"
@@ -4537,6 +4559,7 @@
         "aliasFanoutRead": "none",
         "allocateBodyOccurrenceIds": "none",
         "applyForwardReferenceBootstrap": "none",
+        "applyIdentityDecisions": "none",
         "applyLinkTemporalRows": "none",
         "applyTransactionSettings": "none",
         "assertCycleLease": "none",
@@ -4798,6 +4821,7 @@
         "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",
         "listEnrichCandidates": "none",
+        "listEntityKeyRows": "none",
         "listEvalCandidates": "none",
         "listEvalCaptureFailures": "none",
         "listExactIdentityCandidates": "none",
@@ -4823,6 +4847,7 @@
         "listGatedMirrorRequests": "none",
         "listGuestSourceIds": "none",
         "listHeldFenceFactRows": "none",
+        "listIdentityDecisions": "none",
         "listJobAttachmentNames": "none",
         "listJobAttachments": "none",
         "listJobPage": "none",
@@ -4856,6 +4881,7 @@
         "listRelinkCandidateRows": "none",
         "listReservationsAfter": "none",
         "listRestatedPrivateCopies": "none",
+        "listRestrictedIdentityMembers": "none",
         "listRetiredDeactivations": "none",
         "listSessionFactTwins": "none",
         "listSessionFactsForClassification": "none",
@@ -4940,6 +4966,7 @@
         "onCheckout": "none",
         "openBodyStaging": "none",
         "openWakeWatch": "none",
+        "ownerOnlyMarkTriggers": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "pauseJob": "none",

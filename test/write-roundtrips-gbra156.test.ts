@@ -78,24 +78,6 @@ async function recordIdentityReads<T>(engine: BrainEngine, fn: () => Promise<T>)
   }
 }
 
-/** The typed identity reads a call makes, in order: `readPersistenceBrainId`, `readLocalWriterRow` or `readLocalWriterRow(lock)`. */
-async function recordIdentityReads<T>(engine: BrainEngine, fn: () => Promise<T>): Promise<{ result: T; reads: string[] }> {
-  const reads: string[] = [];
-  const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
-  const wrap = (name: string, label: (args: unknown[]) => string) => {
-    const original = target[name]!;
-    target[name] = function (this: unknown, ...args: unknown[]) { reads.push(label(args)); return original.apply(this, args); };
-  };
-  wrap('readPersistenceBrainId', () => 'brain');
-  wrap('readLocalWriterRow', args => ((args[1] as { lock?: boolean } | undefined)?.lock ? 'writer(lock)' : 'writer'));
-  try {
-    return { result: await fn(), reads };
-  } finally {
-    delete target.readPersistenceBrainId;
-    delete target.readLocalWriterRow;
-  }
-}
-
 const configReads = (statements: string[]) => statements.filter(s => /FROM config\b/.test(s));
 
 type Gate = { upkeepAllowed(): Promise<boolean>; sweepAllowed(direct: boolean): Promise<boolean>; housekeepingTurn: boolean;
