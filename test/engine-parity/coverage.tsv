@@ -93,7 +93,7 @@ getPage	pages	yes	125	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	529	yes	yes	yes	serves
+putPage	pages	yes	530	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -295,9 +295,9 @@ upsertFile	raw_files	yes	3	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	39	yes	yes	yes	serves
+addTakesBatch	takes	yes	40	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	16	no	yes	yes	serves
+listTakes	takes	yes	17	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -905,8 +905,8 @@ readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 readPageBodySizes	large_page	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	5	no	yes	yes	serves
 restorePageTrust	trust_fence	yes	1	no	yes	yes	serves
-listHeldRows	trust_fence	yes	1	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	7	no	yes	yes	serves
+listHeldRows	trust_fence	yes	2	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	8	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves
