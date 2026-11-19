@@ -21,9 +21,12 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
 import type { EdgeTemporalOpts, LinkReadPage } from '../../src/core/link-validity.ts';
 import type { Link, PageInput } from '../../src/core/types.ts';
-import { parityArms, sorted } from './harness.ts';
+import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -303,4 +306,197 @@ describe('engine parity: excludePrivate on link reads and walks', () => {
       return { member, stranger };
     },
   );
+});
+
+/**
+ * `excludePrivate` for a widening caller: a member identity plus a private-readable grant on `default`, the caller
+ * the MCP get_links, get_backlinks and traverse_graph ops send for a granted token. The grant opens the private page
+ * of `default` and the identity opens the readers-only page; a page of an owner-only source (`kind: imessage`) stays
+ * hidden from both, and a caller without the grant still never reads the private page. One case per member.
+ */
+describe('engine parity: excludePrivate on link reads and walks for a widening caller', () => {
+  const GRANTED = { identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true };
+  const UNGRANTED = { identity: ['member:alice-example'], hidePrivate: true };
+
+  /** The hub is cited by an open, a private, a readers-only and an owner-only-source page; the hub cites each back. */
+  async function fixture(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<void> {
+    await engine.putPage('people/hub', page('Hub', { type: 'person' }));
+    await engine.putPage('notes/open', page('Open'));
+    await engine.putPage('notes/private', page('Private', { frontmatter: { visibility: 'private' } }));
+    await engine.putPage('notes/readers', page('Readers', { frontmatter: { readable_by: ['alice-example'] } }));
+    await createSource(engine, backend, 'link-chat', { kind: 'imessage' });
+    await engine.putPage('notes/chat', page('Chat'), { sourceId: 'link-chat' });
+    for (const slug of ['notes/open', 'notes/private', 'notes/readers']) {
+      await engine.addLink(slug, 'people/hub', `${slug} cites the hub`, 'cites', 'manual');
+      await engine.addLink('people/hub', slug, `hub cites ${slug}`, 'mentions', 'manual');
+    }
+    await engine.addLink('notes/chat', 'people/hub', 'chat cites the hub', 'cites', 'manual', undefined, undefined, { fromSourceId: 'link-chat' });
+    await engine.addLink('people/hub', 'notes/chat', 'hub cites chat', 'mentions', 'manual', undefined, undefined, { toSourceId: 'link-chat' });
+  }
+
+  /** Runs `read` for the granted and the ungranted caller in the per-page owner-only form (a recorded schema version). */
+  async function asCallers<T>(engine: BrainEngine, read: () => Promise<T>): Promise<{ granted: T; ungranted: T }> {
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    return withEngineScope(engine, async () => ({
+      granted: await withCallerAccess(GRANTED, read),
+      ungranted: await withCallerAccess(UNGRANTED, read),
+    }));
+  }
+
+  function expectWidened(out: { granted: unknown; ungranted: unknown }): void {
+    const granted = JSON.stringify(out.granted);
+    const ungranted = JSON.stringify(out.ungranted);
+    for (const slug of ['notes/open', 'notes/private', 'notes/readers']) expect(granted.includes(slug)).toBe(true);
+    expect(ungranted.includes('notes/private')).toBe(false);
+    expect(ungranted.includes('notes/readers')).toBe(true);
+    expect(granted.includes('notes/chat')).toBe(false);
+    expect(ungranted.includes('notes/chat')).toBe(false);
+  }
+
+  parityTest('getLinks serves excludePrivate for a caller with a member identity and a private-readable grant', { methods: ['putPage', 'addLink', 'getLinks'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, async () => byEdge(views(await engine.getLinks('people/hub', { excludePrivate: true }))));
+    expectWidened(out);
+    return out;
+  });
+
+  parityTest('getBacklinks serves excludePrivate for a caller with a member identity and a private-readable grant', { methods: ['putPage', 'addLink', 'getBacklinks'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, async () => ({
+      plain: byEdge(views(await engine.getBacklinks('people/hub', { excludePrivate: true }))),
+      temporal: byEdge(views(await engine.getBacklinks('people/hub', { excludePrivate: true, temporal: {} }))),
+    }));
+    expectWidened(out);
+    return out;
+  });
+
+  parityTest('traverseGraph serves excludePrivate for a caller with a member identity and a private-readable grant', { methods: ['putPage', 'addLink', 'traverseGraph'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, () => engine.traverseGraph('people/hub', 2, { excludePrivate: true }));
+    expectWidened(out);
+    return out;
+  });
+
+  parityTest('traversePathsDetailed serves excludePrivate for a caller with a member identity and a private-readable grant', { methods: ['putPage', 'addLink', 'traversePathsDetailed'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, async () => ({
+      both: byPath(await engine.traversePathsDetailed('people/hub', { depth: 2, direction: 'both', excludePrivate: true })),
+      in: byPath(await engine.traversePathsDetailed('people/hub', { depth: 2, direction: 'in', excludePrivate: true, temporal: {} })),
+    }));
+    expectWidened(out);
+    return out;
+  });
+});
+
+/**
+ * `excludePrivate` for an anonymous remote caller on a brain whose config holds no member-access restriction: the
+ * caller the MCP stdio server sends (no reader identity, restricted: false), with and without a private-readable grant
+ * on `default`. No page names readers, so the restriction flag stays unset, as restricted: false requires. The private
+ * page opens only with the grant; a page of an owner-only source (`kind: imessage`) stays hidden from both. One case per
+ * member.
+ */
+describe('engine parity: excludePrivate on link reads and walks for an anonymous caller on an unrestricted brain', () => {
+  const ANONYMOUS = { identity: [], hidePrivate: true, restricted: false };
+  const ANONYMOUS_GRANTED = { identity: [], privateReadableSources: ['default'], hidePrivate: true, restricted: false };
+
+  /** The hub is cited by an open, a private and an owner-only-source page; the hub cites each back. */
+  async function fixture(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<void> {
+    await engine.putPage('people/hub', page('Hub', { type: 'person' }));
+    await engine.putPage('notes/open', page('Open'));
+    await engine.putPage('notes/private', page('Private', { frontmatter: { visibility: 'private' } }));
+    await createSource(engine, backend, 'anon-chat', { kind: 'imessage' });
+    await engine.putPage('notes/chat', page('Chat'), { sourceId: 'anon-chat' });
+    for (const slug of ['notes/open', 'notes/private']) {
+      await engine.addLink(slug, 'people/hub', `${slug} cites the hub`, 'cites', 'manual');
+      await engine.addLink('people/hub', slug, `hub cites ${slug}`, 'mentions', 'manual');
+    }
+    await engine.addLink('notes/chat', 'people/hub', 'chat cites the hub', 'cites', 'manual', undefined, undefined, { fromSourceId: 'anon-chat' });
+    await engine.addLink('people/hub', 'notes/chat', 'hub cites chat', 'mentions', 'manual', undefined, undefined, { toSourceId: 'anon-chat' });
+  }
+
+  /** Runs `read` for the anonymous caller with and without the grant, in the per-page owner-only form. */
+  async function asCallers<T>(engine: BrainEngine, read: () => Promise<T>): Promise<{ anonymous: T; granted: T }> {
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    return withEngineScope(engine, async () => ({
+      anonymous: await withCallerAccess(ANONYMOUS, read),
+      granted: await withCallerAccess(ANONYMOUS_GRANTED, read),
+    }));
+  }
+
+  function expectServed(out: { anonymous: unknown; granted: unknown }): void {
+    const anonymous = JSON.stringify(out.anonymous);
+    const granted = JSON.stringify(out.granted);
+    expect(anonymous.includes('notes/open')).toBe(true);
+    expect(anonymous.includes('notes/private')).toBe(false);
+    expect(granted.includes('notes/open')).toBe(true);
+    expect(granted.includes('notes/private')).toBe(true);
+    expect(anonymous.includes('notes/chat')).toBe(false);
+    expect(granted.includes('notes/chat')).toBe(false);
+  }
+
+  parityTest('getLinks serves excludePrivate for an anonymous caller on an unrestricted brain', { methods: ['putPage', 'addLink', 'getLinks'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, async () => byEdge(views(await engine.getLinks('people/hub', { excludePrivate: true }))));
+    expectServed(out);
+    return out;
+  });
+
+  parityTest('getBacklinks serves excludePrivate for an anonymous caller on an unrestricted brain', { methods: ['putPage', 'addLink', 'getBacklinks'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, async () => ({
+      plain: byEdge(views(await engine.getBacklinks('people/hub', { excludePrivate: true }))),
+      temporal: byEdge(views(await engine.getBacklinks('people/hub', { excludePrivate: true, temporal: {} }))),
+    }));
+    expectServed(out);
+    return out;
+  });
+
+  parityTest('traverseGraph serves excludePrivate for an anonymous caller on an unrestricted brain', { methods: ['putPage', 'addLink', 'traverseGraph'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, () => engine.traverseGraph('people/hub', 2, { excludePrivate: true }));
+    expectServed(out);
+    return out;
+  });
+
+  parityTest('traversePathsDetailed serves excludePrivate for an anonymous caller on an unrestricted brain', { methods: ['putPage', 'addLink', 'traversePathsDetailed'] }, async (engine, backend) => {
+    await fixture(engine, backend);
+    const out = await asCallers(engine, async () => ({
+      both: byPath(await engine.traversePathsDetailed('people/hub', { depth: 2, direction: 'both', excludePrivate: true })),
+      in: byPath(await engine.traversePathsDetailed('people/hub', { depth: 2, direction: 'in', excludePrivate: true, temporal: {} })),
+    }));
+    expectServed(out);
+    return out;
+  });
+});
+
+describe('engine parity: a remote caller whose record carries the schema version its engine scope has not recorded', () => {
+  const REMOTE_POLICY = { privacyRelaxed: false, restricted: false, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, schemaVersion: LATEST_SCHEMA_VERSION };
+  /** The MCP server's caller: anonymous, on an unrestricted brain, with the remote policy its request read. */
+  const REMOTE = { identity: [], hidePrivate: true, restricted: false, remotePolicy: REMOTE_POLICY };
+
+  async function fixture(engine: BrainEngine): Promise<void> {
+    await engine.putPage('people/hub', page('Hub', { type: 'person' }));
+    await engine.putPage('notes/open', page('Open'));
+    await engine.putPage('notes/private', page('Private', { frontmatter: { visibility: 'private' } }));
+    for (const slug of ['notes/open', 'notes/private']) await engine.addLink('people/hub', slug, `hub cites ${slug}`, 'mentions', 'manual');
+  }
+
+  parityTest('getLinks renders its reference policy in the schema version the caller record carries', { methods: ['putPage', 'addLink', 'getLinks'] }, async (engine) => {
+    await fixture(engine);
+    const out = byEdge(views(await withCallerAccess(REMOTE, () => engine.getLinks('people/hub', { excludePrivate: true }))));
+    const text = JSON.stringify(out);
+    expect(text.includes('notes/open')).toBe(true);
+    expect(text.includes('notes/private')).toBe(false);
+    return out;
+  });
+
+  parityTest('readWriteVisibilityProbe renders its reference policy in the schema version the caller record carries', { methods: ['putPage', 'readWriteVisibilityProbe'] }, async (engine) => {
+    await fixture(engine);
+    const out: Record<string, unknown> = {};
+    for (const slug of ['notes/open', 'notes/private']) {
+      out[slug] = await withCallerAccess(REMOTE, () => engine.readWriteVisibilityProbe('default', slug)) ?? null;
+    }
+    expect(JSON.stringify(out['notes/open'])).not.toBe(JSON.stringify(out['notes/private']));
+    return out;
+  });
 });
