@@ -751,6 +751,7 @@ export const RUST_ENGINE_MEMBERS = {
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   readMentionIndexStatus: 'pages',
+  countLivePagesInSource: 'pages',
   countPagesDueForMentions: 'pages',
   readIdentitySiblingCandidates: 'pages',
   findExactSlug: 'pages',

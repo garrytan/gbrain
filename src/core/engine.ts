@@ -3936,6 +3936,8 @@ export interface BrainEngine {
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;
   /** The mention-index status rows of `sourceIds` (mentions/coverage.ts), in no defined order; a source with no row has none. */
   readMentionIndexStatus(sourceIds: readonly string[]): Promise<MentionIndexStatusRow[]>;
+  /** The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row. */
+  countLivePagesInSource(sourceId: string): Promise<number>;
   /**
    * Live pages due for the mention pass (no mention state, or state behind the page's content or `mentionVersion`), in
    * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind.

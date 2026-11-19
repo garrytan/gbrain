@@ -5780,6 +5780,7 @@
         "countLabelFacts": "none",
         "countLeasePressure": "none",
         "countLegacyFactsPending": "none",
+        "countLivePagesInSource": "none",
         "countMcpResolvedTakes": "none",
         "countOffGridTakeWeights": "none",
         "countOnboardSignal": "none",

@@ -506,6 +506,11 @@ const PINS: Pin[] = [
     texts: [`SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
      ORDER BY source_id, slug LIMIT 51`],
   },
+  {
+    from: 'src/core/mentions/coverage.ts:54 readMentionCoverage',
+    case: { method: 'countLivePagesInSource', variant: 'default', run: e => e.countLivePagesInSource('default') },
+    texts: ['SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL'],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */
