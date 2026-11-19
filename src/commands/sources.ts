@@ -842,6 +842,8 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   // catch-and-retry degrade inside a tx; missing table ⇒ empty column set ⇒
   // no FK ⇒ skip); the FK constraint itself is the backstop for a
   // registration committing between the re-check and the DELETE.
+  // GST-3022: an owned-folder source's files leave its folder in one commit first (Git is the parent); a failure keeps the row.
+  await (await import('../core/owned-folder/remove.ts')).removeOwnedFolder(engine, id, { keep: keepStorage });
   class SourceReferencedError extends Error {}
   try {
     await engine.transaction(async (tx) => {
@@ -854,7 +856,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
         );
         if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
       }
-      await deleteSourceRow(tx, id, { keepOwnedFiles: keepStorage });
+      await deleteSourceRow(tx, id);
     });
   } catch (e) {
     const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';
@@ -1070,6 +1072,7 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
+    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolder(engine, id);
     await deleteSourceRow(engine, id);
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;

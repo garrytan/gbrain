@@ -1057,7 +1057,8 @@ export async function removeSource(
     }
   }
 
-  await deleteSourceRow(engine, opts.id, { keepOwnedFiles: opts.keepStorage });
+  await (await import('./owned-folder/remove.ts')).removeOwnedFolder(engine, opts.id, { keep: opts.keepStorage });
+  await deleteSourceRow(engine, opts.id);
 
   return {
     id: opts.id,

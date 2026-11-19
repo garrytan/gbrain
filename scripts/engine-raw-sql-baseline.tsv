@@ -1134,7 +1134,7 @@ src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	2
-src/core/source-delete.ts	execute_raw	3	GST-3022: deleteSourceRow checks the source still qualifies (and is an expired archive when asked) before removing its owned-folder files first
+src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	6
 src/core/source-resolver.ts	execute_raw	15
 src/core/sources-load.ts	execute_raw	4
