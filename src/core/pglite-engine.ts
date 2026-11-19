@@ -1685,6 +1685,8 @@ export class PGLiteEngine implements BrainEngine {
     return pagesImpl.listCorpusSample(async read => read(scopedRead(this.engineSql)), opts);
   }
 
+  bumpPageRetrievals(pageIds: number[]) { return pagesImpl.bumpPageRetrievals(this.engineSql, pageIds); }
+
   async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<string[]> {
     return pagesImpl.resolveSlugs(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), partial, opts);
   }

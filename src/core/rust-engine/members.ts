@@ -80,6 +80,7 @@ export const RUST_ENGINE_MEMBERS = {
   getPageTimestamps: 'pages',
   getEffectiveDates: 'pages',
   getContentFlagsByPageIds: 'pages',
+  bumpPageRetrievals: 'pages',
   getUnverifiedExtractionPageIds: 'pages',
   countStalePagesForExtraction: 'pages',
   listStalePagesForExtraction: 'pages',
