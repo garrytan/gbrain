@@ -36,6 +36,7 @@ import { CARRYING_FIELDS } from '../belief/keys.ts';
 import { relationExists } from '../persistence/rebuildable-cache.ts';
 import { canonicalChangeReason } from '../persistence/change-reason.ts';
 import { outcomeMarkerSql } from './audit-sources.ts';
+import { carriesClaimSql } from './claim-match-sql.ts';
 
 export type StoreCount = Record<string, number>;
 export type StoreStatus = 'deleted' | 'would_remove' | 'retained_inactive' | 'unverified' | 'out_of_reach' | 'out_of_scope' | 'not_present' | 'incomplete';
@@ -57,13 +58,7 @@ export interface PurgeReceipt {
   tell_user_to_run?: { argv: string[]; why: string };
 }
 
-/**
- * A page or page-version row (alias `a`) still states the claim: in its body,
- * timeline, title or frontmatter. `$n` is the lowercased claim, `$n+1` its
- * JSON-escaped form (frontmatter is matched as JSON text).
- */
-export const carriesClaimSql = (a: string, n: number) => `(strpos(lower(${a}.compiled_truth),$${n})>0 OR strpos(lower(COALESCE(${a}.timeline,'')),$${n})>0
-  OR strpos(lower(COALESCE(${a}.title,'')),$${n})>0 OR strpos(lower(COALESCE(${a}.frontmatter::text,'')),$${n + 1})>0)`;
+export { carriesClaimSql };
 export const claimNeedles = (claim: string): [string, string] => [claim.toLowerCase(), JSON.stringify(claim.toLowerCase()).slice(1, -1)];
 /** GBRA-217: the claim folded as a stored change reason is (canonicalChangeReason), lowercased: how a reason quoting it reads. */
 export const reasonNeedle = (claim: string): string => (canonicalChangeReason(claim) ?? claim).toLowerCase();

@@ -3719,6 +3719,76 @@ export interface BrainEngine {
   listPurgeEffects(requestId: string): Promise<Array<{ kind: string; state: string; error_code: string | null; parked: boolean }>>;
   /** The facts and takes that still carry the purged claim's fingerprint under the subject (`*` for any), outcome markers apart. Reads facts and takes. */
   countPurgeFingerprintResidue(sourceId: string, factHash: string, subject: string): Promise<{ facts: number; takes: number }>;
+  /** The next 1000 upload parts of the source's live stagings after the (staging, part) cursor, in order, each with its first and last `keep` bytes. Reads page_body_staging_parts and page_body_stagings. */
+  listStagingPartEdges(sourceId: string, keep: number, after: { id: string; part: number }): Promise<FactsPurgeSql.StagingPartEdge[]>;
+  /** The ids of the source's live stagings whose staged segment texts or upload parts hold the claim, plain or as a fence cell stores it, in id order. Reads page_body_stagings, page_body_manifest, page_segment_texts, page_body_staging_parts, page_body_staging_texts and persistence_requests. */
+  listStagingsHoldingClaim(sourceId: string, claim: string): Promise<string[]>;
+  /** Whether a live page of the source holds the slug (the one-row read that tells a purge the subject is an unbacked name key). Reads pages. */
+  purgeSubjectPageLive(sourceId: string, slug: string): Promise<boolean>;
+  /** The slug, id and knowledge revision of the source's pages with these ids. Reads pages. */
+  listPurgePagesById(sourceId: string, pageIds: number[]): Promise<FactsPurgeSql.PurgePageRef[]>;
+  /** How many saved versions of the source's pages carry the claim in their text, title, metadata or segments, or quote it in their change reason (`needle` lowered, `escaped` its JSON form, `reason` the folded reason form). Reads page_versions, pages, page_body_manifest and page_segment_texts. */
+  countPurgeVersionsCarryingClaim(sourceId: string, needle: string, escaped: string, reason: string): Promise<number>;
+  /** How many review queue, review proposal and decide proposal rows of the source name the facts (`refs` are the ids as text). Reads decide_review_queue, decide_review_proposals and decide_proposals. */
+  countPurgeReviewRows(sourceId: string, refs: string[], factIds: number[]): Promise<FactsPurgeSql.PurgeReviewCounts>;
+  /** The distinct belief stream slugs (holding page, else entity) of the facts. Reads facts; run it in the purge transaction. */
+  listPurgeStreamSlugs(factIds: number[]): Promise<string[]>;
+  /** One unfinished write or withdrawal mirror (not the request `ownRequest`) on one of the pages, null for none. Reads persistence_requests and persistence_effects. */
+  findPurgeBlockedPublication(sourceId: string, slugs: string[], ownRequest: string): Promise<FactsPurgeSql.PurgeBlockedPublication | null>;
+  /** The source's pages with these ids, whole rows, each with its tags as `purge_tags`, in slug order. Reads pages and tags. */
+  listPagesForPurgeRewrite(sourceId: string, pageIds: number[]): Promise<Array<Record<string, unknown>>>;
+  /** Stores a page's body with the purged fence rows dropped, its content hash, and voids its text projection and embedding signature. Writes pages; run it in the purge transaction. */
+  updatePageBodyForPurge(sourceId: string, pageId: number, compiled: string, timeline: string, hash: string): Promise<void>;
+  /** Stores a saved version's two body parts after the purge edit (a null timeline stays null). Writes page_versions; run it in the purge transaction. */
+  setPurgeVersionBody(versionId: number, compiled: string, timeline: string | null): Promise<void>;
+  /** Overwrites the change reason of every saved version of the source's pages that quotes the claim (lowered plain form or folded reason form) with `[purged]`; the ids redacted. Writes page_versions. */
+  redactVersionChangeReasons(sourceId: string, needle: string, reasonNeedle: string): Promise<number[]>;
+  /** The next 5000 segmented saved versions of the source after id `after` that belong to one of the pages or whose generation holds the lowered claim, in id order. Reads page_versions, pages, page_body_manifest and page_segment_texts. */
+  listSegmentedVersionsForPurge(sourceId: string, needle: string, pageIds: number[], after: number): Promise<FactsPurgeSql.SegmentedVersionRow[]>;
+  /** Aborts the uncommitted stagings with these ids; the page ids they belonged to (none for a staging with no page). Writes page_body_stagings; run it in the purge transaction. */
+  abortPurgedStagings(stagingIds: string[]): Promise<number[]>;
+  /** Deletes the upload parts of these stagings; how many. Writes page_body_staging_parts; run it in the purge transaction. */
+  deletePurgedStagingParts(stagingIds: string[]): Promise<number>;
+  /** Deletes the cached read-view digests of these pages. Writes page_view_digests; run it in the purge transaction. */
+  deletePageViewDigests(pageIds: number[]): Promise<void>;
+  /** Deletes the source's segment texts that no manifest row references and that were replaced by the purge (`replaced` are their sha256 digests) or hold the claim, plain or as a fence cell stores it; how many. Writes page_segment_texts; run it in the purge transaction. */
+  deleteUnreferencedPurgedTexts(sourceId: string, replaced: Uint8Array[], claim: string): Promise<number>;
+  /** The first 25 facts of the source whose text contains `text` (case folded), in id order, each cut to 160 characters. Reads facts. */
+  listPurgeMatchCandidates(sourceId: string, text: string): Promise<FactsPurgeSql.PurgeMatchRow[]>;
+  /** Locks the source row for the purge transaction and returns its incarnation and archived flag, null for no such source. Reads sources; run it in the purge transaction. */
+  lockPurgeSource(sourceId: string): Promise<FactsPurgeSql.PurgeSourceLock | null>;
+  /** Stores a purge tombstone for each holding page that holds one of the facts about an entity with no page of its own, none twice. Writes fact_purges; run it in the purge transaction. */
+  insertHoldingPagePurges(sourceId: string, visibility: string, factHash: string, requestId: string, actor: string, reason: string | null, factIds: number[]): Promise<void>;
+  /** Stores the text-free take purge tombstone for the claim fingerprint under the subject, none twice. Writes take_purges; run it in the purge transaction. */
+  insertTakePurge(sourceId: string, subject: string, claimHash: string, requestId: string): Promise<void>;
+  /** Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. */
+  deletePurgedTakes(takeIds: number[]): Promise<number>;
+  /** Deletes the source's review queue rows naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_queue; run it in the purge transaction. */
+  deletePurgeReviewQueue(sourceId: string, refs: string[]): Promise<number>;
+  /** Deletes the source's review proposals naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_proposals; run it in the purge transaction. */
+  deletePurgeReviewProposals(sourceId: string, refs: string[]): Promise<number>;
+  /** Deletes the source's decide proposals that supersede or are superseded by one of the facts; how many. Writes decide_proposals; run it in the purge transaction. */
+  deletePurgeDecideProposals(sourceId: string, factIds: number[]): Promise<number>;
+  /** Deletes the source's trust proposals whose target or related row is one of the facts or takes; how many. Writes trust_proposals; run it in the purge transaction. */
+  deletePurgeTrustProposals(sourceId: string, factIds: number[], takeIds: number[]): Promise<number>;
+  /** Deletes the source's open loops on one of the facts; how many. Writes open_loops; run it in the purge transaction. */
+  deletePurgeOpenLoops(sourceId: string, factIds: number[]): Promise<number>;
+  /** Deletes the source's held writes whose fact or claim text has the fingerprint; the ids deleted. Writes write_gate_holds; run it in the purge transaction. */
+  deletePurgeWriteGateHolds(sourceId: string, factHash: string): Promise<string[]>;
+  /** Deletes the gate receipts that name one of the facts, takes or held writes (ids as text); how many. Writes write_gate_receipts; run it in the purge transaction. */
+  deletePurgeWriteGateReceipts(factIds: string[], takeIds: string[], holdIds: string[]): Promise<number>;
+  /** Deletes the source's take proposals whose claim text has the fingerprint; how many. Writes take_proposals; run it in the purge transaction. */
+  deletePurgeTakeProposals(sourceId: string, factHash: string): Promise<number>;
+  /** Blanks the base text of the source's core edit notices that quote the lowered fact; how many. Writes core_edit_notices; run it in the purge transaction. */
+  blankPurgeCoreEditNotices(sourceId: string, loweredFact: string): Promise<number>;
+  /** Deletes the facts with these ids from the source; how many. Writes facts; run it in the purge transaction. */
+  deletePurgedFacts(factIds: number[], sourceId: string): Promise<number>;
+  /** Deletes the chunks of these pages and voids the text projection that certified them; how many pages had chunks deleted. Writes content_chunks and pages; run it in the purge transaction. */
+  deletePurgedChunks(pageIds: number[]): Promise<number>;
+  /** The id, slug and knowledge revision of the source's pages with these ids, in slug order. Reads pages. */
+  listPurgedPageRevisions(sourceId: string, pageIds: number[]): Promise<FactsPurgeSql.PurgedPageRevision[]>;
+  /** Queues the withdrawal-mirror, git and embedding effects of the purge request under the source's current incarnation and worktree binding, none twice; `data` is the effect payload. Writes persistence_effects; run it in the purge transaction. */
+  insertPurgeEffects(requestId: string, sourceId: string, data: unknown): Promise<void>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */

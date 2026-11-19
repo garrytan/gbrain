@@ -156,6 +156,7 @@ test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
+test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/facts-conversation-sites.test.ts
@@ -177,6 +178,7 @@ test/engine-parity/files-ops-sites.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
 test/engine-parity/held-fence-cells.test.ts
+test/engine-parity/holding-page-purges.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts

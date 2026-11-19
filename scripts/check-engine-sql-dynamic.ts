@@ -84,6 +84,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   unbackedEntitySql: 'src/core/facts/withdrawal-schema.ts: constant unbacked-name-key predicate over a caller facts alias; the callers pass constant aliases',
   ownedMemorySubjectSql: 'src/core/facts/withdrawal-schema.ts: constant owned-memory-subject predicate over a caller column expression; engine-sql passes only the constant column q.subject',
   remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
+  liveStagingSql: 'src/core/page-body/schema.ts: constant live-staging predicate over the staging alias s; no values',
+  carriesClaimSql: 'src/core/facts/purge-verify.ts: constant carries-claim predicate over a caller alias; the caller passes the placeholder number, no values',
   holdingSlugSql: 'src/core/facts-fence.ts: constant holding-page slug predicate over a caller column expression; the callers pass constant aliases (hp.slug, f.entity_slug); no values',
   extractedFromPageSql: 'src/core/facts/gone-page-facts.ts: constant extracted-from-page predicate over a caller facts alias and slug expression; the source list is a module constant; engine-sql passes f and g.slug; no values',
   derivationSweepScopeSql: 'src/core/page-body/schema.ts: constant sweep-scope predicate over caller aliases d and p with a hand-numbered page-id placeholder bound by the caller; no values',
