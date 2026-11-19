@@ -7,7 +7,8 @@
  * (rust/crates/gbrain-store/src/write_misc.rs, rust/docs/store/write_misc.md).
  */
 import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
-import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 
@@ -127,6 +128,47 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
   return rows.map(row => row.id);
+}
+
+/**
+ * How `readLiveMember` finds the member: `member` by its id; `stdio_config` by the member id stored in the config key
+ * the caller names (edge whitespace trimmed); `access_token` and `oauth_client` by the member bound to a live
+ * (unrevoked, undeleted) credential with that id.
+ */
+export type LiveMemberLookup = 'member' | 'stdio_config' | 'access_token' | 'oauth_client';
+/** An access member that is neither disabled nor tombstoned, with its group ids sorted. */
+export interface LiveMemberRow { id: string; groups: string[] }
+
+/** The subquery (or bound value) naming the member id `key` resolves to through `lookup`, `key` bound once. */
+function liveMemberIdSql(lookup: LiveMemberLookup, key: string): SqlFragment {
+  switch (lookup) {
+    case 'member': return sqlFragment`${key}::text`;
+    case 'stdio_config': return sqlFragment`SELECT ${trustedSql(edgeTrimSql('value'))} FROM config WHERE key = ${key}`;
+    case 'access_token': return sqlFragment`SELECT member_id FROM access_tokens WHERE id::text = ${key} AND revoked_at IS NULL`;
+    case 'oauth_client': return sqlFragment`SELECT member_id FROM oauth_clients WHERE client_id = ${key} AND deleted_at IS NULL`;
+  }
+}
+
+/**
+ * The live member `key` resolves to through `lookup`, with its groups; null when nothing resolves or the member is
+ * disabled or tombstoned. A database error (a schema without the member tables included) reaches the caller unchanged,
+ * so access/caller.ts keeps deciding which failures read as nobody.
+ */
+export async function readLiveMember(exec: LegacyUnscopedRead, lookup: LiveMemberLookup, key: string): Promise<LiveMemberRow | null> {
+  const { rows: [row] } = await exec.run<LiveMemberRow>(sqlFragment`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (${liveMemberIdSql(lookup, key)}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`);
+  return row ?? null;
+}
+
+/**
+ * Whether any access member carries the labelled-only grant, disabled and removed members included (the one cheap test
+ * a write runs before resolving its writer, access/labelled-only.ts anyLabelledOnlyMember). A failed read is thrown;
+ * the caller counts it as yes.
+ */
+export async function hasLabelledOnlyMember(exec: LegacyUnscopedRead): Promise<boolean> {
+  return (await exec.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
 }
 
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */

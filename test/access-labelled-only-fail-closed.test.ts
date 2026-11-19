@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { SqlExecutor } from '../src/core/engine-sql/executor.ts';
+import { renderFragment } from '../src/core/engine-sql/fragment.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import type { WriteAuthority } from '../src/core/persistence/model.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -36,7 +38,8 @@ import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
  * 3. Real seams: tokens minted by the token service and verified by the serve --http verifier, MCP dispatch with
  *    remote: true (put_page through the persistence consumer), the access CLI, the stored-write checks
  *    (authorizePageVisibility, assertLabelledOnlyCreate) and real SQL errors from PGLite, and Postgres with
- *    DATABASE_URL. Failures are injected on the engine's executeRaw, which every transaction it opens inherits.
+ *    DATABASE_URL. Failures are injected on the engine's executeRaw and on its typed-read executor (`engineSql`),
+ *    which every transaction it opens inherits.
  */
 
 const SRC = 'lofc-src';
@@ -90,17 +93,34 @@ type Fail = string | ((sql: string) => string);
 function failStatements(engine: BrainEngine, marker: string, times: number, fail: Fail, skip = 0) {
   const original = engine.executeRaw as (...a: unknown[]) => Promise<unknown[]>;
   const state = { skip, left: times, failed: 0 };
-  engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[], opts?: unknown) {
+  /** The statement to send for `sql`: unchanged, a thrown SQLSTATE, or the failing rewrite. */
+  const intercept = (sql: string): string => {
     if (sql.includes(marker) && state.skip > 0) state.skip--;
     else if (state.left > 0 && sql.includes(marker)) {
       state.left--;
       state.failed++;
       if (typeof fail === 'string') throw Object.assign(new Error('injected failure ' + fail), { code: fail });
-      return original.call(this, fail(sql), params, opts);
+      return fail(sql);
     }
-    return original.call(this, sql, params, opts);
+    return sql;
+  };
+  engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[], opts?: unknown) {
+    return original.call(this, intercept(sql), params, opts);
   } as BrainEngine['executeRaw'];
-  return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; } };
+  // Typed engine reads (engine-sql domains) send their statements through the engine's `engineSql` executor, not
+  // executeRaw: wrap it on the instance too, so a transaction clone (Object.create(engine)) builds its own tx-bound
+  // executor through the prototype getter and still meets the injected failure.
+  const executorGetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(engine), 'engineSql')!.get!;
+  const wrap = (exec: SqlExecutor): SqlExecutor => ({
+    ...exec,
+    query: (sql, params, opts) => exec.query(intercept(sql), params, opts),
+    run: (fragment, opts) => { const { text, params } = renderFragment(fragment); return exec.query(intercept(text), params, opts); },
+    executeRaw: (sql, params, opts) => exec.executeRaw(intercept(sql), params, opts),
+    unsafe: (sql, params) => exec.unsafe(intercept(sql), params),
+    transaction: fn => exec.transaction(tx => fn(wrap(tx))),
+  });
+  Object.defineProperty(engine, 'engineSql', { configurable: true, get(this: BrainEngine) { return wrap(executorGetter.call(this)); } });
+  return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; delete (engine as { engineSql?: unknown }).engineSql; } };
 }
 
 async function withFailures<T>(engine: BrainEngine, marker: string, times: number, fail: Fail, fn: () => Promise<T>, skip = 0): Promise<{ value: T; failed: number }> {

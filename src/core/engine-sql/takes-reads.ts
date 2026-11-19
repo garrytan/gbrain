@@ -59,6 +59,25 @@ export async function listTakeRowsForPage(tx: Raw, pageId: number): Promise<Arra
   return rows.map(r => ({ row_num: Number(r.row_num), claim: r.claim }));
 }
 
+/** Which fence generation `listHeldFenceTakeRows` checks: the page's take_fence generation in one source. */
+export interface HeldFenceTakeSpec { sourceId: string; kind: string; ownerKey: string; pageId: number }
+
+/** A stored take as the fence row it was, resolution cells included. */
+export interface HeldFenceTakeRow {
+  row_num: number; claim: string; kind: string; holder: string; weight: number; since_date: string | null; until_date: string | null;
+  source: string | null; active: boolean; resolved_at: Date | string | null; resolved_quality: string | null; resolved_outcome: boolean | null;
+  resolved_source: string | null; resolved_value: number | null; resolved_unit: string | null; resolved_by: string | null;
+}
+
+/** The page's stored takes by row number while its fence generation is held `fence_absent`; none otherwise. */
+export async function listHeldFenceTakeRows(tx: Raw, spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]> {
+  const held = await tx.executeRaw(`SELECT 1 FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason='fence_absent'`,
+    [spec.sourceId, spec.kind, spec.ownerKey]);
+  if (!held.length) return [];
+  return tx.executeRaw<HeldFenceTakeRow>(`SELECT row_num, claim, kind, holder, weight, since_date, until_date, source, active,
+      resolved_at, resolved_quality, resolved_outcome, resolved_source, resolved_value, resolved_unit, resolved_by FROM takes WHERE page_id=$1 ORDER BY row_num`, [spec.pageId]);
+}
+
 export interface McpResolvedSpec {
   /** The source scope the caller's read policy resolved to; null is every source. */
   sourceIds: readonly string[] | null;

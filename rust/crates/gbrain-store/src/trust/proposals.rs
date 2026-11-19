@@ -320,6 +320,27 @@ fn get_id(read: &dyn KvRead, key: &[u8]) -> Result<Option<u64>> {
     }
 }
 
+/// The open contest of one row (engine-sql/trust-fence.ts `OPEN_CONTEST_SQL`): a pending `forget`
+/// proposal whose target is the row.
+pub(crate) fn pending_forget(read: &dyn KvRead, table: &str, row_id: u64) -> Result<bool> {
+    let Ok(row_id) = i64::try_from(row_id) else {
+        return Ok(false);
+    };
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && p.action == "forget"
+            && p.target_table == table
+            && p.target_id == row_id
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The fence guard's held arm for one fact (engine-sql/trust-fence.ts `listFenceFactRows`): a
 /// `supersede_fact` or `confirm` proposal names it as `related`, is pending, rejected or undone,
 /// and its before state has a `visibility` key (`before_state->'visibility' IS NOT NULL`: a JSON
@@ -344,6 +365,31 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
+/// lowest-id pending `supersede_fact` or `supersede_take` proposal naming it, as `tp<id>:challenger`
+/// when the row is the proposal's related row and `tp<id>:challenged` otherwise; `None` when no
+/// such proposal names it.
+pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Result<Option<String>> {
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && matches!(p.action.as_str(), "supersede_fact" | "supersede_take")
+            && p.names(table, row_id)
+        {
+            let side = if p.related_table.as_deref() == Some(table) && p.related_id == Some(row_id)
+            {
+                "challenger"
+            } else {
+                "challenged"
+            };
+            return Ok(Some(format!("tp{}:{side}", p.id)));
+        }
+    }
+    Ok(None)
 }
 
 impl Store {

@@ -33,7 +33,9 @@ tier is refused with `invalid_argument` ("gbrain trust setting names no tier"; P
 only under backfill.
 
 The caller decides `content_changed` by comparing the content columns of the old and new row; `stamp` does not
-see the row.
+see the row. `trust::stamp_row(table, old, supplied, content_changed)` wraps it for a row whose writers never set
+the tier or the origin (takes and timeline entries, `trust::RowTrust`): it reads the open write's context, starts
+an update from the stored tier and origin, and stores `unknown` as no tier.
 
 Rust guesses and gaps (1x parity):
 
@@ -174,6 +176,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `readPageVersionEdition` | `read_page_version_edition` (`trust/valid_time.rs`): the page's `V` version record with the fields an edition reads, `body_storage` `inline` unless the snapshot is segmented; null for another page or an unknown id | `SELECT id, title, … FROM page_versions WHERE id = $1 AND page_id = $2` |
 | `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
 | `pageAwaitsRederive` | none: the store keeps no `needs_rederive` queue (only a raw-SQL purge writes one, and `executeRaw` refuses), so the member answers false | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
+| `listHeldRows` | `list_held_rows` (`trust/held_rows.rs`): the page's take or timeline records among the ids whose stored tier ranks above the writer (the named `writer`, else the declared tier of the write trust context; a name that is no tier ranks 0) or, with `pending`, that a pending `forget` proposal targets; `{ id, trust_tier }` by id. A take or timeline record stored before its tier reads `unknown`; any other table refuses with `invalid_argument`. The `FOR UPDATE` lock adds nothing under the store's one writer | `SELECT x.id, x.trust_tier FROM takes|timeline_entries x WHERE x.page_id = $1 AND x.id = ANY($2) AND (rank > writer OR OPEN_CONTEST) ORDER BY x.id FOR UPDATE` |
 
 - `beginSnapshotRead` sets no isolation level: a store transaction holds the one writer from its start, so its reads
   see one state. With `readOnly` it calls `setTransactionReadOnly` (`transactions.md`), so every later write in the

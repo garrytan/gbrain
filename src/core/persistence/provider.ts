@@ -29,26 +29,39 @@ const localWritersFix: Action = { argv: ['gbrain', 'auth', 'local-writer', 'list
 const LOCAL_CLI_LOCAL_ONLY_OPS = new Set(['takes_remove', 'takes_rebuild']);
 
 /**
- * The persistence socket a serve process offers, or none when the engine has no persistence journal. The provider
- * registers local writers and reads persistence_brain with SQL; a Rust brain has neither yet, so its callers take the
- * engine path and get a typed refusal instead of a socket that fails on its first request. The same check decides
- * whether a Rust owner publishes the socket and whether a CLI sends writes to it (owner-ipc/client.ts).
+ * The persistence socket a serve process offers, or none when the engine has no persistence journal. A Rust brain's
+ * journal is not reported yet (rust-engine/store-capabilities.ts), so its callers take the engine path and get a typed
+ * refusal instead of a socket that fails on its first request. The same check decides whether a Rust owner publishes
+ * the socket and whether a CLI sends writes to it (owner-ipc/client.ts). Either way the serve registers this
+ * installation's local writers first: a remote caller's write and receipt reads run under the stdio registration.
  */
 export async function servePersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider | undefined> {
-  return rustOwnerServesPersistence(engine.capabilities) ? createPersistenceIpcProvider(engine, config) : undefined;
+  if (rustOwnerServesPersistence(engine.capabilities)) return createPersistenceIpcProvider(engine, config);
+  await registerServeLocalWriters(engine);
+  return undefined;
+}
+
+/**
+ * Registers the cli and stdio local writers a serve process answers for, through the typed registration members
+ * (readPersistenceBrainId, readLocalWriterRow, insertLocalWriterRow) every engine serves. A revoked registration stays
+ * revoked across restarts and is skipped; other principals can still use this serve.
+ */
+export async function registerServeLocalWriters(engine: BrainEngine): Promise<void> {
+  for (const lane of ['cli', 'stdio'] as const) {
+    try { await registerLocalWriter(engine, lane); }
+    catch (error) {
+      if (!(error instanceof OperationError && error.code === 'permission_denied')) throw error;
+    }
+  }
 }
 
 /** Resident lifecycle owns the consumer; each connection proves its own durable registration. */
 export async function createPersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider> {
-  for (const lane of ['cli', 'stdio'] as const) {
-    try { await registerLocalWriter(engine, lane); }
-    catch (error) {
-      // Revocation persists across restart. Other principals can still use this owner.
-      if (!(error instanceof OperationError && error.code === 'permission_denied')) throw error;
-    }
-  }
-  // A typed read, so an engine with no raw SQL (Rust) can serve the persistence socket.
-  const brain = { brain_id: await readBrainIdentity(engine) };
+  await registerServeLocalWriters(engine);
+  const brainId = await engine.readPersistenceBrainId();
+  if (brainId === null) throw opError('writer_not_initialized', 'Persistence metadata has not been initialized.',
+    'This brain\'s database has no persistence metadata row, which the schema migrations create; run gbrain doctor --json on the brain host and bring the schema current with gbrain apply-migrations.');
+  const brain = { brain_id: brainId };
   startPersistenceConsumer(engine, config);
   const projectionStatus = startProjectionStatusCache(engine);
   return { brainId: brain.brain_id, projectionStatus: () => projectionStatus.read(), dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {

@@ -6,7 +6,7 @@
  * rust/docs/store/write_misc.md.
  */
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, LiveMemberLookup, LiveMemberRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -62,6 +62,16 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
 
 /** The store keeps no access members, so none is active. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
+
+/**
+ * The store keeps no access members, access tokens or OAuth clients, so no lookup resolves a live member, not even a
+ * stdio binding stored in config: a writer reads as nobody, as PGLite answers on a brain with no members
+ * (engine-sql/write-misc.ts).
+ */
+export const readLiveMember: StoreMember<[lookup: LiveMemberLookup, key: string], LiveMemberRow | null> = async () => null;
+
+/** The store keeps no access members, so none carries the labelled-only grant and a write skips the labelled-only checks. */
+export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
 
 /**
  * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that

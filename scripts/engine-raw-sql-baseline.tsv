@@ -227,10 +227,10 @@ src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	1
 src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
-src/core/access/caller.ts	execute_raw	9
+src/core/access/caller.ts	execute_raw	8
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/core/access/labelled-only.ts	execute_raw	4
+src/core/access/labelled-only.ts	execute_raw	3
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	execute_raw	25
@@ -417,7 +417,7 @@ src/core/facts/conversation-memo.ts	execute_raw	2
 src/core/facts/conversation-publication.ts	execute_raw	24
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
-src/core/facts/derivation-inputs.ts	execute_raw	7	#9653: releaseHiddenMoment, a delete of an already-hidden page ends the automatic purge hold
+src/core/facts/derivation-inputs.ts	execute_raw	6	#9653: releaseHiddenMoment, a delete of an already-hidden page ends the automatic purge hold
 src/core/facts/embedding-identity.ts	execute_raw	2
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	2
@@ -606,7 +606,6 @@ src/core/page-body/segment-rewrite.ts	execute_raw	9
 src/core/page-body/segmented-embedding.ts	execute_raw	8
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
-src/core/page-body/tail-digest.ts	execute_raw	1
 src/core/page-embedding-budget.ts	execute_raw	13
 src/core/page-embedding-lease.ts	execute_raw	4
 src/core/page-searchability.ts	execute_raw	3
@@ -635,7 +634,7 @@ src/core/persistence/atom-maintenance.ts	execute_raw	21
 src/core/persistence/authority.ts	execute_raw	5
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
-src/core/persistence/canonical-projections.ts	execute_raw	11
+src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	2
 src/core/persistence/checkpoint-validation.ts	execute_raw	5
@@ -709,7 +708,6 @@ src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
 src/core/persistence/journal.ts	execute_raw	41
 src/core/persistence/landing-gaps.ts	execute_raw	3
-src/core/persistence/large-page-guard.ts	execute_raw	1
 src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
@@ -736,13 +734,13 @@ src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/ownership.ts	execute_raw	24
 src/core/persistence/page-advisories.ts	execute_raw	1
-src/core/persistence/page-append.ts	execute_raw	3
+src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	10
 src/core/persistence/page-purge.ts	execute_raw	30
 src/core/persistence/page-upload.ts	execute_raw	16
-src/core/persistence/page-visibility.ts	execute_raw	14
+src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	15
@@ -829,7 +827,7 @@ src/core/persistence/sync-tail-record.ts	execute_raw	3
 src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/takes-prepare.ts	execute_raw	9
+src/core/persistence/takes-prepare.ts	execute_raw	7
 src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	20
@@ -970,7 +968,7 @@ src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
 src/core/search/ignored-privacy-labels.ts	execute_raw	1
 src/core/search/image-vector-presence.ts	execute_raw	1
-src/core/search/private-visibility.ts	execute_raw	2
+src/core/search/private-visibility.ts	execute_raw	1
 src/core/search/projection-statistics.ts	execute_raw	11
 src/core/search/query-cache-gate.ts	execute_raw	2
 src/core/search/query-cache.ts	execute_raw	8
@@ -1059,14 +1057,14 @@ src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	9
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/fence-append.ts	execute_raw	3
-src/core/trust/fence-guard.ts	execute_raw	8
+src/core/trust/fence-guard.ts	execute_raw	7
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/min-trust.ts	execute_raw	3
 src/core/trust/owner-actions.ts	execute_raw	6
 src/core/trust/page-handlers.ts	execute_raw	7
-src/core/trust/page-write.ts	execute_raw	9
+src/core/trust/page-write.ts	execute_raw	5
 src/core/trust/privacy-hold-reply.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/provenance-drift.ts	execute_raw	3

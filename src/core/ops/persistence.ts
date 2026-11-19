@@ -74,6 +74,8 @@ async function receiptAccess(ctx: OperationContext, operation: ReceiptOperation,
       `SELECT scopes,revoked_at FROM access_tokens WHERE id=$1${suffix}`, [principal.id]);
     if (!row || row.revoked_at != null || !hasScope(normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'], 'write')) throw denied();
   } else if (principal.kind === 'local_cli' || principal.kind === 'local_stdio') {
+    // The registration row through the typed member every engine serves (engine-sql/persistence-state.ts); `lock` is
+    // the cancel path's FOR SHARE, so a revocation waits for the cancel.
     const row = await ctx.engine.readLocalWriterRow(principal.id, { lock });
     const lane = principal.kind === 'local_cli' ? 'cli' : 'stdio';
     if (!row || row.revoked_at != null || row.lane !== lane || (ctx.remote !== false) !== (lane === 'stdio')
