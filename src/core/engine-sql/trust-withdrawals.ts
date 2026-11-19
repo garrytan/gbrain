@@ -1,7 +1,9 @@
 /**
  * Trust: the fact withdrawal ledger (`fact_withdrawals`, facts/withdrawal-schema.ts). Each function runs the statement
  * its caller ran through `executeRaw`, with the same text and parameters, on the engine's own raw path; only its home
- * moved. Statements that also read `facts` or `fact_purges` stay with their callers.
+ * moved. Statements that also read `facts` stay with their callers. Three reads also read the purge ledgers
+ * (`fact_purges`, `take_purges`, facts/purge-schema.ts): the withdrawn-or-purged check of one claim, the purge check of
+ * one claim and the per-source purge probe of the import overlay.
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -59,4 +61,34 @@ export async function hasFactWithdrawalForSubject(exec: LegacyUnscopedRead, sour
 export async function listFactWithdrawalKeys(exec: LegacyUnscopedRead, sourceId: string, limit: number): Promise<WithdrawalKeyRow[]> {
   return exec.executeRaw<WithdrawalKeyRow>(`SELECT visibility,fact_hash,subject FROM fact_withdrawals
       WHERE source_id=$1 ORDER BY visibility,fact_hash,subject LIMIT $2`, [sourceId, limit]);
+}
+
+/**
+ * Whether a withdrawal or purge of `claim` blocks a write (isFactWithdrawn, facts/withdrawal.ts): a withdrawal at
+ * `visibility` (any when null) with the claim's fingerprint or v1 fingerprint and subject '*', `entitySlug` or
+ * `memberPage`, or a purge at `visibility` (any when null) with the claim's fingerprint and subject '*' or `entitySlug`.
+ */
+export async function isFactClaimWithdrawn(exec: LegacyUnscopedRead, sourceId: string, visibility: string | null, claim: string,
+  entitySlug: string | null, memberPage: string | null): Promise<boolean> {
+  const rows = await exec.executeRaw(`SELECT 1 FROM fact_withdrawals
+    WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+      AND (subject = '*' OR subject = $4::text OR subject = $5::text)
+    UNION ALL SELECT 1 FROM fact_purges WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash=gbrain_fact_fingerprint($3)
+      AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId, visibility, claim, entitySlug, memberPage]);
+  return rows.length > 0;
+}
+
+/** Whether a purge tombstone at `visibility` with the claim's fingerprint and subject '*' or `entitySlug` exists (isFactPurged). */
+export async function isFactClaimPurged(exec: LegacyUnscopedRead, sourceId: string, visibility: string, claim: string, entitySlug: string | null): Promise<boolean> {
+  const rows = await exec.executeRaw(`SELECT 1 FROM fact_purges WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)
+    AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId, visibility, claim, entitySlug]);
+  return rows.length > 0;
+}
+
+/** Whether the source has any fact purge tombstone and any take purge tombstone (one indexed probe each). */
+export async function readSourcePurgeFlags(exec: LegacyUnscopedRead, sourceId: string): Promise<{ facts: boolean; takes: boolean }> {
+  const [row] = await exec.executeRaw<{ facts: boolean; takes: boolean }>(`SELECT
+    EXISTS (SELECT 1 FROM fact_purges WHERE source_id=$1) AS facts,
+    EXISTS (SELECT 1 FROM take_purges WHERE source_id=$1) AS takes`, [sourceId]);
+  return { facts: row?.facts === true, takes: row?.takes === true };
 }

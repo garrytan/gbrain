@@ -234,22 +234,6 @@ export function heldRowSql(sourceId: string, slug: string, rowNum: string, claim
       AND NOT EXISTS (SELECT 1 FROM facts hw WHERE ${page('hw')} AND hw.visibility = 'world' AND ${states('hw')})))`;
 }
 
-const OVERLAY_SQL = (held: boolean, hideHeld = false) => `WITH incoming AS MATERIALIZED (
-    SELECT i.row_num, i.claim, i.visibility, i.fp FROM jsonb_to_recordset($3::text::jsonb) AS i(row_num integer, claim text, visibility text, fp text))
-  SELECT incoming.row_num,
-    (SELECT p.trust_tier FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL LIMIT 1) AS page_tier,
-    (SELECT f.trust_tier FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=incoming.row_num
-      ORDER BY f.id DESC LIMIT 1) AS row_tier,
-    (SELECT ${activationSuppressedSql('facts', 'f')} FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=incoming.row_num
-      ORDER BY f.id DESC LIMIT 1) AS row_flagged,
-    EXISTS (SELECT 1 FROM fact_purges fp WHERE fp.source_id=$1 AND fp.visibility=incoming.visibility
-      AND fp.fact_hash=gbrain_fact_fingerprint(incoming.claim) AND (fp.subject='*' OR fp.subject=$2)) AS purged,
-    ${held ? `EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind='fact' AND h.source_id=$1 AND h.slug=$2
-      AND h.status='held' AND h.fingerprint=incoming.fp)` : 'false'} AS held,
-    ${hideHeld ? heldRowSql('$1', '$2', 'incoming.row_num', 'incoming.claim') : 'false'} AS narrower
-  FROM incoming`;
-const OVERLAY_SQL_WITH_HOLDS = OVERLAY_SQL(true);
-const OVERLAY_SQL_WITHOUT_HOLDS = OVERLAY_SQL(false);
 
 export interface LoadFenceOverlayOpts {
   /** Overrides the registered L2a fingerprint for this call. */
@@ -265,7 +249,7 @@ export interface LoadFenceOverlayOpts {
  * that publishes it inserts it at the writer's tier, which is the page's).
  */
 export async function loadFenceChunkOverlay(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readFenceOverlayRows'>,
   page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null },
   opts: LoadFenceOverlayOpts = {},
 ): Promise<FenceChunkOverlay | undefined> {
@@ -274,9 +258,8 @@ export async function loadFenceChunkOverlay(
   const fingerprint = opts.holdFingerprint === undefined ? factHoldFingerprint : opts.holdFingerprint;
   const incoming = rows.map(row => ({ row_num: row.rowNum, claim: row.claim, visibility: row.visibility,
     fp: fingerprint ? fingerprint(fenceRowHoldTexts(row)) : null }));
-  const sql = opts.hideHeld ? OVERLAY_SQL(fingerprint !== null, true) : fingerprint ? OVERLAY_SQL_WITH_HOLDS : OVERLAY_SQL_WITHOUT_HOLDS;
-  const found = await engine.executeRaw<{ row_num: number; page_tier: string | null; row_tier: string | null; row_flagged: boolean | null; purged: boolean; held: boolean; narrower: boolean }>(
-    sql, [page.sourceId, page.slug, JSON.stringify(incoming)]);
+  const found = await engine.readFenceOverlayRows({ sourceId: page.sourceId, slug: page.slug, incoming: JSON.stringify(incoming),
+    holds: fingerprint !== null, hideHeld: opts.hideHeld === true });
   const pending = pendingRows.getStore();
   const pendingHere = pending && pending.sourceId === page.sourceId && pending.slug === page.slug ? new Set(pending.rowNums) : null;
   const omit = new Set<number>();
@@ -302,7 +285,7 @@ export async function loadFenceChunkOverlay(
  * fact reads are world-only (heldRowSql, against the facts as they stand now), as sanitizeRemoteBody's `omitRows`;
  * undefined for any other caller, who reads the body as stored.
  */
-export async function heldRowsForCaller(engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined,
+export async function heldRowsForCaller(engine: Pick<BrainEngine, 'readFenceOverlayRows'>, remote: boolean | undefined,
   page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null }): Promise<ReadonlySet<number> | undefined> {
   return worldOnlyFacts(remote) ? (await loadFenceChunkOverlay(engine, page, { hideHeld: true }))?.held : undefined;
 }
@@ -338,7 +321,7 @@ export function storedEdge(e: { from_source_id: string; from_slug: string; to_so
  * Every other caller reads contexts as stored and costs no query.
  */
 export async function worldLinkContexts<T extends { context?: string | null }>(
-  engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined, rows: T[], edge: (row: T) => StoredEdgeRef,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readFenceOverlayRows'>, remote: boolean | undefined, rows: T[], edge: (row: T) => StoredEdgeRef,
 ): Promise<T[]> {
   if (!worldOnlyFacts(remote)) return rows;
   const asked = rows.flatMap((row, i) => (row.context ? [{ i, ref: edge(row), context: row.context }] : []));

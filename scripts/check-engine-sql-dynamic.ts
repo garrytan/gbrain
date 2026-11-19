@@ -98,6 +98,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   openedFactRowSql: 'src/core/persistence/context.ts: constant opened-row predicate over caller-given constant aliases; the setting name is a module constant, the opened ids are read by the statement itself',
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',
   activationSuppressedSql: 'src/core/eligibility/sql.ts: constant activation-suppression predicate over a caller alias; tier ranks and reason families come from constant tables',
+  heldRowSql: 'src/core/eligibility/fence-overlay.ts: constant held-from-caller predicate over caller-given constant column expressions (engine-sql passes only v.source_id, v.slug, incoming.row_num and incoming.claim); it embeds only memberFactAdmitSql (member id passed ACCESS_ID_RE) and grantedPrivateFactSql (vetted above); no values',
   contestedRefSql: 'src/core/eligibility/sql.ts: constant pending-supersede-proposal subquery over a caller alias; the table name comes from the facts/takes union, the actions are literals; no values',
   unverifiedExtractionFragment: 'src/core/extraction-review.ts: constant frontmatter predicate over a caller alias; keys and values are module constants',
   buildVisibilityClause: 'src/core/search/sql-ranking.ts: constant page visibility predicates over caller page/source aliases; options pick among constant fragments',

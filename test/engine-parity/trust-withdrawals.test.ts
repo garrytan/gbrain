@@ -3,7 +3,9 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: recording a withdrawal, the covering check, the earliest-withdrawal dates of a fence's claims, the
- *    subject move of a rename, the per-subject check and the ledger key listing return the same observable result on
+ *    subject move of a rename, the per-subject check, the ledger key listing, the withdrawn-or-purged check of one claim
+ *    (any visibility when null; subject '*', the entity or the member page), the purge check of one claim and the
+ *    per-source purge probe return the same observable result on
  *    every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine whose claim fingerprint drifts from `gbrain_fact_fingerprint` /
  *    `gbrain_fact_fingerprint_v1` (case, whitespace, punctuation and sentence-dot folding), that lets a withdrawal leak
@@ -114,6 +116,39 @@ describe('engine parity: fact withdrawal ledger', () => {
         keys: (await engine.listFactWithdrawalKeys('default', 10)).map(k => [k.visibility, k.subject]),
         dates,
       };
+    },
+  );
+
+  parityTest(
+    'isFactClaimWithdrawn reads either fingerprint, any visibility when null, and subject *, the entity or the member page; no purge without a tombstone',
+    { methods: ['insertFactWithdrawal', 'isFactClaimWithdrawn', 'isFactClaimPurged', 'readSourcePurgeFlags'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      await engine.insertFactWithdrawal('default', 'world', 'Acme raised 5M.', 'companies/acme', T1);
+      await engine.insertFactWithdrawal('default', 'private', 'Member note', 'memory/members/alice-example', T1);
+      await engine.insertFactWithdrawal('default', 'private', 'Wide claim', '*', T1);
+      const w = (visibility: string | null, claim: string, entity: string | null, member: string | null = null, sourceId = 'default') =>
+        engine.isFactClaimWithdrawn(sourceId, visibility, claim, entity, member);
+      const out = {
+        anyVisibility: await w(null, '  ACME raised 5m', 'companies/acme'),
+        atVisibility: await w('world', 'Acme raised 5M.', 'companies/acme'),
+        otherVisibility: await w('private', 'Acme raised 5M.', 'companies/acme'),
+        otherSubject: await w(null, 'Acme raised 5M.', 'companies/other'),
+        noSubject: await w(null, 'Acme raised 5M.', null),
+        memberPage: await w(null, 'member note', null, 'memory/members/alice-example'),
+        memberAsEntity: await w('private', 'member note', 'memory/members/alice-example'),
+        wildcard: await w('private', 'wide claim', 'people/anyone'),
+        wildcardOtherVisibility: await w('world', 'wide claim', null),
+        otherSource: await w(null, 'Acme raised 5M.', 'companies/acme', null, 'work'),
+        missingSource: await w(null, 'Acme raised 5M.', 'companies/acme', null, 'missing'),
+        purged: await engine.isFactClaimPurged('default', 'world', 'Acme raised 5M.', 'companies/acme'),
+        purgedWildcard: await engine.isFactClaimPurged('default', 'private', 'wide claim', null),
+        flags: await engine.readSourcePurgeFlags('default'),
+        flagsMissing: await engine.readSourcePurgeFlags('missing'),
+      };
+      expect(out.anyVisibility && out.memberPage && out.wildcard).toBe(true);
+      expect(out.otherVisibility || out.otherSubject || out.noSubject || out.otherSource || out.purged).toBe(false);
+      return out;
     },
   );
 });

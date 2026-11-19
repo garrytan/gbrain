@@ -9,8 +9,12 @@
  * the writer is undeclared (`unknown`) and nothing is opened. Every stored fact reads as `unknown` (Rust facts store no
  * tier yet), so only an opened row, or a writer below `unknown`, lists a row. What the read answers and why:
  * rust/docs/store/facts.md, "The fence guard's reads".
+ *
+ * readFenceOverlayRows is the fence chunk overlay's read (eligibility/fence-overlay.ts loadFenceChunkOverlay). `purged`
+ * answers false (the store keeps no purge ledger: every fact_purges writer is raw SQL it refuses); the held-from-a-world-
+ * only-reader check (`hideHeld`, heldRowSql) is not served and refuses.
  */
-import type { FenceFactRow, PageTrustRestore } from '../../engine-sql/trust-fence.ts';
+import type { FenceFactRow, FenceOverlayRow, FenceOverlayTarget, PageTrustRestore } from '../../engine-sql/trust-fence.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 export const listFenceFactRows: StoreMember<[target: { sourceId: string; slug: string; incoming: string }], FenceFactRow[]> = async (brain, target) => {
@@ -25,4 +29,12 @@ export const restorePageTrust: StoreMember<[spec: PageTrustRestore], void> = asy
   if (typeof spec.trustTier !== 'string') refuseMember(member, 'a trust tier that is not text');
   if (spec.writeOrigin !== null && typeof spec.writeOrigin !== 'string') refuseMember(member, 'a write origin that is not JSON text or null');
   await storeCall({ member }, () => brain.restorePageTrust({ pageId: spec.pageId, trustTier: spec.trustTier, writeOrigin: spec.writeOrigin }));
+};
+
+export const readFenceOverlayRows: StoreMember<[target: FenceOverlayTarget], FenceOverlayRow[]> = async (brain, target) => {
+  const member = 'readFenceOverlayRows';
+  if (target.hideHeld) refuseMember(member, 'the held-from-a-world-only-reader check (hideHeld)');
+  const rows = await storeCall({ member, slug: target.slug, sourceId: target.sourceId },
+    () => brain.readFenceOverlayRows({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming, holds: target.holds })) as FenceOverlayRow[];
+  return rows.map((row) => ({ ...row, row_num: Number(row.row_num) }));
 };

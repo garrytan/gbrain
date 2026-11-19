@@ -1,6 +1,7 @@
 //! The fence guard's read of a page's fact rows with their trust tier (`gbrain_store::facts`,
 //! `list_fence_fact_rows`), and the fence append's restore of its page's trust
-//! (`gbrain_store::pages`, `restore_page_trust`).
+//! (`gbrain_store::pages`, `restore_page_trust`), and the fence chunk overlay's read
+//! (`read_fence_overlay_rows`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! The method decodes its argument, runs one `Store` call on the pool through `Brain::run`, and
@@ -12,7 +13,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::FenceTarget;
+use gbrain_store::facts::{FenceOverlayTarget, FenceTarget};
 
 #[napi]
 impl Brain {
@@ -28,6 +29,21 @@ impl Brain {
         self.run(env, move |s| {
             let t: FenceTarget = required(target, "listFenceFactRows target")?;
             s.list_fence_fact_rows(&t, &s.fence_context())
+        })
+    }
+
+    /// `readFenceOverlayRows({ sourceId, slug, incoming, holds })`: `[{ row_num, page_tier,
+    /// row_tier, row_flagged, purged, held, narrower }]`, one per incoming cell (the fence chunk
+    /// overlay's read).
+    #[napi]
+    pub fn read_fence_overlay_rows<'env>(
+        &self,
+        env: &'env Env,
+        target: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let t: FenceOverlayTarget = required(target, "readFenceOverlayRows target")?;
+            s.read_fence_overlay_rows(&t)
         })
     }
 

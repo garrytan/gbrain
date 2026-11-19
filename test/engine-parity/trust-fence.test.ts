@@ -242,4 +242,29 @@ describe('engine parity: a fence append sets its page trust back', () => {
     expect(after).toEqual(capped);
     return { appended, restored, lowered, unpromoted, capped, after };
   });
+
+  parityTest('readFenceOverlayRows: the page tier, the newest row tier and flag at each cell, and false lookups with no ledger', {
+    methods: ['putPage', 'insertFacts', 'readFenceOverlayRows'],
+  }, async (engine) => {
+    await engine.putPage(SLUG, { type: 'person', title: 'Fence Example', compiled_truth: 'Body.', timeline: '' });
+    const { ids } = await engine.insertFacts([fenceRow(1, 'Alpha'), fenceRow(2, 'Beta', { visibility: 'private' })] as never, { source_id: SRC });
+    expect(ids).toHaveLength(2);
+    const incoming = JSON.stringify([
+      { row_num: 1, claim: 'Alpha', visibility: 'world', fp: 'fp-1' },
+      { row_num: 2, claim: 'Beta', visibility: 'world', fp: 'fp-2' },
+      { row_num: 3, claim: 'Gamma', visibility: 'world', fp: 'fp-3' },
+    ]);
+    const byRow = (rows: Array<{ row_num: number }>) => [...rows].sort((a, b) => a.row_num - b.row_num);
+    const withHolds = byRow(await engine.readFenceOverlayRows({ sourceId: SRC, slug: SLUG, incoming, holds: true, hideHeld: false }));
+    const noHolds = byRow(await engine.readFenceOverlayRows({ sourceId: SRC, slug: SLUG, incoming, holds: false, hideHeld: false }));
+    const noPage = byRow(await engine.readFenceOverlayRows({ sourceId: SRC, slug: 'people/nobody', incoming, holds: false, hideHeld: false }));
+    const empty = await engine.readFenceOverlayRows({ sourceId: SRC, slug: SLUG, incoming: '[]', holds: true, hideHeld: false });
+    const cell = (row_num: number, row_tier: string | null, page_tier: string | null = 'unknown') =>
+      ({ row_num, page_tier, row_tier, row_flagged: row_tier === null ? null : false, purged: false, held: false, narrower: false });
+    expect(withHolds).toEqual([cell(1, 'unknown'), cell(2, 'unknown'), cell(3, null)]);
+    expect(noHolds).toEqual(withHolds);
+    expect(noPage).toEqual([cell(1, null, null), cell(2, null, null), cell(3, null, null)]);
+    expect(empty).toEqual([]);
+    return { withHolds, noHolds, noPage, empty };
+  });
 });

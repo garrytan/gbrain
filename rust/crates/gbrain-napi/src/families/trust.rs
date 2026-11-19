@@ -98,6 +98,57 @@ impl Brain {
         })
     }
 
+    /// `isFactClaimWithdrawn(sourceId, visibility | null, claim, entitySlug | null, memberPage |
+    /// null)`: resolves a boolean.
+    #[napi]
+    pub fn is_fact_claim_withdrawn<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        visibility: Option<String>,
+        claim: String,
+        entity_slug: Option<String>,
+        member_page: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_fact_claim_withdrawn(
+                &source_id,
+                visibility.as_deref(),
+                &claim,
+                entity_slug.as_deref(),
+                member_page.as_deref(),
+            )
+        })
+    }
+
+    /// `isFactClaimPurged(sourceId, visibility, claim, entitySlug | null)`: resolves a boolean.
+    #[napi]
+    pub fn is_fact_claim_purged<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        visibility: String,
+        claim: String,
+        entity_slug: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_fact_claim_purged(&source_id, &visibility, &claim, entity_slug.as_deref())
+        })
+    }
+
+    /// `readSourcePurgeFlags(sourceId)`: resolves `{ facts, takes }`.
+    #[napi]
+    pub fn read_source_purge_flags<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_source_purge_flags(&source_id)
+                .map(|(facts, takes)| serde_json::json!({ "facts": facts, "takes": takes }))
+        })
+    }
+
     /// `listFactWithdrawalKeys(sourceId, limit)`: resolves `[{ visibility, fact_hash, subject }]`.
     #[napi]
     pub fn list_fact_withdrawal_keys<'env>(

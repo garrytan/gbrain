@@ -1,8 +1,11 @@
 /**
  * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, insertFactWithdrawal,
- * listFactWithdrawalDates, moveFactWithdrawalSubject, hasFactWithdrawalForSubject, listFactWithdrawalKeys), over
+ * listFactWithdrawalDates, moveFactWithdrawalSubject, hasFactWithdrawalForSubject, listFactWithdrawalKeys,
+ * isFactClaimWithdrawn, isFactClaimPurged, readSourcePurgeFlags), over
  * `rust/crates/gbrain-store/src/trust/withdrawals.rs`. `withdrawnAt` must be the ISO form `Date#toISOString` gives;
- * the store refuses any other spelling with `invalid_argument` (rust/docs/store/trust.md).
+ * the store refuses any other spelling with `invalid_argument` (rust/docs/store/trust.md). The store keeps no purge
+ * ledger (`fact_purges`, `take_purges`): every writer of one is raw SQL the Rust engine refuses, so the purge reads
+ * match nothing.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
@@ -31,3 +34,13 @@ export const hasFactWithdrawalForSubject: Member<'hasFactWithdrawalForSubject'> 
 
 export const listFactWithdrawalKeys: Member<'listFactWithdrawalKeys'> = (brain, sourceId, limit) =>
   storeCall({ member: 'listFactWithdrawalKeys', sourceId }, () => brain.listFactWithdrawalKeys(sourceId, limit));
+
+export const isFactClaimWithdrawn: Member<'isFactClaimWithdrawn'> = (brain, sourceId, visibility, claim, entitySlug, memberPage) =>
+  storeCall({ member: 'isFactClaimWithdrawn', sourceId },
+    () => brain.isFactClaimWithdrawn(sourceId, visibility ?? null, claim, entitySlug ?? null, memberPage ?? null));
+
+export const isFactClaimPurged: Member<'isFactClaimPurged'> = (brain, sourceId, visibility, claim, entitySlug) =>
+  storeCall({ member: 'isFactClaimPurged', sourceId }, () => brain.isFactClaimPurged(sourceId, visibility, claim, entitySlug ?? null));
+
+export const readSourcePurgeFlags: Member<'readSourcePurgeFlags'> = (brain, sourceId) =>
+  storeCall({ member: 'readSourcePurgeFlags', sourceId }, () => brain.readSourcePurgeFlags(sourceId));

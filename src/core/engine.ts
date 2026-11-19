@@ -47,7 +47,7 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
-import type { FenceFactRow, FenceRowsTarget, PageTrustRestore } from './engine-sql/trust-fence.ts';
+import type { FenceFactRow, FenceOverlayRow, FenceOverlayTarget, FenceRowsTarget, PageTrustRestore } from './engine-sql/trust-fence.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3063,6 +3063,12 @@ export interface BrainEngine {
    */
   listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
   /**
+   * The fence chunk overlay's read (eligibility/fence-overlay.ts loadFenceChunkOverlay, engine-sql/trust-fence.ts): for
+   * each incoming world fence cell, the live page's tier, the newest facts row's tier and activation flag at that row
+   * number, and whether a purge tombstone, a held fact hold or (hideHeld) a narrower live fact keeps it out.
+   */
+  readFenceOverlayRows(target: FenceOverlayTarget): Promise<FenceOverlayRow[]>;
+  /**
    * A fence append's restore (trust/fence-append.ts withPageTierKept, engine-sql/trust-fence.ts): sets the page's
    * trust_tier and write_origin back. The tier trigger still applies, so a raise needs the caller's promotion.
    */
@@ -4201,6 +4207,12 @@ export interface BrainEngine {
   hasFactWithdrawalForSubject(sourceId: string, subject: string): Promise<boolean>;
   /** The source's withdrawal keys by visibility, fingerprint and subject, at most `limit`. */
   listFactWithdrawalKeys(sourceId: string, limit: number): Promise<TrustWithdrawalsSql.WithdrawalKeyRow[]>;
+  /** Whether a withdrawal (fingerprint or v1 fingerprint; subject '*', `entitySlug` or `memberPage`) or a purge (fingerprint; subject '*' or `entitySlug`) of `claim` exists at `visibility`, any visibility when null. */
+  isFactClaimWithdrawn(sourceId: string, visibility: string | null, claim: string, entitySlug: string | null, memberPage: string | null): Promise<boolean>;
+  /** Whether a purge tombstone of `claim` (its fingerprint) exists at `visibility` for subject '*' or `entitySlug`. */
+  isFactClaimPurged(sourceId: string, visibility: string, claim: string, entitySlug: string | null): Promise<boolean>;
+  /** Whether the source has any fact purge tombstone (`facts`) and any take purge tombstone (`takes`). */
+  readSourcePurgeFlags(sourceId: string): Promise<{ facts: boolean; takes: boolean }>;
 
   // Open loops (engine-sql/open-loops.ts). Each runs the statement loops-store.ts ran through executeRaw and returns
   // the raw rows; loops-store.ts normalizes them.

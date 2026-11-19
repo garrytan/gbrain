@@ -10,6 +10,8 @@
  * settings the SQL reads itself; this member passes neither.
  */
 import type { BrainEngine } from '../engine.ts';
+import { heldRowSql } from '../eligibility/fence-overlay.ts';
+import { activationSuppressedSql } from '../eligibility/sql.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
 import { trustRankSql } from '../trust/tier.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -51,6 +53,43 @@ export async function listFenceFactRows(exec: LegacyUnscopedRead, target: FenceR
         AND (${above} OR (${held}) OR ${opened})
       ORDER BY f.row_num FOR UPDATE OF f`)).rows;
   return rows;
+}
+
+/**
+ * What the fence chunk overlay asks of a page (eligibility/fence-overlay.ts loadFenceChunkOverlay): its source, slug, the
+ * world fence cells of its body (`incoming`, the `jsonb_to_recordset` text of row_num, claim, visibility and the hold
+ * fingerprint `fp`), whether to look up held cells (`holds`: a hold fingerprint is installed) and whether to mark the
+ * cells held from a world-only reader (`hideHeld`, heldRowSql).
+ */
+export interface FenceOverlayTarget { sourceId: string; slug: string; incoming: string; holds: boolean; hideHeld: boolean }
+
+/**
+ * One incoming cell's overlay facts: the live page's tier, the tier and activation flag of the newest facts row at that
+ * row number (any state), whether a purge tombstone names its claim, whether a held fact hold has its fingerprint, and
+ * whether it is held from a world-only reader. A lookup the target turns off answers false.
+ */
+export interface FenceOverlayRow { row_num: number; page_tier: string | null; row_tier: string | null; row_flagged: boolean | null; purged: boolean; held: boolean; narrower: boolean }
+
+/** The overlay facts of each incoming cell, one row per cell, in no set order. */
+export async function readFenceOverlayRows(exec: LegacyUnscopedRead, target: FenceOverlayTarget): Promise<FenceOverlayRow[]> {
+  const held = trustedSql(target.holds ? `EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind='fact' AND h.source_id=v.source_id AND h.slug=v.slug
+      AND h.status='held' AND h.fingerprint=incoming.fp)` : 'false');
+  const narrower = trustedSql(target.hideHeld ? heldRowSql('v.source_id', 'v.slug', 'incoming.row_num', 'incoming.claim') : 'false');
+  const flagged = trustedSql(activationSuppressedSql('facts', 'f'));
+  return (await exec.run<FenceOverlayRow>(sqlFragment`WITH v AS MATERIALIZED (SELECT ${target.sourceId}::text AS source_id, ${target.slug}::text AS slug),
+    incoming AS MATERIALIZED (
+      SELECT i.row_num, i.claim, i.visibility, i.fp FROM jsonb_to_recordset(${target.incoming}::text::jsonb) AS i(row_num integer, claim text, visibility text, fp text))
+    SELECT incoming.row_num,
+      (SELECT p.trust_tier FROM pages p WHERE p.source_id=v.source_id AND p.slug=v.slug AND p.deleted_at IS NULL LIMIT 1) AS page_tier,
+      (SELECT f.trust_tier FROM facts f WHERE f.source_id=v.source_id AND f.source_markdown_slug=v.slug AND f.row_num=incoming.row_num
+        ORDER BY f.id DESC LIMIT 1) AS row_tier,
+      (SELECT ${flagged} FROM facts f WHERE f.source_id=v.source_id AND f.source_markdown_slug=v.slug AND f.row_num=incoming.row_num
+        ORDER BY f.id DESC LIMIT 1) AS row_flagged,
+      EXISTS (SELECT 1 FROM fact_purges fp WHERE fp.source_id=v.source_id AND fp.visibility=incoming.visibility
+        AND fp.fact_hash=gbrain_fact_fingerprint(incoming.claim) AND (fp.subject='*' OR fp.subject=v.slug)) AS purged,
+      ${held} AS held,
+      ${narrower} AS narrower
+    FROM incoming CROSS JOIN v`)).rows;
 }
 
 /** What a fence append restores on its page after the page write (trust/fence-append.ts withPageTierKept). */

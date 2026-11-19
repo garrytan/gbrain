@@ -14,11 +14,8 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, renderTakesFence }
 import { withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 
 /** True when the source has any fact or take purge tombstone (one indexed probe). */
-async function sourceHasPurges(engine: BrainEngine, sourceId: string): Promise<{ facts: boolean; takes: boolean }> {
-  const [row] = await engine.executeRaw<{ facts: boolean; takes: boolean }>(`SELECT
-    EXISTS (SELECT 1 FROM fact_purges WHERE source_id=$1) AS facts,
-    EXISTS (SELECT 1 FROM take_purges WHERE source_id=$1) AS takes`, [sourceId]);
-  return { facts: row?.facts === true, takes: row?.takes === true };
+function sourceHasPurges(engine: BrainEngine, sourceId: string): Promise<{ facts: boolean; takes: boolean }> {
+  return engine.readSourcePurgeFlags(sourceId);
 }
 
 /** Drop every fence row naming a purged claim. `subject` is the page slug; without it every subject's tombstone applies. */

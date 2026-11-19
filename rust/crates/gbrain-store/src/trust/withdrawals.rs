@@ -345,6 +345,79 @@ impl Store {
         Ok(found)
     }
 
+    /// `isFactClaimWithdrawn`: whether a withdrawal at `visibility` (any when `None`) with the
+    /// claim's fingerprint or v1 fingerprint and subject `*`, `entity_slug` or `member_page` exists.
+    /// The SQL also matches a `fact_purges` tombstone; the store has no fact purge ledger (every
+    /// writer of `fact_purges` is raw SQL the Rust engine refuses, rust/docs/store/trust.md), so
+    /// that half matches nothing.
+    pub fn is_fact_claim_withdrawn(
+        &self,
+        source_id: &str,
+        visibility: Option<&str>,
+        claim: &str,
+        entity_slug: Option<&str>,
+        member_page: Option<&str>,
+    ) -> Result<bool> {
+        let op = "isFactClaimWithdrawn";
+        no_nul(
+            op,
+            &[
+                ("sourceId", source_id),
+                ("visibility", visibility.unwrap_or("")),
+                ("claim", claim),
+                ("entitySlug", entity_slug.unwrap_or("")),
+                ("memberPage", member_page.unwrap_or("")),
+            ],
+        )?;
+        let read = self.read()?;
+        let visibilities: Vec<&str> = match visibility {
+            Some(v) => vec![v],
+            None => VISIBILITIES.to_vec(),
+        };
+        let subjects: Vec<&str> = std::iter::once("*")
+            .chain(entity_slug)
+            .chain(member_page)
+            .collect();
+        for hash in [fact_fingerprint(claim), fact_fingerprint_v1(claim)] {
+            for v in &visibilities {
+                for who in &subjects {
+                    if at(&*read, &[source_id, v, who, &hash])?.is_some() {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// `isFactClaimPurged`: whether a `fact_purges` tombstone of the claim exists. The store has no
+    /// fact purge ledger (no Rust writer; see [`Store::is_fact_claim_withdrawn`]), so none does.
+    pub fn is_fact_claim_purged(
+        &self,
+        source_id: &str,
+        visibility: &str,
+        claim: &str,
+        entity_slug: Option<&str>,
+    ) -> Result<bool> {
+        no_nul(
+            "isFactClaimPurged",
+            &[
+                ("sourceId", source_id),
+                ("visibility", visibility),
+                ("claim", claim),
+                ("entitySlug", entity_slug.unwrap_or("")),
+            ],
+        )?;
+        Ok(false)
+    }
+
+    /// `readSourcePurgeFlags`: whether the source has a fact or take purge tombstone. The store
+    /// keeps neither ledger (`fact_purges`, `take_purges`: no Rust writer), so both are false.
+    pub fn read_source_purge_flags(&self, source_id: &str) -> Result<(bool, bool)> {
+        no_nul("readSourcePurgeFlags", &[("sourceId", source_id)])?;
+        Ok((false, false))
+    }
+
     /// `listFactWithdrawalKeys`: the source's withdrawal keys ordered by visibility, fact_hash and
     /// subject (byte order), at most `limit`. A negative limit refuses, as Postgres does.
     pub fn list_fact_withdrawal_keys(
@@ -403,6 +476,74 @@ mod tests {
             ..SourceInput::default()
         })
         .unwrap();
+    }
+
+    #[test]
+    fn claim_withdrawn_reads_any_visibility_and_three_subjects() {
+        let s = store();
+        source(&s, "default");
+        s.insert_fact_withdrawal(
+            "default",
+            "world",
+            "Acme raised 5M.",
+            "companies/acme",
+            Some(AT),
+        )
+        .unwrap();
+        s.insert_fact_withdrawal(
+            "default",
+            "private",
+            "Member note",
+            "memory/members/alice-example",
+            Some(AT),
+        )
+        .unwrap();
+        let w = |v: Option<&str>, c: &str, e: Option<&str>, m: Option<&str>| {
+            s.is_fact_claim_withdrawn("default", v, c, e, m).unwrap()
+        };
+        assert!(w(None, "acme raised 5m", Some("companies/acme"), None));
+        assert!(w(
+            Some("world"),
+            "ACME raised 5M",
+            Some("companies/acme"),
+            None
+        ));
+        assert!(!w(
+            Some("private"),
+            "Acme raised 5M.",
+            Some("companies/acme"),
+            None
+        ));
+        assert!(!w(None, "Acme raised 5M.", Some("companies/other"), None));
+        assert!(!w(None, "Acme raised 5M.", None, None));
+        assert!(w(
+            None,
+            "member note",
+            None,
+            Some("memory/members/alice-example")
+        ));
+        assert!(
+            !s.is_fact_claim_withdrawn(
+                "missing",
+                None,
+                "Acme raised 5M.",
+                Some("companies/acme"),
+                None
+            )
+            .unwrap()
+        );
+        assert!(
+            !s.is_fact_claim_purged("default", "world", "Acme raised 5M.", None)
+                .unwrap()
+        );
+        assert_eq!(
+            s.read_source_purge_flags("default").unwrap(),
+            (false, false)
+        );
+        assert!(
+            s.is_fact_claim_withdrawn("default", None, "a\0b", None, None)
+                .is_err()
+        );
     }
 
     #[test]

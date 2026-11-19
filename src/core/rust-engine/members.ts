@@ -322,6 +322,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFenceRetireCandidates: 'facts',
   listFenceFactRows: 'facts',
   restorePageTrust: 'pages',
+  readFenceOverlayRows: 'facts',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
   findTrajectory: 'facts',
@@ -490,6 +491,9 @@ export const RUST_ENGINE_MEMBERS = {
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',
   listFactWithdrawalKeys: 'facts',
+  isFactClaimWithdrawn: 'facts',
+  isFactClaimPurged: 'facts',
+  readSourcePurgeFlags: 'facts',
   // trust: the write gate's receipts and holds (engine-sql/trust-write-gate.ts)
   upsertWriteGateReceipt: 'facts',
   upsertPageWriteGateReceipt: 'facts',

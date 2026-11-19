@@ -66,6 +66,9 @@ hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting 
 | `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |
 | `hasFactWithdrawalForSubject` | `has_fact_withdrawal_for_subject`: a scan of the source | `SELECT 1 … subject=$2 LIMIT 1` |
 | `listFactWithdrawalKeys` | `list_fact_withdrawal_keys`: sorted by visibility, fact_hash and subject in byte order, then cut to `limit` | `ORDER BY visibility, fact_hash, subject LIMIT $2` |
+| `isFactClaimWithdrawn` | `is_fact_claim_withdrawn`: point reads of the claim's two hashes at the visibility (any when null) for subject `*`, the entity and the member page | `SELECT 1 … fact_withdrawals …` with the same keys, or a `fact_purges` tombstone |
+| `isFactClaimPurged` | `is_fact_claim_purged`: false; the store keeps no fact purge ledger | `SELECT 1 FROM fact_purges …` |
+| `readSourcePurgeFlags` | `read_source_purge_flags`: both false; the store keeps no fact or take purge ledger | `EXISTS (… fact_purges …), EXISTS (… take_purges …)` |
 
 ## Trust proposals (`trust::proposals`)
 
@@ -101,8 +104,9 @@ Rust guesses and gaps (1x parity):
   `invalid_argument`. A source that does not exist refuses as the foreign key does.
 - The guest-source rules are not modelled (there is no `guest_sources` table).
 
-Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
-(`isFactWithdrawn`, the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
+The purge halves answer "none" because every `fact_purges` and `take_purges` writer is raw SQL the Rust engine refuses,
+so a Rust brain never holds a tombstone. Not built (they still run through `executeRaw`, which the Rust engine refuses): the
+other reads that read `fact_purges` (the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
 request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
 `gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line).
 

@@ -433,6 +433,22 @@ fn receipts_of(
     Ok(out)
 }
 
+/// The fingerprints of the `kind = 'fact'` holds of one page still `held` (the fence chunk overlay's
+/// `held` lookup, `readFenceOverlayRows`).
+pub(crate) fn held_fact_fingerprints(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    Ok(all_holds(read)?
+        .into_iter()
+        .filter(|h| {
+            h.kind == "fact" && h.source_id == source_id && h.slug == slug && h.status == "held"
+        })
+        .map(|h| h.fingerprint)
+        .collect())
+}
+
 fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
     let mut out = Vec::new();
     let mut failure = None;
