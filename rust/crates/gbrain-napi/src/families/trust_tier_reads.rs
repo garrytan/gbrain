@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
 use gbrain_store::trust::valid_time::{
-    AmendmentsQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
+    AmendmentsQuery, ValidTimeIdentityQuery, ValidTimePickQuery, VersionEditionQuery,
 };
 
 #[napi]
@@ -121,6 +121,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: AmendmentsQuery = required(spec, "listAmendmentsNotApplied spec")?;
             s.list_amendments_not_applied(&a)
+        })
+    }
+
+    /// `readPageVersionEdition(spec)`: resolves one version of the page as an edition, or null.
+    #[napi]
+    pub fn read_page_version_edition<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: VersionEditionQuery = required(spec, "readPageVersionEdition spec")?;
+            s.read_page_version_edition(&a)
         })
     }
 }

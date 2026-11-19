@@ -93,6 +93,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listValidTimeIdentities': OOS.trustTierReads,
   'pickValidTimeEdition': OOS.trustTierReads,
   'listAmendmentsNotApplied': OOS.trustTierReads,
+  'readPageVersionEdition': OOS.trustTierReads,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,

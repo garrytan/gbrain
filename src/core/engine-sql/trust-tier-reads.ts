@@ -12,6 +12,7 @@
  * - `listValidTimeIdentities`: the live pages a valid-time read may follow for a slug, with their file and checkout.
  * - `pickValidTimeEdition`: the edition of one page in force on a date, over the page and its retained versions.
  * - `listAmendmentsNotApplied`: the amendment records an as-of edition does not fold in.
+ * - `readPageVersionEdition`: the retained version an as-of read loads as its edition.
  *
  * Every function takes the engine (or transaction) it runs on. Ids come back as numbers; ordered text sorts
  * `COLLATE "C"`.
@@ -382,4 +383,35 @@ export async function listAmendmentsNotApplied(tx: Raw, spec: AmendmentsNotAppli
        AND (r.first_start IS NULL OR (r.first_start > ${spec.editionFrom}::date AND r.first_start <= ${spec.asOf}::date))
      GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C", f.source_id COLLATE "C" LIMIT ${spec.limit}`);
   return got.map(r => ({ slug: r.slug, source_id: r.source_id, since: r.since ?? null }));
+}
+
+/** A retained version of one page as an as-of read loads it (`readPageVersionEdition`). */
+export interface PageVersionEditionRow {
+  id: number;
+  title: string | null;
+  type: string | null;
+  tags: string[];
+  frontmatter: Record<string, unknown>;
+  compiled_truth: string | null;
+  timeline: string | null;
+  revision: string | null;
+  /** `segmented` on the snapshot of a segmented page, else null. */
+  body_storage: string | null;
+  body_generation: number | null;
+}
+
+/** The version `versionId` of page `pageId`, or null when the page keeps no such version. */
+export async function readPageVersionEdition(tx: Raw, spec: { pageId: number; versionId: number }): Promise<PageVersionEditionRow | null> {
+  const [v] = await rows<Record<string, unknown>>(tx, sqlFragment`SELECT id, title, type, tags, frontmatter, compiled_truth, timeline,
+           knowledge_revision::text AS revision, body_storage, body_generation
+      FROM page_versions WHERE id = ${spec.versionId} AND page_id = ${spec.pageId}`);
+  if (!v) return null;
+  const tags = Array.isArray(v.tags) ? v.tags.map(String) : typeof v.tags === 'string' ? (JSON.parse(v.tags) as unknown[]).map(String) : [];
+  return {
+    id: Number(v.id), title: v.title == null ? null : String(v.title), type: v.type == null ? null : String(v.type), tags,
+    frontmatter: (json(v.frontmatter) ?? {}) as Record<string, unknown>,
+    compiled_truth: v.compiled_truth == null ? null : String(v.compiled_truth), timeline: v.timeline == null ? null : String(v.timeline),
+    revision: v.revision == null ? null : String(v.revision), body_storage: v.body_storage == null ? null : String(v.body_storage),
+    body_generation: v.body_generation == null ? null : Number(v.body_generation),
+  };
 }

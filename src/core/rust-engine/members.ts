@@ -685,6 +685,7 @@ export const RUST_ENGINE_MEMBERS = {
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
   listAmendmentsNotApplied: 'links',
+  readPageVersionEdition: 'page_versions',
   // jobs-tables group D
   getCodeTraversalCache: 'code_edges',
   putCodeTraversalCache: 'code_edges',

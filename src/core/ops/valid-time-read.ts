@@ -190,14 +190,11 @@ async function loadEdition(tx: BrainEngine, identity: Identity, row: PickRow): P
     return { current, edition: { versionId: null, title: p.title, type: p.type, tags: snap.tags, frontmatter: (p.frontmatter ?? {}) as Record<string, unknown>,
       compiled_truth: segmented ? '' : p.compiled_truth ?? '', timeline: segmented ? '' : p.timeline ?? '', revision: snap.revision, segmented, generation: snap.bodyGeneration } };
   }
-  const [v] = await tx.executeRaw<Record<string, unknown>>(`SELECT id, title, type, tags, frontmatter, compiled_truth, timeline, knowledge_revision::text AS revision,
-      body_storage, body_generation FROM page_versions WHERE id = $1 AND page_id = $2`, [row.version_id, identity.id]);
+  const v = await tx.readPageVersionEdition({ pageId: identity.id, versionId: row.version_id });
   if (!v) return null;
-  const tags = Array.isArray(v.tags) ? v.tags.map(String) : typeof v.tags === 'string' ? JSON.parse(v.tags) as string[] : [];
-  const fm = (typeof v.frontmatter === 'string' ? JSON.parse(v.frontmatter) : v.frontmatter ?? {}) as Record<string, unknown>;
-  return { current, edition: { versionId: Number(v.id), title: String(v.title ?? identity.slug), type: String(v.type ?? ''), tags, frontmatter: fm,
-    compiled_truth: String(v.compiled_truth ?? ''), timeline: String(v.timeline ?? ''), revision: String(v.revision ?? ''),
-    segmented: v.body_storage === 'segmented', ...(v.body_generation != null ? { generation: Number(v.body_generation) } : {}) } };
+  return { current, edition: { versionId: v.id, title: v.title ?? identity.slug, type: v.type ?? '', tags: v.tags, frontmatter: v.frontmatter,
+    compiled_truth: v.compiled_truth ?? '', timeline: v.timeline ?? '', revision: v.revision ?? '',
+    segmented: v.body_storage === 'segmented', ...(v.body_generation !== null ? { generation: v.body_generation } : {}) } };
 }
 
 /**

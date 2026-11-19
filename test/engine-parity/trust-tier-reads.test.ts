@@ -434,4 +434,30 @@ describe('engine parity: typed trust tier reads', () => {
       } finally { setPackRelationSemantics(new Map()); restorePack(); }
     },
   );
+  parityTest(
+    'readPageVersionEdition reads one retained version of the page as an edition, and null for another page or an unknown id',
+    { methods: ['putPage', 'createVersion', 'getPage', 'readPageVersionEdition'] },
+    async (engine) => {
+      await engine.putPage('vt/edition', { type: 'note', title: 'Edition One', compiled_truth: 'first body', timeline: '- 2026-01-02: signed',
+        frontmatter: { valid_from: '2026-01-01', tags: ['b-tag', 'a-tag'] } });
+      const v1 = await engine.createVersion('vt/edition', { sourceId: 'default' });
+      await engine.putPage('vt/edition', { type: 'note', title: 'Edition Two', compiled_truth: 'second body', timeline: '', frontmatter: { valid_from: '2026-06-01' } });
+      await engine.putPage('vt/other', { type: 'note', title: 'Other', compiled_truth: 'x', timeline: '', frontmatter: {} });
+      const pageId = (await engine.getPage('vt/edition', { sourceId: 'default' }))!.id;
+      const otherId = (await engine.getPage('vt/other', { sourceId: 'default' }))!.id;
+      const versionId = Number(v1.id);
+      const got = await engine.readPageVersionEdition({ pageId, versionId });
+      const wrongPage = await engine.readPageVersionEdition({ pageId: otherId, versionId });
+      const unknown = await engine.readPageVersionEdition({ pageId, versionId: versionId + 1000 });
+      expect(got?.id).toBe(versionId);
+      expect(got?.compiled_truth).toBe('first body');
+      expect(got?.frontmatter.valid_from).toBe('2026-01-01');
+      expect(typeof got?.revision).toBe('string');
+      expect(wrongPage).toBeNull();
+      expect(unknown).toBeNull();
+      // Ids and revisions differ per engine; the rest of the edition is compared.
+      const { id: _id, revision: _revision, ...edition } = got!;
+      return { edition, wrongPage, unknown };
+    },
+  );
 });

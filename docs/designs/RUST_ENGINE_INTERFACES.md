@@ -1732,7 +1732,7 @@ and write provenance on content rows, and the trust records.
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
     `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`), and the valid-time page lookup
-    `listValidTimeIdentities`, `pickValidTimeEdition` (`trust/valid_time.rs`) and `listAmendmentsNotApplied`
+    `listValidTimeIdentities`, `pickValidTimeEdition`, `readPageVersionEdition` (`trust/valid_time.rs`) and `listAmendmentsNotApplied`
     (`link_queries/link_temporal.rs`); it refuses the takes and timeline
     scan tables and a pick over a history PGLite would have pruned (TODOS.md `rust-version-prune`), and the belief
     history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
@@ -1740,7 +1740,7 @@ and write provenance on content rows, and the trust records.
     title shadow (`alias-trust.test.ts`); it still refuses `excludePrivate` for a caller whose member pages, grants or
     lineage widen the page policy, and the search fan-out reads that refusal as no aliases.
   - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, the valid-time
-    transaction isolation, edition and pinned-ordinal reads, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
+    transaction isolation and pinned-ordinal reads, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
     their refusal.
   - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.
 
