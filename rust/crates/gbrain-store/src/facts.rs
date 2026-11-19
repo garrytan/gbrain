@@ -56,6 +56,7 @@ pub mod repair;
 pub mod trust;
 pub mod trust_reads;
 
+pub(crate) use fence::jsonb_time;
 pub use fence::{FenceContext, FenceTarget};
 use privacy::hidden_by_private_provenance;
 pub use privacy::{OwnerOnly, PrivacyPolicy};

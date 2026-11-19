@@ -50,7 +50,7 @@ import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } 
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
-import type { FenceFactRow, FenceRowsTarget, HeldRowsQuery } from './engine-sql/trust-fence.ts';
+import type { FenceFactRow, FenceRowsTarget, GuardedTakeRow, GuardedTakeRowsQuery, HeldRowsQuery } from './engine-sql/trust-fence.ts';
 import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
@@ -72,7 +72,7 @@ import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow,
@@ -3111,6 +3111,8 @@ export interface BrainEngine {
    * `pending`, held by an open `forget` contest. Each row carries its stored `trust_tier`.
    */
   listHeldRows(q: HeldRowsQuery): Promise<Array<{ id: number; trust_tier: string }>>;
+  /** The stored takes of a reconcile batch's pages that a lower-tier write may not change, by page and row, locked (engine-sql/trust-fence.ts). */
+  listGuardedTakeRows(q: GuardedTakeRowsQuery): Promise<GuardedTakeRow[]>;
   /**
    * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
    * for the same (action, target, related) with `created: false`. The proposer principal and request come from the
@@ -3586,6 +3588,8 @@ export interface BrainEngine {
    * replaced, and switches the transaction to generic plans when coverage is active.
    */
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }): Promise<LedgerSource | null>;
+  /** The sources with a belief event about `subjectKey` in their current incarnation, by id (engine-sql/belief.ts). */
+  listCoveredSources(subjectKey: string): Promise<string[]>;
 
   /**
    * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the
@@ -4022,6 +4026,23 @@ export interface BrainEngine {
   listTakeRowsForPage(pageId: number): Promise<Array<{ row_num: number; claim: string }>>;
   /** The page's stored takes by row number while its take_fence generation is held `fence_absent`; none otherwise. */
   listHeldFenceTakeRows(spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]>;
+  // `gbrain extract takes` reads and delete (engine-sql/takes-reads.ts).
+  /** The id of the live page `slug` in `sourceId`, or null. */
+  readLivePageIdBySlug(slug: string, sourceId: string): Promise<number | null>;
+  /** Page `pageId`'s source, slug and stored trust tier, deleted or not, or null. */
+  readPageTierRef(pageId: number): Promise<PageTierRef | null>;
+  /** The pages among `ids`, deleted or not, with source, slug and stored trust tier, in no set order. */
+  readPageTierRows(ids: readonly number[]): Promise<Array<PageTierRef & { id: number }>>;
+  /** Whether page `pageId`'s frontmatter has the top-level key `key`, deleted or not. */
+  pageHasFrontmatterKey(pageId: number, key: string): Promise<boolean>;
+  /** The ids of the page's takes that leave its fence (TakesLeavingFence), in no set order. */
+  listTakeIdsLeavingFence(pageId: number, fence: TakesLeavingFence): Promise<number[]>;
+  /** Before-states by row number of the page's takes `ids` (`gone`) and of those an incoming row would overwrite. */
+  listTakePreimages(pageId: number, ids: readonly number[], incoming: ReadonlyArray<{ row_num: number; claim: string; kind: string; holder: string }>): Promise<Array<{ preimage: TakePreimage; gone: boolean }>>;
+  /** Delete the takes `ids`, whatever their page, with their synthesis evidence; an empty list deletes nothing. */
+  deleteTakesByIds(ids: readonly number[]): Promise<void>;
+  /** The id of the page's take at `rowNum`, or null. */
+  findTakeId(pageId: number, rowNum: number): Promise<number | null>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

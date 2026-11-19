@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 743/743
+# covered: 753/753
 # lifecycle: 9/9
-# pages: 40/40
+# pages: 44/44
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 10/10
@@ -22,7 +22,7 @@
 # timeline: 20/20
 # ontology: 4/4
 # raw_files: 5/5
-# takes: 24/24
+# takes: 28/28
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
@@ -31,7 +31,7 @@
 # stats_ingest: 5/5
 # sync_aliases: 10/10
 # config: 6/6
-# import_guards: 12/12
+# import_guards: 13/13
 # persistence_journal: 56/56
 # entity_reads: 6/6
 # cycle_locks: 7/7
@@ -65,7 +65,7 @@
 # write_guards: 9/9
 # page_visibility: 4/4
 # large_page: 2/2
-# trust_fence: 2/2
+# trust_fence: 3/3
 # trust_proposals: 6/6
 # connect_gate: 4/4
 # decide_proposals: 16/16
@@ -82,17 +82,17 @@ transaction	lifecycle	yes	75	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	87	yes	yes	yes	serves
+getPage	pages	yes	88	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	345	yes	yes	yes	serves
+putPage	pages	yes	356	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	113	yes	yes	yes	serves
+softDeletePage	pages	yes	116	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -105,7 +105,7 @@ listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
 listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
-listAllPageRefs	pages	yes	1	yes	yes	yes	serves
+listAllPageRefs	pages	yes	2	yes	yes	yes	serves
 listAllSources	pages	yes	3	no	yes	yes	serves
 updateSourceConfig	pages	yes	3	no	yes	yes	serves
 getSource	pages	yes	6	no	yes	yes	serves
@@ -122,6 +122,10 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
+readLivePageIdBySlug	pages	yes	1	no	yes	yes	serves
+readPageTierRef	pages	yes	1	no	yes	yes	serves
+readPageTierRows	pages	yes	1	no	yes	yes	serves
+pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
 searchKeyword	search	yes	34	yes	yes	yes	serves
 countKeywordPages	search	yes	9	no	yes	yes	serves
 searchKeywordPages	search	yes	14	no	yes	yes	serves
@@ -270,9 +274,9 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	33	yes	yes	yes	serves
+addTakesBatch	takes	yes	39	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
-listTakes	takes	yes	14	no	yes	yes	serves
+listTakes	takes	yes	19	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -280,11 +284,11 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	2	no	yes	yes	serves
 supersedeTake	takes	yes	2	no	yes	yes	serves
-resolveTake	takes	yes	8	no	yes	yes	serves
+resolveTake	takes	yes	9	no	yes	yes	serves
 getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
-addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
-listActiveTakesForPages	takes	yes	2	no	yes	yes	serves
+addSynthesisEvidence	takes	yes	3	no	yes	yes	serves
+listActiveTakesForPages	takes	yes	4	no	yes	yes	serves
 matchTakeRows	takes	yes	1	no	yes	yes	serves
 deleteTakeRows	takes	yes	1	no	yes	yes	serves
 countOffGridTakeWeights	takes	yes	1	no	yes	yes	serves
@@ -292,6 +296,10 @@ countTakes	takes	yes	1	no	yes	yes	serves
 planFactPurgeTakes	takes	yes	1	no	yes	yes	serves
 listTakeRowsForPage	takes	yes	1	no	yes	yes	serves
 listHeldFenceTakeRows	takes	yes	1	no	yes	yes	serves
+listTakeIdsLeavingFence	takes	yes	1	no	yes	yes	serves
+listTakePreimages	takes	yes	1	no	yes	yes	serves
+deleteTakesByIds	takes	yes	1	no	yes	yes	serves
+findTakeId	takes	yes	1	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	3	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
@@ -370,6 +378,7 @@ beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
+listCoveredSources	import_guards	yes	1	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	16	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
@@ -698,7 +707,7 @@ readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	9	no	yes	yes	serves
-readRowTrustRows	cli_reads_import	yes	3	no	yes	yes	serves
+readRowTrustRows	cli_reads_import	yes	5	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	7	no	yes	yes	serves
@@ -750,9 +759,10 @@ readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 readPageBodySizes	large_page	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
 listHeldRows	trust_fence	yes	2	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	8	no	yes	yes	serves
+listGuardedTakeRows	trust_fence	yes	1	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	9	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
-listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
+listTrustProposals	trust_proposals	yes	3	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves
 updatePendingTrustProposalAfter	trust_proposals	yes	1	no	yes	yes	serves
 transitionTrustProposal	trust_proposals	yes	1	no	yes	yes	serves

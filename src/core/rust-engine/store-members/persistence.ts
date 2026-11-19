@@ -224,5 +224,11 @@ export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: b
     ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
 };
 
+/**
+ * The store records no belief events (they are written only through `executeRaw`, which this engine refuses), so no
+ * source is covered for any subject, as `readLedgerSource` answers `coverage: null`.
+ */
+export const listCoveredSources: StoreMember<[subjectKey: string], string[]> = async () => [];
+
 /** `current_setting('plan_cache_mode')` on a PGLite brain that never set it. */
 const PLAN_CACHE_MODE = 'auto';
