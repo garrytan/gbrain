@@ -858,7 +858,6 @@ src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
 src/core/questions/store.ts	execute_raw	7
-src/core/readiness.ts	execute_raw	1
 src/core/reason-trailers.ts	execute_raw	2
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1

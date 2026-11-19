@@ -31,6 +31,9 @@ function spyEngine(opts: { hang?: boolean; delayMs?: number } = {}): SpyEngine {
       if (opts.delayMs) await new Promise(r => setTimeout(r, opts.delayMs));
       return /count\(\*\)/i.test(sql) ? [{ n: 0 }] : [];
     },
+    // The sync and worker probes' typed counts hang or lag exactly as the raw reads do.
+    async countRepoBoundSources() { return (await (target.executeRaw as (sql: string) => Promise<Array<{ n: number }>>)('count(*)'))[0]?.n ?? 0; },
+    async countWaitingJobs() { return (await (target.executeRaw as (sql: string) => Promise<Array<{ n: number }>>)('count(*)'))[0]?.n ?? 0; },
     async getConfig(key: string) {
       calls.push('getConfig');
       return key === 'version' ? String(LATEST_VERSION) : null;

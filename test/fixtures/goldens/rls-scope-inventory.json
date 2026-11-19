@@ -4675,6 +4675,7 @@
         "countUnlinkedFactStats": "none",
         "countUnlinkedFactsByOrigin": "none",
         "countUnscannedTrustRows": "none",
+        "countWaitingJobs": "none",
         "countWakeWatches": "none",
         "countWorldFacts": "none",
         "countZeroWeightWithTakes": "none",

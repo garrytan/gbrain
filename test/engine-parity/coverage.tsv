@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 659/659
+# covered: 660/660
 # lifecycle: 9/9
 # pages: 37/37
 # search: 7/7
@@ -36,7 +36,7 @@
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
-# minion_queue: 70/70
+# minion_queue: 71/71
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 11/11
@@ -414,7 +414,7 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	101	no	yes	yes	serves
+admitJob	minion_jobs	yes	102	no	yes	yes	serves
 getJob	minion_jobs	yes	35	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
 claimNextJob	minion_jobs	yes	73	no	yes	yes	serves
@@ -472,6 +472,7 @@ listQueueWedgeCounts	minion_queue	yes	1	no	yes	yes	serves
 listPrivateQueueHealth	minion_queue	yes	1	no	yes	yes	serves
 readWedgeSignals	minion_queue	yes	1	no	yes	yes	serves
 readOldestWaitingAge	minion_queue	yes	1	no	yes	yes	serves
+countWaitingJobs	minion_queue	yes	1	no	yes	yes	serves
 listStuckActiveJobsByName	minion_queue	yes	1	no	yes	yes	serves
 listStalledEmbedBackfillSources	minion_queue	yes	1	no	yes	yes	serves
 readGlobalMaintenanceDeaths	minion_queue	yes	1	no	yes	yes	serves

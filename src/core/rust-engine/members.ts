@@ -645,6 +645,7 @@ export const RUST_ENGINE_MEMBERS = {
   listPrivateQueueHealth: 'minion_queue',
   readWedgeSignals: 'minion_queue',
   readOldestWaitingAge: 'minion_queue',
+  countWaitingJobs: 'minion_queue',
   listStuckActiveJobsByName: 'minion_queue',
   // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
   readLastAutopilotCycles: 'minion_queue',

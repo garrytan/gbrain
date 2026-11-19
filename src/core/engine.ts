@@ -3777,6 +3777,8 @@ export interface BrainEngine {
   readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
   /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
   readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** How many jobs wait; `excludeFactsAbsorb` leaves out the `facts-absorb` jobs PGLite's facts drain owns. */
+  countWaitingJobs(excludeFactsAbsorb: boolean): Promise<number>;
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 
