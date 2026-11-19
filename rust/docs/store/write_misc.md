@@ -27,6 +27,7 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `getWorktreeBinding(sourceId, hostId)` | `null` | The store keeps no writer bindings. A brain on this engine is never managed (`readManagedModeRows`), and the binding writers (`claimWorktree`) run raw SQL, which this engine refuses, so no source is bound on any host. PGLite answers the same for a source with no binding. |
 | `hasExtractedEvents(sourceId, pageId)` | `false` | The store keeps no chronicle extraction state. |
 | `listActiveAccessMembers()` | `[]` | The store keeps no access members. |
+| `notifierCoverageRecorded()` | `false` | The store keeps no notifier state: a resident notifier refuses to start on a Rust brain, so no source has recorded coverage. Search carries the freshness notice only when `sync.on_commit` is on. |
 | `isFolderRestricted(sourceId, slug)` | `false` | The store keeps no access state: no folder rules, no pending coverage, no row-level security. Every write of that state is raw SQL, which this engine refuses, so no slug is restricted. PGLite answers the same for a brain with no folder rules and no pending covers (`src/core/engine-sql/access-control.ts`). |
 | `expireMemoryProposals(reason)`, `purgeMemoryProposals(days)` | `0` | The store keeps no memory proposals. |
 | `listAwaitingMemoryProposals(limit)` | `[]` | The store keeps no memory proposals. |
