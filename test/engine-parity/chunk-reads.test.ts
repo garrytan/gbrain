@@ -8,7 +8,7 @@
  *  - Contract: each member returns the same answer on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts): definition and reference rows, symbol
- *    types, doctor counts, code readiness, qualified names, withdrawal chunks,
+ *    types, doctor counts, code readiness, search's unsealed-page probe, qualified names, withdrawal chunks,
  *    the chunks two deletes leave, contextual-mode candidates and frozen hits.
  *  - Regression: an engine whose read drifts gives a different code-def or
  *    code-refs answer, doctor finding, readiness status, walk candidate,
@@ -213,6 +213,46 @@ describe('engine parity: chunk reads', () => {
       expect(result.current.other).toEqual({ any: true, symbol: false });
       expect(sealed).toEqual({ any: true, symbol: true });
       return { ...result, sealed };
+    },
+  );
+
+  parityTest(
+    'hasUnsealedPages finds a live page below the safe-chunk fence under the source, privacy, type and slug-prefix filters',
+    { methods: ['putPage', 'sealChunks', 'softDeletePage', 'hasUnsealedPages'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const note = (slug: string, frontmatter: Record<string, unknown> = {}): PageInput =>
+        ({ type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter });
+      // A brain whose every page is sealed has nothing below the fence.
+      await engine.putPage('notes/sealed', note('notes/sealed'));
+      await installChunks(engine, 'notes/sealed', [chunk(0, 'sealed body')]);
+      const sealedBrain = await engine.hasUnsealedPages({});
+      // other: one unsealed note under a hard-excluded prefix, one unsealed private note.
+      await engine.putPage('archive/old', note('archive/old'), { sourceId: 'other' });
+      await engine.putPage('notes/secret', note('notes/secret', { visibility: 'private' }), { sourceId: 'other' });
+      // default: an unsealed concept page, and an unsealed page that is deleted.
+      await engine.putPage('concepts/idea', { ...note('concepts/idea'), type: 'concept' });
+      await engine.putPage('notes/gone', note('notes/gone'));
+      await engine.softDeletePage('notes/gone');
+      const result = {
+        sealedBrain,
+        all: await engine.hasUnsealedPages({}),
+        def: await engine.hasUnsealedPages({ sourceId: 'default' }),
+        defNotes: await engine.hasUnsealedPages({ sourceId: 'default', types: ['note'] }),
+        defConcepts: await engine.hasUnsealedPages({ sourceId: 'default', types: ['concept'] }),
+        defNoTypes: await engine.hasUnsealedPages({ sourceId: 'default', types: [] }),
+        other: await engine.hasUnsealedPages({ sourceIds: ['other'] }),
+        otherPublic: await engine.hasUnsealedPages({ sourceIds: ['other'], excludePrivate: true }),
+        otherPublicKept: await engine.hasUnsealedPages({ sourceIds: ['other'], excludePrivate: true, excludeSlugPrefixes: ['archive/'] }),
+        otherKept: await engine.hasUnsealedPages({ sourceIds: ['other'], excludeSlugPrefixes: ['archive/'] }),
+        bothSources: await engine.hasUnsealedPages({ sourceIds: ['default', 'other'], types: ['note'], excludeSlugPrefixes: ['archive/', 'notes/'] }),
+        none: await engine.hasUnsealedPages({ sourceIds: [] }),
+      };
+      expect(result).toEqual({
+        sealedBrain: false, all: true, def: true, defNotes: false, defConcepts: true, defNoTypes: false,
+        other: true, otherPublic: true, otherPublicKept: false, otherKept: true, bothSources: false, none: false,
+      });
+      return result;
     },
   );
 
