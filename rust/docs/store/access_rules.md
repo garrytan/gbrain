@@ -15,6 +15,7 @@ same state under key tag `z` (`crates/gbrain-store/src/access_rules.rs`). The by
 | `z 0x03 <source> \0 <prefix> \0 <reason>` | `{ source_id, prefix, reason, revision }` | `access_pending_coverage` |
 | `z 0x04 <source> \0 <revision u64 BE>` | `{ source_id, revision, applied, rules, digest, change_kind, origin, operation_id, proposed_by, approved_by, created_at_us, applied_at_us, approved_at_us }` | `access_policy_revisions` |
 | `z 0x05 <source> \0 <page id u64 BE>` | the sorted rule ids the last restamp gave the page | `pages.folder_rule_ids` |
+| `z 0x06 <source> \0 <id>` | `{ id, source_id, direction, phase, receipts, created_at_us, created_seq, updated_at_us }` | `access_policy_migrations` |
 
 The writes mirror the v283 and v303 checks: a rule id matches `^[a-z0-9][a-z0-9._-]{0,63}$`, a prefix is a folder
 (segments that each end in `/`) or one page (the same segments without the final `/`), at most 512 bytes with no `..`,
@@ -104,6 +105,34 @@ owner-only form reopens one (`a_policy_missing_its_defaulted_fields_still_hides_
 The store also hides a page under a pending prefix when the caller's record has no coverage entries, where the
 Postgres text renders no pending conjunct for such a record. That hides more than Postgres hides, never less.
 
+## Setup and policy-store members
+
+`src/commands/access-serves.ts` (`gbrain access serves` and `sources unfederate`), `src/core/access/policy-migrate.ts`
+(the policy-store move), `src/core/access/policy-transfer.ts` (export) and `src/core/access/serves.ts` run fourteen
+typed BrainEngine members (`src/core/engine-sql/access-setup.ts` on PGLite and Postgres,
+`src/core/rust-engine/store-members/access-setup.ts` here). The store keeps no access tokens and no OAuth clients
+(minting and the bearer check are raw SQL this engine refuses), so the token members answer what PGLite and Postgres
+answer on a brain with none, and the two token writes match no token. The policy-store migration journal is
+`crates/gbrain-store/src/access_migrations.rs`; each write is one `Store::write`.
+
+| JS member | Rust answers | Mirrors |
+| --- | --- | --- |
+| `listUnboundTokenNames()` / `listUnboundClientIds()` | `[]` | `UNBOUND_TOKEN_NAMES_SQL`, `UNBOUND_CLIENT_IDS_SQL` |
+| `readLiveAccessToken(name)` / `listKeysReadingSource(sourceId)` | `null` / `[]` | `LIVE_TOKEN_SQL`, `KEYS_READING_SOURCE_SQL` |
+| `recordTokenSetupReads(name, reads)` / `revokeAccessTokenById(id)` | nothing | `RECORD_SETUP_READS_SQL`, `REVOKE_TOKEN_SQL` |
+| `listUnarchivedSourceIds(ids)` | the ids of `ids` that name a source that is not archived (`listAllSources`) | `UNARCHIVED_SOURCE_IDS_SQL` |
+| `countCompanyPages(sourceId)` | `{ pages, calls }`: the live pages of the source and those under `company/calls/` (`listAccessPrefixSlugs`) | `COMPANY_PAGE_COUNTS_SQL` |
+| `listAccessPolicySources()` | every source with access state, archived ones too, by id in code-unit order | `POLICY_STATE_SOURCES_SQL` |
+| `countPeopleFolderPages()` | `{ source_id, folder, pages }` for each `people/<folder>/` holding live pages, by source then folder in code-unit order | `PEOPLE_FOLDER_PAGES_SQL` |
+| `brain.readUnfinishedAccessMigration(sourceId)` | `{ id, phase, direction, receipts }` of the newest migration of the source that has not switched, or null | `UNFINISHED_MIGRATION_SQL` |
+| `brain.insertAccessMigration(id, sourceId, direction)` | starts a migration at `started` with `{}` receipts; a source with no access state, a direction other than `to_git` or `to_database`, or a used id refuses | `INSERT_MIGRATION_SQL` |
+| `brain.recordAccessMigrationPhase(id, phase, receipts)` | sets the phase and receipts (`switchAccessMigration` sends `switched`); a missing id changes nothing, a phase the table does not allow refuses | `RECORD_MIGRATION_PHASE_SQL`, `SWITCH_MIGRATION_SQL` |
+
+A migration is a `z 0x06 <source> \0 <id>` record `{ id, source_id, direction, phase, receipts, created_at_us,
+created_seq, updated_at_us }`; `created_seq` orders two migrations made in one microsecond. Postgres sorts
+`ORDER BY source_id` and `ORDER BY 1, 2` in the database collation, so on a server whose collation is not `C` two ids
+that differ only in punctuation or case can come back in another order than PGLite and the store give.
+
 ## Tests
 
 - `crates/gbrain-store/src/access_rules.rs` (unit tests): reads in key order, the flag on a rule or pending put, the
@@ -124,3 +153,10 @@ Postgres text renders no pending conjunct for such a record. That hides more tha
   rule change refused part way, two concurrent rule changes that cannot both apply against one revision, a page
   written or renamed under an applied rule that a later restamp does not count, and a reader a rule names that
   `findPagesByTitles` serves the folder, except while its prefix is pending.
+- `crates/gbrain-store/src/access_migrations.rs` (unit tests): the unfinished migration is the newest that has not
+  switched, and a migration write the table refuses (a source with no access state, a direction or phase it does not
+  allow, a used id) writes nothing.
+- `test/engine-parity/access-setup.test.ts`: on every arm, a brain with no access tokens has nothing unbound, no live
+  key and no key reading a source, the unarchived source ids, the company and people-folder page counts, the sources
+  with access state, and a policy-store migration from its start until it switches.
+  `test/engine-sql-caller-raw-sql-pins.test.ts` pins each Postgres statement to the text its caller ran.

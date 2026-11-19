@@ -62,6 +62,7 @@ import * as effectScans from './effect-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as accessPolicy from './access-policy.ts';
+import * as accessSetup from './access-setup.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as writeGuards from './write-guards.ts';
@@ -112,6 +113,8 @@ export const STORE_MEMBERS = {
   ...writeMisc,
   // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
   ...accessPolicy,
+  // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).
+  ...accessSetup,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).

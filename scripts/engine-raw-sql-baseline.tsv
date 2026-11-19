@@ -7,7 +7,6 @@ src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-rules.ts	execute_raw	4
-src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	6
 src/commands/agent-logs.ts	execute_raw	1
 src/commands/agent-register.ts	execute_raw	4
@@ -238,11 +237,8 @@ src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared compa
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner-only.ts	execute_raw	2	#9634, pre-ratchet: reads sources.config to tell whether the brain or one source is owner-only; no typed engine method exists yet
 src/core/access/owner.ts	execute_raw	1
-src/core/access/policy-migrate.ts	execute_raw	4
-src/core/access/policy-transfer.ts	execute_raw	1
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
-src/core/access/serves.ts	execute_raw	1
 src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
