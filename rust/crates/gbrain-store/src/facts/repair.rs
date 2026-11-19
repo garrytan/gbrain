@@ -6,10 +6,18 @@
 //! - `listCapturedFactsForClassification` (repair/captured-facts.ts),
 //! - `listWorldFactsFromPrivateSources` (repair/visibility.ts).
 //!
-//! The other five members of the file read a table the store does not hold (`open_loops`,
-//! `fact_withdrawals`, `persistence_requests`, `page_purges`, `derived_generations` and
-//! `derived_generation_items`), so the TypeScript engine leaves them out of its member table and they
-//! refuse with `engine_capability_missing`. rust/docs/store/facts.md names each one.
+//! It also serves `countLabelFacts` (repair/conversation-labels.ts), which reads facts, pages,
+//! loops and withdrawals: the TypeScript member reads its label line into literal labels
+//! (`store-members/label-line.ts`) and [`has_label_line`] matches them, so the store evaluates no
+//! regular expression.
+//!
+//! The two loop reads, `closedLoopWithActiveFact` and `loopFactDrift`, are served from
+//! `facts/loops.rs`. `countPurgedPageFacts` (doctor's gone-page check) also reads the store's
+//! `page_purges` ledger (`facts/page_purges.rs`), which no member writes on Rust, and
+//! `listUnwithdrawnFacts` is served from the derived generation ledger in `facts/generations.rs`.
+//! The last member of the file refuses with `engine_capability_missing`:
+//! `listExtractorFactsForClassification` joins the persistence journal. rust/docs/store/facts.md
+//! names each one.
 //!
 //! Shared reading rules. A source's rows come back in id order ([`source_rows`]); the sources are
 //! visited in byte order of their id, which is `ORDER BY f.source_id, f.id` under the C collation
@@ -17,12 +25,15 @@
 //! IS NULL OR = 'user'` is [`user_or_unset`]. `a.entity_slug IS NOT DISTINCT FROM f.entity_slug` is
 //! plain `Option` equality.
 
-use super::{FactRecord, fact_fingerprint, source_rows};
+use super::loops::loop_fact_ids;
+use super::page_purges::source_purges;
+use super::{FactRecord, fact_fingerprint, ids_under, refs_prefix, source_rows};
 use crate::Store;
 use crate::error::Result;
 use crate::links::no_nul;
 use crate::pages::{PageRecord, read_page};
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::withdrawals::withdrawn_claim;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeSet, HashMap};
@@ -54,6 +65,94 @@ pub struct WorldFactArgs {
     /// `honorAliases()`, read from `privateSnapshotFilterFragment('h')`: a page with no
     /// `visibility` and a private `access` or `confidentiality` value is not readable.
     pub honor_aliases: bool,
+}
+
+/// The scope and constants of `countLabelFacts`. The TypeScript member reads the label line
+/// (`~* $4`) into the literal labels its alternation spells and the `LIKE '%…%'` context pattern
+/// into the text it looks for; it refuses any other shape, so the store evaluates no regular
+/// expression.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct LabelCountArgs {
+    pub source_ids: Vec<String>,
+    /// `LIMIT $5`: the most rows to count (`cap + 1`).
+    pub limit: u64,
+    /// `f.source = $2`.
+    pub segment_source: String,
+    /// `f.context LIKE '%' || context_contains || '%'`.
+    pub context_contains: String,
+    /// The labels of `(^|\n)\*\*(labels)[[:space:]]*:\*\*`, ASCII, matched with ASCII case folding.
+    pub labels: Vec<String>,
+    /// `o.source IN ($6, $7)`: the audit sources that mark a page as decided.
+    pub terminal_source: String,
+    pub non_extractable_source: String,
+}
+
+/// `countPurgedPageFacts(sourceIds, cap)`: `limit` is the SQL's `LIMIT cap + 1`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PurgedCountArgs {
+    pub source_ids: Vec<String>,
+    pub limit: u64,
+}
+
+/// `PAGE_EXTRACTION_SOURCE_LIST` (facts/gone-page-facts.ts): the sources whose context names the page.
+const PAGE_EXTRACTION_SOURCES: [&str; 4] =
+    ["mcp:put_page", "sync:import", "file_upload", "code_import"];
+
+/// `contextHeadSql`: `split_part(context, ' — ', 1)`, the text before the first separator.
+fn context_head(context: &str) -> &str {
+    context.split(" \u{2014} ").next().unwrap_or("")
+}
+
+/// The literal prefix of `f.source LIKE 'cli:extract-conversation-facts%'`.
+const EXTRACTOR_PREFIX: &str = "cli:extract-conversation-facts";
+
+/// `[[:space:]]` as PGLite reads it: `iswspace` of its C library (musl) under `C.UTF-8`. Postgres
+/// on glibc also counts U+1680 (OGHAM SPACE MARK); the parity cases use none of the two
+/// characters on which the two disagree.
+fn posix_space(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '\t'
+            | '\n'
+            | '\u{b}'
+            | '\u{c}'
+            | '\r'
+            | '\u{85}'
+            | '\u{2000}'..='\u{2006}'
+            | '\u{2008}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{205f}'
+            | '\u{3000}'
+    )
+}
+
+/// `text ~* '(^|\n)\*\*(labels)[[:space:]]*:\*\*'`: a line opens with `**`, one of the labels
+/// (ASCII case folding: `~*` matches an ASCII letter of the pattern only in its two ASCII cases),
+/// any run of `[[:space:]]`, then `:**`.
+fn has_label_line(text: &str, labels: &[String]) -> bool {
+    let starts = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1));
+    starts.into_iter().any(|at| {
+        let Some(rest) = text[at..].strip_prefix("**") else {
+            return false;
+        };
+        labels.iter().any(|label| {
+            rest.get(..label.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(label))
+                && rest[label.len()..]
+                    .trim_start_matches(posix_space)
+                    .starts_with(":**")
+        })
+    })
+}
+
+/// `context ~ 'extractor_version=[0-9]+$'`: the text ends with `extractor_version=` and one or
+/// more ASCII digits.
+fn version_stamped(context: &str) -> bool {
+    let head = context.trim_end_matches(|c: char| c.is_ascii_digit());
+    head.len() < context.len() && head.ends_with("extractor_version=")
 }
 
 /// `(a.attributed_to IS NULL OR a.attributed_to = 'user')`.
@@ -318,6 +417,171 @@ impl Store {
             })
             .collect())
     }
+
+    /// `countLabelFacts(sourceIds, cap, args)` before its cap: how many active segment facts (at
+    /// most `limit`) sit on a live page whose body or timeline carries a label line, on a page no
+    /// version-stamped audit fact decided, neither superseded nor a successor, named by no loop and
+    /// covered by no withdrawal. The SQL has no ORDER BY; only the count is observable.
+    pub fn count_label_facts(&self, a: &LabelCountArgs) -> Result<u64> {
+        let op = "countLabelFacts";
+        for source in &a.source_ids {
+            no_nul(op, &[("sourceIds", source)])?;
+        }
+        no_nul(
+            op,
+            &[
+                ("segmentSource", &a.segment_source),
+                ("contextContains", &a.context_contains),
+                ("terminalSource", &a.terminal_source),
+                ("nonExtractableSource", &a.non_extractable_source),
+            ],
+        )?;
+        for label in &a.labels {
+            no_nul(op, &[("labels", label)])?;
+        }
+        if a.limit == 0 || !a.segment_source.starts_with(EXTRACTOR_PREFIX) {
+            return Ok(0);
+        }
+        let read = self.read()?;
+        let held = loop_fact_ids(&*read, op)?;
+        let sources: BTreeSet<&str> = a.source_ids.iter().map(String::as_str).collect();
+        let mut n = 0u64;
+        for source in sources {
+            let rows = source_rows(&*read, source)?;
+            let decided: BTreeSet<&str> = rows
+                .iter()
+                .filter(|o| {
+                    o.expired_at_us.is_none()
+                        && (o.source == a.terminal_source || o.source == a.non_extractable_source)
+                        && o.context.as_deref().is_some_and(version_stamped)
+                })
+                .filter_map(|o| o.source_markdown_slug.as_deref())
+                .collect();
+            let mut labelled: HashMap<&str, bool> = HashMap::new();
+            for f in &rows {
+                let Some(slug) = f.source_markdown_slug.as_deref() else {
+                    continue;
+                };
+                if f.source != a.segment_source
+                    || f.expired_at_us.is_some()
+                    || f.superseded_by.is_some()
+                    || !f
+                        .context
+                        .as_deref()
+                        .is_some_and(|c| c.contains(&a.context_contains))
+                    || decided.contains(slug)
+                {
+                    continue;
+                }
+                let on_label_page = match labelled.get(slug) {
+                    Some(known) => *known,
+                    None => {
+                        let found = read_page(&*read, source, slug)?.is_some_and(|p| {
+                            p.deleted_at_us.is_none()
+                                && (has_label_line(
+                                    p.compiled_truth.as_deref().unwrap_or(""),
+                                    &a.labels,
+                                ) || has_label_line(
+                                    p.timeline.as_deref().unwrap_or(""),
+                                    &a.labels,
+                                ))
+                        });
+                        labelled.insert(slug, found);
+                        found
+                    }
+                };
+                if !on_label_page
+                    || held.contains(&f.id)
+                    || !ids_under(&*read, &refs_prefix(f.id))?.is_empty()
+                    || withdrawn_claim(
+                        &*read,
+                        source,
+                        &f.visibility,
+                        &f.fact,
+                        f.entity_slug.as_deref(),
+                    )?
+                {
+                    continue;
+                }
+                n += 1;
+                if n >= a.limit {
+                    return Ok(n);
+                }
+            }
+        }
+        Ok(n)
+    }
+
+    /// `countPurgedPageFacts` (engine-sql/facts-repair.ts): for each gone-page fact, at most `limit`, whether a
+    /// purge record names its page. A gone-page fact is active, filed on no page, from a page-extraction source,
+    /// with a context head that is not empty, holds no `[[:space:]]` ([`posix_space`]) and names no page row
+    /// (live or soft-deleted) of its source. It counts when its head holds a `/` or a tombstone of its source
+    /// names the head at or after the fact's `created_at`, and no withdrawal, successor, referrer or loop holds it.
+    /// Sources go in byte order, facts in id order (the SQL has no ORDER BY; the member only caps the list).
+    pub fn count_purged_page_facts(&self, a: &PurgedCountArgs) -> Result<Vec<bool>> {
+        let op = "countPurgedPageFacts";
+        for source in &a.source_ids {
+            no_nul(op, &[("sourceIds", source)])?;
+        }
+        let mut out = Vec::new();
+        if a.limit == 0 {
+            return Ok(out);
+        }
+        let read = self.read()?;
+        let held = loop_fact_ids(&*read, op)?;
+        let sources: BTreeSet<&str> = a.source_ids.iter().map(String::as_str).collect();
+        for source in sources {
+            let purges = source_purges(&*read, source, op)?;
+            let mut page_row: HashMap<String, bool> = HashMap::new();
+            for f in source_rows(&*read, source)? {
+                if f.expired_at_us.is_some()
+                    || f.source_markdown_slug.is_some()
+                    || !PAGE_EXTRACTION_SOURCES.contains(&f.source.as_str())
+                {
+                    continue;
+                }
+                let Some(head) = f.context.as_deref().map(context_head) else {
+                    continue;
+                };
+                if head.is_empty() || head.chars().any(posix_space) {
+                    continue;
+                }
+                let has_row = match page_row.get(head) {
+                    Some(known) => *known,
+                    None => {
+                        let found = read_page(&*read, source, head)?.is_some();
+                        page_row.insert(head.to_string(), found);
+                        found
+                    }
+                };
+                if has_row {
+                    continue;
+                }
+                let purged = purges
+                    .iter()
+                    .any(|(slug, at)| slug == head && *at >= f.created_at_us);
+                if !(head.contains('/') || purged)
+                    || f.superseded_by.is_some()
+                    || held.contains(&f.id)
+                    || !ids_under(&*read, &refs_prefix(f.id))?.is_empty()
+                    || withdrawn_claim(
+                        &*read,
+                        source,
+                        &f.visibility,
+                        &f.fact,
+                        f.entity_slug.as_deref(),
+                    )?
+                {
+                    continue;
+                }
+                out.push(purged);
+                if out.len() as u64 >= a.limit {
+                    return Ok(out);
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// The sources whose facts name their page in `context` (`factProvenanceSlugSql`).
@@ -413,4 +677,83 @@ fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
     !snapshot_allows(page, honor_aliases)
         || alias_private(&page.frontmatter)
         || page.frontmatter.contains_key("readable_by")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_context_head_is_the_text_before_the_first_separator() {
+        assert_eq!(context_head("notes/a \u{2014} b \u{2014} c"), "notes/a");
+        assert_eq!(context_head("notes/a"), "notes/a");
+        assert_eq!(context_head("notes/a \u{2014}b"), "notes/a \u{2014}b");
+        assert_eq!(context_head(""), "");
+    }
+
+    #[test]
+    fn a_purge_record_of_the_head_written_at_or_after_the_fact_is_the_evidence() {
+        use crate::facts::InsertFactsArgs;
+        use crate::facts::page_purges::put_purge;
+        let store = crate::test_support::store();
+        let rows: Vec<Value> = ["early", "purged", "notes/gone", "elsewhere"]
+            .iter()
+            .map(|c| {
+                json!({ "fact": format!("claim {c}"), "visibility": "private", "source": "mcp:put_page",
+                    "valid_from": "2026-01-01T00:00:00.000Z", "context": format!("{c} \u{2014} x") })
+            })
+            .collect();
+        let insert: InsertFactsArgs =
+            serde_json::from_value(json!({ "rows": rows, "sourceId": "default" })).unwrap();
+        store.insert_facts(&insert).unwrap();
+        store
+            .write(|tx| {
+                put_purge(tx, "default", "h1", "early", 0)?;
+                put_purge(tx, "default", "h2", "purged", i64::MAX)?;
+                put_purge(tx, "default", "h3", "elsewhere-not", i64::MAX)
+            })
+            .unwrap();
+        let count = |limit| {
+            store
+                .count_purged_page_facts(&PurgedCountArgs {
+                    source_ids: vec!["default".into()],
+                    limit,
+                })
+                .unwrap()
+        };
+        // `early` was purged before its fact and `elsewhere` has no record: neither has a `/`, so only
+        // `purged` (evidenced) and `notes/gone` (ambiguous) count, in id order.
+        assert_eq!(count(10), vec![true, false]);
+        assert_eq!(count(1), vec![true]);
+        assert!(count(0).is_empty());
+    }
+
+    fn labels(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_label_line_opens_a_line_folds_ascii_case_and_allows_spaces_before_the_colon() {
+        let l = labels(&["date", "action items", "action item"]);
+        assert!(has_label_line("**Date:** x", &l));
+        assert!(has_label_line("intro\n**DATE\u{2003}\t :** x", &l));
+        assert!(has_label_line("a\r\n**action Items:**", &l));
+        assert!(has_label_line("**Action Item:**", &l));
+        assert!(!has_label_line("see **Date:** inline", &l));
+        assert!(!has_label_line("**Dates:**", &l));
+        assert!(!has_label_line("**Date\u{a0}:**", &l));
+        assert!(!has_label_line("**Date:*", &l));
+        assert!(!has_label_line("**\u{c9}ate:**", &l));
+        assert!(!has_label_line("", &l));
+    }
+
+    #[test]
+    fn a_version_stamp_ends_the_context() {
+        assert!(version_stamped("decided extractor_version=3"));
+        assert!(version_stamped("extractor_version=12"));
+        assert!(!version_stamped("extractor_version="));
+        assert!(!version_stamped("extractor_version=3 later"));
+        assert!(!version_stamped("extractor_version=3\n"));
+        assert!(!version_stamped("extractor_version=1x2"));
+    }
 }

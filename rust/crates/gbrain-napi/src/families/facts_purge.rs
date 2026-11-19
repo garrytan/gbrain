@@ -15,6 +15,7 @@ use gbrain_store::facts::purge::{
     FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery, SingleFactQuery,
     SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
+use gbrain_store::facts::reconcile::BacklogArgs;
 
 #[napi]
 impl Brain {
@@ -158,6 +159,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: WithdrawalExpiry = required(args, "expireFactsByWithdrawal args")?;
             s.expire_facts_by_withdrawal(&a)
+        })
+    }
+
+    /// `listFactsReconcileBacklog({ marker })`: resolves `{ rows, segmented }`.
+    #[napi]
+    pub fn list_facts_reconcile_backlog<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: BacklogArgs = required(args, "listFactsReconcileBacklog args")?;
+            s.list_facts_reconcile_backlog(&a)
         })
     }
 }
