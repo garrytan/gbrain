@@ -29,8 +29,9 @@ microsecond ISO text.
 `sourceIds` scopes every read to a list of sources; with neither `sourceIds` nor `sourceId`
 every source is read. An empty `visibility` list matches no rows.
 
-`ONTOLOGY_SUPERSEDE_GUARD` always passes: the Rust ontology writers stamp trust through `write_fact` but do not yet evaluate the
-supersession trust guard, so a guarded supersession is not refused.
+`ONTOLOGY_SUPERSEDE_GUARD` is evaluated: `mergeOntologyFact` closes the current observation only when its trust rank is no higher than
+the writer's (an undeclared writer ranks as `unknown`). A lower-trust writer still inserts its observation, but it does not close the
+higher-trust row, and the call returns `action: inserted` with `supersededId: null`.
 
 ## Known divergences
 
