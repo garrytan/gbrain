@@ -20,6 +20,9 @@
  *    importFromContent, whose fence withdrawal and purge overlay are raw SQL; its fence rows are private, because a
  *    world row sends the chunk staging through the fence chunk overlay (eligibility/fence-overlay.ts), raw SQL too.
  *    Page, occurrence and version ids are never compared.
+ *  - The rewrite page read lists tags in byte order on every arm (Postgres sorts by "C", not the database collation),
+ *    and a fence append's tier keep (trust/fence-append.ts withPageTierKept) puts the prior tier and origin back after
+ *    a lowering and after a raising write through the typed restore, under the same write trust declaration.
  */
 import { describe, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
@@ -29,6 +32,9 @@ import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persiste
 import { readSegmentedBody } from '../../src/core/page-body/ingest.ts';
 import { rewriteLiveSegmentedFences, rewriteSegmentedGeneration, rewrittenContentHash, segmentedBodyContains,
   type FenceTransform } from '../../src/core/page-body/segment-rewrite.ts';
+import { withWriteTrust } from '../../src/core/persistence/context.ts';
+import { withPageTierKept } from '../../src/core/trust/fence-append.ts';
+import type { TrustTier } from '../../src/core/trust/tier.ts';
 import { conversationBody } from '../helpers/conversation-page.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { parityArms } from './harness.ts';
@@ -138,5 +144,37 @@ describe('engine parity: segmented fence rewrites', () => {
       const refusal = await engine.transaction(tx => rewriteSegmentedGeneration(tx, page.id, live, strike, meta))
         .then(() => null, (e: Error) => e.message.replace(/page \S+;/, 'page <slug>;').replace(/generation \d+/, 'generation <n>'));
       return { before, after, replaced: replaced?.length ?? null, refusal };
+    });
+
+  parityTest('the rewrite page read lists mixed-case tags in byte order',
+    { methods: ['putPage', 'addTag', 'readSegmentedRewritePage'] },
+    async (engine) => {
+      const page = await engine.putPage('notes/tagged', { title: 'Tagged', type: 'note', compiled_truth: 'Body.', timeline: '' });
+      for (const tag of ['beta', 'Alpha', 'alpha', 'Zeta', '_under', 'Beta']) await engine.addTag('notes/tagged', tag);
+      return (await engine.readSegmentedRewritePage(page.id))?.tags ?? null;
+    });
+
+  parityTest('a fence append keeps the page tier and origin through a lowering and a raising write',
+    { methods: ['transaction', 'putPage', 'readPageTrustStamp'] },
+    async (engine) => {
+      const write = (slug: string, tier: TrustTier, channel: string, truth: string, keep: boolean) => engine.transaction(tx =>
+        withWriteTrust(tx, { tier, origin: { channel } }, async () => {
+          const put = () => tx.putPage(slug, { title: slug, type: 'note', compiled_truth: truth, timeline: '' });
+          await (keep ? withPageTierKept(tx, { sourceId: 'default', slug }, put) : put());
+        }));
+      const stamp = async (slug: string) => {
+        const row = await engine.readPageTrustStamp({ sourceId: 'default', slug });
+        return row && { trust_tier: row.trust_tier, write_origin: row.write_origin };
+      };
+      // An owner page appended to by an agent: the agent write lowers it, the restore raises it back.
+      await write('notes/owner', 'operator_curated', 'owner', 'Owner body.', false);
+      await write('notes/owner', 'agent_written', 'agent', 'Owner body.\n\nAgent row.', true);
+      // An agent page appended to by the owner: the owner write raises it, the restore lowers it back.
+      await write('notes/agent', 'agent_written', 'agent', 'Agent body.', false);
+      await write('notes/agent', 'operator_curated', 'owner', 'Agent body.\n\nOwner row.', true);
+      // Without the keep, the agent write lowers the owner page and stamps its own origin.
+      await write('notes/lowered', 'operator_curated', 'owner', 'Owner body.', false);
+      await write('notes/lowered', 'agent_written', 'agent', 'Owner body.\n\nAgent row.', false);
+      return { owner: await stamp('notes/owner'), agent: await stamp('notes/agent'), lowered: await stamp('notes/lowered') };
     });
 });
