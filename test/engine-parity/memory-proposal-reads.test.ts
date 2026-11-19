@@ -40,9 +40,11 @@ async function settle(fn: () => Promise<unknown>): Promise<unknown> {
 describe('engine parity: the owner reads of memory proposals', () => {
   parityTest('status and doctor read no pending proposal on a fresh brain', { methods: ['readPendingProposalSummary'] },
     async (engine) => {
-      const summary = await settle(() => pendingProposalSummary(engine));
-      expect(summary).toEqual({ pending: 0, oldest_hours: null });
-      return summary;
+      const result = { summary: await settle(() => pendingProposalSummary(engine)),
+        // The stored row's count is a bigint on Postgres and a number elsewhere; the summary above folds it with Number().
+        row: await settle(async () => { const r = await engine.readPendingProposalSummary(); return r && { n: Number(r.n), oldest: r.oldest }; }) };
+      expect(result).toEqual({ summary: { pending: 0, oldest_hours: null }, row: { n: 0, oldest: null } });
+      return result;
     });
 
   parityTest('the owner list is empty, with --all, --source and a cursor', { methods: ['listMemoryProposalRows'] },
@@ -53,8 +55,9 @@ describe('engine parity: the owner reads of memory proposals', () => {
         all: await settle(() => listMemoryProposals(engine, { all: true, sourceId: 'default', limit: 5 })),
         after: await settle(() => listMemoryProposals(engine, { all: true, after })),
         badCursor: await settle(() => listMemoryProposals(engine, { after: 'nope' })),
+        rows: await settle(() => engine.listMemoryProposalRows({ sourceId: null, all: true, limit: 5, afterAt: null, afterId: null })),
       };
-      expect(result).toEqual({ awaiting: [], all: [], after: [], badCursor: { code: 'invalid_params' } });
+      expect(result).toEqual({ awaiting: [], all: [], after: [], badCursor: { code: 'invalid_params' }, rows: [] });
       return result;
     });
 
@@ -65,23 +68,10 @@ describe('engine parity: the owner reads of memory proposals', () => {
         approve: await settle(() => approveMemoryProposal(local(engine), UNKNOWN, { decidedBy: 'owner' })),
         deny: await settle(() => denyMemoryProposal(local(engine), UNKNOWN, 'not wanted', { decidedBy: 'owner' })),
         notUuid: await settle(() => ownerProposal(engine, 'nope')),
+        rows: await settle(() => engine.listOwnerProposalRows(UNKNOWN)),
       };
       const notFound = { code: 'not_found' };
-      expect(result).toEqual({ show: notFound, approve: notFound, deny: notFound, notUuid: notFound });
+      expect(result).toEqual({ show: notFound, approve: notFound, deny: notFound, notUuid: notFound, rows: [] });
       return result;
     });
-
-  parityTest('the three engine members answer a fresh brain directly', {
-    methods: ['readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows'],
-  }, async (engine) => {
-    const row = await engine.readPendingProposalSummary();
-    const result = {
-      pending: row === null ? 0 : Number(row.n),
-      oldest: row?.oldest ?? null,
-      rows: await engine.listMemoryProposalRows({ sourceId: null, all: true, limit: 5, afterAt: null, afterId: null }),
-      owner: await engine.listOwnerProposalRows(UNKNOWN),
-    };
-    expect(result).toEqual({ pending: 0, oldest: null, rows: [], owner: [] });
-    return result;
-  });
 });

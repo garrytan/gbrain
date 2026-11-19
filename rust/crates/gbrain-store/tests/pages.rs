@@ -971,3 +971,28 @@ fn resolve_alias_follows_a_rename_alias_and_require_unambiguous_refuses_two_cand
             .is_none()
     );
 }
+
+#[test]
+fn an_alias_read_follows_a_rename_alias_and_an_exact_slug_wins() {
+    let dir = TempDir::new("pages-snapshot-alias");
+    let store = open(&dir);
+    put(&store, "notes/old", "Movable.");
+    store.update_slug("notes/old", "notes/new", None).unwrap();
+    let read = |slug: &str, v: Value| {
+        store
+            .read_page_snapshot(slug, &scope(v))
+            .unwrap()
+            .map(|s| s["page"]["slug"].as_str().unwrap().to_string())
+    };
+    assert_eq!(read("notes/old", json!({})), None);
+    assert_eq!(
+        read("notes/old", json!({"resolveAlias": true})).as_deref(),
+        Some("notes/new")
+    );
+    assert_eq!(read("notes/never", json!({"resolveAlias": true})), None);
+    put(&store, "notes/old", "Squatter.");
+    assert_eq!(
+        read("notes/old", json!({"resolveAlias": true})).as_deref(),
+        Some("notes/old")
+    );
+}

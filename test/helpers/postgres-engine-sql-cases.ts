@@ -546,7 +546,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // facts (incl. the ontology rows of the facts table)
   'insertFact': 'facts', 'expireFact': 'facts', 'insertFacts': 'facts', 'deleteFactsForPage': 'facts',
   'listFactsByEntity': 'facts', 'listFactsSince': 'facts', 'listFactsKeyset': 'facts', 'listFactsBySession': 'facts', 'listSupersessions': 'facts',
-  'countUnconsolidatedFacts': 'facts', 'findCandidateDuplicates': 'facts', 'consolidateFact': 'facts',
+  'countUnconsolidatedFacts': 'facts', 'readHotMemoryWatermark': 'facts', 'findCandidateDuplicates': 'facts', 'consolidateFact': 'facts',
   'findTrajectory': 'facts', 'getFactsHealth': 'facts', 'migrateFactsToCanonical': 'facts',
   'mergeOntologyFact': 'facts', 'getOntology': 'facts', 'discoverOntologyDimensions': 'facts', 'findOntologyConflicts': 'facts',
   // takes (incl. contradictions + synthesis evidence, peeled in postgres-engine/takes.ts)
@@ -1146,6 +1146,7 @@ export const SQL_CASES: SqlCase[] = [
     ['since+visibility', (e) => e.listSupersessions(SRC, { since: EPOCH, visibility: ['world'] })],
   ]),
   ...variants('countUnconsolidatedFacts', [['default', (e) => e.countUnconsolidatedFacts(SRC)]]),
+  ...variants('readHotMemoryWatermark', [['default', (e) => e.readHotMemoryWatermark(SRC)]]),
   ...variants('findCandidateDuplicates', [
     ['default', (e) => e.findCandidateDuplicates(SRC, SLUG, 'Alice Example founded Acme Example')],
     ['embedding', (e) => e.findCandidateDuplicates(SRC, SLUG, 'Alice Example founded Acme Example', { embedding: EMB, embeddingModel: 'test-model' })],

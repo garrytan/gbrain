@@ -205,7 +205,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'getContradictionCacheEntry', 'putContradictionCacheEntry', 'sweepContradictionCache',
   // Facts (hot memory)
   'insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity',
-  'listFactsSince', 'listFactsKeyset', 'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts',
+  'listFactsSince', 'listFactsKeyset', 'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts', 'readHotMemoryWatermark',
   'findCandidateDuplicates', 'consolidateFact', 'findTrajectory', 'getFactsHealth',
   // Versions
   'createVersion', 'getVersions', 'revertToVersion',
