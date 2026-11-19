@@ -27,7 +27,7 @@ func request(_ target: String, auth: String? = "Bearer \(token)", host: String? 
     if let origin { raw += "Origin: \(origin)\r\n" }
     if let auth { raw += "Authorization: \(auth)\r\n" }
     raw += "\r\n"
-    guard case .request(let parsed) = HTTPParser.parse(Array(raw.utf8), maxBytes: 8192) else { fatalError("unparsed") }
+    guard case .request(let parsed, _) = HTTPParser.parse(Array(raw.utf8), maxBytes: 8192) else { fatalError("unparsed") }
     return parsed
 }
 
@@ -203,10 +203,10 @@ func sources(_ routed: Routed) -> [[String: Any]] {
         let fixture = Fixture.standard()
         let r = router(dbPath: fixture.path)
         #expect(send(r, request("/v1/imessage/threads", method: "POST")).response.status == 405)
-        #expect(send(r, request("/v1/imessage/send")).response.status == 404)
-        #expect(send(r, request("/v1/imessage/send", auth: nil)).response.status == 401)
+        #expect(code(send(r, request("/v1/imessage/send"))) == "forbidden_source")
+        #expect(code(send(r, request("/v1/imessage/send", auth: nil, method: "POST"))) == "forbidden_source")
         #expect(send(r, request("/v1/list_threads")).response.status == 404)
-        #expect(send(r, request("/v1/imessage/send")).route == "unknown")
+        #expect(send(r, request("/v1/list_threads")).route == "unknown")
     }
 
     @Test func explainsMissingFullDiskAccess() {
@@ -238,13 +238,13 @@ func sources(_ routed: Routed) -> [[String: Any]] {
         #expect(!r.admits(strangerPeer))
     }
 
-    @Test func servesListedPeersWithAToken() {
+    @Test func servesNoReadRouteToListedPeers() {
         let fixture = Fixture.standard()
         let r = router(dbPath: fixture.path, listener: .tailnet(allowed: [tailnetPeer]))
         let host = "100.100.0.1:8792"
-        #expect(send(r, request("/health", auth: nil, host: host), peer: tailnetPeer).response.status == 200)
-        #expect(send(r, request("/v1/imessage/threads", host: host), peer: tailnetPeer).response.status == 200)
-        #expect(send(r, request("/v1/imessage/threads", auth: nil, host: host), peer: tailnetPeer).response.status == 401)
+        #expect(code(send(r, request("/health", auth: nil, host: host), peer: tailnetPeer)) == "not_found")
+        #expect(code(send(r, request("/v1/imessage/threads", host: host), peer: tailnetPeer)) == "not_found")
+        #expect(code(send(r, request("/v1/sources", host: host), peer: tailnetPeer)) == "not_found")
         for peer in [macTailnet, loopbackPeer, strangerPeer] {
             #expect(code(send(r, request("/health", auth: nil), peer: peer)) == "forbidden_source")
         }

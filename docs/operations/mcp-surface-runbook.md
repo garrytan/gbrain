@@ -61,7 +61,7 @@ connection may widen, and otherwise asks the user, because only the operator wid
 a pinned client. `STARTER_CALLABLE_PARAMS` in `src/mcp/surface.ts` lists the few
 hidden parameters a starter caller may still pass, each with its reason (page
 windows, the shared-skill follower, the thin client's source binding, the
-connection check, a delegating client's `submit_agent` `queue`, `model` and
+connection check, `remember` `valid_from` (already accepted inside `items`), a delegating client's `submit_agent` `queue`, `model` and
 `allowed_slug_prefixes`, `list_pages` paging with `offset`). An agent job (`submit_agent`)
 records the surface of the connection that submitted it, and its tool calls are refused
 the same way; a job queued before the surface was recorded keeps the full surface until

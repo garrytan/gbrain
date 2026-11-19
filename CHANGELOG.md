@@ -10,6 +10,295 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.746.0] - 2026-11-19
+
+**Turning GBrain Helper's sending off now cancels a text that was still on its way, and `send-setup --off` only reports success when it can show the helper is stopped or has confirmed.**
+
+### Fixed
+- A send accepted before a confirmed `send-setup --off` or `send-key remove` is refused at the handover to Messages even if sending was turned back on, or the same key added again, in the few seconds before it got there. It answers `send_disabled` or `unknown_send_key`.
+- When nothing answers on the helper's port, `send-setup --off` now checks whether a `gbrain-apple-helper` process is still running. Only when none is does it report success; otherwise it exits 69 and says a text being handed over may still go out.
+- A busy answer to `send-setup --off` says a text being handed over may still go out.
+- The helper no longer holds its settings lock while a send waits its turn with Messages, so `--off` waits only for a text already being handed over, not for one still waiting its turn. Other helper commands now wait up to 40 seconds as well, instead of 30.
+
+**A concept page hidden because one of its source notes was purged is now rebuilt from its remaining notes, unless anyone wrote something on it.**
+
+### Fixed
+- When purging an old note hid a concept that synthesis built from it, the next concept synthesis now deletes the hidden page for good and writes a new one from the notes still in the group. Nothing of the old text reaches the model or stays in the brain. Previously the concept stayed hidden and was never shown again. (#9653)
+- A hidden concept stays hidden, and the purge preview says why, when it holds anything synthesis did not write: a new title, extra frontmatter, a timeline, curated sections, a file under another name, facts, takes, tags, attached files or data, hand-made links, an entity identity, a guest mark, or a person's decision on an edge proposal. It also stays hidden when the new page would be readable more widely than the hidden one, or when no synthesis model is set.
+- Links from other pages to the concept move to the rebuilt page with all their details kept.
+- Brains with no git repository get the same behavior. On brains whose writes go through the write owner, hidden concepts stay hidden for now; their rebuild waits for a later release.
+
+**An MCP client on the starter tool list can now say when a remembered fact was true by passing `valid_from` to `remember`.**
+
+### Fixed
+- Since starter clients were limited to the parameters their tool list shows, a single `remember` call with `valid_from` was refused with `param_not_on_surface`, although the same date was already accepted inside `items`. Ingest clients that know when each message was said can now date a single fact too. `valid_from` still doesn't appear in the starter tool list, so the list's size is unchanged.
+
+**A secret store restore ties an original only to the page at its backed-up slug, and only when that page still holds its marker.**
+
+### Fixed
+- `gbrain secrets backup --restore` no longer ties an original to a page that merely took its old slug and does not hold its marker (`<REDACTED:<rule>:<id>>`), so that page's readers never pass the `reveal_secret` read check for it. A page that holds a full copy of the marker, in its text or in a timeline entry or fact filed on it, still counts as holding it.
+- A backup that names a page by a slug it had before a rename (one taken before 0.60.744.0) skips that entry (`skipped_no_page`) instead of tying it to another page, and a restore never brings back what a purge removed. This replaces the 0.60.744.0 note saying such an entry would be restored without a place.
+- A restore that loses the race with a purge of the same page no longer leaves the sealed original behind.
+
+**Shipping a gbrain change no longer reruns the full test suite on the developer's machine when Linux CI already passed at the same code.**
+
+### Changed
+- For contributors: `.gstack/pregate.json` now records that the CI `test` and `e2e` jobs run on Linux, and each full run's `tree.json` now records the runner's OS, which gstack requires before it accepts the run. `/ship` reuses a passed CI run of those jobs only when the local machine runs the same operating system, and without this field it could not match them, so it ran the whole suite locally (about an hour). Nothing changes for gbrain users.
+
+## [0.60.745.0] - 2026-11-19
+
+**Brains with page titles longer than about 2,700 bytes upgrade again, and pages with long titles save instead of being refused (#9779).**
+
+### Fixed
+- The index behind exact-title lookups (`entity`, `whois`, context cards, search's alias check) was a btree on the lowercased title, and a btree entry must fit in 2,704 bytes. Upgrading a brain that already held a longer title stopped with "index row requires N bytes, maximum size is 8191", and on an upgraded brain saving such a page failed with `storage_error` ("index row size N exceeds btree version 4 maximum 2704"). The index is now a hash index on the lowercased title, which indexes a title of any length; the lookups are unchanged and still use it. Brains that already built the old index get the new one built online, then the old one dropped online, on the next upgrade. Reported by @mweber82.
+- Transcript imports cap the title of a new page at 200 characters, ending in an ellipsis when cut. Some harnesses report a session's opening text as its title, which ran to over 100 KB. Pages already imported keep their titles.
+
+<!-- behavior-change: transcript_title_cap_9779 -->
+
+**Turning GBrain Helper's sending off now wins over a text in progress and over a Touch ID dialog still open.**
+
+### Fixed
+- Each send checks the kill switch and its key again right before it hands the text to Messages, under the lock the settings are saved under. Once `send-setup --off` or `send-key remove` has returned, no new text is handed to Messages; a text Messages has already accepted may still be delivered. Both commands now say so when they succeed.
+- `send-setup --off` no longer waits for an earlier `send-setup` that is still showing its Touch ID dialog, and an approval given after the switch went off answers `send_disabled` instead of turning sending back on. `--off` keeps the config file locked until the helper has answered, so a `send-setup` started meanwhile waits for it instead of writing sending back on in between.
+- `send-setup --off` says what happened when the helper doesn't confirm: if the helper isn't running it says so and exits 0, because the config switch alone stops every send; if it doesn't answer within 40 seconds it exits 69; and if it answers with an error, it names the error (for example that the helper was busy) instead of blaming the keychain.
+
+## [0.60.744.0] - 2026-11-19
+
+**Archiving a source now hides its pages from every API token, not just from search.**
+
+<!-- behavior-change: archived_source_token_reads_gst3163 -->
+
+### Fixed
+- After `gbrain sources archive <id>`, a bearer token whose source list named that source still read its pages over HTTP when the call named no source: `get_page` by slug returned the body, and `list_pages`, `get_versions`, `get_backlinks`, `get_timeline`, `get_raw_data`, `entity`, `recall`, `chronicle_day` and `chronicle_since` all answered from it. A token's sources are now checked against the live sources each time it is used, the way OAuth clients already were, so an archived source reads as absent until `gbrain sources restore <id>` brings it back for the same token. Naming the archived source still answers `unknown_source` on every read that takes a `source_id`, `resolve_slugs` included. A token whose write source is archived, or whose every source is, reads nothing and is told so with that code, as an OAuth client whose source is archived already was. The owner's own tokens keep reading everything else.
+- `gbrain access serves several --members <ids> --yes` and adding or enabling a member from the admin page over HTTP now keep conversation archive pages written while the brain was personal to the owner before the new member can read them, as `gbrain access member add` already did. Before, those pages stayed readable by the new member until the next archive run.
+
+**`gbrain sources refresh` no longer stops and asks for the user when a local commit lands while it publishes the checkout's earlier local commits.**
+
+### Fixed
+- On a managed brain whose refresh publishes local commits by itself (Git durability on, or `sources.refresh_publish_diverged` true), a commit made on the checkout after that publish and before the fast-forward ended the run with `refresh_diverged` and a fix that said to ask the user, although nothing was lost and the next refresh succeeded. The refresh now retries once from a fresh check in the same run, which publishes the new commit too. If that retry is refused as well, the refusal still says the first commits were already published.
+
+**A managed `gbrain sources refresh` that brings in a few files now holds the checkout's refresh lock for about a second instead of minutes, and reports where its time went.**
+
+### Fixed
+- After its import, a refresh's member sync used to derive links for up to 1,000 pages of the source's stale-link backlog while the refresh still held the lock. That took minutes on a large brain, and other refreshes of the checkout failed with `refresh_in_progress` meanwhile. Now the lock covers only the pages the refresh imported. The rest of the sync's link budget (the same 1,000 pages and 5 minutes) is spent on the backlog after the lock is released, so an uncontended run drains as much as before. Refreshes drain a source's backlog one at a time: a refresh that finds another refresh's drain running skips its own. A failed drain never fails the refresh. (GST-3107)
+
+### Added
+- `gbrain sources refresh --json` reports `phase_ms` (whole milliseconds for each phase the run reached: `fetch`, `precheck`, `drain`, `merge`, `sync`, `tail`, `backlog`), `lock_held_ms` and `link_backlog` (each member's backlog drain: `drained` with `pages` and `remaining`, `skipped` or `failed`). `GBRAIN_DEBUG=1` prints the phase times on stderr.
+
+<!-- behavior-change: refresh_link_backlog_after_lock_gst3107 -->
+
+**The Mac helper's send log no longer keeps a recipient hash that can be reversed by trying every phone number.**
+
+### Fixed
+- After 90 days, a line in GBrain Helper's send log keeps only a short hash of the recipient. That hash was a plain SHA-256 of the phone number or email, so anyone holding the log could recover a number by hashing every possible one. It is now keyed with a random 32-byte secret the helper makes on its first send and keeps with the send keys in its keychain item, so the hash can't be reversed without that secret and differs from Mac to Mac. The hourly limit to one recipient uses the same keyed hash. A malformed secret in the keychain item stops sending with `send_keys_tampered` instead of being replaced. Nothing is installed on any Mac yet, so no existing log needs rewriting.
+
+**The experimental Rust engine's store now serves vector search, embeddings, link and graph reads, takes, salience, stats and the ingest log the way PGLite does, but nothing selects it yet; PGLite and Postgres brains are unchanged.**
+
+### Added
+- The Rust engine serves `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as pgvector scores them) and the embedding members, and `upsertChunks` and `sealChunks` store the vector a chunk carries. It reports the `vector_search`, `embeddings`, `links`, `graph`, `takes`, `salience` and `ingest_log` capabilities (`rust/docs/store/vectors.md`, `embeddings.md`).
+- The Rust engine serves the link reads, alias and slug members, the take members, salience, `getStats`, `getHealth`, the ingest log, the extraction reads and the page-listing reads (`rust/docs/store/`). A caller that asks for `excludePrivate` gets the pages PGLite hides, including a page of an owner-only source.
+
+### Changed
+- A chunk that carries an image vector, and a brain whose config names a vector column other than `embedding`, still refuse with `engine_capability_missing`; the store keeps one vector column.
+
+**A publish that redacts secrets no longer reports a failure that did not happen, and the secret audit logs are private to their owner.**
+
+### Fixed
+- The `secret_store_spooled` notice is now an info notice. It says the originals were sealed in this machine's encrypted spool, which every redacting publish does, and that the next owner push or maintenance pass moves them into the secret store. It also says that `gbrain git commit-push` does not move them itself. It used to be a degraded notice saying the store could not be written, which was not true. `gbrain doctor`'s `secret_store` check still reports originals left in the spool.
+- The `secrets` and `secret-spans` audit logs (`~/.gbrain/audit/`) are now created at mode 0600, and an existing file with looser permissions is tightened on its next write. Before, a publish created them with the process umask (usually 0644). They hold page slugs, field names, store entry ids and span offsets, never a value.
+
+<!-- behavior-change: secret_store_spooled_info_gst2988 -->
+
+**Purging a page now removes the secret store originals only that page held.**
+
+### Changed
+- `gbrain delete <slug> --purge`, the batch hard delete and the expiry of a deleted page now remove the places the redactor recorded on that page, and every sealed original no other page and no publish commit still references. An original another page holds, or that a redacted publish commit points to, stays. A place recorded under a slug the page had before a rename goes with the page.
+- Renaming a page moves the places the redactor recorded on it to the new slug, so a later purge of a page that takes the old slug leaves them alone.
+- `gbrain secrets backup --restore` adds the recorded places of an entry the store already holds, and skips an original whose every place was on a page this brain does not hold (`skipped_no_page`), so it never brings back what a purge removed. When it skips every entry that way, it refuses with `invalid_params` and writes nothing.
+- `gbrain doctor`'s `secret_store` check counts sealed originals no page or commit references.
+
+### Known limits
+- Backups uploaded to the storage bucket before a purge still hold that page's sealed original (encrypted, under the store key). Delete those objects from the bucket when it must be gone from there too.
+- A restore from a backup taken before a rename can tie an original to a different page that has since taken the renamed page's old slug, and that page's readers then pass the `reveal_secret` read check for it. It needs both: an older backup and another page now at that slug. After a restore, `gbrain secrets list` shows the pages each original is tied to. A backup taken after the rename names the new slug.
+- A backup taken before this release can name a place by a slug its page had before an older rename. A restore of that backup skips such an entry today (`skipped_no_page`); GST-3178 makes it restore the entry without a place instead. Backups from this release on name each place by its page's current slug.
+
+**The bake-off baseline benchmark can run against Postgres on a clean install again.**
+
+### Fixed
+- `rust/bench/baseline` with `--engine postgres` loaded a `postgres` package that a clean install does not have, so it stopped before it reached the database. It now loads the repo's vendored driver (`#postgres`), like the rest of gbrain. A new test checks that the driver loads before the database name is checked, and the test connects to nothing.
+
+## [0.60.743.0] - 2026-11-19
+
+**OpenClaw's skill resolver now suggests skills for the message the user just sent.**
+
+### Fixed
+- The `gbrain-skill-resolver` plugin read the user's text from fields a real OpenClaw gateway does not send. OpenClaw 2026.10.33 and 2026.11.5 pass it as `event.prompt` and keep only earlier turns in `event.messages`. So the first turn of every session got no suggestions (`skipped_empty`), and each later turn was ranked on the message before it, in live and in shadow mode. The plugin now reads `event.prompt` first.
+- The plugin now finds OpenClaw's `assertActive` check under `ctx.hookInvocation`, so a run that OpenClaw already ended no longer counts toward the session.
+- `gbrain setup openclaw` now parses `openclaw skills list --json` from stdout only. A warning OpenClaw printed on stderr used to make the list read as failed. Setup then skipped the hidden-skill filter and the `skill_resolver_host_load_cut` note.
+- An upgrade does not rewrite the plugin on its own. To install the fixed plugin, run `gbrain setup openclaw --skill-loading resolve` (or `shadow`) again, then restart the gateway.
+
+**Changing GBrain Helper's send settings at the Mac no longer holds up sends, and a Touch ID approval applies only to the settings it was shown for.**
+
+### Fixed
+- Turning sending on, adding a send key and raising a limit ask for Touch ID. The helper used to hold its settings lock for the whole dialog, which can take up to two minutes, so any send arriving then waited. It now asks with no lock held, and sends keep working while the dialog is open.
+- After the owner approves, the helper takes the lock, reads the settings again and applies the change only if they still match what the dialog was built from. If another change landed in the meantime it applies nothing and answers `overloaded`, and the owner runs the command again.
+- A send now reads its settings, checks the kill switch and its key, and takes the limits under the same lock admin uses to save. A send that arrives while a key is being replaced is checked against the new key.
+- `send-setup --off`, `send-key remove` and lowering a limit always write the keychain item in one step, so a failed write is reported as an error rather than taken as done, and a Touch ID approval still open from an earlier command is refused instead of undoing them. `send-setup --off` exits with an error when the helper answers but can't save.
+- `send-key add` and `send-limits set` wait for the helper's Touch ID wait plus a minute.
+
+**The secret store now backs itself up, encrypted, to your storage bucket, and `gbrain doctor` reports its health.**
+
+### Added
+- `gbrain secrets backup` uploads an encrypted export of the secret store to the storage backend you already configured for files (Supabase, S3 or local), and maintenance does it after new entries. The bucket gets no value, page name, path or rule in clear, and never the key; `gbrain secrets backup --restore <object>` adds back the entries a brain lacks, only where the key is. With no backend, the database backup carries the store and nothing is needed.
+- `gbrain doctor` has a `secret_store` check: entries, the last backup, keys entries need that this host lacks (`secret_store_key_forked`), a key whose escrow copy was never exported, originals waiting in the spool, held-back publish commits and local refs that still hold commits from before a redaction rebuild.
+
+### Known limits
+- Purging a page does not yet remove its sealed originals from the secret store. They stay encrypted, and `gbrain doctor`'s `secret_store` check still counts them. Removing them with the page follows in a later release.
+
+## [0.60.742.0] - 2026-11-19
+
+**The PostgreSQL unit tests run on 28 shards, so new test files no longer push them past their time budget.**
+
+### Changed
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 28. In `.github/workflows/persistence-validation.yml`, the `unit-postgres-arms` matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose 570 s budget is unchanged). `scripts/postgres-arm-weights.json` is re-mined from the arms jobs of the five newest complete full runs, so every listed file has a measured weight. The largest shard drops from 557.4 s on 24 shards to 478.4 s on 28. Check names become `Unit-lane PostgreSQL arms N/28 / Bun …`, and none of them is a required check.
+
+**A consented page purge now commits even when the page has many facts, a purge that is still committing is reported as pending instead of failed, and `gbrain forget` refuses several fact ids instead of forgetting only the first.**
+
+### Fixed
+- Purging a page deletes the leftover segment texts that still hold one of its facts. That sweep lowered every leftover text once for every fact form, so with a few MB of leftover text it outlasted the 5-second statement limit on every attempt and the purge never committed. It now lowers each text once per 4 MiB chunk, deletes exactly the same texts, and finishes in about a second.
+- `gbrain pages purge-deleted --yes` and the `purge_deleted_pages` operation counted a purge that was accepted but had not committed yet as failed, reported `managed_purge_failed`, and parked the page after five runs although every request committed later. The purge is now deferred like the automatic purge's: it is reported as pending with its request id and `gbrain write-request` command, never counted failed or parked, and the next run checks it before submitting more in that source. With `dream.write_deferral.enabled=false` it is reported pending with code `write_pending`.
+- `gbrain forget 1 2 3` withdrew only the first fact, printed success and exited 0. It now refuses before changing anything and says to run one `gbrain forget` per fact id. The `--purge` form refuses several ids the same way, and neither form takes a number that is a flag's value (`--reason 42`, `--reason-scan-limit 1000`) for the fact id any more, wherever it sits on the line.
+
+**Renaming a page no longer changes the trust tier of the page or of the facts filed under it.**
+
+### Fixed
+- A slug move (a sync rename, a file or frontmatter repair, an import that moves a page) used to stamp the page and every fact filed under it with the tier of whoever ran the move. An owner-run rename could promote an agent-written page and its facts to operator-curated without anyone reading them, and a rename with no declared tier demoted them to unknown. The move now keeps each row's stored tier on both PGLite and Postgres; edits made after the move still stamp the writer's tier as before. Rows that past renames already re-stamped are not changed by upgrading.
+
+**The automatic purge no longer permanently deletes a concept that was hidden only because one of its inputs was purged.**
+
+<!-- behavior-change: automatic_purge_keeps_rederive_concepts_9653 -->
+
+### Fixed
+- When an atom was purged, the concept built from it was hidden for rebuilding, but no rebuild came, and the automatic purge removed the concept about 72 hours later with its history and incoming links. The cycle's purge phase, `gbrain maintain` and the purge job now keep such a concept until it is rebuilt. A concept a person or a sync deleted still expires on time, and an explicit `gbrain pages purge-deleted --yes` or `gbrain delete --purge` still removes it (#9653).
+
+**The experimental Rust engine's store now answers keyword search, title search, fuzzy title lookup and chunk reads the way PGLite does, but nothing selects it yet; PGLite and Postgres brains are unchanged.**
+
+### Added
+- The Rust engine serves `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`, `searchTitles` and `findByTitleFuzzy`, so it now reports the `keyword_search` capability. The store carries its own copy of PostgreSQL's English text search (word splitting, stemming, stop words, `websearch_to_tsquery`, `ts_rank` and `ts_rank_cd`) and returns PGLite's scores and order. Search hides the same pages PGLite hides. With `excludePrivate`, `searchKeyword` also hides pages that belong to an owner-only source, and a page that came from an owner-only page stays hidden after that page is deleted for good. `rust/docs/store/keyword.md` lists what each member accepts and refuses.
+- The Rust engine serves the chunk reads `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent` and `listChunklessPagesWithContent`, including for pages stored in segments (`rust/docs/store/chunk_queries.md`).
+- A put that would store a chunk or a page whose search vector is too large for PostgreSQL's limit is refused with PostgreSQL's own "string is too long for tsvector" message and stores nothing, and a repeated `putPage` is refused when the page no longer fits.
+- A search query with more than 131,072 items is refused with `invalid_argument`, where PGLite runs out of stack on a few thousand. Searches reuse the vectors they have already built, so a repeated query is much faster than the first (about 20 ms against about 350 ms on a 4,000-chunk test brain).
+
+### Changed
+- Keyword search on the Rust engine ranks with the ported `ts_rank`, not BM25, so its scores and order match PGLite's. A search with an offset, a `where` filter or an ISO date window is served instead of refused. A Chinese, Japanese or Korean query, a text search language other than English, `requireSafeChunks`, `minTrust`, `suppressFlagged`, a date that is not an ISO date, and `excludePrivate` on any search but `searchKeyword` still refuse `engine_capability_missing` and write nothing.
+- The Rust engine's documentation in `docs/ENGINES.md`, `rust/README.md` and the design notes now says which search and chunk members are served. The parity suite's opt-in Rust arm now has a how-to in `docs/TESTING.md`.
+
+### For contributors
+- The PostgreSQL and Snowball sources the search port is built from are credited under `third-party/`, and the checked generators that rebuild its tables and its PostgreSQL 18.6 goldens are in `rust/scripts/`. Reviewers leave the generated golden files out of their diffs.
+
+## [0.60.741.0] - 2026-11-19
+
+**You can now confirm or reject the duplicate people and companies `gbrain dedupe --preview` finds, and a confirmed group counts as one person in rankings and enrichment.**
+
+### Added
+- `gbrain dedupe confirm` prints the groups you can confirm, clean ones first, each with what differs between the pages (employer, title, city, birth year) and, for a group that shares only an email, phone, X handle or domain, a hint line with how many other pages carry the value. `gbrain dedupe confirm <group-id>` links one group as one identity, and `gbrain dedupe confirm --clean --expect <hash>` links every clean group in the list you read and refuses if the list changed. A group that shares only contact keys is confirmed on its own.
+- `gbrain dedupe reject <group-id>` records that the pages are different people: the pair is never proposed again, a confirmed group is unlinked, and two pages in one source also get `distinct_from`.
+- Your decisions are kept in `.gbrain/identity/` in the default source's repository, committed through `gbrain git commit-push` before anything reaches the database, so a database rebuilt from git keeps them; a brain whose default source has no repository keeps them in the database. A decision file names each member's source and slug, so a decision about pages in several sources writes every member's source and slug into the default source's repository, where anyone who reads that repository can see them. On such a brain `confirm` and `reject` refuse a group with a page in an owner-only source (archived ones included) or a page outside the default source that not every reader of it may read (`dedupe_group_not_confirmable`), and the bulk `--clean` list leaves those groups out; a brain with no repository records them in the database. `reconcile` never rewrites a committed decision from the database: git wins. `confirm --join` refuses to put two pages recorded as different people in one identity. `gbrain dedupe reconcile` moves decisions the database holds alone into git, and `gbrain doctor` reports when the two disagree.
+- Six new error codes: `dedupe_group_unknown`, `dedupe_group_not_confirmable`, `identity_member_in_other_group`, `dedupe_page_changed`, `identity_link_owned_by_dedupe` and `dedupe_decision_store_mismatch`.
+
+### Changed
+- `rank_entities` counts a confirmed group once, on its main page, and enrichment tiering counts the mentions in every source of a confirmed group. Groups linked by hand are unchanged.
+- `entity_identity_link` and `entity_identity_unlink` refuse to move or remove a page that `gbrain dedupe confirm` linked; use `gbrain dedupe reject`.
+
+<!-- behavior-change: dedupe_confirmed_counts_once -->
+
+**Three fixes for duplicate-people decisions: `confirm --join` on an already confirmed group, a sync that could write an older decision back, and a doctor fix that never cleared.**
+
+### Fixed
+- `gbrain dedupe confirm <group-id> --join <entity>` no longer crashes with a TypeError when the group is already confirmed and the joined identity holds two pages recorded as different people. It says the group is already confirmed and writes nothing.
+- A sync that read the duplicate decisions before a newer `confirm` or `reject` was committed no longer writes the older verdict back into the database. Decisions are applied one at a time, and a sync whose read is out of date reads again.
+- `gbrain doctor` offers `gbrain dedupe reconcile` only when reconcile can clear what it found. A confirmed group with a missing page, a page that sits in another identity group, or a decision file that does not validate now gets its own remedy (restore the page, `gbrain dedupe reject`, `gbrain entity-identity-unlink`, or fix the file), instead of a reconcile that leaves the warning in place.
+
+**`gbrain dream --phase patterns` no longer fails on every run when a managed brain has more unverified pattern pages than its write cap, two smaller bugs from outside reports are fixed, and a flaky performance test is steadier.**
+
+### Fixed
+- On a managed brain, `gbrain dream --phase patterns` published every leftover pattern page in one write batch. A backlog larger than the brain's outstanding-write cap was refused at the cap, nothing was saved, and the phase failed the same way on every run. Long maintenance batches are now written in parts that each fit inside the cap, so the backlog drains in one run. The cap and its default are unchanged. Reported by @superyuriy, first fixed by @Masashi-Ono0611 (#9708).
+- A `--json` command run from a directory whose `.env` sets a protected key now prints one JSON document. It used to print a second `command_failed` document after the real one. Reported and first fixed by @Masashi-Ono0611 (#9717).
+- The thin-client launcher that `gbrain connect --install` writes from a source checkout now says how to restore missing dependencies (`bun install --frozen-lockfile --ignore-scripts` in that checkout) instead of printing a module-not-found stack. Reported by @Kkkkkuro, first fixed by @Masashi-Ono0611 (#9665).
+- The entity-card performance test for a company with 10,000 links no longer fails on busy CI runners. It now measures only the work that grows with the number of referrers and holds that to a tighter limit, so a slow read still fails it.
+
+**Three nightly test flakes are fixed, and five small bugs, three of them from outside reports.**
+
+### Fixed
+- `gbrain reindex --synopsis` now sweeps pages that choose the synopsis tier in their own frontmatter (`contextual_retrieval: per_chunk_synopsis`) on a source that trusts frontmatter. It used to say "Nothing to do". Reported and first fixed by @Masashi-Ono0611 (#9683).
+- An Ollama server that answers "connection refused" while its model runner restarts is now a retryable error instead of a permanent one. Reported by @benswinney, first fixed by @Masashi-Ono0611 (#9696).
+- On a managed brain, `add_link` no longer records a Chronicle decision for a page with no automatic extraction pending. Reported by @frxiaobei, first fixed by @Masashi-Ono0611 (#9636).
+- `gbrain auth rescope` shows the hint about reading shared sources only when shared reads were off before and after and the key still reads a source.
+- A held fact move's planning reads stop at the move's deadline, including while they wait for a database connection.
+- `bun run regen:all` now rewrites the doctor hot-checks golden.
+- Three tests that failed on busy CI runners (the stdio boot deadline, the notifier owner lease and the held-move timing bound) no longer depend on wall-clock speed.
+
+### Fixed
+- `gbrain dedupe --preview` no longer reads a GitHub address under a page GitHub runs itself (such as `github.com/enterprises/...`, `github.com/watching` or `github.com/customer-stories/...`), or the `ghost` account GitHub gives deleted users, as somebody's login. Two pages that both carried such an address could be listed as one person or company; now that value is not used as a key.
+
+**The brain owner's own remote credential now reads private fact rows, held rows, graph-hop context and every take holder the way the local CLI does.**
+
+<!-- behavior-change: owner_remote_reads_protected_gst3058 -->
+
+### Fixed
+- A direct remote call from a credential bound to the brain owner, speaking for itself with no room declared, reads as the local CLI does. get_page and fetch give it the Facts fence as stored, and the Takes fence too when the credential carries no holders list; a segmented page's `view: 'markdown'` reads as for the local CLI then. A credential with a list reads takes through takes_list, as before.
+- With no holders list that call reads every holder wherever a read filters takes by holder, among them takes_list, takes_search, takes_scorecard, takes_calibration, search, query, recall, delta, think and synthesize; synthesize now reads world takes only for a non-owner with no list.
+- traverse_graph hops give that call the stored edge context; one with a holders list still skips evidence pages that hold takes.
+- Both HTTP transports give an owner-bound credential with no holders list every holder; every other credential keeps `['world']`.
+- Every other context reads as before: stdio, on-behalf-of audiences, attested actors, agent jobs and group chats (a declared room), until GST-3066. An agent job now reads its client's stored takes holders list, else world takes.
+- With a room declared, a get_page whole-body read or `view: 'markdown'` whose returned body carries rows a world-only read strips is marked `room_access: {readable: false, reason: 'private_label'}`. The mark is per page; held rows inside read-view windows and in a segmented page's markdown view are not marked, as before (GST-3066). The local CLI's `--room` marks a page whose body carries private rows, held rows or takes the same way.
+- Known limit: an owner's edit or delete of a private Facts row through remote put_page does not stick yet (the old row is restored); use the local CLI until the follow-up lands.
+
+**Calls imported before calls were kept to their attendees can now be fixed by preview, then approval.**
+
+### Changed
+- `gbrain repair visibility --propose` now covers imported calls with no reader list: each one is proposed for the brain owner plus the teammates its `Attendees:` or `Participants:` header names, matched exactly as `gbrain import --calls` matches them, owner first. Names that match no enabled member are listed beside the proposal instead of holding the call back, and a call with no list is proposed for the owner only. With no owner set, calls are listed with the `gbrain access owner set` command and nothing is proposed. Nothing changes until the admin applies a printed command with its `--expect` hash; the owner reads every call before and after.
+
+**GBrain Helper on a Mac can now send a one-to-one iMessage for the owner's agent; upgrading gbrain installs nothing on the Mac, and sending stays off until the owner turns it on at the Mac with Touch ID.**
+
+### Added
+- `POST /v1/imessage/send` on the helper's tailnet listener sends one iMessage to one phone number or email address. Each request is signed with an Ed25519 send key, carries an `Idempotency-Key`, and only addresses listed in `listen.tailnet.allowed_peers` may call it. The answer says `sent`, `unknown` (Messages took it but didn't confirm in time) or a refusal, with `retryable` and `side_effects`, so an agent knows whether a retry could send twice. A retry with the same key never sends again.
+- Sending is off until the owner runs `gbrain-apple-helper send-setup` at the Mac and confirms with Touch ID. Adding a send key (`send-key add`) and raising a limit (`send-limits set`) also need Touch ID. `send-setup --off` or `send.enabled: false` in the config stops the next send without a restart, and once the helper has seen it off, turning sending on again needs Touch ID.
+- Limits on by default: 5 texts a minute, 30 an hour and 60 a day, 10 an hour to one recipient, and 3 a day to people never texted one-to-one before. A banner shows on the Mac for every send.
+- Every attempt and outcome goes to a send log on the Mac (mode 0600). After 90 days each line keeps only its time, outcome, code and a short hash of the recipient. `gbrain-apple-helper send-audit show --redacted` prints the redacted form.
+- `src/core/apple/send-sign.ts` signs send requests the way the helper checks them, tested against shared vectors.
+
+**`embedding_disabled` now stops most of the routes that still sent text to the embedding provider; two (a contextual reindex queued before the setting was turned on, and a `reindex-multimodal` run already in progress) are closed by #9754.**
+
+<!-- behavior-change: embedding_disabled_every_route_9715 -->
+
+### Fixed
+- With `embedding_disabled` set (in the config file or the database), the synthesize phase-end embed, the safe-chunks, contextual-mode and secret-spans repairs, the `doctor --remediate` embed step, imports run by derived writers (concepts, patterns, enrichment), code and image imports, extract_facts' fence facts, `reindex-code`, the grounding check and brainstorm's question still sent text to the embedding provider. They now send nothing. `gbrain embed` and its sync, connector and auto-fix callers also refuse when only the database says embedding is off, and `gbrain reindex --multimodal` refuses with the same enable-command message. If the database setting can't be read, these routes now treat embedding as off instead of on, and `gbrain serve` stops retrying its background embed on such a brain. Reported by @DaCal90 (#9715).
+- Not covered by that change: a contextual reindex queued before the setting was turned on, and a `reindex-multimodal` run already in progress; both are closed by #9754, in this release.
+
+**Turning on `embedding_disabled` now also stops reindex work that was already queued or running, and an unreadable setting keeps work pending instead of marking it done.**
+
+<!-- behavior-change: embedding_disabled_rechecks_9715 -->
+
+### Fixed
+- A contextual reindex job queued before `embedding_disabled` was set now sends nothing when the worker runs it. A job already running checks the setting again before each embedding send and each per-chunk synopsis call, and a `gbrain reindex --multimodal` run already in progress stops before its next batch with the enable-command message. When the database setting can't be read, the contextual reindex job, the `doctor --remediate` embed step and `gbrain serve`'s background embed send nothing, and keep the work pending to try again later instead of counting it as done. Reported by @DaCal90 (#9715).
+
+### Changed
+- Contributors: `/ship`'s reviewers now leave the Rust store's three PostgreSQL search goldens (`english_stem.tsv`, `ts_parse.json` and `tsearch.json`) out of their diffs, as they already do for docs and other generated goldens. Those files are about 1.7 MB of generated test data, and `regen-search-goldens.ts` checks every output column against PostgreSQL 18.6. Nothing changes for gbrain users.
+
+**The experimental Rust engine now stores and serves config, sources, tags, pages (including pages over 1 MiB stored in segments), versions, chunks, keyword search, links, graph and timeline from a brain directory, but nothing selects it yet; PGLite and Postgres brains are unchanged.**
+
+### Added
+- Opening a Rust engine now opens the brain directory through the addon, and closing it closes the store. A second engine on the same directory refuses `rust_store_locked`, and a directory the store cannot read refuses `rust_store_unreadable` with a reason (`format_unknown`, `store_corrupt` or `store_io`). `gbrain errors <code>` explains each.
+- The Rust engine serves these members on that store with the results PGLite gives: config, sources, tags, pages (including soft delete and restore), page versions, chunks, links, graph traversal and timeline. It reports the `config`, `sources`, `tags` and `schema` capabilities, the ones it now serves completely. The store keeps each tag's claim (`added` or `frontmatter`), so an import prunes only the tags the import added. A page over 1 MiB is stored in segments as on PGLite; `sweepSegments` still refuses.
+- Keyword search runs on the store with BM25. Its scores and tie order are not the same as PGLite's. It hides the pages PGLite hides, including soft-deleted pages, archived sources, and pages marked with the `quarantine` or `pinned_question` frontmatter key. `docs/ENGINES.md` says what matches and what does not.
+- The engine parity suite has an opt-in Rust arm. Run it with `GBRAIN_TEST_RUST_ARM=1` after `bun run rust:build`. A case that reaches a member or an option the Rust engine refuses must end on that refusal. Every other case must match PGLite, or differ only as a row of `test/rust-expected-divergence/` names; a thrown error never passes. Without the flag the suite runs as before.
+
+### Changed
+- When the Rust engine cannot keep an option or an input, or cannot answer the way PGLite does, it refuses `engine_capability_missing` and writes nothing instead of dropping it. This covers a chunk that carries a vector (vectors are refused with that typed code for now and arrive in a later release; until then a Rust brain has no vector search), a config that names an embedding column, a `putPage` with a `source_path` into a source-root source below its repository root, `listPages` with `listColumnsOnly`, a `resolveSlugs` with no exact match (PGLite would try a fuzzy match), a `getChunks` over several sources, a read of unsealed chunks or embeddings, a keyword search with an offset, `where` or a date window.
+- The Rust `putPage` writes the page alone and `upsertChunks` does not seal, as on PGLite; only `sealChunks` seals. An unscoped `softDeletePage` or `restorePage` acts on every source, as on PGLite. A write already running in the native store cannot be cancelled by an `AbortSignal` (it is checked before the write starts), which PGLite does differently.
+- `transaction`, `transactionDirect`, `lockPageKeys` and the belief ledger still refuse on the Rust engine. `docs/ENGINES.md` says why.
+
 ## [0.60.740.0] - 2026-11-18
 
 **An agent job a starter client submits is now confined to the starter tool surface, so its tool calls cannot read soft-deleted pages either.**

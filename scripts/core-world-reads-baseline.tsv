@@ -740,6 +740,7 @@ src/core/persistence/protocol.ts	module_collection	1	W6: per-engine state, or ma
 src/core/persistence/publication-deadline.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/publication-deadline.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/publication-timing.ts	process_env	1	W6: settings plane out of the core
+src/core/persistence/concept-rebuild.ts	load_config	1	#9653: the rebuild's retention purge goes through the coordinator with the same config as purge-deleted.ts
 src/core/persistence/purge-deleted.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/put-page-screen.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/reconcile-audit.ts	fs_import	1	W5: repo-less persistence for hosts
@@ -980,6 +981,8 @@ src/core/secret-scan-allowlist.ts	fs_import	1	W7: filesystem boundary moves to t
 src/core/secret-scan-allowlist.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/secret-scan.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/secret-store/backup.ts	fs_import	1	W7: filesystem boundary moves to the local app (the backup status file lives on the machine beside the keyring)
+src/core/secret-store/backup.ts	load_config	1	W6: settings plane out of the core (reads the configured storage backend for the secret store backup)
 src/core/secret-store/keyring.ts	fs_import	1	W7: filesystem boundary moves to the local app (the secret store key file lives on the machine)
 src/core/secret-store/keyring.ts	process_env	1	W6: settings plane out of the core (GBRAIN_SECRET_STORE_KEY override)
 src/core/secret-store/spool.ts	fs_import	1	W7: filesystem boundary moves to the local app (the encrypted spool lives on the machine)
@@ -1244,3 +1247,6 @@ src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver e
 src/core/setup/cursor-skill-pins.ts	fs_import	1	GBRA-435 Cursor pinned skills: setup writes the project's pinned-skills rule, its git exclude line and the project record under GBRAIN_HOME (no brain or engine is opened); stays
 src/core/setup/cursor-skill-pins.ts	process_env	1	GBRA-435 Cursor pinned skills: HOME locates the user-level skill directories Cursor loads; stays
 src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills: setup runs git rev-parse to find the repository's info/exclude; stays
+src/core/entities/identity-decisions.ts	fs_import	1	W7: filesystem boundary moves to the local app (decision files under .gbrain/identity/, same door as access/policy-git.ts)
+src/core/entities/identity-decisions.ts	process_env	4	W7: the commit-lock marker (COMMIT_LOCK_ENV) exported to commitAndPush while the lock is held, as in access/policy-git.ts; it moves with the filesystem boundary
+src/core/entities/identity-decisions.ts	spawn_import	1	W7: process-wide effects move to src/cli (git show of the committed decision file)

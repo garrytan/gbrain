@@ -28,6 +28,7 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   'src/core/pglite-engine.ts': { count: 2, why: 'engine methods forwarding to engine-sql/pages.ts' },
   'src/core/postgres-engine.ts': { count: 2, why: 'engine methods forwarding to engine-sql/pages.ts' },
   'src/core/engine-sql/pages.ts': { count: 3, why: 'the engine implementations themselves' },
+  'src/core/rust-engine/store-members/pages.ts': { count: 1, why: 'the Rust engine deletePage member forwarding to the native store, as the PGLite and Postgres engine methods forward to engine-sql' },
   'src/core/persistence/page-purge.ts': { count: 1, why: 'inside deletePageWithSegments, whose callers are MARKED' },
   'src/core/engine.ts': { count: 1, why: 'doc comment of deletePages' },
   'src/core/engine-constants.ts': { count: 1, why: 'doc comment of the batch bound' },
