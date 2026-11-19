@@ -62,11 +62,10 @@ async function bounded<T>(work: Promise<T>): Promise<T> {
 /** Every entry's last known result; an unreadable store reads as empty (nothing is served, so nothing reads as healthy). */
 export async function readLastKnown(engine: BrainEngine): Promise<Map<string, LastKnownEntry>> {
   try {
-    const rows = await bounded(engine.executeRaw<{ fingerprint: string; entry: unknown }>(
-      'SELECT fingerprint, completed_keys->0 AS entry FROM op_checkpoints WHERE op = $1', [LAST_KNOWN_OP]));
+    const rows = await bounded(engine.readDoctorLastKnown(LAST_KNOWN_OP));
     const out = new Map<string, LastKnownEntry>();
     for (const row of rows) {
-      const value = (typeof row.entry === 'string' ? JSON.parse(row.entry) : row.entry) as LastKnownEntry | null;
+      const value = row.entry as LastKnownEntry | null;
       if (value && Array.isArray(value.checks) && typeof value.measured_at === 'string') out.set(row.fingerprint, value);
     }
     return out;
@@ -82,11 +81,7 @@ export async function writeLastKnown(engine: BrainEngine, outcomes: readonly Ent
       emits: [...o.entry.emits] } satisfies LastKnownEntry }));
   if (!rows.length) return;
   try {
-    await bounded(engine.executeRaw(
-      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       SELECT $1, e->>'entry', jsonb_build_array(e->'value'), now() FROM jsonb_array_elements($2::text::jsonb) AS e
-       ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = EXCLUDED.updated_at`,
-      [LAST_KNOWN_OP, JSON.stringify(rows)]));
+    await bounded(engine.writeDoctorLastKnown(LAST_KNOWN_OP, rows));
   } catch { /* the previous results stay; the next run that can write records them */ }
 }
 

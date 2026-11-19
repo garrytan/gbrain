@@ -121,11 +121,8 @@ export async function clearCandidateParts(engine: Exec, ids: { sourceId: string;
 }
 
 /** Candidate records of live source incarnations (optionally one source). */
-export async function readCandidateRecords(engine: Exec, sourceIds?: readonly string[]): Promise<CandidateRecord[]> {
-  const rows = await engine.executeRaw<{ record: CandidateRecord }>(`SELECT c.completed_keys->0 AS record FROM op_checkpoints c
-    JOIN sources s ON s.id=c.completed_keys->0->>'source_id' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
-    WHERE c.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) ORDER BY c.fingerprint`, [FENCE_CANDIDATE_OP, sourceIds ? [...sourceIds] : null]);
-  return rows.map(row => row.record);
+export async function readCandidateRecords(engine: Pick<BrainEngine, 'listFenceCandidateRecords'>, sourceIds?: readonly string[]): Promise<CandidateRecord[]> {
+  return engine.listFenceCandidateRecords(FENCE_CANDIDATE_OP, sourceIds);
 }
 
 /** One trend row: files or pages Tier 1 normalized, by fix class and by writer. */

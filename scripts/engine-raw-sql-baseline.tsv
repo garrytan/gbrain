@@ -33,7 +33,6 @@ src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/calibration.ts	execute_raw	8
-src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
 src/commands/doctor/checks/content-quality.ts	execute_raw	3
 src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
@@ -60,7 +59,7 @@ src/commands/doctor/checks/google-calendar.ts	execute_raw	1
 src/commands/doctor/checks/graph-embedding.ts	execute_raw	2
 src/commands/doctor/checks/guest-source.ts	execute_raw	4
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
-src/commands/doctor/checks/knowledge-health.ts	execute_raw	3
+src/commands/doctor/checks/knowledge-health.ts	execute_raw	2
 src/commands/doctor/checks/landing-gaps.ts	execute_raw	1
 src/commands/doctor/checks/managed-guard.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
@@ -93,7 +92,6 @@ src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
-src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	2
 src/commands/doctor/skill-checks.ts	execute_raw	3
@@ -340,7 +338,7 @@ src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	2
 src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
-src/core/eligibility/scan.ts	execute_raw	4
+src/core/eligibility/scan.ts	execute_raw	3
 src/core/eligibility/stamp.ts	execute_raw	1
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
@@ -420,7 +418,7 @@ src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	1
 src/core/feedback/store.ts	execute_raw	16
 src/core/fence-repair/attempts.ts	execute_raw	3
-src/core/fence-repair/census-store.ts	execute_raw	9
+src/core/fence-repair/census-store.ts	execute_raw	8
 src/core/fence-repair/census.ts	execute_raw	6
 src/core/fence-repair/hold-fix.ts	execute_raw	2
 src/core/fence-repair/repair-io.ts	execute_raw	1
@@ -597,7 +595,7 @@ src/core/persistence/admin-intent.ts	execute_raw	3
 src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/applied-watermark.ts	execute_raw	4
-src/core/persistence/atom-maintenance.ts	execute_raw	21
+src/core/persistence/atom-maintenance.ts	execute_raw	20
 src/core/persistence/authority.ts	execute_raw	9
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
@@ -623,7 +621,7 @@ src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/deactivation.ts	execute_raw	19
-src/core/persistence/derived-origin-hold.ts	execute_raw	10
+src/core/persistence/derived-origin-hold.ts	execute_raw	9
 src/core/persistence/derived-retirement-hold.ts	execute_raw	1
 src/core/persistence/detached-pages.ts	execute_raw	4
 src/core/persistence/diagnostics.ts	execute_raw	7
@@ -718,7 +716,7 @@ src/core/persistence/provider.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
 src/core/persistence/purge-deleted.ts	execute_raw	6
 src/core/persistence/purge-name-stores.ts	execute_raw	1
-src/core/persistence/purge-parks.ts	execute_raw	6
+src/core/persistence/purge-parks.ts	execute_raw	5
 src/core/persistence/purge-slug-stores.ts	execute_raw	4
 src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1
@@ -740,19 +738,18 @@ src/core/persistence/searchable.ts	execute_raw	2
 src/core/persistence/segmented-apply.ts	execute_raw	9
 src/core/persistence/semantic-pages.ts	execute_raw	2
 src/core/persistence/skill-activation.ts	execute_raw	12
-src/core/persistence/soak-counters.ts	execute_raw	4
+src/core/persistence/soak-counters.ts	execute_raw	3
 src/core/persistence/source-lifecycle.ts	execute_raw	33
 src/core/persistence/staging.ts	execute_raw	4
 src/core/persistence/sync-administration.ts	execute_raw	1
-src/core/persistence/sync-admission.ts	execute_raw	4
+src/core/persistence/sync-admission.ts	execute_raw	3
 src/core/persistence/sync-admitted.ts	execute_raw	1
 src/core/persistence/sync-authority.ts	execute_raw	1
-src/core/persistence/sync-blocked.ts	execute_raw	2
 src/core/persistence/sync-concurrent-write.ts	execute_raw	2
 src/core/persistence/sync-cursor-key.ts	execute_raw	7
 src/core/persistence/sync-delete-tombstones.ts	execute_raw	2
 src/core/persistence/sync-discovery.ts	execute_raw	6
-src/core/persistence/sync-drain.ts	execute_raw	4
+src/core/persistence/sync-drain.ts	execute_raw	3
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
 src/core/persistence/sync-failures.ts	execute_raw	9
 src/core/persistence/sync-freshness.ts	execute_raw	3
@@ -775,7 +772,7 @@ src/core/persistence/sync-pass-confirm.ts	execute_raw	8
 src/core/persistence/sync-pass-episode.ts	execute_raw	2
 src/core/persistence/sync-pass-fold.ts	execute_raw	3
 src/core/persistence/sync-pass-readers.ts	execute_raw	1
-src/core/persistence/sync-pass-row.ts	execute_raw	4
+src/core/persistence/sync-pass-row.ts	execute_raw	2
 src/core/persistence/sync-pass-run.ts	execute_raw	14
 src/core/persistence/sync-pass-status.ts	execute_raw	3
 src/core/persistence/sync-pass.ts	execute_raw	14
@@ -793,7 +790,7 @@ src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/takes-prepare.ts	execute_raw	9
-src/core/persistence/terminal-failures.ts	execute_raw	4
+src/core/persistence/terminal-failures.ts	execute_raw	3
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	20
 src/core/persistence/topology-receipts.ts	execute_raw	13
@@ -985,7 +982,7 @@ src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-dispatch-read.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	3
-src/core/sync-identity-downgrades.ts	execute_raw	8
+src/core/sync-identity-downgrades.ts	execute_raw	7
 src/core/sync-pending.ts	execute_raw	3
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	4

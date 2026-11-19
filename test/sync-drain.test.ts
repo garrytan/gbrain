@@ -160,7 +160,7 @@ describe('estimates and outcomes', () => {
 });
 
 describe('managed sync backlog', () => {
-  const engineWith = (headers: unknown[]) => ({ executeRaw: async () => headers.map(header => ({ header })) }) as never;
+  const engineWith = (headers: unknown[]) => ({ listManagedSyncBacklogHeaders: async () => headers, listLiveManagedSyncPassRows: async () => [] }) as never;
 
   test('estimates from the latest drain window and builds the resume command from stored options', async () => {
     const { readManagedSyncBacklog, formatManagedSyncBacklog } = await import('../src/core/persistence/sync-drain.ts');

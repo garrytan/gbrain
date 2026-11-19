@@ -35,7 +35,7 @@ export async function readCheckoutHeads(engine: Pick<BrainEngine, 'executeRaw'>,
  * The pass rows of the sources' live incarnations with their health. `stalledMs`: an open pass whose row has not moved
  * for that long reads `open_stalled` (Infinity: never). `head: false` skips the HEAD read (no `nothing_pending` test).
  */
-export async function readPassReadings(engine: Pick<BrainEngine, 'executeRaw'>, opts: { sourceIds?: readonly string[]; now?: number; stalledMs?: number; head?: boolean } = {}): Promise<PassReading[]> {
+export async function readPassReadings(engine: Pick<BrainEngine, 'executeRaw' | 'readManagedSyncPassRow' | 'listLiveManagedSyncPassRows'>, opts: { sourceIds?: readonly string[]; now?: number; stalledMs?: number; head?: boolean } = {}): Promise<PassReading[]> {
   const rows = await readLivePassRows(engine, opts.sourceIds);
   if (!rows.size) return [];
   const heads = opts.head === false ? new Map<string, string | null>() : await readCheckoutHeads(engine, [...rows.keys()]);

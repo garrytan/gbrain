@@ -170,22 +170,18 @@ export const passReadClock = (row: PassRow): number => row.read_at ? Date.parse(
 export const transientEnding = (telemetry: Pick<ManagedSyncPassValue['telemetry'], 'outcome' | 'stop_reason'>): boolean =>
   telemetry.outcome === 'resumable' && (telemetry.stop_reason === 'transient' || telemetry.stop_reason === 'terminated');
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readManagedSyncPassRow' | 'listLiveManagedSyncPassRows'>;
 const iso = (value: Date | string) => new Date(value).toISOString();
 
 /** The pass row of one incarnation, or null when no pass has run on it. */
 export async function readPassRow(engine: Exec, sourceId: string, incarnation: string): Promise<PassRow | null> {
-  const [row] = await engine.executeRaw<{ value: ManagedSyncPassValue | null; updated_at: Date | string; read_at: Date | string }>(
-    'SELECT completed_keys->0 AS value, updated_at, now() AS read_at FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [MANAGED_SYNC_PASS_OP, passFingerprint(sourceId, incarnation)]);
+  const row = await engine.readManagedSyncPassRow(MANAGED_SYNC_PASS_OP, passFingerprint(sourceId, incarnation));
   return row?.value ? { value: row.value, updated_at: iso(row.updated_at), read_at: iso(row.read_at) } : null;
 }
 
 /** The pass rows of the sources' live incarnations (all sources when `sourceIds` is omitted), keyed by source id. */
 export async function readLivePassRows(engine: Exec, sourceIds?: readonly string[]): Promise<Map<string, PassRow>> {
-  const rows = await engine.executeRaw<{ source_id: string; value: ManagedSyncPassValue; updated_at: Date | string; read_at: Date | string }>(
-    `SELECT s.id AS source_id, c.completed_keys->0 AS value, c.updated_at, now() AS read_at FROM sources s
-       JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text
-      WHERE ($2::text[] IS NULL OR s.id=ANY($2::text[]))`, [MANAGED_SYNC_PASS_OP, sourceIds ? [...sourceIds] : null]);
+  const rows = await engine.listLiveManagedSyncPassRows(MANAGED_SYNC_PASS_OP, sourceIds);
   return new Map(rows.filter(row => row.value).map(row => [row.source_id, { value: row.value, updated_at: iso(row.updated_at), read_at: iso(row.read_at) }]));
 }
 

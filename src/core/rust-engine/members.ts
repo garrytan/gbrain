@@ -473,6 +473,26 @@ export const RUST_ENGINE_MEMBERS = {
   readFeedbackStatus: 'health',
   listVolunteerChannels: 'health',
 
+  // doctor checkpoint reads (engine-sql/doctor-checkpoints.ts)
+  readOpCheckpointKeys: 'persistence_journal',
+  listFenceCandidateRecords: 'persistence_journal',
+  listDerivedOriginParks: 'persistence_journal',
+  listPurgeParks: 'persistence_journal',
+  readSoakCounterRows: 'persistence_journal',
+  listUnfinishedManagedSyncCursors: 'persistence_journal',
+  listManagedSyncPassStops: 'persistence_journal',
+  listManagedSyncBacklogHeaders: 'persistence_journal',
+  readManagedSyncPassRow: 'persistence_journal',
+  listLiveManagedSyncPassRows: 'persistence_journal',
+  listCheckpointBlockedSources: 'persistence_journal',
+  listOpenIdentityDowngrades: 'persistence_journal',
+  listHeldManagedAtomRows: 'persistence_journal',
+  readDoctorLastKnown: 'health',
+  writeDoctorLastKnown: 'health',
+  readSyncAdmissionSettingRow: 'config',
+  readLatestConnectorReceipt: 'ingest_log',
+  listFactsAbsorbFailureGroups: 'ingest_log',
+
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',
   listFactRelinkOutcomes: 'facts',

@@ -30,7 +30,7 @@ export const NON_PLAIN_SYNC_FLAGS = ['--retry-failed', '--full', '--skip-failed'
 /** Holds the sweep stamps per sync; the rest are counted by the next sync. */
 const SWEEP_LIMIT = 500;
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readSoakCounterRows'>;
 const day = (at: number) => new Date(at).toISOString().slice(0, 10);
 
 /** Adds `n` to one counter of today's row. Never throws. */
@@ -87,8 +87,7 @@ export interface SoakCounters {
 /** The last `days` UTC days (today included), summed per counter and per day. */
 export async function readSoakCounters(engine: Exec, days = SOAK_WINDOW_DAYS, now = Date.now()): Promise<SoakCounters> {
   const window = Array.from({ length: days }, (_, i) => day(now - i * 86_400_000));
-  const rows = await engine.executeRaw<{ counts: Record<string, unknown> }>('SELECT completed_keys->0 AS counts FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])',
-    [SOAK_COUNTERS_OP, window]);
+  const rows = (await engine.readSoakCounterRows(SOAK_COUNTERS_OP, window)).map(counts => ({ counts }));
   const sum = (counts: Record<string, unknown>, kinds: readonly string[]) => kinds.reduce((total, kind) => total + (Number(counts[kind]) || 0), 0);
   const total = (kind: string) => rows.reduce((n, row) => n + (Number(row.counts[kind]) || 0), 0);
   const interventions = Object.fromEntries(INTERVENTION_KINDS.map(kind => [kind, total(kind)])) as SoakCounters['interventions'];
