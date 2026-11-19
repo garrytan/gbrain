@@ -29,7 +29,7 @@ test/engine-parity/facts-conversation-sites.test.ts	0	22
 test/engine-parity/facts-cycle-sites.test.ts	0	15
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
-test/engine-parity/facts-purge-sites.test.ts	0	24
+test/engine-parity/facts-purge-sites.test.ts	0	27
 test/engine-parity/facts-purge.test.ts	23	2
 test/engine-parity/facts-repair-sites.test.ts	0	14
 test/engine-parity/facts-repair.test.ts	14	2
