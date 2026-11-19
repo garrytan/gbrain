@@ -7,6 +7,7 @@
  * (rust/crates/gbrain-store/src/write_misc.rs, rust/docs/store/write_misc.md).
  */
 import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
@@ -127,6 +128,35 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
   return rows.map(row => row.id);
+}
+
+/**
+ * How `readLiveMember` finds the member: `member` by its id; `stdio_config` by the member id stored in the config key
+ * the caller names (edge whitespace trimmed); `access_token` and `oauth_client` by the member bound to a live
+ * (unrevoked, undeleted) credential with that id.
+ */
+export type LiveMemberLookup = 'member' | 'stdio_config' | 'access_token' | 'oauth_client';
+/** An access member that is neither disabled nor tombstoned, with its group ids sorted. */
+export interface LiveMemberRow { id: string; groups: string[] }
+
+const LIVE_MEMBER_ID_SQL: Record<LiveMemberLookup, string> = {
+  member: '$1',
+  stdio_config: `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`,
+  access_token: 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL',
+  oauth_client: 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL',
+};
+
+/**
+ * The live member `key` resolves to through `lookup`, with its groups; null when nothing resolves or the member is
+ * disabled or tombstoned. A database error (a schema without the member tables included) reaches the caller unchanged,
+ * so access/caller.ts keeps deciding which failures read as nobody.
+ */
+export async function readLiveMember(exec: LegacyUnscopedRead, lookup: LiveMemberLookup, key: string): Promise<LiveMemberRow | null> {
+  const [row] = await exec.executeRaw<LiveMemberRow>(`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = (${LIVE_MEMBER_ID_SQL[lookup]}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`, [key]);
+  return row ?? null;
 }
 
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */

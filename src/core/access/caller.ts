@@ -27,6 +27,7 @@
  * is unbound.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { LiveMemberLookup } from '../engine-sql/write-misc.ts';
 import type { AuthInfo } from '../ops/contract.ts';
 import { remotePrivacyRelaxed, requestRemotePolicy, type CallerAccess, type FolderCoverage, type RemotePolicy } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
@@ -35,7 +36,6 @@ import type { Action } from '../agent-output.ts';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
-import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { audienceMemberIds, parseMayActFor } from './members.ts';
 import { stdioBindRoute } from './stdio-bind-route.ts';
@@ -50,7 +50,6 @@ const MEMBERS_WHERE_SQL = (predicate: string) => `SELECT m.id, COALESCE(array_ag
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
   WHERE ${predicate} AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
   GROUP BY m.id`;
-const MEMBER_SQL = (member: string) => MEMBERS_WHERE_SQL(`m.id = (${member})`);
 
 /** The objects v282 added that the lookup reads: a schema without them predates the member tables. */
 const MEMBER_TABLES = ['access_members', 'access_group_members'];
@@ -88,10 +87,10 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
   return null;
 }
 
-async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
-  let row: { id: string; groups: string[] } | undefined;
+async function liveIdentity(engine: Pick<BrainEngine, 'readLiveMember'>, lookup: LiveMemberLookup, key: string): Promise<string[]> {
+  let row: { id: string; groups: string[] } | null;
   try {
-    [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
+    row = await engine.readLiveMember(lookup, key);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
     if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
@@ -114,15 +113,13 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
  * that fails throws (liveIdentity: a transient database failure unchanged, else access_identity_unavailable). A write's publication passes only its stored
  * principal, so a member disabled or a binding removed after submission takes effect.
  */
-export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
+export async function memberIdentityFor(engine: Pick<BrainEngine, 'readLiveMember'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
-  if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, '$1', auth.stdioMember)
-    : liveIdentity(engine, `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`, STDIO_MEMBER_KEY);
+  if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, 'member', auth.stdioMember)
+    : liveIdentity(engine, 'stdio_config', STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
-  return liveIdentity(engine, principal.kind === 'legacy_token'
-    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'
-    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', principal.id);
+  return liveIdentity(engine, principal.kind === 'legacy_token' ? 'access_token' : 'oauth_client', principal.id);
 }
 
 /** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */
@@ -143,7 +140,7 @@ export async function stdioMemberId(engine: BrainEngine): Promise<string | null>
  */
 export async function stdioMemberIdentity(engine: BrainEngine, registered?: string): Promise<string[]> {
   const member = registered ?? await stdioMemberId(engine);
-  return member ? liveIdentity(engine, '$1', member) : [];
+  return member ? liveIdentity(engine, 'member', member) : [];
 }
 
 /**

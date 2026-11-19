@@ -241,7 +241,7 @@ export interface ActorChannels { header?: string | null; audience?: string | nul
  * `acting_user` stripped, or a refusal: actor_not_attested with its reason, actor_unlinked, or B's
  * on_behalf_of_invalid_audience when an on_behalf_of audience is asserted too.
  */
-export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw'>, input: {
+export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember'>, input: {
   channels?: ActorChannels; params: Record<string, unknown> | undefined; op: string; opShape: AttestableOpShape | undefined;
   auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean;
 }): Promise<{ actor?: AttestedActor; access?: Partial<CallerAccess>; params: Record<string, unknown>; read?: AttestRight['read'] } | null> {
@@ -283,7 +283,7 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
  * is argument_mismatch, so the argument never widens or switches whose notes are read, and never tells an existing id
  * from an unknown one. Every other caller is refused argument_without_attestation as before.
  */
-async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
+async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
   argument: string, caller: ActorCaller, ctx: { op: string; transport?: string }): Promise<{ params: Record<string, unknown> }> {
   const own = input.transport === 'stdio' || input.audienceAsserted || !input.auth ? null
     : (await memberIdentityFor(engine, input.auth)).find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
