@@ -70,6 +70,7 @@ pub mod raw_files;
 pub mod relations;
 pub mod salience;
 pub mod stats;
+pub mod synopsis_tier;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;

@@ -181,6 +181,7 @@ export const RUST_ENGINE_MEMBERS = {
   readOldestVersionAttribution: 'page_versions',
   readRowAttribution: 'pages',
   listSynopsisSourceIds: 'sources',
+  readSynopsisTierSources: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',
   isSourceClaimed: 'persistence_journal',

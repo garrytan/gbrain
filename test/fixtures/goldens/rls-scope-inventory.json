@@ -6433,6 +6433,7 @@
         "readSourceWriteRow": "none",
         "readStoredBodyBytes": "none",
         "readStoredPageTier": "none",
+        "readSynopsisTierSources": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",

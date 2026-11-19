@@ -2,6 +2,7 @@ import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawal
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
+import type * as SynopsisTierSql from './engine-sql/synopsis-tier.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
@@ -1507,6 +1508,8 @@ export interface BrainEngine {
   readHealthMemoClock(): Promise<string>;
   /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
   listSynopsisSourceIds(): Promise<string[]>;
+  /** The synopsis tier's sources and whether trusted page frontmatter picks the tier (synopsis-sweep.ts); skips the page check when asked. */
+  readSynopsisTierSources(skipFrontmatter: boolean): Promise<SynopsisTierSql.SynopsisTierSources>;
   expireMemoryProposals(reason: string): Promise<number>;
   listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
   /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */

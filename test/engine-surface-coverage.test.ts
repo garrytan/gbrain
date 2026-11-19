@@ -122,6 +122,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // Op checkpoints, health memo clock, synopsis sources (engine-sql/write-misc.ts; covered by test/engine-parity/write-misc.test.ts)
   'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
   'readHealthMemoClock', 'listSynopsisSourceIds',
+  // The synopsis tier's configuration read (engine-sql/synopsis-tier.ts; covered by test/engine-parity/write-misc.test.ts)
+  'readSynopsisTierSources',
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',
   // CLI export and segmented-body reads (engine-sql/export-reads.ts; covered by test/engine-parity/cli-reads-export.test.ts)

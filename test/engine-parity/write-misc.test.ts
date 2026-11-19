@@ -7,7 +7,7 @@
  *    listAccessTokens, isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
  *    listAudienceAccessMembers, readLiveMember, hasLabelledOnlyMember, readFolderAccess, expireMemoryProposals,
  *    readOpCheckpointKeys, writeOpCheckpointKeys, appendOpCheckpointPaths, deleteOpCheckpoint, deleteOpCheckpointPaths,
- *    readHealthMemoClock, listSynopsisSourceIds,
+ *    readHealthMemoClock, listSynopsisSourceIds, readSynopsisTierSources,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -324,10 +324,63 @@ describe('engine parity: write misc', () => {
     return view;
   });
 
-  parityTest('readSynopsisTierConfig lists no synopsis source on a fresh brain', { methods: ['listSynopsisSourceIds'] }, async (engine) => {
+  parityTest('readSynopsisTierConfig lists no synopsis source on a fresh brain', { methods: ['listSynopsisSourceIds', 'readSynopsisTierSources'] }, async (engine) => {
     const config = await readSynopsisTierConfig(engine);
     expect(config.synopsis_sources).toEqual([]);
     return { config, direct: await engine.listSynopsisSourceIds() };
+  });
+
+  // #9683: trusted page frontmatter picks the synopsis tier. Only a live markdown page on the host source counts (no
+  // seeded source trusts frontmatter overrides); a page on another source, a soft-deleted page and another tier value
+  // do not, and the skip flag (kill switch or synopsis global tier) skips the page check.
+  parityTest('readSynopsisTierSources reports a trusted page frontmatter pick and readSynopsisTierConfig counts it as configured', { methods: ['readSynopsisTierSources'] }, async (engine, backend) => {
+    const FM = { contextual_retrieval: 'per_chunk_synopsis' };
+    const note = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
+    const before = await readSynopsisTierConfig(engine);
+    expect(before.global_tier).not.toBe('per_chunk_synopsis');
+    await createSource(engine, backend, 'work');
+    await engine.putPage('notes/elsewhere', { ...note('notes/elsewhere'), frontmatter: FM }, { sourceId: 'work' });
+    await engine.putPage('notes/titled', { ...note('notes/titled'), frontmatter: { contextual_retrieval: 'title' } });
+    await engine.putPage('notes/gone', { ...note('notes/gone'), frontmatter: FM });
+    await engine.softDeletePage('notes/gone');
+    const untrusted = { config: (await readSynopsisTierConfig(engine)).configured, direct: await engine.readSynopsisTierSources(false) };
+    await engine.putPage('notes/picked', { ...note('notes/picked'), frontmatter: FM });
+    const view = {
+      before: before.configured,
+      untrusted,
+      picked: await readSynopsisTierConfig(engine),
+      direct: await engine.readSynopsisTierSources(false),
+      skipped: await engine.readSynopsisTierSources(true),
+    };
+    expect(view).toEqual({
+      before: false,
+      untrusted: { config: false, direct: { sourceIds: [], frontmatterPicks: false } },
+      picked: { global_tier: before.global_tier, kill_switch: false, synopsis_sources: [], configured: true },
+      direct: { sourceIds: [], frontmatterPicks: true },
+      skipped: { sourceIds: [], frontmatterPicks: false },
+    });
+    return view;
+  });
+
+  // The synopsis sources order by bytes on every engine: a hyphenated id sorts before its letters even on a Postgres
+  // database with a linguistic collation (en_US ignores the hyphen). The seed is `sources` admin raw SQL, so on Rust it
+  // stops on the typed refusal, as the listSynopsisSourceIds case below.
+  parityTest('readSynopsisTierSources orders the synopsis sources by bytes, whatever the database collation', { methods: ['readSynopsisTierSources'] }, async (engine, backend) => {
+    for (const id of ['coop', 'cob', 'co-op']) await createSource(engine, backend, id);
+    let seeded: unknown = null;
+    try {
+      await engine.executeRaw(`UPDATE sources SET contextual_retrieval_mode = 'per_chunk_synopsis' WHERE id IN ('coop', 'cob', 'co-op')`);
+    } catch (error) { seeded = error; }
+    if (seeded) {
+      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
+      expect(await engine.readSynopsisTierSources(true)).toEqual({ sourceIds: [], frontmatterPicks: false });
+      throw seeded;
+    }
+    const tier = await engine.readSynopsisTierSources(true);
+    expect(tier).toEqual({ sourceIds: ['co-op', 'cob', 'coop'], frontmatterPicks: false });
+    const config = await readSynopsisTierConfig(engine);
+    expect(config.synopsis_sources).toEqual(['co-op', 'cob', 'coop']);
+    return { tier, configured: config.configured };
   });
 
   // A source's own contextual-retrieval mode is written by `sources` admin raw SQL; on Rust the seed refuses, because no

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 904/904
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 34/34
+# write_misc: 35/35
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -859,6 +859,7 @@ deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
+readSynopsisTierSources	write_misc	yes	3	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 readMemoryProposal	write_misc	yes	2	no	yes	yes	serves
