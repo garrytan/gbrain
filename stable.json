@@ -13,5 +13,11 @@
   "rollback": false,
   "reason": "scheduled daily check; important: #9814 (v0.60.746.0), #9809 (v0.60.745.0), #9803 (v0.60.744.0), #9782 (v0.60.742.0)",
   "known_bad": [],
-  "not_promotable": []
+  "not_promotable": [
+    {
+      "version": "0.60.747.0",
+      "reason": "access member handover can apply a preview approved for another member or a moved folder rule; fix pending",
+      "fixed_in": "0.60.748.0"
+    }
+  ]
 }
