@@ -125,7 +125,8 @@ const STATED_SQL = `SELECT array_remove(ARRAY[
   CASE WHEN EXISTS (SELECT 1 FROM entity_identities i WHERE i.page_id = $1) THEN 'entity_identities' END,
   CASE WHEN EXISTS (SELECT 1 FROM guest_marks g WHERE g.page_id = $1) THEN 'guest_marks' END,
   CASE WHEN EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1) THEN 'guest_promotions' END,
-  CASE WHEN EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.page_id = $1 AND o.commit_sha IS NULL) THEN 'secret_store_occurrence' END,
+  CASE WHEN EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.source_id = $2 AND o.commit_sha IS NULL
+    AND (o.page_id = $1 OR (o.page_id IS NULL AND o.slug = $3))) THEN 'secret_store_occurrence' END,
   CASE WHEN EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = $1) OR EXISTS (SELECT 1 FROM pages p WHERE p.id = $1
     AND p.frontmatter ?| $5::text[]) THEN 'labels' END
 ], NULL) AS kinds,

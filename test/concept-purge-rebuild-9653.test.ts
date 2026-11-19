@@ -349,6 +349,10 @@ for (const backend of testBackends()) {
             await raw(engine, "INSERT INTO secret_store (id, source_id, rule, ciphertext, nonce, tag, key_id, value_mac) VALUES ('ss_0123456789ab', 'default', 'api_key', 'sealed', 'nonce', 'tag', '0123456789abcdef', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')");
             await raw(engine, "INSERT INTO secret_store_occurrence (entry_id, source_id, page_id, slug, field, origin) VALUES ('ss_0123456789ab', 'default', $1, $2, 'compiled_truth', 'repair')", [id, CONCEPT]);
           }],
+          ['secret_store_occurrence', async engine => {
+            await raw(engine, "INSERT INTO secret_store (id, source_id, rule, ciphertext, nonce, tag, key_id, value_mac) VALUES ('ss_0123456789ac', 'default', 'api_key', 'sealed', 'nonce', 'tag', '0123456789abcdef', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')");
+            await raw(engine, "INSERT INTO secret_store_occurrence (entry_id, source_id, page_id, slug, field, origin) VALUES ('ss_0123456789ac', 'default', NULL, $1, 'compiled_truth', 'repair')", [CONCEPT]);
+          }],
           ['guest_promotions', async (engine, _ctx, id) => raw(engine, "INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id) VALUES ($1, 'default', 'notes/promoted-example', 'member', 'alice-example')", [id])],
         ];
         for (const [kind, add] of stated) await managedBrain(async ({ engine, ctx, root }) => {
@@ -358,7 +362,7 @@ for (const backend of testBackends()) {
           expect(details.rebuilt).toEqual([]);
           expect(details.rebuild_kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'stated', kinds: [kind] }]);
           await stillHeld(engine, id, kind === 'links' ? 2 : 1);
-          if (kind === 'secret_store_occurrence') expect(await engine.executeRaw("SELECT 1 FROM secret_store s JOIN secret_store_occurrence o ON o.entry_id = s.id WHERE s.id = 'ss_0123456789ab' AND o.page_id = $1", [id])).toHaveLength(1);
+          if (kind === 'secret_store_occurrence') expect(await engine.executeRaw("SELECT 1 FROM secret_store s JOIN secret_store_occurrence o ON o.entry_id = s.id WHERE o.slug = $1", [CONCEPT])).toHaveLength(1);
         }, { databaseUrl });
       }, 1_500_000);
     }
