@@ -1734,7 +1734,8 @@ and write provenance on content rows, and the trust records.
     `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`), and the valid-time page lookup
     `listValidTimeIdentities`, `pickValidTimeEdition`, `readPageVersionEdition`, `readCursorEdition` (`trust/valid_time.rs`)
     and `listAmendmentsNotApplied`
-    (`link_queries/link_temporal.rs`). `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
+    (`link_queries/link_temporal.rs`). `pageAwaitsRederive`, the purge check of `get_page`, `fetch` and `known_as_of`,
+    answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
     fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets nothing, because a
     store transaction holds the one writer from its start, and it does not enforce `READ ONLY`. It refuses the takes and timeline
     scan tables and a pick over a history PGLite would have pruned (TODOS.md `rust-version-prune`), and the belief

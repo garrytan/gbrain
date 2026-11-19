@@ -688,6 +688,7 @@ export const RUST_ENGINE_MEMBERS = {
   listAmendmentsNotApplied: 'links',
   readPageVersionEdition: 'page_versions',
   readCursorEdition: 'page_versions',
+  pageAwaitsRederive: 'pages',
   // jobs-tables group D
   getCodeTraversalCache: 'code_edges',
   putCodeTraversalCache: 'code_edges',

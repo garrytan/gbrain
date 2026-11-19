@@ -9,7 +9,8 @@
  *    listVersionTrustTiers and listVersionReasonWriters read the snapshot tier of a version and the writer that replaced
  *    it; listValidTimeIdentities lists the live pages with a slug in the source scope by source; pickValidTimeEdition
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
- *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
+ *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
  *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
@@ -27,6 +28,8 @@ import { applyTemporalEvidence, relationshipKeysForOrigin } from '../../src/core
 import { primeRelationSemantics } from '../../src/core/link-semantics-pack.ts';
 import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import { operations } from '../../src/core/operations.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -486,4 +489,39 @@ describe('engine parity: typed trust tier reads', () => {
       return { atFirst: named(atFirst), moved: named(moved), unknown: named(unknown), deleted: named(deleted), gone };
     },
   );
+
+  // A purge marks a page in needs_rederive through raw SQL, which the Rust engine refuses, so only the SQL arms can
+  // mark one; the store keeps no such queue and answers false. Unmarked and missing pages answer false on every arm.
+  parityTest('pageAwaitsRederive is true only for a page a needs_rederive row names', {
+    methods: ['putPage', 'pageAwaitsRederive'],
+  }, async (engine, backend) => {
+    const live = await engine.putPage('rederive/live', { type: 'note', title: 'Live', compiled_truth: 'live body' });
+    const marked = await engine.putPage('rederive/marked', { type: 'note', title: 'Marked', compiled_truth: 'marked body' });
+    if (backend !== 'rust') {
+      await engine.executeRaw(`INSERT INTO needs_rederive (derived_table, derived_id, reason) VALUES ('pages', $1, 'purge')`, [String(marked.id)]);
+      expect(await engine.pageAwaitsRederive(Number(marked.id))).toBe(true);
+    } else {
+      expect(await engine.pageAwaitsRederive(Number(marked.id))).toBe(false);
+    }
+    return { live: await engine.pageAwaitsRederive(Number(live.id)), missing: await engine.pageAwaitsRederive(Number(live.id) + 100000) };
+  });
+
+  // get_page with as_of end to end: identity, pick, edition load, amendments, snapshot and the re-derivation check.
+  // Ids and recorded times differ between arms, so the version id is folded to whether one was chosen.
+  parityTest('get_page as_of answers the edition in force on each date', {
+    methods: ['putPage', 'createVersion', 'listValidTimeIdentities', 'pickValidTimeEdition', 'readPageVersionEdition', 'beginSnapshotRead', 'pageAwaitsRederive'],
+  }, async (engine) => {
+    await engine.putPage('vt/e2e', { type: 'note', title: 'E', compiled_truth: 'old body', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+    await engine.createVersion('vt/e2e', { sourceId: 'default' });
+    await engine.putPage('vt/e2e', { type: 'note', title: 'E', compiled_truth: 'new body', timeline: '', frontmatter: { valid_from: '2026-06-01' } });
+    const op = operations.find((o) => o.name === 'get_page')!;
+    const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const read = async (as_of: string) => {
+      const r = await op.handler(ctx, { slug: 'vt/e2e', as_of }) as Record<string, unknown>;
+      const { chosen_version_id, recorded_since, ...vt } = r.valid_time as Record<string, unknown>;
+      expect(typeof recorded_since).toBe('string');
+      return { body: r.compiled_truth, title: r.title, chose_version: chosen_version_id != null, vt };
+    };
+    return { before: await read('2026-03-01'), after: await read('2026-07-01') };
+  });
 });

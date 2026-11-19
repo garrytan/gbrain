@@ -95,6 +95,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAmendmentsNotApplied': OOS.trustTierReads,
   'readPageVersionEdition': OOS.trustTierReads,
   'readCursorEdition': OOS.trustTierReads,
+  'pageAwaitsRederive': OOS.trustTierReads,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,

@@ -14,13 +14,14 @@
  * - `listAmendmentsNotApplied`: the amendment records an as-of edition does not fold in.
  * - `readPageVersionEdition`: the retained version an as-of read loads as its edition.
  * - `readCursorEdition`: where the edition a window cursor pinned stands now.
+ * - `pageAwaitsRederive`: whether a purge hid the page until it is derived again (`needs_rederive`).
  *
  * Every function takes the engine (or transaction) it runs on. Ids come back as numbers; ordered text sorts
  * `COLLATE "C"`.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
-import { activationSuppressedSql, pageEligibleSql } from '../eligibility/sql.ts';
+import { activationSuppressedSql, pageEligibleSql, rederiveHiddenSql } from '../eligibility/sql.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import {
   callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment,
@@ -431,4 +432,11 @@ export async function readCursorEdition(tx: Raw, spec: { pageId: number; revisio
       FROM pages p WHERE p.id = ${spec.pageId}`);
   if (!r) return null;
   return { current: r.current === true, version_id: r.version_id == null ? null : Number(r.version_id) };
+}
+
+/** Whether a purge hid the page until it is derived again: a `needs_rederive` row names it. False for a missing page. */
+export async function pageAwaitsRederive(tx: Raw, pageId: number): Promise<boolean> {
+  const [r] = await rows<{ n: number | string }>(tx, sqlFragment`SELECT count(*)::int AS n
+      FROM pages p WHERE p.id = ${pageId} AND NOT ${trustedSql(rederiveHiddenSql('pages', 'p'))}`);
+  return Number(r?.n) > 0;
 }
