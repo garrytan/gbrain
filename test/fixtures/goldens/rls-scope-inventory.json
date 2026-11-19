@@ -5424,6 +5424,7 @@
         "readNoopEmbeddingCandidates": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
+        "readPageIndexingState": "none",
         "readPageOrigin": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",

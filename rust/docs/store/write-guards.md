@@ -17,6 +17,7 @@ lives in `src/core/engine-sql/write-guards.ts`. The store answers the same membe
 | `brain.stampPageIngest(slug, { sourceId, sourceKind, ingestedVia, ingestedAt })` | nothing. Sets the page's `source_kind`, `ingested_via` and `ingested_at`, live or a tombstone; a missing page changes nothing. `ingestedAt` that is not an ISO time is `invalid_argument` | `stampPageIngest` |
 | `brain.sealImportedPage(slug, { sourceId, revision, timelineText, chunkerVersion })` | `{ id }`, or `null` for a missing page. Sets `chunker_version`; when `revision` equals the page's `knowledge_revision`, also sets `text_projection_revision` and records `timelineText` as the timeline the keyword index reads | `sealImportedPage` |
 | `brain.readLivePageBody(slug, sourceId)` | `{ frontmatter, compiled_truth, timeline, body_storage, content_hash }` of the live page, or `null` for a missing page or a tombstone. A page with no inline body (a segmented shell) reads `body_storage: "segmented"` | `readLivePageBody` |
+| `brain.readPageIndexingState(pageId)` | `{ chunker_version, corpus_generation, page_kind }` of the page, live or a tombstone, or `null` when no page has the id. `corpus_generation` is the page's contextual-retrieval generation, `null` when it has none | `readPageIndexingState` |
 | `brain.hasSegmentStorage()` | `true` when any segment text or body staging record exists | `hasSegmentStorage` |
 
 ## Differences from PGLite

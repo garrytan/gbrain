@@ -125,15 +125,13 @@ export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'getConfigV
 async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxChunkTokensOverride?: number): Promise<{ key: string; model: string | null; maxChunkTokens: number; column: ResolvedColumn; pageKind: PageKind; provenanceModel: string | null; corpusGeneration: string | null }> {
   const { config, model, column, provenanceModel } = await embeddingWriteTarget(engine);
   const maxChunkTokens = maxChunkTokensOverride ?? resolveMaxChunkTokens();
-  const [projection] = await engine.executeRaw<{ chunker_version: number | null; corpus_generation: string | null }>(
-    'SELECT chunker_version,corpus_generation FROM pages WHERE id=$1', [snapshot.page.id]);
-  const [kind] = await engine.executeRaw<{ page_kind: PageKind }>('SELECT page_kind FROM pages WHERE id=$1', [snapshot.page.id]);
-  if (!kind) throw new PageRevisionConflictError(snapshot.revision, null);
+  const state = await engine.readPageIndexingState(snapshot.page.id);
+  if (!state) throw new PageRevisionConflictError(snapshot.revision, null);
   return { key: digest({ config, mode: snapshot.page.contextual_retrieval_mode, model, column,
-    maxChunkTokens, storedChunkerVersion: projection?.chunker_version ?? null, corpusGeneration: projection?.corpus_generation ?? null,
-    chunkerVersion: MARKDOWN_CHUNKER_VERSION, codeChunkerVersion: CHUNKER_VERSION, pageKind: kind.page_kind,
-    ftsLanguage: getFtsLanguage() }), model, maxChunkTokens, column, pageKind: kind.page_kind, provenanceModel,
-    corpusGeneration: projection?.corpus_generation ?? null };
+    maxChunkTokens, storedChunkerVersion: state.chunker_version, corpusGeneration: state.corpus_generation,
+    chunkerVersion: MARKDOWN_CHUNKER_VERSION, codeChunkerVersion: CHUNKER_VERSION, pageKind: state.page_kind,
+    ftsLanguage: getFtsLanguage() }), model, maxChunkTokens, column, pageKind: state.page_kind, provenanceModel,
+    corpusGeneration: state.corpus_generation };
 }
 
 /**

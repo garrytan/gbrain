@@ -55,6 +55,7 @@ export const RUST_ENGINE_MEMBERS = {
   stampPageIngest: 'pages',
   sealImportedPage: 'pages',
   readLivePageBody: 'pages',
+  readPageIndexingState: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',

@@ -44,6 +44,14 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     : sql === 'SELECT archived FROM sources WHERE id=$1' ? [{ archived: false }]
     : sql.includes('FROM persistence_brain') ? [{ enabled: false }]
     : executeRaw(sql, params);
+  // indexingContext reads the page's indexing state through the typed member; the mock answers it from the two
+  // statements the member runs, so a test that models `SELECT chunker_version` keeps its answer.
+  overrides.readPageIndexingState ??= async (pageId: number) => {
+    const [projection] = await engine.executeRaw('SELECT chunker_version,corpus_generation FROM pages WHERE id=$1', [pageId]) ?? [];
+    const [kind] = await engine.executeRaw('SELECT page_kind FROM pages WHERE id=$1', [pageId]) ?? [];
+    if (!kind) return null;
+    return { chunker_version: projection?.chunker_version ?? null, corpus_generation: projection?.corpus_generation ?? null, page_kind: kind.page_kind };
+  };
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });

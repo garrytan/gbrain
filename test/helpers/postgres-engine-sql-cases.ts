@@ -298,6 +298,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'stampPageIngest': OOS.writeGuards,
   'sealImportedPage': OOS.writeGuards,
   'readLivePageBody': OOS.writeGuards,
+  'readPageIndexingState': OOS.writeGuards,
   'hasSegmentStorage': OOS.writeGuards,
   'removeTimelineRows': OOS.pageWriteRows,
   'updateTimelineDetails': OOS.pageWriteRows,
