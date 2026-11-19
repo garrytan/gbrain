@@ -17,6 +17,7 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
 | `brain.deleteOauthClient(clientId)` | `{ client_id, client_name }` of the row it removed in one write, or null (the engine member is `deleteOAuthClient`). It also removes the client's OAuth tokens in the same write ([oauth-tokens.md](oauth-tokens.md)), as the foreign key does on PostgreSQL; the store keeps no codes, so nothing cascades to them |
 | `brain.oauthClientLive(clientId)` | whether a client not deleted (`deleted_at IS NULL`) has this id |
+| `brain.listUnboundClientIds()` | the ids of the clients not deleted and bound to no member (`member_id` NULL), in byte order (`ORDER BY client_id COLLATE "C"`); `gbrain access serves --owner` offers to bind each |
 | `brain.setOauthClientTokenTtl(clientId, ttl)` | whether the client exists after setting its `token_ttl`; the row is checked again |
 
 TypeScript-only members (`src/core/rust-engine/store-members/jobs-oauth-clients.ts`): `readOauthClientColumns(probe)`

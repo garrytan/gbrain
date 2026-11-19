@@ -8,9 +8,10 @@
 //! listAllPageRefs, listPrefixSampledPages, listCorpusSample, getContentFlagsByPageIds,
 //! getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
 //!
-//! Keys: none. Every read scans the page records (`pages::all_pages`), as `list_pages` does; the
-//! family tag `keys::PAGE_OPS` (`p`) stays unused until an index is needed, and such an index needs
-//! the core `write_page` hook to stay in step.
+//! Keys: this file keeps none. The only records under `keys::PAGE_OPS` (`p`) are the retrieval
+//! records of `page_ops/retrievals.rs`. Every read scans the page records (`pages::all_pages`), as
+//! `list_pages` does; an index of page fields under `p` needs the core `write_page` hook to stay in
+//! step.
 //!
 //! Text compares and sorts in byte order (Postgres `COLLATE "C"`). Dates cross the binding as ISO
 //! strings with microseconds.

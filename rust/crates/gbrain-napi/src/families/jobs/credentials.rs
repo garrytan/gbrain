@@ -173,4 +173,47 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.delete_expired_oauth_tokens(now))
     }
+
+    /// `listUnboundTokenNames()`: the names of the live tokens bound to no member, in byte order.
+    #[napi]
+    pub fn list_unbound_token_names<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_unbound_token_names())
+    }
+
+    /// `listUnboundClientIds()`: the ids of the live OAuth clients bound to no member, in byte order.
+    #[napi]
+    pub fn list_unbound_client_ids<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_unbound_client_ids())
+    }
+
+    /// `readLiveAccessToken(name)`: the member-key setup's row of the live token with this name, or null.
+    #[napi]
+    pub fn read_live_access_token<'env>(
+        &self,
+        env: &'env Env,
+        name: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_live_access_token(&name))
+    }
+
+    /// `recordTokenSetupReads(name, reads)`: keeps `reads` as `setup_reads` in the live token's permissions.
+    #[napi]
+    pub fn record_token_setup_reads<'env>(
+        &self,
+        env: &'env Env,
+        name: String,
+        reads: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.record_token_setup_reads(&name, &reads))
+    }
+
+    /// `listKeysReadingSource(sourceId)`: the live member-bound keys whose read list holds another write source's id.
+    #[napi]
+    pub fn list_keys_reading_source<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_keys_reading_source(&source_id))
+    }
 }

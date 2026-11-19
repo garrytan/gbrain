@@ -65,12 +65,13 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 
 ## What the store does not do
 
-- Credentials: the store keeps no access tokens and no OAuth clients. `insertAccessMember` with a `bindTokenId`
+- Credential binding: the store keeps access tokens and OAuth clients ([access-tokens.md](access-tokens.md),
+  [oauth-clients.md](oauth-clients.md)), but binds neither to a member. `insertAccessMember` with a `bindTokenId`
   (`gbrain access member add --bind-token`) and the binding members (`readCredentialBindingForUpdate`,
   `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so `bindCredential` and `gbrain auth rescope --member`)
   refuse with `engine_capability_missing` before anything is written.
-- Order: ids sort in byte order. Postgres sorts `ORDER BY m.id` and `array_agg(... ORDER BY g.group_id)` in the
-  database collation, so ids with `.`, `_` or `-` can order differently from an `en_US` database.
+- Order: ids sort in byte order. The SQL sorts member ids, group ids and each member's groups with `COLLATE "C"`,
+  so an `en_US` Postgres gives the same order (`test/engine-parity/access-sort-order.test.ts`).
 
 ## Tests
 
