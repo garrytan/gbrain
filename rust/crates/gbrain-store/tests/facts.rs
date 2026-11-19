@@ -843,6 +843,28 @@ fn a_widening_record_admits_own_member_and_granted_open_private_facts_only() {
         json!({ "visibility": ["world", "private"], "widen": { "privateFactSources": [] } }),
     );
     assert_eq!(both.len(), 9);
+    // findTrajectory's world-only read widens the same way.
+    let trajectory = |widen: Value| {
+        let points = b
+            .find_trajectory(&args::<TrajectoryQuery>(json!({ "sourceIds": ["default"],
+                "entitySlug": "subject", "worldOnly": true, "widen": widen, "limit": 50 })))
+            .unwrap();
+        let mut kept: Vec<String> = points
+            .iter()
+            .map(|p| p["text"].as_str().unwrap().to_string())
+            .collect();
+        kept.sort_unstable();
+        kept
+    };
+    assert_eq!(trajectory(Value::Null), ["world"]);
+    assert_eq!(
+        trajectory(json!({ "member": "alice-example", "memberPagePolicy": policy })),
+        ["own member", "world"]
+    );
+    assert_eq!(
+        trajectory(json!({ "privateFactSources": ["default"] })),
+        ["granted", "world"]
+    );
     // listSupersessions widens the same way.
     batch(
         &b,

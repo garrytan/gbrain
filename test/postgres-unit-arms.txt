@@ -140,6 +140,7 @@ test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/fact-relink-writes.test.ts
+test/engine-parity/fact-trajectory-widening.test.ts
 test/engine-parity/fact-visibility-widening.test.ts
 test/engine-parity/facts-cycle.test.ts
 test/engine-parity/facts-doctor.test.ts

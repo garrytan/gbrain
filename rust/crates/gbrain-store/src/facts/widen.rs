@@ -137,6 +137,21 @@ pub(crate) fn visibility_admits(
     }
 }
 
+/// A world-only read (`worldOnly`, `factVisibilitySql(alias, ['world'])`): a world row, or a private row `widen` admits.
+pub(crate) fn world_admits(
+    read: &dyn KvRead,
+    widen: &Option<VisibilityWidening>,
+    row: &FactRecord,
+) -> Result<bool> {
+    if row.visibility == "world" {
+        return Ok(true);
+    }
+    match widen {
+        Some(widen) => widen.admits(read, row),
+        None => Ok(false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

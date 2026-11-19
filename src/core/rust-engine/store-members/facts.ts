@@ -22,7 +22,6 @@ import { getFtsLanguage } from '../../fts-language.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
-import { factVisibilitySql } from '../../access/member-facts.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
 
@@ -283,12 +282,11 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   const o = takeOptions('findTrajectory', opts,
     ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit', 'excludePrivate']) as unknown as typeof opts;
   const worldOnly = opts.remote !== false;
-  if (worldOnly && factVisibilitySql('facts', ['world']) !== "facts.visibility IN ('world')") {
-    refuseMember('findTrajectory', 'visibility widened by member pages or grants');
-  }
+  // A world-only read is widened per row for the caller's member page and private-facts grant, as the lists are.
+  const widen = worldOnly ? storeVisibility('findTrajectory', ['world']).widen : undefined;
   const sourceIds = Array.isArray(o.sourceIds) && o.sourceIds.length > 0 ? [...new Set(o.sourceIds)] : [o.sourceId ?? 'default'];
   const rows: Row[] = await storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
-    sourceIds, entitySlug: o.entitySlug, worldOnly, metric: o.metric ?? undefined, kind: o.kind ?? 'all',
+    sourceIds, entitySlug: o.entitySlug, worldOnly, ...(widen ? { widen } : {}), metric: o.metric ?? undefined, kind: o.kind ?? 'all',
     since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
     limit: clampSearchLimit(o.limit, 100, 500),
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
