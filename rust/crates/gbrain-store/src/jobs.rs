@@ -84,6 +84,7 @@ pub use checks::{
 };
 pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
+use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub use oauth_clients::ClientInsert;
 pub use private_queues::PrivateQueueState;
@@ -823,6 +824,10 @@ fn check_insert(v: &JobInsert) -> Result<()> {
             format!("minion_jobs check: {what}"),
         ))
     };
+    // A NUL byte is not valid text in Postgres, and the claim index uses it as the queue separator.
+    if v.queue.contains('\0') {
+        return bad("queue");
+    }
     if !["fixed", "exponential"].contains(&v.backoff_type.as_str()) {
         return bad("backoff_type");
     }
@@ -1030,7 +1035,9 @@ impl Store {
             let mut picked = None;
             let mut first_overdue = None;
             for id in ids_under(tx, &claim_prefix(&spec.queue))? {
-                let Some(row) = load(tx, id)? else { continue };
+                let Some(row) = load(tx, id)?.filter(|r| r.queue == spec.queue) else {
+                    continue;
+                };
                 let eligible =
                     row.submission_authority.is_some() && names.contains(row.name.as_str());
                 if eligible && overdue(&row) {
@@ -1150,9 +1157,9 @@ impl Store {
                     && let Some(p_old) = load(tx, parent)?.filter(|p| !is_terminal(&p.status))
                 {
                     let mut p = p_old.clone();
-                    p.tokens_input += tokens[0];
-                    p.tokens_output += tokens[1];
-                    p.tokens_cache_read += tokens[2];
+                    p.tokens_input = add_token("input", p.tokens_input, tokens[0])?;
+                    p.tokens_output = add_token("output", p.tokens_output, tokens[1])?;
+                    p.tokens_cache_read = add_token("cache_read", p.tokens_cache_read, tokens[2])?;
                     p.updated_at = now;
                     save(tx, Some(&p_old), &p)?;
                 }
@@ -1505,7 +1512,7 @@ impl Store {
                     "acquired_at": iso(l.acquired_at),
                     "ttl_expires_at": iso(l.ttl_expires_at),
                     "last_refreshed_at": l.last_refreshed_at.map(iso),
-                    "acquisition_token": l.acquisition_token,
+                    "acquisition_token": l.acquisition_token.clone(),
                     "db_now": iso(now),
                 })
             })

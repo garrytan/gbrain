@@ -3,7 +3,7 @@
 mod memory_env;
 
 use gbrain_store::error::{ADMISSION_REFUSED, INVALID_STATE};
-use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter};
+use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, TokenDelta};
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -298,4 +298,53 @@ fn list_jobs_filters_and_orders_newest_first() {
     assert_eq!(ids(json!({})), vec![c, a]);
     assert_eq!(ids(json!({"name": "work"})), vec![a]);
     assert_eq!(ids(json!({"limit": 1, "offset": 1})), vec![a]);
+}
+
+/// Postgres refuses a NUL byte in text, and the claim index uses it as the queue separator: a queue named
+/// `default\0private` must not be admitted, or a worker on `default` would claim its job.
+#[test]
+fn a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue() {
+    let b = brain("jobs-queue-nul");
+    let err = admit(
+        &b,
+        json!({ "insert": insert("work", json!({ "queue": "default\u{0}private" })) }),
+    )
+    .expect_err("a NUL in the queue name refuses");
+    assert_eq!(err.code, "constraint_violation");
+    assert!(claim(&b, "w:1").is_none(), "nothing was admitted to claim");
+    let id = add(&b, "work", json!({}));
+    assert_eq!(claim(&b, "w:2").unwrap()["id"], id);
+}
+
+/// `tokens_input` is an `INTEGER`: a roll-up that overflows it fails the completion (as the SQL `+` does)
+/// rather than wrapping to a negative count in a release build.
+#[test]
+fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion() {
+    let b = brain("jobs-token-overflow");
+    let parent = add(&b, "parent", json!({}));
+    let kids: Vec<i64> = (0..2)
+        .map(|_| add(&b, "work", json!({ "parent_job_id": parent })))
+        .collect();
+    for (n, kid) in kids.iter().enumerate() {
+        let token = format!("w:{n}");
+        assert!(claim(&b, &token).is_some());
+        let delta = TokenDelta {
+            input: 1_500_000_000,
+            output: 0,
+            cache_read: 0,
+        };
+        assert!(b.add_job_tokens(*kid, &token, &delta).unwrap());
+    }
+    assert!(b.complete_job(kids[0], "w:0", None).unwrap().is_some());
+    assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
+    let err = b
+        .complete_job(kids[1], "w:1", None)
+        .expect_err("the roll-up overflows");
+    assert_eq!(err.code, "invalid_argument");
+    assert_eq!(
+        job(&b, kids[1])["status"],
+        "active",
+        "the refused completion wrote nothing"
+    );
+    assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
 }
