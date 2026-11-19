@@ -312,69 +312,6 @@ describe('access member commands, end to end', () => {
 // The member and group reads lane 12 typed (readAccessMembers by email, listAudienceAccessMembers, readLiveMember,
 // readAccessGroups) answer the members and groups the typed writes made, on every engine: on Rust they read the store.
 describe('access member and group reads after the typed writes', () => {
-  parityTest('the email, audience, live member and group reads name only what the writes made', {
-    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'addAccessGroupMembers', 'setConfig',
-      'readAccessMembers', 'listAudienceAccessMembers', 'readLiveMember', 'readAccessGroups'],
-  }, async (engine) => {
-    await engine.insertAccessMember(member('zed-example', { kind: 'audience', email: 'z@example.com', groups: ['team-b', 'team-a'] }));
-    await engine.insertAccessMember(member('alice-example', { kind: 'audience', groups: ['team-a'] }));
-    await engine.insertAccessMember(member('bob-example', { kind: 'audience', email: 'b@example.com', groups: ['team-a'] }));
-    await engine.insertAccessMember(member('carol-example', { kind: 'audience', email: 'c@example.com', groups: ['team-c'] }));
-    await engine.insertAccessMember(member('dave-example', { groups: ['team-c'] }));
-    await engine.setAccessMemberDisabled('bob-example', true);
-    await engine.tombstoneAccessMember('carol-example');
-    await engine.addAccessGroupMembers('team-empty', []);
-    await engine.setConfig('mcp.stdio_member', ' zed-example ');
-    await engine.setConfig('other.key', 'bob-example');
-    const ids = (rows: Awaited<ReturnType<BrainEngine['readAccessMembers']>>) => rows.map(r => [r.id, r.groups]);
-    const out = {
-      byEmail: {
-        declared: ids(await engine.readAccessMembers({ email: 'z@example.com' })),
-        disabled: ids(await engine.readAccessMembers({ email: 'b@example.com' })),
-        removed: ids(await engine.readAccessMembers({ email: 'c@example.com' })),
-        otherCase: ids(await engine.readAccessMembers({ email: 'Z@example.com' })),
-      },
-      audience: await engine.listAudienceAccessMembers(),
-      live: {
-        zed: await engine.readLiveMember('member', 'zed-example'),
-        disabled: await engine.readLiveMember('member', 'bob-example'),
-        removed: await engine.readLiveMember('member', 'carol-example'),
-        group: await engine.readLiveMember('member', 'team-a'),
-        stdioTrimmed: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
-        stdioDisabled: await engine.readLiveMember('stdio_config', 'other.key'),
-        stdioUnset: await engine.readLiveMember('stdio_config', 'no.such.key'),
-        token: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c1'),
-        client: await engine.readLiveMember('oauth_client', 'client-alice'),
-      },
-      groups: {
-        all: await engine.readAccessGroups(null),
-        one: await engine.readAccessGroups('team-a'),
-        empty: await engine.readAccessGroups('team-empty'),
-        member: await engine.readAccessGroups('zed-example'),
-        otherCase: await engine.readAccessGroups('Team-A'),
-      },
-    };
-    expect(out).toEqual({
-      byEmail: { declared: [['zed-example', ['team-a', 'team-b']]], disabled: [['bob-example', ['team-a']]], removed: [], otherCase: [] },
-      audience: ['alice-example', 'zed-example'],
-      live: {
-        zed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, disabled: null, removed: null, group: null,
-        stdioTrimmed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, stdioDisabled: null, stdioUnset: null, token: null, client: null,
-      },
-      groups: {
-        all: [
-          { id: 'team-a', members: ['alice-example', 'bob-example', 'zed-example'] }, { id: 'team-b', members: ['zed-example'] },
-          { id: 'team-c', members: ['dave-example'] }, { id: 'team-empty', members: [] },
-        ],
-        one: [{ id: 'team-a', members: ['alice-example', 'bob-example', 'zed-example'] }],
-        empty: [{ id: 'team-empty', members: [] }], member: [], otherCase: [],
-      },
-    });
-    return out;
-  });
-});
-
-describe('access member reads by email', () => {
   /** Five members across groups: an audience member with an email and two groups, a disabled one, a removed one. */
   async function seedMembers(engine: BrainEngine) {
     await engine.insertAccessMember(member('zed-example', { kind: 'audience', email: 'z@example.com', groups: ['team-b', 'team-a'] }));
@@ -425,4 +362,59 @@ describe('access member reads by email', () => {
     }
   });
 
+  parityTest('listAudienceAccessMembers names the enabled, unremoved audience members, by id', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'listAudienceAccessMembers'],
+  }, async (engine) => {
+    await seedMembers(engine);
+    const out = await engine.listAudienceAccessMembers();
+    expect(out).toEqual(['alice-example', 'zed-example']);
+    return out;
+  });
+
+  parityTest('readLiveMember finds a live member by id or by the trimmed stdio config value, and nothing else', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'setConfig', 'readLiveMember'],
+  }, async (engine) => {
+    await seedMembers(engine);
+    await engine.setConfig('mcp.stdio_member', ' zed-example ');
+    await engine.setConfig('other.key', 'bob-example');
+    const out = {
+      zed: await engine.readLiveMember('member', 'zed-example'),
+      disabled: await engine.readLiveMember('member', 'bob-example'),
+      removed: await engine.readLiveMember('member', 'carol-example'),
+      group: await engine.readLiveMember('member', 'team-a'),
+      stdioTrimmed: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
+      stdioDisabled: await engine.readLiveMember('stdio_config', 'other.key'),
+      stdioUnset: await engine.readLiveMember('stdio_config', 'no.such.key'),
+      token: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c1'),
+      client: await engine.readLiveMember('oauth_client', 'client-alice'),
+    };
+    expect(out).toEqual({
+      zed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, disabled: null, removed: null, group: null,
+      stdioTrimmed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, stdioDisabled: null, stdioUnset: null, token: null, client: null,
+    });
+    return out;
+  });
+
+  parityTest('readAccessGroups lists each group with its members, or the one group with exactly that id', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'addAccessGroupMembers', 'readAccessGroups'],
+  }, async (engine) => {
+    await seedMembers(engine);
+    await engine.addAccessGroupMembers('team-empty', []);
+    const out = {
+      all: await engine.readAccessGroups(null),
+      one: await engine.readAccessGroups('team-a'),
+      empty: await engine.readAccessGroups('team-empty'),
+      member: await engine.readAccessGroups('zed-example'),
+      otherCase: await engine.readAccessGroups('Team-A'),
+    };
+    expect(out).toEqual({
+      all: [
+        { id: 'team-a', members: ['alice-example', 'bob-example', 'zed-example'] }, { id: 'team-b', members: ['zed-example'] },
+        { id: 'team-c', members: ['dave-example'] }, { id: 'team-empty', members: [] },
+      ],
+      one: [{ id: 'team-a', members: ['alice-example', 'bob-example', 'zed-example'] }],
+      empty: [{ id: 'team-empty', members: [] }], member: [], otherCase: [],
+    });
+    return out;
+  });
 });

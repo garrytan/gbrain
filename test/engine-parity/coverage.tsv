@@ -365,11 +365,11 @@ readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	4	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	2	no	yes	yes	serves
-insertAccessMember	access_members	yes	12	no	yes	yes	serves
-setAccessMemberDisabled	access_members	yes	5	no	yes	yes	serves
+insertAccessMember	access_members	yes	14	no	yes	yes	serves
+setAccessMemberDisabled	access_members	yes	7	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
 setAccessMemberKind	access_members	yes	2	no	yes	yes	serves
-tombstoneAccessMember	access_members	yes	5	no	yes	yes	serves
+tombstoneAccessMember	access_members	yes	7	no	yes	yes	serves
 addAccessGroupMembers	access_members	yes	2	no	yes	yes	serves
 removeAccessGroupMembers	access_members	yes	1	no	yes	yes	serves
 deleteAccessGroup	access_members	yes	1	no	yes	yes	serves
@@ -703,7 +703,7 @@ attachSourcePath	write_misc	yes	1	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	2	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	3	no	yes	yes	serves
-readAccessMembers	write_misc	yes	9	no	yes	yes	serves
+readAccessMembers	write_misc	yes	8	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readLiveMember	write_misc	yes	3	no	yes	yes	serves

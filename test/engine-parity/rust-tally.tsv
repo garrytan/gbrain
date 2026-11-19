@@ -1,7 +1,7 @@
 file	equal	stopped
 test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/access-grants.test.ts	3	3
-test/engine-parity/access-members.test.ts	10	2
+test/engine-parity/access-members.test.ts	12	2
 test/engine-parity/alias-fanout-reads.test.ts	10	0
 test/engine-parity/alias-trust.test.ts	5	0
 test/engine-parity/chunk-reads.test.ts	11	0
