@@ -10,6 +10,7 @@ import type { WriteRequest } from '../src/core/persistence/model.ts';
 import * as derivationInputs from '../src/core/facts/derivation-inputs.ts';
 import * as pageMutations from '../src/core/persistence/page-mutations.ts';
 import * as preparedMaintenance from '../src/core/persistence/prepared-maintenance.ts';
+import * as pagePrepare from '../src/core/persistence/page-prepare.ts';
 import { releaseHiddenMoment } from '../src/core/facts/derivation-inputs.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
@@ -31,10 +32,10 @@ for (const backend of testBackends()) {
       for (const [what, act] of between) await managedBrain(async ({ engine, ctx, root }) => {
         const id = await heldConcept(engine, ctx, root);
         let fired = false;
-        const submit = pageMutations.submitPageMutation;
-        const spy = spyOn(pageMutations, 'submitPageMutation').mockImplementation(async (c, input) => {
-          if (!fired && input.operation === 'delete_page' && (input.params as Record<string, unknown>).concept_hold !== undefined) { fired = true; await act(engine, id); }
-          return submit(c, input);
+        const submit = preparedMaintenance.submitMaintenanceIntent;
+        const spy = spyOn(preparedMaintenance, 'submitMaintenanceIntent').mockImplementation(async (e, authority, slug, intent, requestId) => {
+          if (!fired && intent.kind === 'managed_maintenance_concept_purge') { fired = true; await act(engine, id); }
+          return submit(e, authority, slug, intent, requestId);
         });
         const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW }).finally(() => spy.mockRestore());
         expect([what, fired, details.rebuilt]).toEqual([what, true, []]);
@@ -43,6 +44,40 @@ for (const backend of testBackends()) {
         expect(after.versions).toBeGreaterThan(0);
       }, { databaseUrl });
     }, 600_000);
+
+    test('managed: a write owner too old to re-check the hold refuses the rebuild\'s purge, so a person\'s delete during synthesis keeps its restore window and nothing is published', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        const id = await heldConcept(engine, ctx, root);
+        let tagged = false;
+        const tag = async () => { if (!tagged) { tagged = true; await releaseHiddenMoment(engine, id); } };
+        const submitPage = pageMutations.submitPageMutation;
+        const submitIntent = preparedMaintenance.submitMaintenanceIntent;
+        const prepareKind = preparedMaintenance.prepareMaintenanceMutation;
+        const preparePage = pagePrepare.preparePageMutation;
+        const spies = [
+          spyOn(pageMutations, 'submitPageMutation').mockImplementation(async (c, input) => {
+            if (input.operation === 'delete_page' && input.params.slug === CONCEPT) await tag();
+            return submitPage(c, input);
+          }),
+          spyOn(preparedMaintenance, 'submitMaintenanceIntent').mockImplementation(async (e, authority, slug, intent, requestId) => {
+            if (slug === CONCEPT) await tag();
+            return submitIntent(e, authority, slug, intent, requestId);
+          }),
+          // An older owner: it publishes no maintenance kind it does not know, and reads a delete without the hold check.
+          spyOn(preparedMaintenance, 'prepareMaintenanceMutation').mockImplementation(async (e, row, config, clock) =>
+            prepareKind(e, row.intent?.kind === 'managed_maintenance_concept_purge' ? { ...row, intent: { ...row.intent, kind: 'managed_maintenance_unknown_example' } } : row, config, clock)),
+          spyOn(pagePrepare, 'preparePageMutation').mockImplementation(async (e, row, ...rest) => {
+            const { concept_hold: _ignored, ...intent } = (row.intent ?? {}) as Record<string, unknown>;
+            return preparePage(e, row.operation === 'delete_page' ? { ...row, intent } : row, ...rest);
+          }),
+        ];
+        const details = await synthesize(engine, root, [1, 2, 3, 4, 5], { text: NEW }).finally(() => spies.forEach(spy => spy.mockRestore()));
+        expect([tagged, details.rebuilt]).toEqual([true, []]);
+        const after = await state(engine);
+        expect(after).toMatchObject({ id, live: false });
+        expect(after.versions).toBeGreaterThan(0);
+      }, { databaseUrl });
+    }, 300_000);
 
     test('managed: a member removed between the tombstone purge and the publish refuses the publish, so its text never comes back', async () => {
       await managedBrain(async ({ engine, ctx, root }) => {
@@ -112,7 +147,7 @@ for (const backend of testBackends()) {
         await heldConcept(engine, ctx, root);
         let release!: () => void;
         const stalled = new Promise<void>(resolve => { release = resolve; });
-        installFaultHook(async (point, detail) => { if (point === 'consumer:prepared' && (detail as { operation?: string }).operation === 'delete_page') await stalled; });
+        installFaultHook(async (point, detail) => { if (point === 'consumer:prepared' && (detail as { operation?: string }).operation === 'submit_job') await stalled; });
         const restore = __setMaintenanceWriteWaitForTests(300);
         try {
           const details = (await runPhaseSynthesizeConcepts(engine, { sourceId: 'default', brainDir: root, _atoms: members([1, 2, 3, 4, 5]), _chat: (async () => reply(NEW)) as never })).details as Record<string, any>;

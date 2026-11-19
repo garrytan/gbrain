@@ -13,13 +13,10 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine, PageSnapshot } from '../engine.ts';
-import type { OperationContext } from '../ops/contract.ts';
-import { loadConfig } from '../config.ts';
-import { submitPageMutation } from './page-mutations.ts';
+import type { MaintenanceAuthority } from './prepared-maintenance.ts';
 import { linkStreamSlugs } from './page-purge.ts';
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { pendingRequestId } from '../cycle/dream-write-deferral.ts';
 import { OWED_PURGE_OP } from './derived-origin-hold.ts';
 import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
@@ -272,15 +269,14 @@ export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, 
  * person's edit, restore, delete or statement in between refuses it. True only when its receipt shows the purge committed; a pending, failed or
  * refused purge returns why, and the next synthesis handles whatever it finds.
  */
-export async function submitHeldConceptPurge(engine: BrainEngine, sourceId: string, slug: string, rebuild: ConceptRebuild): Promise<true | string> {
+export async function submitHeldConceptPurge(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, slug: string, rebuild: ConceptRebuild): Promise<true | string> {
   if (!await membersUnchanged(engine, sourceId, rebuild.members)) return 'a member the rebuilt narrative was built from changed or was removed during synthesis';
   if (!await stillHeld(engine, rebuild.page_id, rebuild.deleted_us)) return 'the concept is no longer held for a rebuild (a person or sync deleted, restored or purged it)';
   if ((await statedKinds(engine, rebuild.page_id, sourceId, slug)).length) return 'something was stated on the concept during synthesis';
-  const ctx: OperationContext = { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false, sourceId, dryRun: false,
-    logger: { info() {}, warn() {}, error() {} } };
   try {
-    const purged = await submitPageMutation(ctx, { operation: 'delete_page', waitMs: maintenancePublishWaitMs(), params: { slug, source_id: sourceId,
-      purge: true, retention: true, concept_hold: { page_id: rebuild.page_id, deleted_us: rebuild.deleted_us }, expected_revision: rebuild.revision, request_id: randomUUID() } });
+    // GST-3179: its own maintenance kind, so a write owner too old to re-check the hold refuses it instead of purging.
+    const purged = await (await import('./prepared-maintenance.ts')).submitMaintenanceIntent(engine, authority, slug, { kind: 'managed_maintenance_concept_purge', expected_revision: rebuild.revision,
+      deleted_page: true, purge: true, retention: true, concept_hold: { page_id: rebuild.page_id, deleted_us: rebuild.deleted_us } }, randomUUID());
     return purged.status === 'purged' ? true : `the purge of the hidden concept did not commit (${String(purged.status ?? 'no status')})`;
   } catch (error) {
     const pending = pendingRequestId(error);

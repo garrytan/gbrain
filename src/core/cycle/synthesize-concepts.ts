@@ -533,7 +533,7 @@ export async function runPhaseSynthesizeConcepts(
     await stopIfAborted();
     if (!opts.dryRun) {
       // #9653: managed, the tombstone's retention purge commits before the fresh page is queued; otherwise nothing more is written.
-      const purged = rebuild && maintenance ? await submitHeldConceptPurge(engine, src, conceptSlug, rebuild) : true;
+      const purged = rebuild && maintenance ? await submitHeldConceptPurge(engine, maintenance, src, conceptSlug, rebuild) : true;
       if (purged !== true) { rebuildDeferred.push({ concept: conceptSlug, reason: purged }); continue; }
       // #5525: tighten-only — a concept already private stays private.
       const prior = rebuild ? null : await engine.getPage(conceptSlug, { sourceId: src });

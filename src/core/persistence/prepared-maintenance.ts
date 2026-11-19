@@ -742,6 +742,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   }
   if (row.intent?.kind === 'managed_maintenance_adopt_fact_fence' || row.intent?.kind === 'managed_maintenance_move_held_fact') return prepareFactFenceAdoption(engine, row, config, clock);
   if (row.intent?.kind === 'managed_maintenance_phantom_merge') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomMerge(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_concept_purge') return preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { clock });
   if (row.intent?.kind === 'managed_maintenance_phantom_delete') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomDelete(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_chronicle_event' || row.intent?.kind === 'managed_maintenance_chronicle_retire') {
     return (await import('../chronicle/publish.ts')).prepareChronicleMutation(engine, row, config);
