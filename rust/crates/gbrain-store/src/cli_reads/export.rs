@@ -16,7 +16,7 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::links::no_nul;
 use crate::page_body::{
-    in_generation, manifest_rows, page_u64, read_body_state, segmented_reference,
+    ManifestRow, in_generation, manifest_rows, page_u64, read_body_state, segmented_reference,
 };
 use crate::pages::read_page_by_id;
 use crate::raw_files::page_raw_rows;
@@ -132,6 +132,14 @@ pub struct BodyManifestMeta {
     pub occurrence_id: i64,
     pub entry_state: Value,
     pub protected_regions: Value,
+}
+
+/// One row of `readBodyManifestOutline`: a manifest row's facts slots and stored outline.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BodyManifestOutline {
+    pub occurrence_id: i64,
+    pub facts_slots: Value,
+    pub outline: Value,
 }
 
 /// `jsonb_array_length`: the stored columns are arrays (`NOT NULL DEFAULT '[]'`).
@@ -437,15 +445,14 @@ impl Store {
         Ok(rows)
     }
 
-    /// `readBodyManifestMeta(pageId, occurrenceIds, generation)`: the published rows of generation
-    /// `generation` whose occurrence id is in `occurrence_ids`, with their entry state and
-    /// protected regions. Postgres sets no order; these come in seq order.
-    pub fn read_body_manifest_meta(
+    /// The published rows of generation `generation` of page `page_id` whose occurrence id is in
+    /// `occurrence_ids`, in seq order (Postgres sets none).
+    fn named_manifest_rows(
         &self,
         page_id: i64,
         occurrence_ids: &[i64],
         generation: i64,
-    ) -> Result<Vec<BodyManifestMeta>> {
+    ) -> Result<Vec<ManifestRow>> {
         let Some(page) = page_u64(page_id) else {
             return Ok(Vec::new());
         };
@@ -461,12 +468,44 @@ impl Store {
             })
             .collect();
         rows.sort_by_key(|row| row.seq);
-        Ok(rows
+        Ok(rows)
+    }
+
+    /// `readBodyManifestMeta(pageId, occurrenceIds, generation)`: the published rows of generation
+    /// `generation` whose occurrence id is in `occurrence_ids`, with their entry state and
+    /// protected regions. Postgres sets no order; these come in seq order.
+    pub fn read_body_manifest_meta(
+        &self,
+        page_id: i64,
+        occurrence_ids: &[i64],
+        generation: i64,
+    ) -> Result<Vec<BodyManifestMeta>> {
+        Ok(self
+            .named_manifest_rows(page_id, occurrence_ids, generation)?
             .into_iter()
             .map(|row| BodyManifestMeta {
                 occurrence_id: row.occurrence_id,
                 entry_state: row.entry_state,
                 protected_regions: row.protected_regions,
+            })
+            .collect())
+    }
+
+    /// `readBodyManifestOutline(pageId, occurrenceIds, generation)`: the same rows as
+    /// `read_body_manifest_meta`, with their facts slots and stored outline.
+    pub fn read_body_manifest_outline(
+        &self,
+        page_id: i64,
+        occurrence_ids: &[i64],
+        generation: i64,
+    ) -> Result<Vec<BodyManifestOutline>> {
+        Ok(self
+            .named_manifest_rows(page_id, occurrence_ids, generation)?
+            .into_iter()
+            .map(|row| BodyManifestOutline {
+                occurrence_id: row.occurrence_id,
+                facts_slots: row.facts_slots,
+                outline: row.outline,
             })
             .collect())
     }
@@ -631,6 +670,12 @@ mod tests {
                 .is_empty()
         );
         assert!(s.read_body_manifest_meta(id, &[], 0).unwrap().is_empty());
+        assert!(
+            s.read_body_manifest_outline(id, &[1, 2], 1)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(s.read_body_manifest_outline(id, &[], 0).unwrap().is_empty());
         assert!(s.list_access_policy_source_ids().unwrap().is_empty());
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);

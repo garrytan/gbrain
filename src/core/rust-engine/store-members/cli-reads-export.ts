@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -68,3 +68,7 @@ export const readBodyManifestMeta: StoreMember<[pageId: number, occurrenceIds: r
 /** The sources with an access policy (`cli_reads::export::list_access_policy_source_ids`): none, as the store keeps no folder rules. */
 export const listAccessPolicySourceIds: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listAccessPolicySourceIds' }, () => brain.listAccessPolicySourceIds());
+
+/** A segmented outline read: the facts slots and stored outline of the named occurrences in one generation (`cli_reads::export::read_body_manifest_outline`). */
+export const readBodyManifestOutline: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], BodyManifestOutline[]> = (brain, pageId, occurrenceIds, generation) =>
+  storeCall({ member: 'readBodyManifestOutline' }, () => brain.readBodyManifestOutline(pageId, [...occurrenceIds], generation));

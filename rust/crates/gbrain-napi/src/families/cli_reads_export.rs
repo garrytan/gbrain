@@ -113,6 +113,21 @@ impl Brain {
         })
     }
 
+    /// `readBodyManifestOutline(pageId, occurrenceIds, generation)`: the facts slots and stored
+    /// outline of the named occurrences in one published generation.
+    #[napi]
+    pub fn read_body_manifest_outline<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrence_ids: Vec<i64>,
+        generation: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_body_manifest_outline(page_id, &occurrence_ids, generation)
+        })
+    }
+
     /// `listAccessPolicySourceIds()`: the sources with an access policy; none, as the store keeps
     /// no folder rules.
     #[napi]

@@ -157,6 +157,20 @@ export async function readBodyManifestMeta(tx: Raw, pageId: number, occurrenceId
   [pageId, [...occurrenceIds], generation]);
 }
 
+/** One manifest row's facts slots and stored outline (both jsonb arrays), read for the page outline. */
+export interface BodyManifestOutline {
+  occurrence_id: number | string;
+  facts_slots: unknown;
+  outline: unknown;
+}
+
+/** The published rows of generation `generation` of page `pageId` among `occurrenceIds`: their facts slots and stored outline, in no set order. */
+export async function readBodyManifestOutline(tx: Raw, pageId: number, occurrenceIds: readonly number[], generation: number): Promise<BodyManifestOutline[]> {
+  return tx.executeRaw<BodyManifestOutline>(`SELECT occurrence_id, facts_slots, outline
+      FROM page_body_manifest WHERE page_id=$1 AND occurrence_id=ANY($2::bigint[]) AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`,
+  [pageId, [...occurrenceIds], generation]);
+}
+
 /** The sources with an access policy (folder rules or pending coverage), in id order: the rulebooks an export of every source carries. */
 export async function listAccessPolicySourceIds(tx: Raw): Promise<string[]> {
   return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);

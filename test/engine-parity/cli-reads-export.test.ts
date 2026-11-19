@@ -19,7 +19,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { flipInput, manifestRow, pageMeta, segmentText, stagingInput } from '../helpers/page-body-fixtures.ts';
 import { stageGeneration } from '../helpers/page-body-fixtures.ts';
 import type { BodyFlipInput, ManifestRowInput } from '../../src/core/page-body/types.ts';
-import { confirmBodyPin, openSegmentedBody } from '../../src/core/page-body/read-range.ts';
+import { confirmBodyPin, openSegmentedBody, projectedOutline } from '../../src/core/page-body/read-range.ts';
 import { REVISION_BACKFILL_PENDING } from '../../src/core/page-state/types.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -300,5 +300,23 @@ describe('engine parity: export reads', () => {
     expect(before).toBe('ok');
     expect(after).toBe('revision_changed');
     return { before, after };
+  });
+
+  // The stored outline of a segmented page, paged by heading index: each heading's projected byte offset, read from
+  // the named occurrences' manifest metadata without any segment text.
+  parityTest('projectedOutline reads the stored headings of a segmented page', {
+    methods: ['readBodyManifestOutline', 'readSegmentedPageHead', 'readBodyManifestRows', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds',
+      'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
+  }, async (engine) => {
+    const titles = ['Intro', 'Next'];
+    const { pageId } = await publishSegmented(engine, 'notes/big', {
+      row: seq => ({ outline: [{ level: seq + 1, text: titles[seq]!, proj_byte: 0 }], factsSlots: [] }),
+    });
+    const body = await openSegmentedBody(engine, { pageId });
+    return {
+      all: await projectedOutline(engine, body, 0, 10),
+      second: await projectedOutline(engine, body, 1, 1),
+      past: await projectedOutline(engine, body, 5, 1),
+    };
   });
 });

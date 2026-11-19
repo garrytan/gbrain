@@ -592,7 +592,6 @@ src/core/oversized-backfill.ts	execute_raw	6
 src/core/page-body/body-tiling.ts	execute_raw	4
 src/core/page-body/ingest.ts	execute_raw	3
 src/core/page-body/projection.ts	execute_raw	10
-src/core/page-body/read-range.ts	execute_raw	1
 src/core/page-body/rechunk.ts	execute_raw	8
 src/core/page-body/segment-blocks.ts	execute_raw	2
 src/core/page-body/segment-conversation.ts	execute_raw	3

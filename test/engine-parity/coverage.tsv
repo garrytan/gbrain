@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 738/738
+# covered: 739/739
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -39,7 +39,7 @@
 # minion_queue: 80/80
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_export: 10/10
+# cli_reads_export: 11/11
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
@@ -77,7 +77,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	75	no	yes	yes	serves
+transaction	lifecycle	yes	76	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -314,17 +314,17 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	8	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	9	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	9	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	10	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	11	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	17	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	18	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	18	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	19	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	12	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	11	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	13	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	12	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
@@ -557,9 +557,10 @@ readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
 listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
-readSegmentedPageHead	cli_reads_export	yes	3	no	yes	yes	serves
-readBodyManifestRows	cli_reads_export	yes	3	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	4	no	yes	yes	serves
+readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
+readBodyManifestOutline	cli_reads_export	yes	1	no	yes	yes	serves
 listAccessPolicySourceIds	cli_reads_export	yes	2	no	yes	yes	serves
 setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves

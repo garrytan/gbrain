@@ -55,6 +55,7 @@ export const RUST_ENGINE_MEMBERS = {
   readSegmentedPageHead: 'pages',
   readBodyManifestRows: 'pages',
   readBodyManifestMeta: 'pages',
+  readBodyManifestOutline: 'pages',
   listAccessPolicySourceIds: 'access_control',
   listExactIdentityCandidates: 'pages',
   listExtractionPendingPages: 'pages',
