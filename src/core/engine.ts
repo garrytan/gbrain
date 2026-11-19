@@ -1397,6 +1397,8 @@ export interface BrainEngine {
   listActiveAccessMembers(): Promise<string[]>;
   /** The live member `key` resolves to through `lookup`, with its groups; null when none (engine-sql/write-misc.ts). */
   readLiveMember(lookup: LiveMemberLookup, key: string): Promise<LiveMemberRow | null>;
+  /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
+  hasLabelledOnlyMember(): Promise<boolean>;
   expireMemoryProposals(reason: string): Promise<number>;
   listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
   purgeMemoryProposals(retentionDays: number): Promise<number>;

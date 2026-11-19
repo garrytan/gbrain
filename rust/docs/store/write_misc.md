@@ -28,6 +28,7 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `hasExtractedEvents(sourceId, pageId)` | `false` | The store keeps no chronicle extraction state. |
 | `listActiveAccessMembers()` | `[]` | The store keeps no access members. |
 | `readLiveMember(lookup, key)` | `null` | The store keeps no access members, access tokens or OAuth clients, so no lookup resolves a live member, not even a stdio binding stored in config. |
+| `hasLabelledOnlyMember()` | `false` | The store keeps no access members, so none carries the labelled-only grant and a remote write skips the labelled-only checks. |
 | `isFolderRestricted(sourceId, slug)` | `false` | The store keeps no access state: no folder rules, no pending coverage, no row-level security. Every write of that state is raw SQL, which this engine refuses, so no slug is restricted. PGLite answers the same for a brain with no folder rules and no pending covers (`src/core/engine-sql/access-control.ts`). |
 | `expireMemoryProposals(reason)`, `purgeMemoryProposals(days)` | `0` | The store keeps no memory proposals. |
 | `listAwaitingMemoryProposals(limit)` | `[]` | The store keeps no memory proposals. |

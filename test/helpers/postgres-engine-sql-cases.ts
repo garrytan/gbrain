@@ -543,6 +543,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasExtractedEvents': OOS.writeMisc,
   'listActiveAccessMembers': OOS.writeMisc,
   'readLiveMember': OOS.writeMisc,
+  'hasLabelledOnlyMember': OOS.writeMisc,
   'expireMemoryProposals': OOS.writeMisc,
   'attachSourcePath': OOS.writeMisc,
   'listAwaitingMemoryProposals': OOS.writeMisc,

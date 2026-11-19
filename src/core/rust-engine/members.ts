@@ -576,6 +576,7 @@ export const RUST_ENGINE_MEMBERS = {
   isFolderRestricted: 'access_control',
   listActiveAccessMembers: 'access_control',
   readLiveMember: 'access_control',
+  hasLabelledOnlyMember: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',

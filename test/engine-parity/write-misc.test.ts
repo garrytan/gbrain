@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, hasExtractedEvents, listActiveAccessMembers, readLiveMember, isFolderRestricted, expireMemoryProposals,
+ *    listSharedSkillPackRoots, getWorktreeBinding, hasExtractedEvents, listActiveAccessMembers, readLiveMember, hasLabelledOnlyMember, isFolderRestricted, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -125,6 +125,14 @@ describe('engine parity: write misc', () => {
     };
     expect(answers).toEqual({ member: null, stdio: null, token: null, oauth: null });
     return answers;
+  });
+
+  // A remote page write asks this before it resolves its writer (access/labelled-only.ts anyLabelledOnlyMember, from
+  // persistence/page-visibility.ts). A fresh brain has no member, so none carries the grant on any arm.
+  parityTest('hasLabelledOnlyMember answers no on a fresh brain', { methods: ['hasLabelledOnlyMember'] }, async (engine) => {
+    const any = await engine.hasLabelledOnlyMember();
+    expect(any).toBe(false);
+    return { any };
   });
 
   // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer
