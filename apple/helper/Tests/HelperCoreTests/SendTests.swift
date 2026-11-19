@@ -620,7 +620,7 @@ final class Harness {
         #expect(admin(h, ["action": "add_key", "name": "bad", "public_key": "abc"]).1["code"] as? String == "bad_param")
     }
 
-    @Test func aSendSeeingTheSwitchOffDuringTouchIDMakesTheOwnerRerunTheChange() {
+    @Test func aSendSeeingTheSwitchOffDuringTouchIDRefusesTheChange() {
         let h = Harness()
         h.presence.gate = DispatchSemaphore(value: 0)
         h.presence.entered = DispatchSemaphore(value: 0)
@@ -636,7 +636,7 @@ final class Harness {
         #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
         h.presence.gate?.signal()
         #expect(group.wait(timeout: .now() + 10) == .success)
-        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(reply.1["code"] as? String == "send_disabled")
         #expect(h.store.state?.keys.map(\.name) == ["box"])
         #expect(h.store.state?.enabled == false)
         #expect(h.messages.count == 0)
@@ -749,7 +749,8 @@ final class Harness {
         #expect(h.messages.count == 0)
     }
 
-    @Test func aSetupApprovedAfterTheConfigSwitchWentOffIsRefused() {
+    @Test(arguments: [true, false])
+    func aSetupApprovedAfterTheConfigSwitchWentOffIsRefused(helperHeardOff: Bool) {
         let h = Harness()
         #expect(admin(h, ["action": "off"]).0 == 200)
         h.presence.gate = DispatchSemaphore(value: 0)
@@ -763,6 +764,7 @@ final class Harness {
         }.start()
         #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         h.switchedOn = false
+        if helperHeardOff { #expect(admin(h, ["action": "off"]).0 == 200) }
         h.presence.gate?.signal()
         #expect(group.wait(timeout: .now() + 10) == .success)
         #expect(reply.1["code"] as? String == "send_disabled")

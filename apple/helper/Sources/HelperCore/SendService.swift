@@ -389,8 +389,8 @@ public final class SendService {
                 state = try locked { () throws -> SendState in
                     var current = try store.load() ?? SendState()
                     observeKill(&current)
-                    guard current == first.seen, adminSaves == first.saves else { throw Problem.overloaded }
                     guard current.enabled || !first.change.state.enabled || switchedOn() else { throw Problem.sendDisabled }
+                    guard current == first.seen, adminSaves == first.saves else { throw Problem.overloaded }
                     if first.change.save {
                         try store.save(first.change.state)
                         adminSaves += 1

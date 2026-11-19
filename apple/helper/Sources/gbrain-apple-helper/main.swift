@@ -131,8 +131,7 @@ case "send-setup":
         print("sending is off in \(configPath)")
         let port = config.port
         guard let (status, body) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 40) else {
-            print("GBrain Helper didn't answer; the config switch already stops every send")
-            exit(0)
+            fail("GBrain Helper didn't confirm within 40 seconds. The config switch stops every new send, but a text it was already handing to Messages may still go out.", code: 69)
         }
         guard status == 200 else {
             let code = ((try? JSONSerialization.jsonObject(with: Data(body))) as? [String: Any])?["code"] as? String ?? "HTTP \(status)"
@@ -153,7 +152,7 @@ case "send-key":
         guard let data, let key = String(data: data, encoding: .utf8) else { fail("could not read the public key", code: 66) }
         admin(["action": "add_key", "name": keyName, "public_key": key.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: LocalOwnerPresence.wait + 60)
     case "remove":
-        admin(["action": "remove_key", "name": keyName])
+        admin(["action": "remove_key", "name": keyName], timeout: 40)
     default:
         fail(usage, code: 64)
     }
