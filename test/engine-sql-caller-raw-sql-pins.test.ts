@@ -356,6 +356,17 @@ const PINS: Pin[] = [
           AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
         LIMIT 3`],
   },
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+  ] as const).map(([privacy, predicate]): Pin => ({
+    from: `src/core/entities/resolve.ts:552 entityReferenceCandidates named (privacy ${privacy})`,
+    case: { method: 'readNamedEntitySlugs', variant: privacy, run: e => e.readNamedEntitySlugs('default', ['companies/acme', 'orgs/acme'], privacy) },
+    texts: () => [`SELECT p.slug FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${predicate()}
+      ORDER BY p.slug LIMIT 5`],
+  })),
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

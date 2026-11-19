@@ -31,7 +31,6 @@ import { slugifySegment } from '../sync.ts';
 const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
   (await import('../mentions/siblings.ts')).siblingCanonical(...args);
 import { isMissingSchemaObject } from '../utils.ts';
-import { privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { BASENAME_DIRS, PREFIX_EXPANSION_DIRS } from './basename-dirs.ts';
 
@@ -544,17 +543,12 @@ export async function entityReferenceCandidates(
   const trimmed = raw.trim();
   const token = slugify(trimmed);
   if (!token) return [];
-  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
   const resolverPrivacy: ResolverPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
   const aliases = await aliasHitSlugs(engine, source_id, trimmed).catch(() => [] as string[]);
   const prefixed = (await findPrefixCandidates(engine, source_id, token)).map(c => c.slug);
-  const named = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${privacy}
-      ORDER BY p.slug LIMIT 5`,
-    [source_id, [...new Set([...BASENAME_DIRS.map(dir => `${dir}/${token}`), ...orgDirVariants(trimmed), ...aliases, ...prefixed])]],
-  );
-  if (named.length) return named.map(r => r.slug);
+  const named = await engine.readNamedEntitySlugs(source_id,
+    [...new Set([...BASENAME_DIRS.map(dir => `${dir}/${token}`), ...orgDirVariants(trimmed), ...aliases, ...prefixed])], resolverPrivacy);
+  if (named.length) return named;
   const near = await engine.readTrigramCandidates(source_id,
     { arm: 'near', titleLc: trimmed.toLowerCase(), slugFragment: token, privacy: resolverPrivacy },
   ).catch(err => { if (isMissingTrigramError(err)) return []; throw err; });

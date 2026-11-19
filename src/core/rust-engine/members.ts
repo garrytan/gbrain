@@ -602,6 +602,7 @@ export const RUST_ENGINE_MEMBERS = {
   readPrefixCandidates: 'pages',
   readPrefixDirs: 'pages',
   readPrefixTitleMatches: 'pages',
+  readNamedEntitySlugs: 'pages',
   readRetirementHop: 'pages',
   readEntityCardRows: 'pages',
   readExtractionLagCounts: 'pages',

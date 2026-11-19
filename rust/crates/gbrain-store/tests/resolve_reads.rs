@@ -321,3 +321,68 @@ fn the_prefix_title_read_matches_the_name_ignoring_case() {
     );
     assert!(slugs("Acme Organization").is_empty());
 }
+
+#[test]
+fn the_named_entity_read_names_live_non_retired_pages_by_slug_under_the_policy() {
+    let dir = TempDir::new("resolve-named");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/hidden-example",
+        page("person", "Hidden Example", json!({"visibility": "private"})),
+    );
+    for n in 1..=6 {
+        put(
+            &store,
+            "default",
+            &format!("people/many-{n}"),
+            page("person", &format!("Many {n}"), json!({})),
+        );
+    }
+    let slugs = strings(&[
+        "orgs/acme",
+        "companies/acme",
+        "organizations/acme",
+        "people/gone",
+        "orgs/widget",
+        "people/hidden-example",
+        "companies/acme",
+    ]);
+    assert_eq!(
+        store
+            .read_named_entity_slugs("default", &slugs, None)
+            .unwrap(),
+        strings(&["companies/acme", "orgs/acme", "people/hidden-example"])
+    );
+    let policy = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        store
+            .read_named_entity_slugs("default", &slugs, Some(&policy))
+            .unwrap(),
+        strings(&["companies/acme", "orgs/acme"])
+    );
+    let many: Vec<String> = (1..=6).rev().map(|n| format!("people/many-{n}")).collect();
+    assert_eq!(
+        store
+            .read_named_entity_slugs("default", &many, None)
+            .unwrap(),
+        strings(&[
+            "people/many-1",
+            "people/many-2",
+            "people/many-3",
+            "people/many-4",
+            "people/many-5"
+        ])
+    );
+    assert!(
+        store
+            .read_named_entity_slugs("default", &[], None)
+            .unwrap()
+            .is_empty()
+    );
+}

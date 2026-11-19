@@ -3553,6 +3553,8 @@ export interface BrainEngine {
   readPrefixDirs(sourceId: string, patterns: readonly string[]): Promise<string[]>;
   /** The resolver's live, non-retired prefix pages whose title is `title` ignoring case, at most three. */
   readPrefixTitleMatches(sourceId: string, patterns: readonly string[], title: string): Promise<PrefixTitleRow[]>;
+  /** The resolver's live, non-retired pages among `slugs` that `privacy` admits, by slug, at most five. */
+  readNamedEntitySlugs(sourceId: string, slugs: readonly string[], privacy: ResolverPrivacy): Promise<string[]>;
   /**
    * One hop of a retirement chain (entities/resolve.ts `followRetirement`): the live page at `slug`, whether it is
    * retired (`retiredPageSql`) and its trimmed `superseded_by` (else `merged_into`) target; null when no live page sits

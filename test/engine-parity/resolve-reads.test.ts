@@ -214,4 +214,30 @@ describe('engine parity: entity resolver reads', () => {
         other: [{ slug: 'orgs/widget', title: 'Widget' }],
       });
     });
+
+  parityTest('readNamedEntitySlugs names the live, non-retired pages among the slugs under the resolver privacy, by slug, at most five',
+    { methods: ['readNamedEntitySlugs'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      await engine.putPage('people/hidden-example', page('person', 'Hidden Example', { visibility: 'private' }), { sourceId: 'default' });
+      for (const n of [1, 2, 3, 4, 5, 6]) await engine.putPage(`people/many-${n}`, page('person', `Many ${n}`), { sourceId: 'default' });
+      const slugs = ['orgs/acme', 'companies/acme', 'organizations/acme', 'people/gone', 'orgs/widget', 'people/hidden-example', 'people/missing', 'companies/acme'];
+      const many = ['people/many-6', 'people/many-2', 'people/many-4', 'people/many-1', 'people/many-5', 'people/many-3'];
+      const result = {
+        none: await engine.readNamedEntitySlugs('default', slugs, 'none'),
+        caller: await engine.readNamedEntitySlugs('default', slugs, 'caller'),
+        floor: await engine.readNamedEntitySlugs('default', slugs, 'floor'),
+        other: await engine.readNamedEntitySlugs('other', ['orgs/widget', 'companies/acme'], 'none'),
+        capped: await engine.readNamedEntitySlugs('default', many, 'none'),
+        empty: await engine.readNamedEntitySlugs('default', [], 'none'),
+      };
+      expect(result).toEqual({
+        none: ['companies/acme', 'orgs/acme', 'people/hidden-example'],
+        caller: ['companies/acme', 'orgs/acme'],
+        floor: ['companies/acme', 'orgs/acme'],
+        other: ['orgs/widget'],
+        capped: ['people/many-1', 'people/many-2', 'people/many-3', 'people/many-4', 'people/many-5'],
+        empty: [],
+      });
+      return result;
+    });
 });

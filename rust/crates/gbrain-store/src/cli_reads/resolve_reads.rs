@@ -260,4 +260,33 @@ impl Store {
         }
         Ok(rows)
     }
+
+    /// `readNamedEntitySlugs(sourceId, slugs, policy)`: the live, non-retired pages among `slugs`
+    /// in the source that the page policy (when given) does not hide, by slug bytes, at most five.
+    pub fn read_named_entity_slugs(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut found = BTreeSet::new();
+        for slug in slugs {
+            if found.contains(slug) {
+                continue;
+            }
+            let Some(page) = read_page(&*read, source_id, slug)?
+                .filter(|p| p.deleted_at_us.is_none() && !retired(&p.frontmatter))
+            else {
+                continue;
+            };
+            if let Some(policy) = policy
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            found.insert(page.slug);
+        }
+        Ok(found.into_iter().take(5).collect())
+    }
 }

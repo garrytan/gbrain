@@ -149,6 +149,26 @@ impl Brain {
         self.run(env, move |s| s.read_prefix_dirs(&source_id, &patterns))
     }
 
+    /// `readNamedEntitySlugs(sourceId, slugs, policy)`: the named live, non-retired pages the
+    /// policy admits, by slug, at most five; a `null` policy reads every page.
+    #[napi]
+    pub fn read_named_entity_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(v, "readNamedEntitySlugs policy")
+                })
+                .transpose()?;
+            s.read_named_entity_slugs(&source_id, &slugs, policy.as_ref())
+        })
+    }
+
     /// `readPrefixTitleMatches(sourceId, patterns, title)`: the prefix pages titled `title`,
     /// ignoring case, at most three.
     #[napi]

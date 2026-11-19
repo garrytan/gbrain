@@ -359,3 +359,14 @@ export async function readPrefixTitleMatches(exec: LegacyUnscopedRead, sourceId:
         LIMIT 3`);
   return exec.executeRaw<PrefixTitleRow>(text, params);
 }
+
+/**
+ * The live, non-retired pages among `slugs` in the source that `privacy` admits, by slug, at most five: the named
+ * pages (basename directories, org-directory variants, aliases, prefix candidates) entityReferenceCandidates offers.
+ */
+export async function readNamedEntitySlugs(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[], privacy: ResolverPrivacy): Promise<string[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.slug FROM pages p
+      WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND NOT ${trustedSql(retiredPageSql('p'))} AND p.slug = ANY(${[...slugs]}::text[]) ${retirementPrivacySql(privacy)}
+      ORDER BY p.slug LIMIT 5`);
+  return (await exec.executeRaw<{ slug: string }>(text, params)).map(r => r.slug);
+}
