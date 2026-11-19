@@ -1665,6 +1665,31 @@ mod tests {
     }
 
     #[test]
+    fn update_slug_refuses_a_segmented_page_and_moves_nothing() {
+        let store = crate::test_support::store();
+        put(&store, "big");
+        make_shell(&store, "big");
+        let err = store.update_slug("big", "big-2", None).unwrap_err();
+        assert_eq!(err.code, crate::error::INVALID_STATE);
+        assert_eq!(
+            err.message,
+            "updateSlug refuses segmented page big (source=default)"
+        );
+        let scope = ReadScope::default();
+        assert!(store.read_page_snapshot("big", &scope).unwrap().is_some());
+        assert!(store.read_page_snapshot("big-2", &scope).unwrap().is_none());
+        assert!(
+            store
+                .get_versions("big", &VersionsOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+        // An inline page still renames.
+        put(&store, "small");
+        assert_eq!(store.update_slug("small", "small-2", None).unwrap(), 1);
+    }
+
+    #[test]
     fn create_version_refuses_a_segmented_page_and_writes_no_version() {
         let store = crate::test_support::store();
         put(&store, "big");

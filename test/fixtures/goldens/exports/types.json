@@ -6918,6 +6918,7 @@
         "members": [
           "allowedOperations?: string[] | null | undefined",
           "allowedSources?: string[] | undefined",
+          "archivedSources?: string[] | undefined",
           "attest?: { system: string; ops: string[]; sources: string[] | null; read?: \"person\" | \"scope\"; } | null | undefined",
           "boundBrainId?: string | null | undefined",
           "boundMaxConcurrent?: number | undefined",

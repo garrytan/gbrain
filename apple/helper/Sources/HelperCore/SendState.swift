@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import LocalAuthentication
 import Security
@@ -60,19 +61,28 @@ public struct SendKey: Codable, Equatable {
 
     public var rawKey: [UInt8]? { Base64URL.decode(publicKey).flatMap { $0.count == 32 ? $0 : nil } }
 
-    public var fingerprint: String { String(Recipient.hash(publicKey).prefix(8)) }
+    public var fingerprint: String { String(SHA256.hash(data: Data(publicKey.utf8)).map { String(format: "%02x", $0) }.joined().prefix(8)) }
 }
 
 public struct SendState: Codable, Equatable {
     public var enabled = false
     public var keys: [SendKey] = []
     public var limits = SendLimits()
+    public var recipientHashKey: String?
 
-    public init(enabled: Bool = false, keys: [SendKey] = [], limits: SendLimits = SendLimits()) {
+    enum CodingKeys: String, CodingKey {
+        case enabled, keys, limits
+        case recipientHashKey = "recipient_hash_key"
+    }
+
+    public init(enabled: Bool = false, keys: [SendKey] = [], limits: SendLimits = SendLimits(), recipientHashKey: String? = nil) {
         self.enabled = enabled
         self.keys = keys
         self.limits = limits
+        self.recipientHashKey = recipientHashKey
     }
+
+    public var recipientKey: [UInt8]? { recipientHashKey.flatMap(Base64URL.decode).flatMap { $0.count == 32 ? $0 : nil } }
 }
 
 public protocol SendStateStore {

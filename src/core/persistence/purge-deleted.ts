@@ -52,7 +52,7 @@ export function rebuildNote(rebuild: PurgeSelection['rebuild'], removes = false)
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { keptReason, readHeldConcepts, type RebuildKept } from './concept-rebuild.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
-import { scrubPurgedSlugHolds, scrubPurgedSlugStores } from './purge-slug-stores.ts';
+import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from './purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 import { maintenanceTransaction } from './attribution.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -198,13 +198,14 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
         return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
           async () => {
             out.reparked.push(...await parkUncarriedInPurge(tx, [row.id]));
+            const secrets = await pageSecretOccurrences(tx, [row.id]);
             const gone = await tx.executeRaw<{ source_id: string; slug: string; deleted_at: string }>(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} AND ${derivedRetirementPurgeHold('pages')} AND ${derivedOriginPurgeHold('pages')} RETURNING source_id, slug, deleted_at::text AS deleted_at`,
               [row.id, hours]);
             await expireGonePageFacts(tx, gone);
             if (gone.length > 0) {
               await scrubPurgedSlugs(tx, row.source_id, [row.slug]);
               await scrubPurgedNameStores(tx, row.source_id, [row.slug]);
-              await scrubPurgedSlugStores(tx, row.source_id, [row.slug]);
+              await scrubPurgedSlugStores(tx, row.source_id, [row.slug], { secretOccurrences: secrets.map(o => o.id) });
               await scrubPurgedSlugHolds(tx, row.source_id, [{ slug: row.slug, deletedAt: gone[0].deleted_at }]);
             }
             return gone.length > 0;
