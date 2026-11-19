@@ -203,3 +203,42 @@ fn a_write_with_an_unfinished_effect_keeps_its_whole_reservation() {
     assert_eq!(done["state"], "committed");
     assert_eq!(done["terminal_reservation"], 4096);
 }
+
+#[test]
+fn a_receipt_reads_each_effect_state_in_kind_order_or_only_the_git_effect() {
+    let dir = TempDir::new("effects-receipt");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    store
+        .insert_publication_effects(&spec(&store, &id, every_kind()))
+        .unwrap();
+    let waiting = |kind: &str| json!({ "kind": kind, "state": "queued", "error_code": null, "outcome": null, "recovering": false });
+    assert_eq!(
+        store.read_request_effect_states(&id, None).unwrap(),
+        [
+            "embedding",
+            "facts-backstop",
+            "git",
+            "links",
+            "withdrawal-mirror"
+        ]
+        .map(waiting)
+    );
+    assert_eq!(
+        store.read_request_effect_states(&id, Some("git")).unwrap(),
+        [waiting("git")]
+    );
+    assert!(
+        store
+            .read_request_effect_states(REQ, None)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .read_request_effect_states("nope", None)
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}

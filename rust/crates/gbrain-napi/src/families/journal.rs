@@ -438,6 +438,20 @@ impl Brain {
         })
     }
 
+    /// `readRequestEffects(requestId, kind)`: the request's effect states in kind order, or only
+    /// its `kind` effect.
+    #[napi]
+    pub fn read_request_effects<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        kind: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_request_effect_states(&request_id, kind.as_deref())
+        })
+    }
+
     /// `selectClaimableEffect(hostId)`: the next effect to claim; `null` (this engine claims no
     /// effect yet, so a stored effect waits).
     #[napi]

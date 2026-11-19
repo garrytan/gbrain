@@ -259,7 +259,8 @@ const RECORDED_WRITES: Array<{ args: string[]; rust: 'equal' } | { args: string[
   { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'equal' },
 ];
 // `put` records, claims, publishes and completes its request on the Rust brain as on PGLite: the store keeps the
-// publication's effects (insertPublicationEffects) and the receipt says committed.
+// publication's effects (insertPublicationEffects) and the receipt says committed. Its `write-request` receipt is then
+// read on both brains: the same, but for the effects, which the Rust brain stores and does not run yet.
 
 type State = 'equal' | 'refused' | 'queued' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
@@ -363,6 +364,20 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         const equal = got.exitCode === want.exitCode && got.member === null && same(got.json, want.json);
         table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: equal ? 'written' : member ?? `exit ${rust.exitCode}` });
         if (!equal) expect(got).toEqual(want);
+        // The write's receipt reads the same on both brains, but for its effects: PGLite ran its effect pass and
+        // settled each one; the Rust brain stores every effect and runs none yet, so each one waits queued with
+        // nothing recorded against it (rust/docs/store/persistence.md, "Publication effects").
+        const requestOf = (run: Run) => String((parseJson(run.stdout) as { request_id?: unknown } | undefined)?.request_id ?? '');
+        const [pgReceipt, rustReceipt] = await Promise.all([cli(brains.pglite, ['write-request', requestOf(pg), '--json']),
+          cli(brains.rust, ['write-request', requestOf(rust), '--json'])]);
+        type Receipt = { effects?: Array<Record<string, unknown>> } & Record<string, unknown>;
+        const pgBody = parseJson(pgReceipt.stdout) as Receipt | undefined;
+        const rustBody = parseJson(rustReceipt.stdout) as Receipt | undefined;
+        const without = (body: Receipt | undefined) => body && normalize({ ...body, effects: undefined }, []);
+        expect({ exitCode: rustReceipt.exitCode, receipt: without(rustBody), member: refusedMember(rustReceipt) })
+          .toEqual({ exitCode: pgReceipt.exitCode, receipt: without(pgBody), member: null });
+        expect(pgBody?.effects?.some((e) => e.kind === 'embedding' && e.state === 'skipped')).toBe(true);
+        expect(rustBody?.effects).toEqual([{ kind: 'embedding', state: 'queued' }]);
         return;
       }
       if (outcome === 'queued') {

@@ -152,6 +152,10 @@ order. A `gated` kind is left out while config `auto_link` or `mcp.remote_auto_l
 with the uuid syntax message; a journal id with no request row refuses `constraint_violation` (the
 foreign key), and so does an effect with no kind or no data. Nothing is stored on a refusal.
 
+`brain.readRequestEffects(requestId, kind)` resolves `{ kind, state, error_code, outcome, recovering }` for
+each stored effect of the request in kind order, or only its `kind` effect when one is named (`readRequestEffects`,
+the reads a write receipt makes). A request id that is not a uuid refuses with the uuid syntax message.
+
 No effect is claimed or run on this engine yet: `selectClaimableEffect` answers `null` (see "Effect
 scans"), so every stored kind, embedding included, waits `queued` and nothing is lost. The receipt
 names a row that exists, and the write's reservation stays charged until the effect ends.

@@ -323,6 +323,31 @@ impl crate::Store {
         effects.sort_by_key(|e| e.id);
         Ok(effects.iter().map(EffectRecord::to_row).collect())
     }
+
+    /// `readRequestEffects(requestId, kind)`: `{ kind, state, error_code, outcome, recovering }` for each
+    /// effect of the request in kind order, or only its `kind` effect when one is named. A request id that
+    /// is not a uuid refuses, as `$1::uuid` does.
+    pub fn read_request_effect_states(
+        &self,
+        request_id: &str,
+        kind: Option<&str>,
+    ) -> Result<Vec<Value>> {
+        uuid_cast(request_id)?;
+        let effects = request_effects(&*self.read()?, request_id)?;
+        Ok(effects
+            .iter()
+            .filter(|e| kind.is_none_or(|k| e.kind == k))
+            .map(|e| {
+                json!({
+                    "kind": e.kind,
+                    "state": e.state,
+                    "error_code": e.error_code,
+                    "outcome": e.outcome,
+                    "recovering": e.recovery.is_some(),
+                })
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
