@@ -116,7 +116,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits',
     'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions'],
   entity_reads: ['readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug',
-    'findFuzzyEntityCandidates', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],
+    'findFuzzyEntityCandidates', 'findExactBasenameCandidates', 'readRetirementHop', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
     'assertCycleLease'],
   minion_jobs: ['admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs'],

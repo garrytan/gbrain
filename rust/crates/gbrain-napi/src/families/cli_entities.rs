@@ -77,6 +77,30 @@ impl Brain {
         })
     }
 
+    /// `findExactBasenameCandidates(sourceId, slugs)`: at most two live slugs, in slug byte order.
+    #[napi]
+    pub fn find_exact_basename_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_exact_basename_candidates(&source_id, &slugs)
+        })
+    }
+
+    /// `readRetirementHop(sourceId, slug)`: `{ slug, type, retired, target }` or `null`.
+    #[napi]
+    pub fn read_retirement_hop<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_retirement_hop(&source_id, &slug))
+    }
+
     /// `readIgnoredPrivacyLabelPages(sourceId, { slugs } | { since })`: labelled candidate pages.
     #[napi]
     pub fn read_ignored_privacy_label_pages<'env>(

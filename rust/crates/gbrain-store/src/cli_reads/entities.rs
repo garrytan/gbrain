@@ -50,6 +50,16 @@ pub struct SiblingCandidateRow {
     pub identity: Option<String>,
 }
 
+/// `readRetirementHop` row: the live page, whether it is retired, and the page it names.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RetirementHopRow {
+    pub slug: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub retired: bool,
+    pub target: Option<String>,
+}
+
 /// `readIgnoredPrivacyLabelPages` scope: the run's own slugs, or pages updated since an ISO time.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -143,6 +153,53 @@ impl Store {
             }
         }
         Ok(None)
+    }
+
+    /// `findExactBasenameCandidates(sourceId, slugs)`: at most two of `slugs` at which a live page
+    /// sits, in slug byte order. Postgres reads them with `LIMIT 2` and no `ORDER BY`, so when more
+    /// than two match, the two it returns can differ from these.
+    pub fn find_exact_basename_candidates(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+    ) -> Result<Vec<String>> {
+        let wanted: BTreeSet<&String> = slugs.iter().collect();
+        let read = self.read()?;
+        let mut found = Vec::new();
+        for slug in wanted {
+            let page = crate::pages::read_page(&*read, source_id, slug)?;
+            if let Some(p) = page.filter(|p| p.deleted_at_us.is_none()) {
+                found.push(p.slug);
+                if found.len() == 2 {
+                    break;
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// `readRetirementHop(sourceId, slug)`: the live page at `slug`, whether it is retired
+    /// (`retiredPageSql`), and its `btrim`med `superseded_by`, else `merged_into`, target.
+    pub fn read_retirement_hop(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<RetirementHopRow>> {
+        let read = self.read()?;
+        let page = crate::pages::read_page(&*read, source_id, slug)?;
+        Ok(page.filter(|p| p.deleted_at_us.is_none()).map(|p| {
+            let target = ["superseded_by", "merged_into"].iter().find_map(|key| {
+                let text = p.frontmatter.get(*key).and_then(arrow_text)?;
+                let trimmed = text.trim_matches(' ');
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            });
+            RetirementHopRow {
+                retired: is_retired(&p),
+                slug: p.slug,
+                page_type: p.page_type,
+                target,
+            }
+        }))
     }
 
     /// `readIgnoredPrivacyLabelPages(sourceId, scope)`: the live pages of the source in the scope

@@ -5,7 +5,7 @@
  * never ran. `readExtractionLagCounts` is served by the extraction members (extraction.ts). `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), and
  * refuses for a caller whose members, grants or lineage change it.
  */
-import type { FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -33,6 +33,13 @@ export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly strin
 /** pg_trgm `similarity` and `%` as PGLite computes them (keyword/trgm.rs); the store always has the trigram functions. */
 export const findFuzzyEntityCandidates: StoreMember<[sourceId: string, title: string, fragment: string], FuzzyEntityCandidateRow[]> = (brain, sourceId, title, fragment) =>
   storeCall({ member: 'findFuzzyEntityCandidates', sourceId }, () => brain.findFuzzyEntityCandidates(sourceId, title, fragment));
+
+/** The store returns the matches in slug byte order; Postgres states no order (`LIMIT 2` with no `ORDER BY`). */
+export const findExactBasenameCandidates: StoreMember<[sourceId: string, slugs: readonly string[]], string[]> = (brain, sourceId, slugs) =>
+  storeCall({ member: 'findExactBasenameCandidates', sourceId }, () => brain.findExactBasenameCandidates(sourceId, [...slugs]));
+
+export const readRetirementHop: StoreMember<[sourceId: string, slug: string], RetirementHopRow | null> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readRetirementHop', sourceId }, () => brain.readRetirementHop(sourceId, slug));
 
 /** The store returns every live labelled page with no visibility key; the label rule itself is the TypeScript twin of the SQL. */
 export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope: { slugs: readonly string[] } | { since: string },

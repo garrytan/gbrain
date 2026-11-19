@@ -148,6 +148,7 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/effect-scans.test.ts
+test/engine-parity/entity-basename.test.ts
 test/engine-parity/entity-fuzzy.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts

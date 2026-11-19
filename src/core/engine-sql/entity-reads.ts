@@ -128,6 +128,42 @@ export async function findFuzzyEntityCandidates(exec: LegacyUnscopedRead, source
   return exec.executeRaw<FuzzyEntityCandidateRow>(FUZZY_ENTITY_CANDIDATES_SQL, [sourceId, title, fragment]);
 }
 
+/**
+ * At most two of `slugs` that hold a live page of the source, in no stated order (entities/resolve.ts
+ * `findExactBasenameCandidates`: the `<dir>/<basename>` slugs of a reference).
+ */
+export async function findExactBasenameCandidates(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<string[]> {
+  const rows = await exec.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
+        LIMIT 2`,
+    [sourceId, [...slugs]],
+  );
+  return rows.map(r => r.slug);
+}
+
+/** One hop of a retirement chain: the live page at a slug, whether it is retired, and the page it names. */
+export interface RetirementHopRow { slug: string; type: string | null; retired: boolean; target: string | null }
+
+/** `followRetirement`'s hop with its privacy slot empty (hence the space before the newline), `retiredPageSql('p')` inlined. */
+const RETIREMENT_HOP_SQL = `SELECT p.slug, p.type, (lower(COALESCE(p.frontmatter->>'canonical', '')) IN ('false', 'no')
+    OR btrim(COALESCE(p.frontmatter->>'superseded_by', '')) <> ''
+    OR btrim(COALESCE(p.frontmatter->>'merged_into', '')) <> ''
+    OR lower(COALESCE(p.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)') AS retired,
+              COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
+         FROM pages p
+        WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL 
+        LIMIT 1`;
+
+/**
+ * The live page at `slug` in the source (entities/resolve.ts `followRetirement` with no privacy fragment): its type,
+ * whether `retiredPageSql` holds, and its trimmed `superseded_by`, else `merged_into`, target; null when none.
+ */
+export async function readRetirementHop(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<RetirementHopRow | null> {
+  const [row] = await exec.executeRaw<RetirementHopRow>(RETIREMENT_HOP_SQL, [sourceId, slug]);
+  return row ?? null;
+}
+
 export interface ExtractionLagQuery {
   sourceId?: string;
   versionTs: string;

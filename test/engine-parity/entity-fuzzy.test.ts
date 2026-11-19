@@ -86,8 +86,8 @@ describe('engine parity: the fuzzy entity lookup', () => {
       return result;
     });
 
-  // A reference with a folder skips the exact-basename tier, which reads through executeRaw (a separate Rust wall),
-  // and goes straight to the fuzzy tier as `resolveRememberEntity` sends it there.
+  // A reference with a folder skips the exact-basename tier (entity-basename.test.ts) and goes straight to the
+  // fuzzy tier as `resolveRememberEntity` sends it there.
   parityTest('resolveEntitySlugWithSource takes the one same-name fuzzy candidate and falls back on two',
     { methods: ['findFuzzyEntityCandidates'] }, async (engine, backend) => {
       await seed(engine, backend);

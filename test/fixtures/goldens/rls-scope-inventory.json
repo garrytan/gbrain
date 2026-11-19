@@ -717,6 +717,17 @@
           "src-a"
         ]
       },
+      "findExactBasenameCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "findExactSlug#any": {
         "flagOffLanes": [
           "pool"
@@ -3586,6 +3597,17 @@
         ],
         "flagOnScopes": []
       },
+      "readRetirementHop#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
@@ -4983,6 +5005,7 @@
         "findCodeRefChunks": "none",
         "findDuplicatePage": "direct",
         "findDuplicatePages": "direct",
+        "findExactBasenameCandidates": "none",
         "findExactSlug": "none",
         "findFuzzyEntityCandidates": "none",
         "findOntologyConflicts": "none",
@@ -5419,6 +5442,7 @@
         "readReceiptBudget": "none",
         "readRemoteForgetTier": "none",
         "readRequestEffects": "none",
+        "readRetirementHop": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",
         "readSegmentDerivations": "none",

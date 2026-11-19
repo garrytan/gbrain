@@ -55,7 +55,7 @@ import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, Retire
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
+import type { ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -3609,6 +3609,10 @@ export interface BrainEngine {
    * contains `fragment`, scored by the greater pg_trgm similarity, best first then by slug (the fuzzy entity lookup).
    */
   findFuzzyEntityCandidates(sourceId: string, title: string, fragment: string): Promise<FuzzyEntityCandidateRow[]>;
+  /** At most two of `slugs` holding a live page of the source (the exact-basename step of entity resolution). */
+  findExactBasenameCandidates(sourceId: string, slugs: readonly string[]): Promise<string[]>;
+  /** The live page at `slug`: its type, whether it is retired (`retiredPageSql`) and its trimmed `superseded_by`, else `merged_into`, target. */
+  readRetirementHop(sourceId: string, slug: string): Promise<RetirementHopRow | null>;
   /** The link-extraction lag row (`extractionLagStatement`) under a `timeoutMs` bound (default 10 s; PGLite ignores it). */
   readExtractionLagCounts(q: ExtractionLagQuery): Promise<ExtractionLagCounts | undefined>;
   /**

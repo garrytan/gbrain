@@ -81,6 +81,15 @@ describe('facts write-path failures (B-21)', () => {
     await expect(resolveEntitySlugWithSource(broken, 'default', 'people/alice-example')).rejects.toThrow('connection reset');
   });
 
+  test('an exact-basename or retirement-hop lookup error is not a fallback slug', async () => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice.' });
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'Alice Example')).toEqual({ slug: 'people/alice-example', source: 'fuzzy_match' });
+    for (const member of ['findExactBasenameCandidates', 'readRetirementHop'] as const) {
+      const broken = failingMember(member, new Error(`${member} connection reset`));
+      await expect(resolveEntitySlugWithSource(broken, 'default', 'Alice Example')).rejects.toThrow(`${member} connection reset`);
+    }
+  });
+
   test('a fuzzy lookup error is not a fallback slug, but a missing pg_trgm still degrades', async () => {
     const broken = failingMember('findFuzzyEntityCandidates', new Error('connection reset'));
     await expect(resolveEntitySlugWithSource(broken, 'default', 'Alice Example')).rejects.toThrow('connection reset');

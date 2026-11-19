@@ -22,6 +22,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { RetirementHopRow } from '../engine-sql/entity-reads.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { slugifySegment } from '../sync.ts';
@@ -243,14 +244,17 @@ export async function followRetirement(
   let current: string | null = slug;
   while (current && !seen.has(current) && seen.size <= MAX_RETIREMENT_HOPS) {
     seen.add(current);
-    const [row]: Array<{ slug: string; type: string | null; retired: boolean; target: string | null }> = await engine.executeRaw(
-      `SELECT p.slug, p.type, ${retiredPageSql('p')} AS retired,
+    // With no privacy fragment the hop is the typed member (the Rust engine has no SQL); a fragment keeps the raw read.
+    const [row]: Array<RetirementHopRow | null> = privacy === ''
+      ? [await engine.readRetirementHop(source_id, current)]
+      : await engine.executeRaw<RetirementHopRow>(
+        `SELECT p.slug, p.type, ${retiredPageSql('p')} AS retired,
               COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
          FROM pages p
         WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${privacy}
         LIMIT 1`,
-      [source_id, current],
-    );
+        [source_id, current],
+      );
     if (!row) return null;
     if (!row.retired) return { slug: row.slug, type: row.type };
     current = row.target ? redirectSlug(row.target) : null;
@@ -361,18 +365,8 @@ async function findExactBasenameCandidates(
 ): Promise<Array<{ slug: string }>> {
   const token = slugify(raw);
   if (raw.includes('/') || !token.includes('-')) return [];
-  let rows: Array<{ slug: string }>;
-  try {
-    rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
-        LIMIT 2`,
-      [source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`)],
-    );
-  } catch {
-    return [];
-  }
-  return canonicalPages(engine, source_id, rows.map(r => r.slug));
+  const slugs = await engine.findExactBasenameCandidates(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`));
+  return canonicalPages(engine, source_id, slugs);
 }
 
 /**
