@@ -412,6 +412,26 @@ fn entity_card_rows_match_the_title_slugs_and_like_pattern() {
     let body = rows[0].compiled_truth.as_deref().unwrap();
     assert_eq!(body.chars().count(), 65_536);
     assert_eq!(rows[0].last_retrieved_at, None);
+    // A recorded retrieval (`bumpPageRetrievals`) shows on the card row as an ISO time.
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "person", "title": "Read", "compiled_truth": "Read."}),
+    )
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+    let read = store.put_page("people/read", &input, &opts).unwrap();
+    let id = read["id"].as_i64().unwrap();
+    assert_eq!(store.bump_page_retrievals(&[id]).unwrap(), 1);
+    let rows = store
+        .read_entity_card_rows(
+            "default",
+            &EntityCardMatch::Slugs {
+                slugs: vec!["people/read".into()],
+            },
+            None,
+        )
+        .unwrap();
+    let at = rows[0].last_retrieved_at.as_deref().unwrap();
+    assert!(at.ends_with('Z') && at.len() > 20, "{at}");
     assert!(
         store
             .read_entity_card_rows(

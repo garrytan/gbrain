@@ -40,6 +40,8 @@ with `callerReaders`; it refuses a caller whose policy the store does not model)
 
 A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
 last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`.
+The entity card rows (`readEntityCardRows`, `cli_reads/entities.rs`) read the same record as
+`last_retrieved_at`, so `gbrain entity` shows `last_touched.last_retrieved_at` after a search.
 
 ## Retrieval records
 

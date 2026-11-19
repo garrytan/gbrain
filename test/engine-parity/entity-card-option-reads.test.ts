@@ -26,6 +26,12 @@
  *  - Regression: the Rust arm refused the read (raw SQL), so the card's `referenced_by` failed open to empty on a Rust
  *    brain and `gbrain entity --json` differed from PGLite.
  *  - Why existing coverage misses it: no parity case reads the referrer groups; mentions tests run PGLite only.
+ *  - Contract: a search records when it surfaced each page (last-retrieved.ts bumpLastRetrievedAt), and the entity card
+ *    shows that time as `last_touched.last_retrieved_at` (readEntityCardRows); a page no search surfaced shows null.
+ *  - Regression: the Rust arm's readEntityCardRows always answered null, so after a search `gbrain entity --json` showed
+ *    a never-retrieved card on a Rust brain and differed from PGLite and Postgres (rust-cli-parity.serial.test.ts).
+ *  - Why existing coverage misses it: pages.test.ts reads the retrieval through the samplers only; the CLI census uses a
+ *    fresh brain per command, so no search runs before the card.
  *  - Seam: none. Real engines, typed methods only.
  */
 import { describe, expect } from 'bun:test';
@@ -35,6 +41,10 @@ import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { TERMINAL_AUDIT_SOURCE } from '../../src/core/facts/audit-sources.ts';
 import { readReferrerGroups, type ReferrerScope } from '../../src/core/mentions/referrers.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import { operations } from '../../src/core/operations.ts';
+import { awaitPendingLastRetrievedWrites } from '../../src/core/last-retrieved.ts';
+import { chunk, seedPage } from './chunk-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -281,6 +291,36 @@ describe('engine parity: the entity card referrer groups', () => {
       expect(out.local.groups[1]!.rows[1]).toMatchObject({ slug: 'meetings/standup', type: 'call', canonical_type: 'meeting',
         date: '2026-02-01T00:00:00.000000Z', date_source: 'event_date' });
       expect(out.local.groups[2]!.rows[0]).toMatchObject({ preview: 'Alice works with Acme on the platform.', trust_tier: 'operator_curated' });
+      return out;
+    },
+  );
+});
+
+describe('engine parity: the entity card last_touched after a search', () => {
+  parityTest(
+    'a search then the entity card on one brain shows the retrieval time of the surfaced page and null for a page no search surfaced',
+    { methods: ['putPage', 'sealChunks', 'searchKeyword', 'bumpPageRetrievals', 'readEntityCardRows'] },
+    async (engine: BrainEngine) => {
+      // Sealed chunks, so the search serves the pages (chunk-fixtures.ts).
+      const person = (slug: string, title: string, text: string) =>
+        seedPage(engine, { slug, input: page(title, { type: 'person', compiled_truth: text }), chunks: [chunk(0, text)] });
+      await person(ALICE, 'Alice Example', 'Alice Example runs the zephyr rollout.');
+      await person('people/bob-example', 'Bob Example', 'Bob Example writes the docs.');
+      const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+        logger: { info() {}, warn() {}, error() {} }, emitNotice() {} } as unknown as OperationContext;
+      const op = (name: string) => operations.find(o => o.name === name)!;
+      const hits = await op('search').handler(ctx, { query: 'zephyr rollout' }) as Array<{ slug: string }>;
+      expect((await awaitPendingLastRetrievedWrites()).outcome).toBe('drained');
+      const touched = async (name: string) => {
+        const r = await op('entity').handler(ctx, { name }) as { card?: { last_touched: { updated_at: string; last_retrieved_at: string | null; last_timeline_date: string | null } } };
+        const t = r.card!.last_touched;
+        return { retrieved: t.last_retrieved_at === null ? null : typeof t.last_retrieved_at,
+          retrievedAfterWrite: t.last_retrieved_at === null ? null : Date.parse(t.last_retrieved_at) >= Date.parse(t.updated_at),
+          timeline: t.last_timeline_date };
+      };
+      const out = { hits: hits.map(h => h.slug), alice: await touched('Alice Example'), bob: await touched('Bob Example') };
+      expect(out).toEqual({ hits: [ALICE], alice: { retrieved: 'string', retrievedAfterWrite: true, timeline: null },
+        bob: { retrieved: null, retrievedAfterWrite: null, timeline: null } });
       return out;
     },
   );

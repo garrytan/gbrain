@@ -118,8 +118,8 @@ pub enum EntityCardMatch {
 }
 
 /// One entity-card candidate row (`readEntityCardRows`). `compiled_truth` is the bounded body
-/// prefix, `left(coalesce(compiled_truth, truth_lead), 65536)`. `last_retrieved_at` is always
-/// NULL: the store records no retrievals.
+/// prefix, `left(coalesce(compiled_truth, truth_lead), 65536)`. `last_retrieved_at` is the page's
+/// retrieval record (`page_ops/retrievals.rs`, the `page_retrievals` LEFT JOIN), NULL when none.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EntityCardRow {
     pub slug: String,
@@ -351,7 +351,7 @@ impl Store {
                         .map_or(b.clone(), |(at, _)| b[..at].to_string())
                 }),
                 updated_at: iso(p.updated_at_us),
-                last_retrieved_at: None,
+                last_retrieved_at: crate::page_ops::last_retrieved_us(&*read, p.id)?.map(iso),
                 frontmatter: Value::Object(p.frontmatter.clone()),
                 slug: p.slug,
                 source_id: p.source_id,
