@@ -17,6 +17,14 @@ type Raw = Pick<BrainEngine, 'executeRaw'>;
 /** The four write-history tables, in the order the refusal names them. */
 export const ENGINE_MIGRATION_HISTORY_TABLES = ['belief_events', 'persistence_requests', 'fact_withdrawals', 'persistence_worktrees'] as const;
 
+/** One constant statement per history table: whether it holds any row. */
+const HISTORY_EXISTS_SQL = {
+  belief_events: 'SELECT EXISTS(SELECT 1 FROM belief_events) AS present',
+  persistence_requests: 'SELECT EXISTS(SELECT 1 FROM persistence_requests) AS present',
+  fact_withdrawals: 'SELECT EXISTS(SELECT 1 FROM fact_withdrawals) AS present',
+  persistence_worktrees: 'SELECT EXISTS(SELECT 1 FROM persistence_worktrees) AS present',
+} as const;
+
 /** What `readEngineMigrationHistory` answers. */
 export interface EngineMigrationHistory {
   /** The history tables (of `ENGINE_MIGRATION_HISTORY_TABLES`, in that order) that hold at least one row. */
@@ -35,7 +43,7 @@ export async function readEngineMigrationHistory(exec: Raw): Promise<EngineMigra
   const held: string[] = [];
   for (const table of ENGINE_MIGRATION_HISTORY_TABLES) {
     if (!present.some(row => row.name === table)) continue;
-    const [row] = await exec.executeRaw<{ present: boolean }>(`SELECT EXISTS(SELECT 1 FROM ${table}) AS present`);
+    const [row] = await exec.executeRaw<{ present: boolean }>(HISTORY_EXISTS_SQL[table]);
     if (row?.present) held.push(table);
   }
   const [versions] = await exec.executeRaw<{ n: number | null }>(
@@ -55,8 +63,20 @@ export const MIGRATION_SOURCE_COLUMNS = [
   'contextual_retrieval_mode', 'trust_frontmatter_overrides', 'newest_content_at', 'created_at',
 ] as const;
 
-/** Columns read as text: a vector parses into `vector` and `halfvec` alike, JSON into `jsonb`. */
-const TEXT_CAST: Partial<Record<MigrationTable, string>> = { facts: 'embedding', open_loops: 'evidence' };
+const TEXT_COLUMN = '__gbrain_migration_text';
+
+/**
+ * The whole-table reads, one constant statement each. `t.*` keeps the schema's own column set, so an older source
+ * schema still copies; where the table has a column read as text (a vector parses into `vector` and `halfvec` alike,
+ * JSON into `jsonb`), `withText` also returns it as `TEXT_COLUMN`, which replaces the column in each row.
+ */
+const ROWS_SQL = {
+  facts: { column: 'embedding', plain: 'SELECT t.* FROM facts t ORDER BY id',
+    withText: 'SELECT t.*, t.embedding::text AS __gbrain_migration_text FROM facts t ORDER BY id' },
+  open_loops: { column: 'evidence', plain: 'SELECT t.* FROM open_loops t ORDER BY id',
+    withText: 'SELECT t.*, t.evidence::text AS __gbrain_migration_text FROM open_loops t ORDER BY id' },
+  loop_suppressions: { column: null, plain: 'SELECT t.* FROM loop_suppressions t ORDER BY id', withText: null },
+} as const;
 
 /**
  * Every row of `table` by id (`sources`: `default` first, then by id), or null when the schema has no such table.
@@ -78,9 +98,15 @@ export async function readMigrationRows(exec: Raw, table: MigrationTable): Promi
       WHERE table_schema = current_schema() AND table_name = $1
       ORDER BY ordinal_position`, [table])).map(r => r.column_name);
   if (columns.length === 0) return null;
-  const cast = TEXT_CAST[table];
-  const rows = await exec.executeRaw<Record<string, unknown>>(
-    `SELECT ${columns.map(c => (c === cast ? `${c}::text AS ${c}` : `"${c}"`)).join(', ')} FROM ${table} ORDER BY id`);
+  const read = ROWS_SQL[table];
+  if (read.column === null || read.withText === null || !columns.includes(read.column)) {
+    return { columns, rows: await exec.executeRaw<Record<string, unknown>>(read.plain) };
+  }
+  const column = read.column;
+  const rows = (await exec.executeRaw<Record<string, unknown>>(read.withText)).map(row => {
+    const { [TEXT_COLUMN]: text, ...rest } = row;
+    return { ...rest, [column]: text };
+  });
   return { columns, rows };
 }
 

@@ -21,7 +21,7 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { createEngine } from '../../src/core/engine-factory.ts';
 import { runMigrateEngine } from '../../src/commands/migrate-engine.ts';
 import { loadConfigFileOnly, saveConfig } from '../../src/core/config.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../../src/core/cli-force-exit.ts';
@@ -62,7 +62,8 @@ async function seed(engine: BrainEngine, backend: Parameters<typeof createSource
 
 /** The target brain's rows the copy owns, with generated values reduced to relations. */
 async function dumpTarget(path: string) {
-  const target = new PGLiteEngine();
+  // The factory migrate itself opens the target with; the finally below closes it, so no engine outlives the dump.
+  const target = await createEngine({ engine: 'pglite', database_path: path });
   await target.connect({ engine: 'pglite', database_path: path });
   try {
     const q = <T,>(sql: string) => target.executeRaw<T>(sql);
