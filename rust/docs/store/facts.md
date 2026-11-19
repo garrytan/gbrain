@@ -175,8 +175,8 @@ then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
 - `remove_source_rows` (`cascade::remove_source_rows`): deletes every fact of a deleted
   source, as `facts_source_id_fkey ... ON DELETE CASCADE` does.
 - `rename_slug_rows` (`cascade::rename_slug_rows`): the facts half of PGLite's
-  `moveSlugBindings`, in its order. The fact-withdrawal move has nothing to move: only
-  `executeRaw` writes `fact_withdrawals`, and the Rust engine refuses it. Then the ontology
+  `moveSlugBindings`, in its order. It first moves the `fact_withdrawals` of the old subject to the new one
+  (`trust::withdrawals::move_subject_in`; a withdrawal the new slug already has keeps its time). Then the ontology
   duplicates of the entity move are dropped, `entity_slug` moves, the rows at the new page
   whose `row_num` the old page holds are deleted, the ontology duplicates of the page move are
   dropped, and `source_markdown_slug` moves.
@@ -204,8 +204,9 @@ reads refuse their `hasAttempts: true` form.
 - With no attempts table nothing was tried or paid, so the served unlinked reads return
   `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,
   and only the `relink` fix targets rows.
-- `countFactEmbeddingCoverage` treats `fact_withdrawals` as empty (the same stance as
-  "Lookups and hooks"): the Rust engine refuses `executeRaw`, the only writer of a withdrawal.
+- `countFactEmbeddingCoverage` leaves out a fact a withdrawal covers, as `eligibleFactEmbedding` does (the row's
+  source and visibility, either fingerprint, subject `*` or the row's entity, or only the page's own slug on a member
+  page). Unlike the write-time guard it gives an unbacked name key no extra subjects.
   A fact is `partial` when its text is over 8000 UTF-16 units and the row is not stale.
 - The window reads sort by `created_at DESC` then `id DESC`; PGLite leaves a tie in
   `created_at` unordered. Rows come sorted by source id (and origin or slug) where PGLite's

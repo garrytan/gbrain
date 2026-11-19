@@ -300,3 +300,37 @@ fn a_true_up_listing_counts_a_queued_effect_as_unfinished_work() {
     assert_eq!(rows[0]["effect_bytes"], json!("1035"), "{rows:?}");
     assert_eq!(rows[0]["unfinished"], json!(true), "{rows:?}");
 }
+
+#[test]
+fn an_effect_naming_a_worktree_refuses_but_a_duplicate_or_gated_one_does_not() {
+    let dir = TempDir::new("effects-worktree");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let named = |effects: Value| {
+        let mut s = spec(&store, &id, effects);
+        s.worktree_id = Some("11111111-1111-4111-8111-111111111111".into());
+        s
+    };
+    let err = store
+        .insert_publication_effects(&named(json!([{ "kind": "embedding", "data": {} }])))
+        .unwrap_err();
+    assert!(
+        err.message.contains("persistence_effects_worktree_id_fkey"),
+        "{err:?}"
+    );
+    assert!(store.read_request_effects(&id).unwrap().is_empty());
+    // an effect already stored is skipped before the worktree matters
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    assert!(
+        store
+            .insert_publication_effects(&named(json!([{ "kind": "embedding", "data": {} }])))
+            .unwrap()
+            .is_empty()
+    );
+}

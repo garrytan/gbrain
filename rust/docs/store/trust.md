@@ -55,8 +55,8 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
 hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting a source removes its rows (the table's
-`ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename does not move them; the rename callers call
-`moveFactWithdrawalSubject`.
+`ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename (`updateSlug`) moves them in its own
+transaction (`move_subject_in`, the same move `moveFactWithdrawalSubject` makes).
 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |

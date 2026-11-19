@@ -278,6 +278,11 @@ pub(crate) fn insert_publication_effects_in(
         if get_json::<EffectRecord>(&*tx, &key)?.is_some() {
             continue;
         }
+        if spec.worktree_id.is_some() {
+            return Err(violation(
+                "insert or update on table \"persistence_effects\" violates foreign key constraint \"persistence_effects_worktree_id_fkey\": no persistence worktree exists on this engine",
+            ));
+        }
         next_id += 1;
         let record = EffectRecord {
             id: next_id,
