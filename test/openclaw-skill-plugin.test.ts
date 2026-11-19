@@ -170,7 +170,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     const copy = join(b.root, 'capture');
     mkdirSync(copy);
     writeFileSync(join(copy, 'index.js'), readFileSync(join(pluginDir(b), 'index.js'), 'utf8'));
-    const script = "import(process.argv[1]).then((m) => { m.default.register({ on() {} }); setTimeout(() => process.exit(0), 1500); });";
+    const script = "import(process.argv[1]).then((m) => { m.default.register({ on() {} }); setTimeout(() => process.exit(0), 1500) });";
     const r = Bun.spawnSync([NODE!, '--input-type', 'module', '-e', script, join(copy, 'index.js')], { env: { PATH: b.env.PATH!, HOME: b.home }, stdout: 'pipe', stderr: 'pipe', timeout: 30_000 });
     expect(r.exitCode, r.stderr.toString()).toBe(0);
     const dir = join(gbrainHome(b), 'skill-index', 'logs');
