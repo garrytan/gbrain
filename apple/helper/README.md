@@ -197,7 +197,7 @@ The request was over 8 KB, or a send's body over 32 KB.
 
 ### overloaded
 
-Four requests were already running. Retry after the `Retry-After` seconds.
+Four requests were already running. Retry after the `Retry-After` seconds. From `POST /v1/admin/send`, it can also mean another settings change landed while a Touch ID dialog was open, so nothing was applied; run the command again.
 
 ### no_access
 
