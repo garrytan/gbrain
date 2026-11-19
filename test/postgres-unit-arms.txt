@@ -205,6 +205,7 @@ test/engine-parity/typed-config-reads.test.ts
 test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/wanted-markers.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
 test/engine-sql-fact-relink-attempts.test.ts

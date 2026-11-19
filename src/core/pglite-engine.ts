@@ -1709,6 +1709,38 @@ export class PGLiteEngine implements BrainEngine {
     return notifierImpl.hasNotifierCoverage(this.engineSql);
   }
 
+  async upsertWantedMarker(marker: notifierImpl.WantedMarkerInput): Promise<notifierImpl.WantedMarker | null> {
+    return notifierImpl.upsertWantedMarker(this.engineSql, marker);
+  }
+
+  async attachWantedMarkerJob(sourceId: string, intent: notifierImpl.MarkerIntent, generation: number, jobId: number): Promise<void> {
+    return notifierImpl.attachWantedMarkerJob(this.engineSql, sourceId, intent, generation, jobId);
+  }
+
+  async readWantedMarkers(sourceIds: string[] | null): Promise<notifierImpl.WantedMarker[]> {
+    return notifierImpl.readWantedMarkers(this.engineSql, sourceIds);
+  }
+
+  async readDueWantedMarkers(sourceIds: string[] | null): Promise<notifierImpl.WantedMarker[]> {
+    return notifierImpl.readDueWantedMarkers(this.engineSql, sourceIds);
+  }
+
+  async pruneSatisfiedWantedMarkers(sourceIds: string[]): Promise<void> {
+    return notifierImpl.pruneSatisfiedWantedMarkers(this.engineSql, sourceIds);
+  }
+
+  async clearWantedMarker(sourceId: string, intent: notifierImpl.MarkerIntent, generation: number): Promise<boolean> {
+    return notifierImpl.clearWantedMarker(this.engineSql, sourceId, intent, generation);
+  }
+
+  async settleFreshnessMarker(sourceId: string, generation: number, checkoutHead: string | null): Promise<void> {
+    return notifierImpl.settleFreshnessMarker(this.engineSql, sourceId, generation, checkoutHead);
+  }
+
+  async listSourceWantedMarkers(sourceId: string): Promise<notifierImpl.PendingWantedMarker[]> {
+    return notifierImpl.listSourceWantedMarkers(this.engineSql, sourceId);
+  }
+
   async listSourceLocalPaths(): Promise<string[]> {
     return sourcesImpl.listSourceLocalPaths(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the filesystem lock read it through executeRaw)'));
   }

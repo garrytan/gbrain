@@ -111,6 +111,17 @@
         ],
         "flagOnScopes": []
       },
+      "attachWantedMarkerJob#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "batchLoadEmotionalInputs#default": {
         "flagOffLanes": [
           "pool"
@@ -189,6 +200,17 @@
         "flagOnScopes": []
       },
       "clearCodeTraversalCache#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "clearWantedMarker#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2796,6 +2818,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceWantedMarkers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listStaleChunks#default": {
         "flagOffLanes": [
           "pool"
@@ -3128,6 +3161,17 @@
         ],
         "flagOnScopes": []
       },
+      "pruneSatisfiedWantedMarkers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "purgeDeletedPages#default": {
         "flagOffLanes": [
           "tx"
@@ -3264,6 +3308,28 @@
         "flagOnScopes": []
       },
       "readCapacityForecastInputs#light": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readDueWantedMarkers#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readDueWantedMarkers#ids": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3726,6 +3792,28 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readWantedMarkers#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWantedMarkers#ids": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -4388,6 +4476,17 @@
         ],
         "flagOnScopes": []
       },
+      "settleFreshnessMarker#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "softDeletePage#default": {
         "flagOffLanes": [
           "pool"
@@ -4772,6 +4871,17 @@
         ],
         "flagOnScopes": []
       },
+      "upsertWantedMarker#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "writeContradictionsRun#default": {
         "flagOffLanes": [
           "pool"
@@ -4871,6 +4981,7 @@
         "applyTransactionSettings": "none",
         "assertCycleLease": "none",
         "attachSourcePath": "none",
+        "attachWantedMarkerJob": "none",
         "autocommitSql": "none",
         "backfillSearchVectors": "none",
         "batchLoadEmotionalInputs": "none",
@@ -4886,6 +4997,7 @@
         "claimWakeForgets": "none",
         "claimWakeWatch": "none",
         "clearCodeTraversalCache": "none",
+        "clearWantedMarker": "none",
         "cliReads": "none",
         "closeOpenLoop": "none",
         "closedLoopWithActiveFact": "none",
@@ -5223,6 +5335,7 @@
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",
+        "listSourceWantedMarkers": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
         "listStalePagesForExtraction": "direct",
@@ -5321,6 +5434,7 @@
         "pruneFrontmatterTags": "none",
         "pruneJobs": "none",
         "pruneMcpRequestLogBatch": "none",
+        "pruneSatisfiedWantedMarkers": "none",
         "purgeDeletedPages": "none",
         "purgeMemoryProposals": "none",
         "putCodeTraversalCache": "none",
@@ -5347,6 +5461,7 @@
         "readCursorEdition": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
+        "readDueWantedMarkers": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingIdentity": "none",
         "readEmbeddingStateCounts": "direct",
@@ -5427,6 +5542,7 @@
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",
         "readWakeDoctor": "none",
+        "readWantedMarkers": "none",
         "readWedgeSignals": "none",
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
@@ -5508,6 +5624,7 @@
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
         "setSourceChunkerVersion": "none",
+        "settleFreshnessMarker": "none",
         "settleSpendReservation": "none",
         "settleWakeForget": "none",
         "settleWakeWatch": "none",
@@ -5558,6 +5675,7 @@
         "upsertOpenLoop": "none",
         "upsertPageWriteGateReceipt": "none",
         "upsertSegmentDerivations": "none",
+        "upsertWantedMarker": "none",
         "upsertWriteGateHold": "none",
         "upsertWriteGateReceipt": "none",
         "vectorIterativeScanSupported": "none",

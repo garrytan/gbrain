@@ -116,9 +116,11 @@ The resident commit notifier's host lease, host source list, per-source rows and
 (`src/core/engine-sql/notifier.ts`; `notifier/store.ts` `claimLease`, `readLease`, `holdsLease`,
 `releaseLease`, `readNotifierSources`, `writeState`, `writeCoverage` and `recordSyncerHost`;
 `notifier/resident.ts` `listHostSources`; `notifier/status.ts` `readSourceFreshness` and the
-`gbrain sync status` notifier block). With these typed, a resident on this engine starts the
-notifier and records each source's state and coverage, and search reports each source's freshness,
-as on Postgres.
+`gbrain sync status` notifier block), and its wanted markers (`notifier/store.ts` `upsertMarker`,
+`attachMarkerJob`, `readMarkers`, `readDueMarkers`, `pruneSatisfiedMarkers`, `clearMarker` and
+`settleMarkers`). With these typed, a resident on this engine starts the notifier and records each
+source's state and coverage, a sync request records its marker, and search reports each source's
+freshness, as on Postgres.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -131,11 +133,20 @@ as on Postgres.
 | `brain.writeNotifierState(sourceId, { state, reason, firstDue, attempts, nextRetryInMs, progress, errorGiven, error })` | one write. A first write makes the row (`first_due_at` only for `firstDue: 'keep'`, `attempts` 0 when not given); a later one keeps `first_due_at` (set when null) unless `'clear'`, keeps `attempts` and `last_progress_at` unless given, and replaces the error fields only when `errorGiven`. Nothing for a source that does not exist. `invalid_argument` for a state or number outside the Postgres CHECK and `int` range | `writeNotifierState` |
 | `brain.writeNotifierCoverage(sourceId, { head, mode, ownerHostId, ownerKind, ownerPid })` | one write: the observed head, the detection mode and the owner, each with now as its time. Nothing for a source that does not exist | `writeNotifierCoverage` |
 | `brain.recordNotifierSyncerHost(sourceId, hostId)` | one write that records the host when it changed; the same host, or a source that does not exist, writes nothing | `recordNotifierSyncerHost` |
-| `brain.readNotifierStatusRows(ids \| null)` | each listed source (every source when `null`) that is not archived, in id order, at most 200, with its row (null fields when it has none), `lease_live` (the owner host's lease has not expired) and `lease_expires_at`. `last_commit` is `null` and `due_markers` is 0: this engine keeps no source `last_commit` and no due marker yet | `readNotifierStatusRows` |
+| `brain.readNotifierStatusRows(ids \| null)` | each listed source (every source when `null`) that is not archived, in id order, at most 200, with its row (null fields when it has none), `lease_live` (the owner host's lease has not expired) and `lease_expires_at`. `last_commit` is `null` (this engine keeps no source `last_commit`) and `due_markers` counts the source's due wanted markers | `readNotifierStatusRows` |
 | `brain.hasNotifierCoverage()` | `true` when some source's row has an observed time | `hasNotifierCoverage` |
+| `brain.upsertWantedMarker({ sourceId, intent, wantedHead, requestedBy, jobId })` | one write. A first upsert makes the marker at generation 1 with `first_due_at` now; a later one bumps the generation, takes the new `wanted_head` and requester, keeps `job_id` when none is given, and keeps `first_due_at` unless the source was re-created. The marker `{ source_id, intent, wanted_head, generation, first_due_at, updated_at, requested_by, job_id }`, or `null` for a source that does not exist. `invalid_argument` for an intent other than `freshness`, `pull` or `full` | `upsertWantedMarker` |
+| `brain.attachWantedMarkerJob(sourceId, intent, generation, jobId)` | sets the job id only while the marker is still at `generation`, in one write | `attachWantedMarkerJob` |
+| `brain.readWantedMarkers(ids \| null)` | the markers of the listed sources (every source when `null`), ordered by `first_due_at`, source id and intent, at most 1000 | `readWantedMarkers` |
+| `brain.readDueWantedMarkers(ids \| null)` | the same read, limited to sources that exist. Every such marker is due: with no source `last_commit`, a freshness marker that names a head never matches it, as on Postgres with a null `last_commit` | `readDueWantedMarkers` |
+| `brain.pruneSatisfiedWantedMarkers(ids)` | writes nothing: a marker is satisfied only when its head equals the source's `last_commit`, which this engine does not keep | `pruneSatisfiedWantedMarkers` |
+| `brain.clearWantedMarker(sourceId, intent, generation)` | deletes the marker only at `generation`, in one write; `true` when it deleted one | `clearWantedMarker` |
+| `brain.settleFreshnessMarker(sourceId, generation, checkoutHead)` | deletes the source's freshness marker only at `generation` and only when its `wanted_head` is null, in one write | `settleFreshnessMarker` |
+| `brain.listSourceWantedMarkers(sourceId)` | the source's markers `{ intent, wanted_head, first_due_at, requested_by }`, ordered by `first_due_at` and intent, for the `gbrain sync status` notifier block | `listSourceWantedMarkers` |
 
-The notifier's due markers and the drain lease still refuse with `engine_capability_missing`;
-the notifier logs each refusal once and keeps running. A source delete removes its notifier row.
+The drain lease still refuses with `engine_capability_missing`; the notifier logs the refusal once
+and keeps running. A source delete removes its notifier row and its wanted markers. A freshness
+marker that names a head stays due on this engine until a drain clears it by generation.
 
 ## Effect scans
 

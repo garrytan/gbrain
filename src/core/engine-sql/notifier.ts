@@ -16,12 +16,41 @@
  * - The status rows (readNotifierStatusRows): each source that is not archived, with its notifier row, whether the
  *   owner host's lease is live, and how many wanted markers are still due. The freshness notice and the sync status
  *   notifier block read them.
+ * - Wanted markers (`sync_wanted_markers`): one row per source and intent class, written only for a source that exists.
+ *   An upsert bumps `generation` and keeps `first_due_at` unless the source was re-created; a drainer deletes a row only
+ *   at the generation it read (clearWantedMarker, settleFreshnessMarker). A freshness marker is due while its
+ *   wanted_head is null or differs from the source's last_commit; pull and full markers are due until a run clears them.
+ *   notifier/store.ts (upsertMarker, attachMarkerJob, readMarkers, readDueMarkers, pruneSatisfiedMarkers, clearMarker,
+ *   settleMarkers) and notifier/status.ts readNotifierBlock sent these statements through `executeRaw`.
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 
 /** The executor the notifier statements need: master's `executeRaw` path. */
 type RawExec = Pick<SqlExecutor, 'executeRaw'>;
+
+/** `sync_wanted_markers.intent` CHECK: freshness asks for the checkout HEAD, pull for an upstream pull, full for a full walk. */
+export const MARKER_INTENTS = ['freshness', 'pull', 'full'] as const;
+export type MarkerIntent = typeof MARKER_INTENTS[number];
+export type MarkerRequester = 'sync_trigger' | 'webhook' | 'notifier' | 'delegated_sync' | 'lock_busy' | 'sync_nudge';
+
+/** One `sync_wanted_markers` row (without the source incarnation). */
+export interface WantedMarker {
+  source_id: string;
+  intent: MarkerIntent;
+  wanted_head: string | null;
+  generation: number;
+  first_due_at: string;
+  updated_at: string;
+  requested_by: string;
+  job_id: number | null;
+}
+
+/** `upsertWantedMarker(m)`: what the source should reach, who asked, and the queued job when the caller has one. */
+export interface WantedMarkerInput { sourceId: string; intent: MarkerIntent; wantedHead: string | null; requestedBy: MarkerRequester; jobId?: number | null }
+
+/** One marker as the sync status notifier block lists it (listSourceWantedMarkers). */
+export interface PendingWantedMarker { intent: string; wanted_head: string | null; first_due_at: string; requested_by: string }
 
 /** The host's lease row as a lost claim (or `gbrain sync status`) sees it. */
 export interface NotifierLeaseHolder { owner_id: string; fence: number; resident_kind: string; pid: number | null; expires_at: string; live: boolean }
@@ -150,6 +179,20 @@ export function toNotifierStatusRow(row: Record<string, unknown>): NotifierStatu
   };
 }
 
+/** A marker row with its timestamps as ISO strings (the Rust store's member maps its rows here too). */
+export function toWantedMarker(row: Record<string, unknown>): WantedMarker {
+  return {
+    source_id: String(row.source_id), intent: row.intent as MarkerIntent, wanted_head: optStr(row.wanted_head),
+    generation: num(row.generation), first_due_at: iso(row.first_due_at)!, updated_at: iso(row.updated_at)!,
+    requested_by: String(row.requested_by), job_id: optNum(row.job_id),
+  };
+}
+
+/** A pending marker with its first_due_at as an ISO string (the Rust store's member maps its rows here too). */
+export function toPendingWantedMarker(row: Record<string, unknown>): PendingWantedMarker {
+  return { intent: String(row.intent), wanted_head: optStr(row.wanted_head), first_due_at: iso(row.first_due_at)!, requested_by: String(row.requested_by) };
+}
+
 /** Claims or renews the host's notifier lease: the fencing token when this resident owns it, else the current holder. */
 export async function claimNotifierLease(exec: RawExec, l: NotifierLeaseClaimInput): Promise<NotifierLeaseClaim> {
   const [won] = await exec.executeRaw<{ fence: unknown }>(
@@ -266,4 +309,78 @@ export async function readNotifierStatusRows(exec: LegacyUnscopedRead, sourceIds
 export async function hasNotifierCoverage(exec: RawExec): Promise<boolean> {
   const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
   return truthy(row?.covered);
+}
+
+/**
+ * Records (or re-records) what a source should reach, or null when the source does not exist. A re-record keeps
+ * first_due_at (unless the source was re-created) and bumps generation; `wanted_head` takes the newer value.
+ */
+export async function upsertWantedMarker(exec: RawExec, m: WantedMarkerInput): Promise<WantedMarker | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(
+    `INSERT INTO sync_wanted_markers (source_id, intent, source_incarnation, wanted_head, generation, first_due_at, updated_at, requested_by, job_id)
+     SELECT s.id, $2, s.incarnation::text, $3, 1, now(), now(), $4, $5 FROM sources s WHERE s.id = $1
+     ON CONFLICT (source_id, intent) DO UPDATE SET wanted_head = EXCLUDED.wanted_head, generation = sync_wanted_markers.generation + 1,
+       updated_at = now(), requested_by = EXCLUDED.requested_by, job_id = COALESCE(EXCLUDED.job_id, sync_wanted_markers.job_id),
+       first_due_at = CASE WHEN sync_wanted_markers.source_incarnation IS DISTINCT FROM EXCLUDED.source_incarnation THEN now() ELSE sync_wanted_markers.first_due_at END,
+       source_incarnation = EXCLUDED.source_incarnation
+     RETURNING *`,
+    [m.sourceId, m.intent, m.wantedHead, m.requestedBy, m.jobId ?? null]);
+  return row ? toWantedMarker(row) : null;
+}
+
+/** Names the queued job that will drain a marker, only while the marker is still at `generation`. */
+export async function attachWantedMarkerJob(exec: RawExec, sourceId: string, intent: MarkerIntent, generation: number, jobId: number): Promise<void> {
+  await exec.executeRaw('UPDATE sync_wanted_markers SET job_id = $4 WHERE source_id = $1 AND intent = $2 AND generation = $3', [sourceId, intent, generation, jobId]);
+}
+
+/** The markers of `sourceIds` (every marker when null), oldest first_due_at first, at most 1000. */
+export async function readWantedMarkers(exec: RawExec, sourceIds: string[] | null): Promise<WantedMarker[]> {
+  const rows = await exec.executeRaw<Record<string, unknown>>(
+    'SELECT * FROM sync_wanted_markers WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) ORDER BY first_due_at, source_id, intent LIMIT 1000', [sourceIds]);
+  return rows.map(toWantedMarker);
+}
+
+/**
+ * The markers that still ask for work: every pull and full marker, and a freshness marker whose wanted_head is null or
+ * differs from the source's last_commit. Oldest first_due_at first, at most 1000.
+ */
+export async function readDueWantedMarkers(exec: RawExec, sourceIds: string[] | null): Promise<WantedMarker[]> {
+  const rows = await exec.executeRaw<Record<string, unknown>>(
+    `SELECT m.* FROM sync_wanted_markers m JOIN sources s ON s.id = m.source_id
+      WHERE ($1::text[] IS NULL OR m.source_id = ANY($1::text[]))
+        AND (m.intent <> 'freshness' OR m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit)
+      ORDER BY m.first_due_at, m.source_id, m.intent LIMIT 1000`, [sourceIds]);
+  return rows.map(toWantedMarker);
+}
+
+/** Deletes the freshness and pull markers of `sourceIds` that name the head the source already reached. */
+export async function pruneSatisfiedWantedMarkers(exec: RawExec, sourceIds: string[]): Promise<void> {
+  await exec.executeRaw(
+    `DELETE FROM sync_wanted_markers m USING sources s WHERE m.source_id = s.id AND m.source_id = ANY($1::text[])
+       AND m.intent IN ('freshness','pull') AND m.wanted_head IS NOT NULL AND m.wanted_head = s.last_commit`, [sourceIds]);
+}
+
+/** Deletes the marker only when nobody re-recorded it since `generation` was read; true when a row went. */
+export async function clearWantedMarker(exec: RawExec, sourceId: string, intent: MarkerIntent, generation: number): Promise<boolean> {
+  const rows = await exec.executeRaw<{ source_id: string }>(
+    'DELETE FROM sync_wanted_markers WHERE source_id = $1 AND intent = $2 AND generation = $3 RETURNING source_id', [sourceId, intent, generation]);
+  return rows.length > 0;
+}
+
+/**
+ * Deletes the source's freshness marker at `generation` when a run satisfied it: it named no head, or the head the
+ * source's last_commit holds, or the drainer saw the checkout's HEAD (`checkoutHead`) equal last_commit after the run.
+ */
+export async function settleFreshnessMarker(exec: RawExec, sourceId: string, generation: number, checkoutHead: string | null): Promise<void> {
+  await exec.executeRaw(
+    `DELETE FROM sync_wanted_markers m USING sources s WHERE m.source_id = s.id AND m.source_id = $1 AND m.intent = 'freshness'
+           AND m.generation = $2 AND (m.wanted_head IS NULL OR m.wanted_head IS NOT DISTINCT FROM s.last_commit
+             OR ($3::text IS NOT NULL AND s.last_commit = $3::text))`, [sourceId, generation, checkoutHead]);
+}
+
+/** The source's markers as the sync status notifier block lists them, oldest first_due_at first. */
+export async function listSourceWantedMarkers(exec: RawExec, sourceId: string): Promise<PendingWantedMarker[]> {
+  const rows = await exec.executeRaw<Record<string, unknown>>(
+    'SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent', [sourceId]);
+  return rows.map(toPendingWantedMarker);
 }

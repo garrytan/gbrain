@@ -11,7 +11,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { hostIdFor } from '../persistence/identity.ts';
 import { missingTable, type DetectionMode, type NotifierState } from './store.ts';
-import type { NotifierStatusRow } from '../engine-sql/notifier.ts';
+import type { NotifierStatusRow, PendingWantedMarker } from '../engine-sql/notifier.ts';
 import { residentNotifier } from './resident.ts';
 import { parseOnCommit } from '../commit-notifier.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
@@ -124,10 +124,10 @@ const syncNowFix = (sourceId: string, why: string): Action => ({ argv: ['gbrain'
  */
 export async function readNotifierBlock(engine: BrainEngine, sourceId: string, opts: { remote?: boolean } = {}): Promise<NotifierBlock | null> {
   let row: Row | undefined;
-  let markers: Array<{ intent: string; wanted_head: string | null; first_due_at: unknown; requested_by: string }> = [];
+  let markers: PendingWantedMarker[] = [];
   try {
     [row] = await readRows(engine, [sourceId]);
-    markers = await engine.executeRaw('SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent', [sourceId]);
+    markers = await engine.listSourceWantedMarkers(sourceId);
   } catch (error) { if (missingTable(error)) return null; throw error; }
   if (!row) return null;
   const remote = opts.remote === true;
@@ -157,7 +157,7 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
     next_retry_at: iso(row.next_retry_at),
     last_error: row.last_error_code || row.last_error ? { code: row.last_error_code, message: row.last_error, at: iso(row.last_error_at), ...(remote ? {} : { trace_path: row.trace_path }) } : null,
     observed_head: row.observed_head, observed_at: iso(row.observed_at),
-    pending_markers: markers.map(m => ({ intent: m.intent, wanted_head: m.wanted_head, first_due_at: iso(m.first_due_at)!, requested_by: m.requested_by })),
+    pending_markers: markers.map(m => ({ intent: m.intent, wanted_head: m.wanted_head, first_due_at: m.first_due_at, requested_by: m.requested_by })),
     stalled, drain_holder: remote ? publicDrainHolder(holder) : holder, recorded_resident: recorded, fix,
   };
 }

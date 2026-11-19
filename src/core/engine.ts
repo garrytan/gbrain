@@ -53,7 +53,10 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
-import type { Coverage as NotifierCoverage, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow, StatePatch as NotifierStatePatch } from './engine-sql/notifier.ts';
+import type {
+  Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
+  PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
+} from './engine-sql/notifier.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
@@ -1392,6 +1395,40 @@ export interface BrainEngine {
 
   /** Whether a resident has recorded commit notifier coverage for any source (notifier/status.ts, the freshness notice). */
   hasNotifierCoverage(): Promise<boolean>;
+
+  /**
+   * Records (or re-records) a wanted marker: what a source should reach, for one intent class. A re-record bumps
+   * generation and keeps first_due_at unless the source was re-created. Null when the source does not exist.
+   * notifier/store.ts upsertMarker.
+   */
+  upsertWantedMarker(marker: WantedMarkerInput): Promise<WantedMarker | null>;
+
+  /** Names the queued job that drains a wanted marker, only while the marker is still at `generation`. notifier/store.ts attachMarkerJob. */
+  attachWantedMarkerJob(sourceId: string, intent: MarkerIntent, generation: number, jobId: number): Promise<void>;
+
+  /** The wanted markers of `sourceIds` (every marker when null), oldest first_due_at first, at most 1000. notifier/store.ts readMarkers. */
+  readWantedMarkers(sourceIds: string[] | null): Promise<WantedMarker[]>;
+
+  /**
+   * The wanted markers that still ask for work: pull and full markers, and freshness markers whose wanted_head is null or
+   * differs from the source's last_commit. Oldest first_due_at first, at most 1000. notifier/store.ts readDueMarkers.
+   */
+  readDueWantedMarkers(sourceIds: string[] | null): Promise<WantedMarker[]>;
+
+  /** Deletes the freshness and pull markers of `sourceIds` that name the head the source already reached. notifier/store.ts pruneSatisfiedMarkers. */
+  pruneSatisfiedWantedMarkers(sourceIds: string[]): Promise<void>;
+
+  /** Deletes a wanted marker only at `generation`; true when a row went. notifier/store.ts clearMarker. */
+  clearWantedMarker(sourceId: string, intent: MarkerIntent, generation: number): Promise<boolean>;
+
+  /**
+   * Deletes the source's freshness marker at `generation` when a run satisfied it (no head named, the head last_commit
+   * holds, or `checkoutHead` equal to last_commit). notifier/store.ts settleMarkers.
+   */
+  settleFreshnessMarker(sourceId: string, generation: number, checkoutHead: string | null): Promise<void>;
+
+  /** The source's wanted markers as the sync status notifier block lists them, oldest first. notifier/status.ts readNotifierBlock. */
+  listSourceWantedMarkers(sourceId: string): Promise<PendingWantedMarker[]>;
 
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;

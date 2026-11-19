@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 685/685
+# covered: 693/693
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 50/50
+# persistence_journal: 58/58
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -371,8 +371,16 @@ readNotifierSources	persistence_journal	yes	1	no	yes	yes	serves
 writeNotifierState	persistence_journal	yes	2	no	yes	yes	serves
 writeNotifierCoverage	persistence_journal	yes	3	no	yes	yes	serves
 recordNotifierSyncerHost	persistence_journal	yes	1	no	yes	yes	serves
-readNotifierStatusRows	persistence_journal	yes	2	no	yes	yes	serves
+readNotifierStatusRows	persistence_journal	yes	3	no	yes	yes	serves
 hasNotifierCoverage	persistence_journal	yes	2	no	yes	yes	serves
+upsertWantedMarker	persistence_journal	yes	3	no	yes	yes	serves
+attachWantedMarkerJob	persistence_journal	yes	1	no	yes	yes	serves
+readWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
+readDueWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
+pruneSatisfiedWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
+clearWantedMarker	persistence_journal	yes	1	no	yes	yes	serves
+settleFreshnessMarker	persistence_journal	yes	1	no	yes	yes	serves
+listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves

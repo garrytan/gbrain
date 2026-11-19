@@ -16,6 +16,7 @@
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
 //! | `d 0x08 0x01 <host_id>` | one `sync_notifier_leases` row (`notifier.rs`), JSON |
 //! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -53,7 +54,9 @@ mod projection_queue;
 mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
-pub use notifier::{NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch};
+pub use notifier::{
+    NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };

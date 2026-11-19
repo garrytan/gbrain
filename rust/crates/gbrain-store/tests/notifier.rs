@@ -1,12 +1,14 @@
-//! The commit notifier's host lease, host source list, per-source state and coverage rows and
-//! freshness status rows (persistence/notifier.rs).
+//! The commit notifier's host lease, host source list, per-source state and coverage rows,
+//! freshness status rows and wanted markers (persistence/notifier.rs).
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::error::*;
-use gbrain_store::persistence::{NotifierCoverage, NotifierLeaseClaim, NotifierStatePatch};
+use gbrain_store::persistence::{
+    NotifierCoverage, NotifierLeaseClaim, NotifierStatePatch, WantedMarkerInput,
+};
 use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -399,4 +401,213 @@ fn the_status_rows_list_each_live_source_with_its_row_and_whether_its_owner_leas
         .map(|r| r["id"].clone())
         .collect();
     assert_eq!(listed, vec![json!("beta")]);
+}
+
+fn mark(
+    store: &Store,
+    id: &str,
+    intent: &str,
+    head: Option<&str>,
+    by: &str,
+    job: Option<i64>,
+) -> Result<Option<Value>> {
+    let m: WantedMarkerInput = serde_json::from_value(json!({
+        "sourceId": id, "intent": intent, "wantedHead": head, "requestedBy": by, "jobId": job,
+    }))
+    .unwrap();
+    store.upsert_wanted_marker(&m)
+}
+
+/// A marker's source, intent, head, generation, requester and job.
+fn pick(m: &Value) -> Value {
+    json!([
+        m["source_id"],
+        m["intent"],
+        m["wanted_head"],
+        m["generation"],
+        m["requested_by"],
+        m["job_id"]
+    ])
+}
+
+#[test]
+fn a_marker_upsert_inserts_generation_one_and_a_re_record_bumps_it_keeping_first_due_and_the_job() {
+    let dir = TempDir::new("notifier-marker-upsert");
+    let store = open(&dir);
+    source(&store, "alpha");
+    let first = mark(&store, "alpha", "freshness", Some("h1"), "webhook", Some(7))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        pick(&first),
+        json!(["alpha", "freshness", "h1", 1, "webhook", 7])
+    );
+    assert!(first["source_incarnation"].is_string());
+    std::thread::sleep(Duration::from_millis(5));
+    let again = mark(&store, "alpha", "freshness", None, "notifier", None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        pick(&again),
+        json!(["alpha", "freshness", null, 2, "notifier", 7])
+    );
+    assert_eq!(again["first_due_at"], first["first_due_at"]);
+    assert_ne!(again["updated_at"], first["updated_at"]);
+    let third = mark(
+        &store,
+        "alpha",
+        "freshness",
+        Some("h3"),
+        "sync_trigger",
+        Some(9),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        pick(&third),
+        json!(["alpha", "freshness", "h3", 3, "sync_trigger", 9])
+    );
+    // Another intent is its own row.
+    let pull = mark(&store, "alpha", "pull", None, "webhook", None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        pick(&pull),
+        json!(["alpha", "pull", null, 1, "webhook", null])
+    );
+    // A missing source records nothing; a bad intent is refused.
+    assert_eq!(
+        mark(&store, "missing", "pull", None, "webhook", None).unwrap(),
+        None
+    );
+    assert_eq!(
+        mark(&store, "a\0b", "pull", None, "webhook", None).unwrap(),
+        None
+    );
+    assert_eq!(
+        mark(&store, "alpha", "push", None, "webhook", None)
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+    assert_eq!(store.read_wanted_markers(None).unwrap().len(), 2);
+}
+
+#[test]
+fn marker_reads_order_by_first_due_then_source_then_intent_and_filter_by_source() {
+    let dir = TempDir::new("notifier-marker-read");
+    let store = open(&dir);
+    for id in ["alpha", "beta"] {
+        source(&store, id);
+    }
+    mark(&store, "beta", "pull", None, "webhook", None).unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    mark(&store, "alpha", "full", None, "webhook", None).unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    mark(&store, "alpha", "freshness", Some("h"), "webhook", None).unwrap();
+    let order = |rows: Vec<Value>| {
+        rows.iter()
+            .map(|m| json!([m["source_id"], m["intent"]]))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        order(store.read_wanted_markers(None).unwrap()),
+        vec![
+            json!(["beta", "pull"]),
+            json!(["alpha", "full"]),
+            json!(["alpha", "freshness"])
+        ]
+    );
+    let alpha = [
+        String::from("alpha"),
+        String::from("alpha"),
+        String::from("nobody"),
+    ];
+    assert_eq!(
+        order(store.read_wanted_markers(Some(&alpha)).unwrap()),
+        vec![json!(["alpha", "full"]), json!(["alpha", "freshness"])]
+    );
+    // No source keeps a last_commit here, so a freshness marker naming a head is due too.
+    assert_eq!(order(store.read_due_wanted_markers(None).unwrap()).len(), 3);
+    assert_eq!(
+        order(store.read_due_wanted_markers(Some(&alpha)).unwrap()).len(),
+        2
+    );
+    // The status list orders the source's markers by first_due_at, then intent.
+    let listed = store.list_source_wanted_markers("alpha").unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|m| m["intent"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("full"), json!("freshness")]
+    );
+    assert_eq!(
+        {
+            let mut keys: Vec<String> = listed[1].as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            keys
+        },
+        vec!["first_due_at", "intent", "requested_by", "wanted_head"]
+    );
+    assert!(
+        store
+            .list_source_wanted_markers("nobody")
+            .unwrap()
+            .is_empty()
+    );
+    // The status rows count the due markers.
+    let due: Vec<Value> = store
+        .read_notifier_status_rows(None)
+        .unwrap()
+        .iter()
+        .filter(|r| r["id"] != json!("default"))
+        .map(|r| json!([r["id"], r["due_markers"]]))
+        .collect();
+    assert_eq!(due, vec![json!(["alpha", 2]), json!(["beta", 1])]);
+}
+
+#[test]
+fn attach_clear_and_settle_act_only_at_the_generation_read_and_prune_deletes_nothing() {
+    let dir = TempDir::new("notifier-marker-generation");
+    let store = open(&dir);
+    source(&store, "alpha");
+    mark(&store, "alpha", "pull", None, "webhook", None).unwrap();
+    mark(&store, "alpha", "pull", None, "webhook", None).unwrap();
+    store
+        .attach_wanted_marker_job("alpha", "pull", 1, 11)
+        .unwrap();
+    assert_eq!(
+        store.read_wanted_markers(None).unwrap()[0]["job_id"],
+        Value::Null
+    );
+    store
+        .attach_wanted_marker_job("alpha", "pull", 2, 12)
+        .unwrap();
+    assert_eq!(
+        store.read_wanted_markers(None).unwrap()[0]["job_id"],
+        json!(12)
+    );
+    assert!(!store.clear_wanted_marker("alpha", "pull", 1).unwrap());
+    assert!(!store.clear_wanted_marker("alpha", "full", 2).unwrap());
+    assert!(store.clear_wanted_marker("alpha", "pull", 2).unwrap());
+    assert!(!store.clear_wanted_marker("alpha", "pull", 2).unwrap());
+    // A freshness marker that names no head settles at its generation only.
+    mark(&store, "alpha", "freshness", None, "webhook", None).unwrap();
+    store.settle_freshness_marker("alpha", 2, None).unwrap();
+    assert_eq!(store.read_wanted_markers(None).unwrap().len(), 1);
+    store
+        .settle_freshness_marker("alpha", 1, Some("h"))
+        .unwrap();
+    assert!(store.read_wanted_markers(None).unwrap().is_empty());
+    // One that names a head stays: no last_commit can equal it.
+    mark(&store, "alpha", "freshness", Some("h"), "webhook", None).unwrap();
+    store
+        .settle_freshness_marker("alpha", 1, Some("h"))
+        .unwrap();
+    mark(&store, "alpha", "pull", Some("h"), "webhook", None).unwrap();
+    store
+        .prune_satisfied_wanted_markers(&[String::from("alpha")])
+        .unwrap();
+    assert_eq!(store.read_wanted_markers(None).unwrap().len(), 2);
 }

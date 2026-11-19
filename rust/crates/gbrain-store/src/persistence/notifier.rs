@@ -23,8 +23,22 @@
 //! reads `bound` false and `last_commit`, `owner` and `root` null, as Postgres reads a source with
 //! none of those rows.
 //!
-//! The status rows join each source that is not archived to its notifier row and to the lease of
-//! the row's owner host. This engine records no wanted markers yet, so `due_markers` reads 0.
+//! The wanted markers are one `sync_wanted_markers` row per source and intent: the
+//! `upsertWantedMarker`, `attachWantedMarkerJob`, `readWantedMarkers`, `readDueWantedMarkers`,
+//! `pruneSatisfiedWantedMarkers`, `clearWantedMarker`, `settleFreshnessMarker` and
+//! `listSourceWantedMarkers` members. Key `d 0x08 0x03 <source_id> 0x00 <intent>`, JSON
+//! `WantedMarkerRecord`. An upsert inserts generation 1 only when the source exists; a re-record
+//! adds 1 to the generation, takes the new head and requester, keeps the old job id when no new
+//! one is given, and keeps `first_due_at` unless the source was re-created (another
+//! incarnation). Deleting the source deletes its markers (`remove_source_rows`).
+//!
+//! A source on this engine keeps no `last_commit` (the sync anchor does not run here), so every
+//! marker term that compares with it reads the column as NULL, as Postgres reads a source that
+//! never synced: a freshness marker that names a head is always due, the prune deletes nothing,
+//! and the settle deletes only a freshness marker that names no head.
+//!
+//! The status rows join each source that is not archived to its notifier row, to the lease of
+//! the row's owner host and to the count of its due markers.
 
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
@@ -38,6 +52,13 @@ use serde_json::{Value, json};
 const LEASE: u8 = 0x01;
 /// The byte after `d 0x08` of a per-source row.
 const SOURCE_ROW: u8 = 0x02;
+/// The byte after `d 0x08` of a wanted marker row.
+const MARKER: u8 = 0x03;
+
+/// `sync_wanted_markers.intent` CHECK.
+const MARKER_INTENTS: &[&str] = &["freshness", "pull", "full"];
+/// The marker reads' `LIMIT 1000`.
+const MARKER_LIMIT: usize = 1000;
 
 /// `sync_notifier_sources.state` CHECK.
 const STATES: &[&str] = &["idle", "due", "running", "retry", "operator_blocked"];
@@ -150,6 +171,31 @@ pub struct NotifierCoverage {
     pub owner_pid: f64,
 }
 
+/// One stored `sync_wanted_markers` row (the source id and intent are in the key).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WantedMarkerRecord {
+    source_incarnation: Option<String>,
+    wanted_head: Option<String>,
+    generation: i64,
+    first_due_at_us: i64,
+    updated_at_us: i64,
+    requested_by: String,
+    job_id: Option<i64>,
+}
+
+/// `upsertWantedMarker(marker)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WantedMarkerInput {
+    pub source_id: String,
+    pub intent: String,
+    #[serde(default)]
+    pub wanted_head: Option<String>,
+    pub requested_by: String,
+    #[serde(default)]
+    pub job_id: Option<i64>,
+}
+
 /// A number bound as `$n::int`: Postgres rounds half away from zero and refuses a value outside
 /// the integer range.
 fn pg_int(v: f64, name: &str) -> Result<i64> {
@@ -178,6 +224,24 @@ fn source_and_row(
     };
     let row = get_json::<NotifierSourceRecord>(read, &source_row_key(source_id))?;
     Ok(Some((source.incarnation, row)))
+}
+
+/// The key prefix of a source's markers, `d 0x08 0x03 <source_id> 0x00`, or `None` when the id
+/// holds NUL (no source has such an id, so it names no marker).
+fn marker_prefix(source_id: &str) -> Option<Vec<u8>> {
+    if source_id.contains('\0') {
+        return None;
+    }
+    let mut key = vec![keys::PERSISTENCE, super::NOTIFIER, MARKER];
+    key.extend_from_slice(source_id.as_bytes());
+    key.push(0);
+    Some(key)
+}
+
+fn marker_key(source_id: &str, intent: &str) -> Option<Vec<u8>> {
+    let mut key = marker_prefix(source_id)?;
+    key.extend_from_slice(intent.as_bytes());
+    Some(key)
 }
 
 fn lease_key(host_id: &str) -> Result<Vec<u8>> {
@@ -461,6 +525,10 @@ pub(crate) fn read_notifier_status_rows_in(
     let mut out = Vec::with_capacity(sources.len());
     for s in sources {
         let n = get_json::<NotifierSourceRecord>(read, &source_row_key(&s.id))?;
+        let due_markers = source_markers(read, &s.id)?
+            .iter()
+            .filter(|m| is_due(m))
+            .count();
         let lease = match n.as_ref().and_then(|n| n.owner_host_id.as_deref()) {
             Some(host) => lease_of(read, host)?,
             None => None,
@@ -487,7 +555,7 @@ pub(crate) fn read_notifier_status_rows_in(
             "owner_seen_at": n.and_then(|n| n.owner_seen_at_us).map(iso),
             "lease_live": lease.as_ref().is_some_and(|l| l.expires_at_us > now),
             "lease_expires_at": lease.as_ref().map(|l| iso(l.expires_at_us)),
-            "due_markers": 0,
+            "due_markers": due_markers,
         }));
     }
     Ok(out)
@@ -512,9 +580,291 @@ pub(crate) fn has_notifier_coverage_in(read: &dyn KvRead) -> Result<bool> {
     failure.map_or(Ok(covered), Err)
 }
 
-/// The `ON DELETE CASCADE` of `sync_notifier_sources`: deleting a source deletes its row.
+/// The `ON DELETE CASCADE` of `sync_notifier_sources` and `sync_wanted_markers`: deleting a
+/// source deletes its notifier row and its markers.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
-    tx.delete(&source_row_key(source_id))
+    tx.delete(&source_row_key(source_id))?;
+    let Some(prefix) = marker_prefix(source_id) else {
+        return Ok(());
+    };
+    let mut doomed = Vec::new();
+    scan_prefix(&*tx, &prefix, false, &mut |k, _| {
+        doomed.push(k.to_vec());
+        true
+    })?;
+    for k in doomed {
+        tx.delete(&k)?;
+    }
+    Ok(())
+}
+
+/// One marker read back with its source id and intent.
+struct Marker {
+    source_id: String,
+    intent: String,
+    record: WantedMarkerRecord,
+}
+
+/// A marker key's source id and intent.
+fn split_marker_key(key: &[u8]) -> (String, String) {
+    let rest = &key[3..];
+    let nul = rest.iter().position(|b| *b == 0).unwrap_or(rest.len());
+    let source_id = String::from_utf8_lossy(&rest[..nul]).into_owned();
+    let intent = String::from_utf8_lossy(rest.get(nul + 1..).unwrap_or_default()).into_owned();
+    (source_id, intent)
+}
+
+/// Every marker under `prefix`, in key order.
+fn scan_markers(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<Marker>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, prefix, false, &mut |k, v| {
+        match serde_json::from_slice::<WantedMarkerRecord>(v) {
+            Ok(record) => {
+                let (source_id, intent) = split_marker_key(k);
+                out.push(Marker {
+                    source_id,
+                    intent,
+                    record,
+                });
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
+/// The markers of one source, in key order.
+fn source_markers(read: &dyn KvRead, source_id: &str) -> Result<Vec<Marker>> {
+    match marker_prefix(source_id) {
+        Some(prefix) => scan_markers(read, &prefix),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// The markers of `ids` (every marker when `None`), ordered by `first_due_at, source_id, intent`.
+fn markers_of(read: &dyn KvRead, ids: Option<&[String]>) -> Result<Vec<Marker>> {
+    let mut out = match ids {
+        None => scan_markers(read, &[keys::PERSISTENCE, super::NOTIFIER, MARKER])?,
+        Some(ids) => {
+            let mut seen: Vec<&String> = ids.iter().collect();
+            seen.sort();
+            seen.dedup();
+            let mut out = Vec::new();
+            for id in seen {
+                out.extend(source_markers(read, id)?);
+            }
+            out
+        }
+    };
+    out.sort_by(|a, b| {
+        (a.record.first_due_at_us, &a.source_id, &a.intent).cmp(&(
+            b.record.first_due_at_us,
+            &b.source_id,
+            &b.intent,
+        ))
+    });
+    Ok(out)
+}
+
+/// `m.intent <> 'freshness' OR m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM
+/// s.last_commit`, with `last_commit` NULL on this engine: only a freshness marker can be
+/// settled, and it stays due while it names a head or none (`'x' IS DISTINCT FROM NULL`).
+fn is_due(_m: &Marker) -> bool {
+    true
+}
+
+/// A marker row as `SELECT *` returns it.
+fn marker_row(m: &Marker) -> Value {
+    let r = &m.record;
+    json!({
+        "source_id": m.source_id,
+        "intent": m.intent,
+        "source_incarnation": r.source_incarnation,
+        "wanted_head": r.wanted_head,
+        "generation": r.generation,
+        "first_due_at": iso(r.first_due_at_us),
+        "updated_at": iso(r.updated_at_us),
+        "requested_by": r.requested_by,
+        "job_id": r.job_id,
+    })
+}
+
+/// The INSERT ... SELECT ... ON CONFLICT DO UPDATE ... RETURNING * of `upsertWantedMarker`:
+/// the row, or `None` when the source does not exist.
+pub(crate) fn upsert_wanted_marker_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    m: &WantedMarkerInput,
+) -> Result<Option<Value>> {
+    if !MARKER_INTENTS.contains(&m.intent.as_str()) {
+        return Err(StoreError::invalid(format!(
+            "intent \"{}\" is not one of {MARKER_INTENTS:?}",
+            m.intent
+        )));
+    }
+    let Some(source) = read_source(&*tx, &m.source_id)? else {
+        return Ok(None);
+    };
+    let Some(key) = marker_key(&m.source_id, &m.intent) else {
+        return Ok(None);
+    };
+    let now = env.now_micros();
+    let incarnation = Some(source.incarnation);
+    let record = match get_json::<WantedMarkerRecord>(&*tx, &key)? {
+        None => WantedMarkerRecord {
+            source_incarnation: incarnation,
+            wanted_head: m.wanted_head.clone(),
+            generation: 1,
+            first_due_at_us: now,
+            updated_at_us: now,
+            requested_by: m.requested_by.clone(),
+            job_id: m.job_id,
+        },
+        Some(old) => WantedMarkerRecord {
+            first_due_at_us: if old.source_incarnation != incarnation {
+                now
+            } else {
+                old.first_due_at_us
+            },
+            source_incarnation: incarnation,
+            wanted_head: m.wanted_head.clone(),
+            generation: old.generation + 1,
+            updated_at_us: now,
+            requested_by: m.requested_by.clone(),
+            job_id: m.job_id.or(old.job_id),
+        },
+    };
+    put_json(tx, &key, &record)?;
+    Ok(Some(marker_row(&Marker {
+        source_id: m.source_id.clone(),
+        intent: m.intent.clone(),
+        record,
+    })))
+}
+
+/// The UPDATE of `attachWantedMarkerJob`: `job_id` only while the marker is at `generation`.
+pub(crate) fn attach_wanted_marker_job_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    intent: &str,
+    generation: i64,
+    job_id: i64,
+) -> Result<()> {
+    let Some(key) = marker_key(source_id, intent) else {
+        return Ok(());
+    };
+    if let Some(mut r) = get_json::<WantedMarkerRecord>(&*tx, &key)?
+        && r.generation == generation
+    {
+        r.job_id = Some(job_id);
+        put_json(tx, &key, &r)?;
+    }
+    Ok(())
+}
+
+/// The SELECT * of `readWantedMarkers`.
+pub(crate) fn read_wanted_markers_in(
+    read: &dyn KvRead,
+    ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    Ok(markers_of(read, ids)?
+        .iter()
+        .take(MARKER_LIMIT)
+        .map(marker_row)
+        .collect())
+}
+
+/// The SELECT m.* ... JOIN sources of `readDueWantedMarkers`.
+pub(crate) fn read_due_wanted_markers_in(
+    read: &dyn KvRead,
+    ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    let mut out = Vec::new();
+    for m in markers_of(read, ids)? {
+        if out.len() == MARKER_LIMIT {
+            break;
+        }
+        if is_due(&m) && read_source(read, &m.source_id)?.is_some() {
+            out.push(marker_row(&m));
+        }
+    }
+    Ok(out)
+}
+
+/// The DELETE of `pruneSatisfiedWantedMarkers` deletes a freshness or pull marker whose head
+/// equals the source's `last_commit`. No source keeps one here (`wanted_head = NULL` is never
+/// true), so it deletes nothing; the ids are not read.
+pub(crate) fn prune_satisfied_wanted_markers_in(
+    _tx: &mut dyn KvWrite,
+    _ids: &[String],
+) -> Result<()> {
+    Ok(())
+}
+
+/// The DELETE ... RETURNING of `clearWantedMarker`: true when the marker was at `generation`.
+pub(crate) fn clear_wanted_marker_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    intent: &str,
+    generation: i64,
+) -> Result<bool> {
+    let Some(key) = marker_key(source_id, intent) else {
+        return Ok(false);
+    };
+    match get_json::<WantedMarkerRecord>(&*tx, &key)? {
+        Some(r) if r.generation == generation => {
+            tx.delete(&key)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// The DELETE of `settleFreshnessMarker`: the source's freshness marker at `generation` when
+/// `wanted_head IS NULL OR wanted_head IS NOT DISTINCT FROM s.last_commit OR s.last_commit =
+/// checkoutHead`. With `last_commit` NULL only the first term can hold, so `checkoutHead` is
+/// not read.
+pub(crate) fn settle_freshness_marker_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    generation: i64,
+    _checkout_head: Option<&str>,
+) -> Result<()> {
+    let Some(key) = marker_key(source_id, "freshness") else {
+        return Ok(());
+    };
+    if let Some(r) = get_json::<WantedMarkerRecord>(&*tx, &key)?
+        && r.generation == generation
+        && r.wanted_head.is_none()
+        && read_source(&*tx, source_id)?.is_some()
+    {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
+/// The SELECT of `listSourceWantedMarkers`: ordered by `first_due_at, intent`.
+pub(crate) fn list_source_wanted_markers_in(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Vec<Value>> {
+    let mut markers = source_markers(read, source_id)?;
+    markers.sort_by(|a, b| {
+        (a.record.first_due_at_us, &a.intent).cmp(&(b.record.first_due_at_us, &b.intent))
+    });
+    Ok(markers
+        .iter()
+        .map(|m| {
+            json!({
+                "intent": m.intent,
+                "wanted_head": m.record.wanted_head,
+                "first_due_at": iso(m.record.first_due_at_us),
+                "requested_by": m.record.requested_by,
+            })
+        })
+        .collect())
 }
 
 /// The notifier's host source list: every source that is not archived, in id order.
@@ -599,6 +949,62 @@ impl Store {
     /// `listNotifierHostSourceRows()`.
     pub fn list_notifier_host_source_rows(&self) -> Result<Vec<Value>> {
         list_notifier_host_source_rows_in(&*self.read()?)
+    }
+
+    /// `upsertWantedMarker(marker)`: one write; `None` when the source does not exist.
+    pub fn upsert_wanted_marker(&self, marker: &WantedMarkerInput) -> Result<Option<Value>> {
+        self.write(|tx| upsert_wanted_marker_in(tx, &*self.env, marker))
+    }
+
+    /// `attachWantedMarkerJob(sourceId, intent, generation, jobId)`: one write.
+    pub fn attach_wanted_marker_job(
+        &self,
+        source_id: &str,
+        intent: &str,
+        generation: i64,
+        job_id: i64,
+    ) -> Result<()> {
+        self.write(|tx| attach_wanted_marker_job_in(tx, source_id, intent, generation, job_id))
+    }
+
+    /// `readWantedMarkers(sourceIds)`.
+    pub fn read_wanted_markers(&self, ids: Option<&[String]>) -> Result<Vec<Value>> {
+        read_wanted_markers_in(&*self.read()?, ids)
+    }
+
+    /// `readDueWantedMarkers(sourceIds)`.
+    pub fn read_due_wanted_markers(&self, ids: Option<&[String]>) -> Result<Vec<Value>> {
+        read_due_wanted_markers_in(&*self.read()?, ids)
+    }
+
+    /// `pruneSatisfiedWantedMarkers(sourceIds)`: one write.
+    pub fn prune_satisfied_wanted_markers(&self, ids: &[String]) -> Result<()> {
+        self.write(|tx| prune_satisfied_wanted_markers_in(tx, ids))
+    }
+
+    /// `clearWantedMarker(sourceId, intent, generation)`: one write.
+    pub fn clear_wanted_marker(
+        &self,
+        source_id: &str,
+        intent: &str,
+        generation: i64,
+    ) -> Result<bool> {
+        self.write(|tx| clear_wanted_marker_in(tx, source_id, intent, generation))
+    }
+
+    /// `settleFreshnessMarker(sourceId, generation, checkoutHead)`: one write.
+    pub fn settle_freshness_marker(
+        &self,
+        source_id: &str,
+        generation: i64,
+        checkout_head: Option<&str>,
+    ) -> Result<()> {
+        self.write(|tx| settle_freshness_marker_in(tx, source_id, generation, checkout_head))
+    }
+
+    /// `listSourceWantedMarkers(sourceId)`.
+    pub fn list_source_wanted_markers(&self, source_id: &str) -> Result<Vec<Value>> {
+        list_source_wanted_markers_in(&*self.read()?, source_id)
     }
 }
 
@@ -688,6 +1094,64 @@ mod tests {
             .map(|r| r["source_id"].clone())
             .collect();
         assert_eq!(left, vec![json!("ab")]);
+    }
+
+    #[test]
+    fn a_marker_key_sits_in_its_own_range_apart_from_the_leases_and_source_rows() {
+        let (start, end) = range(&[keys::PERSISTENCE, super::super::NOTIFIER, MARKER]);
+        for other in [LEASE, SOURCE_ROW] {
+            let (o_start, o_end) = range(&[keys::PERSISTENCE, super::super::NOTIFIER, other]);
+            assert!(start >= o_end || end <= o_start, "markers overlap {other}");
+        }
+        for id in ["", "default", "\u{ff}\u{ff}", "a\u{1}"] {
+            for intent in MARKER_INTENTS {
+                let key = marker_key(id, intent).unwrap();
+                assert!(
+                    key.as_slice() >= start.as_slice() && key.as_slice() < end.as_slice(),
+                    "{id:?}"
+                );
+                assert_eq!(
+                    split_marker_key(&key),
+                    (id.to_owned(), (*intent).to_owned())
+                );
+            }
+        }
+        // One source's prefix never covers another source's markers: "a" stops at its NUL.
+        let a = marker_prefix("a").unwrap();
+        assert!(!marker_key("ab", "pull").unwrap().starts_with(&a));
+        assert!(marker_prefix("a\0b").is_none());
+    }
+
+    #[test]
+    fn a_source_delete_removes_its_markers_only() {
+        let store = crate::test_support::store();
+        for id in ["a", "ab"] {
+            let input = crate::sources::SourceInput {
+                id: id.into(),
+                ..crate::sources::SourceInput::default()
+            };
+            store.upsert_source(&input).unwrap();
+            for intent in ["freshness", "pull"] {
+                let m = WantedMarkerInput {
+                    source_id: id.into(),
+                    intent: intent.into(),
+                    wanted_head: None,
+                    requested_by: "webhook".into(),
+                    job_id: None,
+                };
+                assert!(store.upsert_wanted_marker(&m).unwrap().is_some());
+            }
+        }
+        store
+            .write(|tx| crate::cascade::remove_source_rows(tx, "a"))
+            .unwrap();
+        let left: Vec<Value> = store
+            .read_wanted_markers(None)
+            .unwrap()
+            .iter()
+            .map(|r| r["source_id"].clone())
+            .collect();
+        assert_eq!(left, vec![json!("ab"), json!("ab")]);
     }
 
     #[test]

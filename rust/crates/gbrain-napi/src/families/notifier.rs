@@ -1,12 +1,25 @@
 //! The commit notifier: the host lease (claim, read, fencing check, release), the host source list, the per-source
-//! state and coverage rows and the freshness status rows (rust/docs/store/persistence.md, "Commit notifier").
+//! state and coverage rows, the freshness status rows and the wanted markers (rust/docs/store/persistence.md, "Commit
+//! notifier").
 
+use gbrain_store::StoreError;
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, arg, required};
+
+/// A generation or job id, bound as a Postgres bigint: a whole number.
+fn whole(v: f64, what: &str) -> Result<i64, StoreError> {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0 {
+        Ok(v as i64)
+    } else {
+        Err(StoreError::invalid(format!(
+            "{what} must be a whole number"
+        )))
+    }
+}
 
 #[napi]
 impl Brain {
@@ -139,5 +152,123 @@ impl Brain {
     #[napi]
     pub fn has_notifier_coverage<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.has_notifier_coverage())
+    }
+
+    /// `upsertWantedMarker({ sourceId, intent, wantedHead, requestedBy, jobId })`: the marker row, or null when the
+    /// source does not exist.
+    #[napi]
+    pub fn upsert_wanted_marker<'env>(
+        &self,
+        env: &'env Env,
+        marker: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.upsert_wanted_marker(&required(marker, "upsertWantedMarker marker")?)
+        })
+    }
+
+    /// `attachWantedMarkerJob(sourceId, intent, generation, jobId)`: names the marker's job at that generation.
+    #[napi]
+    pub fn attach_wanted_marker_job<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        intent: String,
+        generation: f64,
+        job_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.attach_wanted_marker_job(
+                &source_id,
+                &intent,
+                whole(generation, "attachWantedMarkerJob generation")?,
+                whole(job_id, "attachWantedMarkerJob jobId")?,
+            )
+        })
+    }
+
+    /// `readWantedMarkers(sourceIds)`: the markers of `sourceIds` (every marker when null), oldest first.
+    #[napi]
+    pub fn read_wanted_markers<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Option<Vec<String>> = arg(source_ids, "readWantedMarkers sourceIds")?;
+            s.read_wanted_markers(ids.as_deref())
+        })
+    }
+
+    /// `readDueWantedMarkers(sourceIds)`: the markers that still ask for work, oldest first.
+    #[napi]
+    pub fn read_due_wanted_markers<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Option<Vec<String>> = arg(source_ids, "readDueWantedMarkers sourceIds")?;
+            s.read_due_wanted_markers(ids.as_deref())
+        })
+    }
+
+    /// `pruneSatisfiedWantedMarkers(sourceIds)`: deletes the markers whose head the source reached.
+    #[napi]
+    pub fn prune_satisfied_wanted_markers<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<String> = required(source_ids, "pruneSatisfiedWantedMarkers sourceIds")?;
+            s.prune_satisfied_wanted_markers(&ids)
+        })
+    }
+
+    /// `clearWantedMarker(sourceId, intent, generation)`: true when the marker at that generation went.
+    #[napi]
+    pub fn clear_wanted_marker<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        intent: String,
+        generation: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.clear_wanted_marker(
+                &source_id,
+                &intent,
+                whole(generation, "clearWantedMarker generation")?,
+            )
+        })
+    }
+
+    /// `settleFreshnessMarker(sourceId, generation, checkoutHead)`: deletes a satisfied freshness marker.
+    #[napi]
+    pub fn settle_freshness_marker<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        generation: f64,
+        checkout_head: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.settle_freshness_marker(
+                &source_id,
+                whole(generation, "settleFreshnessMarker generation")?,
+                checkout_head.as_deref(),
+            )
+        })
+    }
+
+    /// `listSourceWantedMarkers(sourceId)`: the source's markers as the sync status notifier block lists them.
+    #[napi]
+    pub fn list_source_wanted_markers<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_source_wanted_markers(&source_id))
     }
 }
