@@ -234,6 +234,9 @@ inventory:
   the same run, attempt and commit. Otherwise both are left out with a warning:
   the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
   A push that reused a run has no `full-suite` job, so it is never evidence.
+- `tree.json` carries `os`, the runner's OS from `RUNNER_OS` (`Linux` for both
+  jobs). A run profile that sets `os` refuses a run whose `tree.json` records a
+  different OS or none (`os_mismatch`).
 - `bash scripts/pregate-remote-gate.sh --list` prints the inventory: the gate
   command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
   discovery the gate runs, one file per line. It exits non-zero when the
@@ -259,7 +262,12 @@ inventory:
   (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
   (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
   accepting `workflow_dispatch` and `push` runs from the last 24 hours, and
-  `remote_gate_runs` naming both with this inventory command. gstack reads them
+  `remote_gate_runs` naming both with this inventory command. Both profiles set
+  `os` to `Linux`, the OS of the runners that execute these jobs: gstack uses a
+  run only when its `tree.json` records that OS, and the final pregate's tests
+  stage reuses it only on a machine running the same OS (on macOS or Windows
+  that stage runs the selected tests locally; the lane carries below don't
+  need it). gstack reads the profiles
   only from `origin/<base>`, so a branch cannot loosen them. gstack accepts
   these keys from 1.91.377.0 on.
 

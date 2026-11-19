@@ -345,6 +345,14 @@ for (const backend of testBackends()) {
           ['link_edge_proposals', async (engine, _ctx, id) => raw(engine, "INSERT INTO link_edge_proposals (source_id, from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash, status) SELECT 'default', n.id, $1, n.id, 'works_at', 'evidence-example', 'rejected' FROM pages n WHERE n.slug = 'notes/storage-ref'", [id])],
           ['entity_identities', async (engine, _ctx, id) => raw(engine, "INSERT INTO entity_identities (entity_id, source_id, page_id) VALUES ('entity-example', 'default', $1)", [id])],
           ['guest_marks', async (engine, _ctx, id) => raw(engine, "INSERT INTO guest_marks (page_id, source_id, slug_at_write, audience_member, group_slug, sender_label, saved_at, writer_kind, writer_id) VALUES ($1, 'default', $2, 'alice-example', 'group-example', 'Alice', now(), 'member', 'alice-example')", [id, CONCEPT])],
+          ['secret_store_occurrence', async (engine, _ctx, id) => {
+            await raw(engine, "INSERT INTO secret_store (id, source_id, rule, ciphertext, nonce, tag, key_id, value_mac) VALUES ('ss_0123456789ab', 'default', 'api_key', 'sealed', 'nonce', 'tag', '0123456789abcdef', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')");
+            await raw(engine, "INSERT INTO secret_store_occurrence (entry_id, source_id, page_id, slug, field, origin) VALUES ('ss_0123456789ab', 'default', $1, $2, 'compiled_truth', 'repair')", [id, CONCEPT]);
+          }],
+          ['secret_store_occurrence', async engine => {
+            await raw(engine, "INSERT INTO secret_store (id, source_id, rule, ciphertext, nonce, tag, key_id, value_mac) VALUES ('ss_0123456789ac', 'default', 'api_key', 'sealed', 'nonce', 'tag', '0123456789abcdef', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')");
+            await raw(engine, "INSERT INTO secret_store_occurrence (entry_id, source_id, page_id, slug, field, origin) VALUES ('ss_0123456789ac', 'default', NULL, $1, 'compiled_truth', 'repair')", [CONCEPT]);
+          }],
           ['guest_promotions', async (engine, _ctx, id) => raw(engine, "INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id) VALUES ($1, 'default', 'notes/promoted-example', 'member', 'alice-example')", [id])],
         ];
         for (const [kind, add] of stated) await managedBrain(async ({ engine, ctx, root }) => {
@@ -354,6 +362,7 @@ for (const backend of testBackends()) {
           expect(details.rebuilt).toEqual([]);
           expect(details.rebuild_kept).toEqual([{ source_id: 'default', slug: CONCEPT, reason: 'stated', kinds: [kind] }]);
           await stillHeld(engine, id, kind === 'links' ? 2 : 1);
+          if (kind === 'secret_store_occurrence') expect(await engine.executeRaw("SELECT 1 FROM secret_store s JOIN secret_store_occurrence o ON o.entry_id = s.id WHERE o.slug = $1", [CONCEPT])).toHaveLength(1);
         }, { databaseUrl });
       }, 1_500_000);
     }
