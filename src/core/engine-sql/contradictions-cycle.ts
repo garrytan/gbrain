@@ -186,6 +186,7 @@ export interface LiveChunkRow { id: number; page_id: number; slug: string; sourc
 export interface LiveTakeRow { id: number; page_id: number; slug: string; source_id: string; row_num: number; claim: string; holder: string }
 
 /** The constant heads of the two live re-reads; the page policy and the visibility predicates follow them. */
+// chunk-visibility-ok: a head only; listLiveChunksByIds appends chunkVisibleFilter(p, cc) to it
 const LIVE_CHUNKS_HEAD = `SELECT cc.id, cc.page_id, cc.chunk_text, p.slug, p.source_id
        FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
       WHERE cc.id = ANY($1::int[]) AND `;
