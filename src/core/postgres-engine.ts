@@ -1319,7 +1319,7 @@ export class PostgresEngine implements BrainEngine {
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }
   readRowTrustRows(lookup: RowTrustLookup) { return cliReadsImpl.readRowTrustRows(this.cliReads, lookup); }
-  readDatabaseClock() { return cliReadsImpl.readDatabaseClock(this.cliReads); }
+  readDatabaseClock() { return this.preparationRead(exec => cliReadsImpl.readDatabaseClock(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'))); }
   /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
   private get writeMiscReads() { return unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw'); }
   private writeMiscRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) {
