@@ -114,56 +114,7 @@ export interface AgentClientSpend {
 }
 
 export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentClientSpend[]> {
-  const sql = sqlQueryForEngine(engine);
-  const rows = await sql`
-    SELECT
-      c.client_id,
-      c.client_name,
-      COALESCE(c.budget_usd_per_day, NULL) AS cap_usd_per_day,
-      COALESCE((
-        SELECT SUM(spend_cents)::text
-          FROM mcp_spend_log
-         WHERE client_id = c.client_id
-           -- Double AT TIME ZONE: the inner one yields NAIVE UTC-midnight;
-           -- the outer one converts it back to a timestamptz INSTANT. Without
-           -- it, the naive value is reinterpreted in the SESSION timezone, so
-           -- any non-UTC session (host-tz PGLite, a tz-configured Postgres
-           -- role) shifts the day boundary by the offset and today's spend
-           -- underreports every evening.
-           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-      ), '0') AS spent_cents_today,
-      COALESCE((
-        SELECT SUM(estimated_cents)::text
-          FROM mcp_spend_reservations
-         WHERE client_id = c.client_id
-           AND status IN ('pending', 'expired')
-      ), '0') AS pending_cents,
-      (SELECT COUNT(*)::int FROM mcp_spend_reservations
-        WHERE client_id = c.client_id AND status IN ('pending', 'expired')
-          AND estimate_known = false) AS unknown_count,
-      COALESCE((
-        SELECT COUNT(*)::int
-          FROM minion_jobs
-         WHERE name = 'subagent'
-           AND status IN ('waiting', 'active', 'waiting-children', 'delayed', 'paused')
-           AND data->>'__owner_client_id' = c.client_id
-      ), 0) AS inflight_count
-    FROM oauth_clients c
-    WHERE c.deleted_at IS NULL
-      AND ('agent' = ANY (string_to_array(c.scope, ' ')) OR c.bound_tools IS NOT NULL)
-    ORDER BY c.client_name ASC
-  `;
-  return rows.map(r => ({
-    client_id: String(r.client_id),
-    client_name: String(r.client_name ?? r.client_id),
-    cap_usd_per_day: r.cap_usd_per_day !== null && r.cap_usd_per_day !== undefined
-      ? parseFloat(String(r.cap_usd_per_day))
-      : null,
-    spent_cents_today: parseFloat(String(r.spent_cents_today ?? '0')),
-    pending_cents: parseFloat(String(r.pending_cents ?? '0')),
-    unknown_count: Number(r.unknown_count ?? 0),
-    inflight_count: Number(r.inflight_count ?? 0),
-  }));
+  return engine.readAgentClientSpend();
 }
 
 /** Admin auth middleware over the server's cookie-session map (sessionId -> expiresAt). */

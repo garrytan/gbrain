@@ -1,3 +1,4 @@
+import { requireOauthClientColumns } from '../core/engine-sql/oauth-clients.ts';
 import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 /**
  * gbrain agent register — mint a scoped OAuth client + access token and print
@@ -747,23 +748,13 @@ async function runReissue(
   urlWarning: string | null,
 ): Promise<RegisterOutput> {
   const clientId = flags.reissueClientId!;
-  const columns = await preflightOauthClientColumns(sql);
-  // Projection derived from the pre-flight column set: pre-migration brains
-  // lack source_id/federated_read/token_ttl/deleted_at — drop the absent ones
-  // (the ?? defaults below tolerate missing keys). Column names come from a
-  // fixed allowlist, never caller input.
-  const projection = [
-    'client_id', 'client_name', 'grant_types', 'client_secret_hash',
-    ...['source_id', 'federated_read', 'token_ttl', 'deleted_at'].filter(c => columns.has(c)),
-  ];
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT ${projection.join(', ')} FROM oauth_clients WHERE client_id = $1`,
-    [clientId],
-  );
-  if (rows.length === 0) {
+  // The whole row, so a pre-migration brain's absent columns simply read as missing (the ?? defaults below tolerate
+  // them); the four the code cannot do without are checked and fail as an undefined column does.
+  const found = await engine.readOauthClient(clientId);
+  if (!found) {
     throw new RegisterError('reissue_invalid_target', `no OAuth client with id "${clientId}" — list clients with \`gbrain auth clients\`.`);
   }
-  const row = rows[0] as Record<string, unknown>;
+  const row = requireOauthClientColumns(found, ['client_id', 'client_name', 'grant_types', 'client_secret_hash']) as unknown as Record<string, unknown>;
   if (row.deleted_at != null) {
     throw new RegisterError('reissue_invalid_target', `client "${clientId}" is deleted — register a new one.`);
   }
@@ -814,15 +805,10 @@ async function runReissue(
 export async function rotateClientSecret(engine: BrainEngine, clientId: string, clientName: string): Promise<string> {
   let newSecret!: string;
   await engine.transaction(async (tx) => {
-    const txSql = sqlQueryForEngine(tx);
     await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(clientName)]);
     newSecret = generateToken('gbrain_cs_');
-    const updated = await txSql`
-      UPDATE oauth_clients SET client_secret_hash = ${hashToken(newSecret)}
-      WHERE client_id = ${clientId}
-      RETURNING client_id
-    `;
-    if (updated.length === 0) throw new RegisterError('reissue_invalid_target', `client "${clientId}" vanished mid-rotation.`);
+    const updated = await tx.patchOauthClient(clientId, { client_secret_hash: hashToken(newSecret) });
+    if (!updated) throw new RegisterError('reissue_invalid_target', `client "${clientId}" vanished mid-rotation.`);
   });
   return newSecret;
 }
