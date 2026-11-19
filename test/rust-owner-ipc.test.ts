@@ -37,6 +37,7 @@ import { persistenceSocketPathForConfig, startPersistenceIpcServer, type Persist
 import { withEnv } from './helpers/with-env.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { openRustEngine, RustEngine } from '../src/core/rust-engine.ts';
+import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
 import { bindResolveIpcForServe } from '../src/mcp/resolve-ipc-binding.ts';
 import { once } from 'node:events';
 import { createPersistenceIpcProvider } from '../src/core/persistence/provider.ts';
@@ -445,12 +446,10 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
     try {
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
-        ['getPage', e => e.getPage('notes/a')],
-        ['putPage', e => e.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'body' })],
         ['transaction', e => e.transaction(async () => null)],
-        ['searchKeyword', e => e.searchKeyword('body', { limit: 5 })],
       ];
       for (const [member, call] of calls) {
+        expect(member in STORE_MEMBERS).toBe(false);
         const started = Date.now();
         const remote = await call(engine).then(() => null, e => e);
         expect(Date.now() - started).toBeLessThan(500);
@@ -461,6 +460,27 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
       expect((await engine.executeRaw('SELECT 1').then(() => null, e => e) as OperationError).reason).toBe('raw_sql');
       expect(asked).toBe(0);
       expect(ownerServer.stats()).toMatchObject({ active: 0, queued: 0 });
+    } finally { close(); }
+  });
+
+  test('a member the Rust store serves is sent to the owner even when the rest of its capability is not reported', async () => {
+    const { engine, close } = await clientOf(ownerSocketPath(db));
+    try {
+      const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
+        ['getPage', e => e.getPage('notes/a')],
+        ['putPage', e => e.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'body' })],
+        ['searchKeyword', e => e.searchKeyword('body', { limit: 5 })],
+      ];
+      const before = asked;
+      for (const [member, call] of calls) {
+        expect(member in STORE_MEMBERS).toBe(true);
+        const remote = await call(engine).then(() => null, e => e);
+        // The owner answers as it does in its own process: this owner was never connected, so it says engine_closed.
+        const local = await (RustEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[member]!.call(rust).then(() => null, e => e);
+        expect((remote as OperationError).code).toBe('engine_closed');
+        expect(JSON.stringify(errorShape(remote))).toBe(JSON.stringify(errorShape(local)));
+      }
+      expect(asked - before).toBe(calls.length);
     } finally { close(); }
   });
 });

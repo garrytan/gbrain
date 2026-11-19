@@ -53,7 +53,7 @@ import { deriveDateContext } from '../conversation-parser/parse.ts';
 import { loadPricingOverrides, type PricingOverrides } from '../budget/budget-tracker.ts';
 import { providerItemRefusal } from '../ai/errors.ts';
 import { writeDerivedFacts } from '../persistence/derived-facts.ts';
-import { estimateFactsExtractionUsd, meterPaidCall, unpricedModelReceipt } from '../page-embedding-budget.ts';
+import { estimateChatCallUsd, estimateFactsExtractionUsd, meterPaidCall, unpricedModelReceipt } from '../page-embedding-budget.ts';
 import { readExtractionReceipt, setExtractionReceipt, type InputTruncated } from '../extraction-watermark.ts';
 import { planSegmentDerivations, segmentDerivationContextHash, sourceWindowFor, sourceWindowKey, type SegmentDerivationInput,
   type SegmentDerivationRow, type SourceWindow } from '../page-body/derivations.ts';
@@ -68,6 +68,7 @@ import type { ConversationSegment } from './conversation-types.ts';
 import { renderSegmentForExtraction } from './conversation-windows.ts';
 import { extractConversationWindow, nonExtractableAuditFact, regularPageVersionToken, terminalAuditFact, type ConversationWindowRun } from './conversation-window-extract.ts';
 import { getFactsExtractionMaxTokens, resolveFactsExtractionModel, type ExtractInput } from './extract.ts';
+import { SLOT_TAG_INPUT_CHARS, SLOT_TAG_MAX_TOKENS } from './slot-tagging.ts';
 import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
 
 const KIND = 'conversation_facts';
@@ -88,6 +89,10 @@ export interface SegmentedConversationCounters {
   pages_marked_non_extractable: number; pages_failed: number; segments_processed: number; facts_extracted: number;
   facts_inserted: number; orphan_facts_cleaned: number; fallback_slugify_count: number; resolution_errors: number;
   failed_pages: Array<{ slug: string; error: string }>;
+  /** GBRA-574: windows whose slot-tagging call failed; their facts were kept without slots. */
+  slot_tagging_failed?: number;
+  /** GBRA-574: facts kept under a name key with no page (facts.unbacked_entity_keys). */
+  unbacked_keys?: number;
   /** Pages held because no format is detected over them yet some format parses a message (a detection_ambiguous receipt). */
   pages_detection_ambiguous?: number;
   /** --grammar --dry-run: what a run under the chosen format would extract and collect, per page. */
@@ -402,7 +407,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
         const sha = w.window.window_text_sha;
         let metered: Awaited<ReturnType<typeof meterPaidCall<Awaited<ReturnType<typeof extractConversationWindow>>>>>;
         try {
-          metered = await meterPaidCall(engine, page, `facts:${model}`, estimateFactsExtractionUsd(model, text.length, maxTokens, pricingOverrides),
+          metered = await meterPaidCall(engine, page, `facts:${model}`, estimateFactsExtractionUsd(model, text.length, maxTokens, pricingOverrides) + estimateChatCallUsd(model, SLOT_TAG_INPUT_CHARS, SLOT_TAG_MAX_TOKENS, pricingOverrides),
             () => extractConversationWindow(run, page, w.seg, text, 0, entityHints), { pricingOverrides });
         } catch (error) {
           if (!windowFailure(error, run.signal)) throw error;
@@ -439,7 +444,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
     });
     throw error;
   } finally {
-    result.fallback_slugify_count += resolution.fallback_slugify_count;
+    result.fallback_slugify_count += resolution.fallback_slugify_count; if (resolution.unbacked_key_count) result.unbacked_keys = (result.unbacked_keys ?? 0) + resolution.unbacked_key_count;
     result.resolution_errors += resolution.resolution_errors;
   }
 

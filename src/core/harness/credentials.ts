@@ -75,6 +75,11 @@ export function readPrivateText(path: string, maximumBytes = 8192): string {
   } finally { closeSync(fd); }
 }
 
+/** The file holds one bare bearer token (a member key setup minted), not a credential handoff. */
+export class PlainBearerKeyFile extends Error {
+  constructor() { super('The credential file holds a plain bearer key, not a credential handoff'); }
+}
+
 export function readCredentials(path: string): HarnessCredentials {
   assertNoSymlinks(resolve(path));
   const fd = openSync(resolve(path), constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -82,7 +87,13 @@ export function readCredentials(path: string): HarnessCredentials {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > 65_536) throw new Error('Credential handoff must be a small regular file');
     if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) throw new Error('Credential handoff must be private: chmod 600 the file');
-    try { return validateCredentials(JSON.parse(readFileSync(fd, 'utf8'))); }
+    const raw = readFileSync(fd, 'utf8');
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch {
+      if (/^\S+$/.test(raw.trim()) && validateToken(raw.trim()).ok) throw new PlainBearerKeyFile();
+      throw new Error('Invalid credential handoff; re-export it from the brain host');
+    }
+    try { return validateCredentials(parsed); }
     catch { throw new Error('Invalid credential handoff; re-export it from the brain host'); }
   } finally { closeSync(fd); }
 }

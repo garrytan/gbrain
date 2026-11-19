@@ -4,19 +4,25 @@
  * `openRustEngine` is the one seam: the addon loader calls it after it has loaded and verified the native addon, and
  * gets back the engine. It has every BrainEngine member; its `kind` is `'rust'`, which `BrainEngine.kind` admits once
  * the `rust` config value lands with the addon loader. Selecting the engine, loading the addon and refusing a missing or mismatched addon live in
- * the loader, not here. The shell reports an empty capability set, so every BrainEngine member except the lifecycle
- * ones rejects with a typed `engine_capability_missing` naming the capability it needs (rust-engine/members.ts), before
- * any work. Later Rust PRs replace those refusals with typed methods one capability at a time.
+ * the loader, not here. `connect` opens the brain store (rust-engine/store.ts); the members the store answers exactly
+ * are served from it (rust-engine/store-members/). Every other BrainEngine member rejects with a typed
+ * `engine_capability_missing` naming the capability it needs (rust-engine/members.ts), before any work. The engine
+ * reports a capability only when it serves every member of it (rust-engine/store-capabilities.ts).
  *
- * One process owns a Rust brain at a time (rust-engine/owner-ipc/). `connect` takes the brain's owner lock and serves
- * this engine on the owner socket, or, when another process holds the lock, makes this engine a client of that owner:
- * its data members then run on the owner, and the members that need a transaction refuse (owner-ipc/routes.ts).
+ * One process owns a Rust brain at a time (rust-engine/owner-ipc/). `connect` takes the brain's owner lock, opens the
+ * store and serves this engine on the owner socket, or, when another process holds the lock, makes this engine a
+ * client of that owner without opening the store: its data members then run on the owner, and the members that need
+ * a transaction refuse (owner-ipc/routes.ts).
  */
 import type { BrainEngine } from './engine.ts';
 import type { Capability, EngineCapabilities } from './engine-capabilities.ts';
 import type { EngineConfig } from './types.ts';
 import { capabilityMissing } from './rust-engine/errors.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
+import { openRustStore, type RustStore } from './rust-engine/store.ts';
+import { mapStoreError } from './rust-engine/store-errors.ts';
+import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
+import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { installOwnerClient } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
@@ -44,13 +50,18 @@ export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
 export interface RustEngine extends Omit<BrainEngine, 'kind'> {}
 export class RustEngine {
   readonly kind = 'rust' as const;
-  /** Empty until the Rust engine implements a capability with parity tests (plan PRs 9 onward). */
-  readonly capabilities: EngineCapabilities = new Set();
+  /** The capabilities whose every member the store serves (rust-engine/store-capabilities.ts). */
+  readonly capabilities: EngineCapabilities = servedCapabilities();
 
   readonly addon: RustEngineAddonHandle;
   readonly databasePath: string;
   private _savedConfig: EngineConfig | null = null;
   private _connected = false;
+  private _store: RustStore | null = null;
+  /** The election in progress. */
+  private _opening: Promise<void> | null = null;
+  /** Bumped by every `disconnect`, so an election that started before it knows it was abandoned. */
+  private _generation = 0;
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
   private readonly _ownerWaitMs: number | undefined;
   private _owner: OwnerRole | null = null;
@@ -71,17 +82,83 @@ export class RustEngine {
   /** The owner's call pool, when this process owns the brain. */
   ownerStats(): OwnerServerStats | null { return this._owner?.role === 'owner' ? this._owner.server.stats() : null; }
 
+  /**
+   * Becomes the brain's owner (opens the store, serves the owner socket) or a client of the process that owns it. A
+   * second `connect` while connected changes nothing, and connects that overlap share one election. A `disconnect`
+   * that comes while the election is still running wins: what the election produced is closed, the engine stays
+   * disconnected, and that `connect` rejects `engine_closed`.
+   */
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config;
-    const role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
-      wholeOperations: ownerWholeOperations(), ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
-    });
-    this._owner = role;
-    if (role.role === 'client') this._leaveOwner = installOwnerClient(this, role.connection);
+    if (this._owner) return;
     this._connected = true;
+    try { await this._elect(); }
+    catch (error) { if (!this._owner) this._connected = false; throw error; }
+  }
+
+  /** Runs the election once for every caller that needs it at the same time. */
+  private _elect(): Promise<void> {
+    if (this._opening) return this._opening;
+    const generation = this._generation;
+    const opening: Promise<void> = this._runElection(generation)
+      .finally(() => { if (this._opening === opening) this._opening = null; });
+    this._opening = opening;
+    return opening;
+  }
+
+  private async _runElection(generation: number): Promise<void> {
+    let opened: RustStore | null = null;
+    const role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
+      wholeOperations: ownerWholeOperations(),
+      ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
+      // Holding the owner lock: stop forwarding to any owner that went away, then open the store before the socket
+      // serves, so no call reaches this engine without it.
+      onLock: async () => {
+        this._leaveClient();
+        const store = await openRustStore(this.addon, this.databasePath);
+        if (generation !== this._generation) {
+          await store.close().catch(() => undefined);
+          throw mapStoreError({ code: 'store_closed' }, { member: 'connect' });
+        }
+        opened = store;
+        this._store = store;
+        return async () => {
+          opened = null;
+          if (this._store === store) this._store = null;
+          await store.close().catch(() => undefined);
+        };
+      },
+    });
+    if (generation !== this._generation) {
+      if (role.role === 'owner') {
+        await role.server.close();
+        const store = opened as RustStore | null;
+        if (store && this._store === store) this._store = null;
+        await store?.close().catch(() => undefined);
+        await role.lock.release();
+      } else role.connection.close();
+      throw mapStoreError({ code: 'store_closed' }, { member: 'connect' });
+    }
+    if (role.role === 'client') {
+      this._leaveClient();
+      this._leaveOwner = installOwnerClient(this, role.connection);
+    }
+    this._owner = role;
+  }
+
+  private _leaveClient(): void {
+    const leave = this._leaveOwner;
+    this._leaveOwner = null;
+    leave?.();
   }
 
   async disconnect(): Promise<void> {
+    // Abandon a pending election first, before any await: an election that finishes while a stop hook is still running
+    // must see the new generation, close what it made, and reject its `connect`. The store that is already open stays
+    // reachable until the hooks have run, since a hook may still need it.
+    this._generation++;
+    const opening = this._opening;
+    this._opening = null;
     const stops = [...this._beforeDisconnect];
     this._beforeDisconnect.clear();
     for (const stop of stops) {
@@ -89,13 +166,22 @@ export class RustEngine {
     }
     const owner = this._owner;
     this._owner = null;
-    this._leaveOwner?.();
-    this._leaveOwner = null;
-    if (owner?.role === 'owner') {
-      await owner.server.close();
-      await owner.lock.release();
-    }
     this._connected = false;
+    this._leaveClient();
+    // The owner stops serving and drains its calls, then closes the store, and only then frees the owner lock: the
+    // next owner opens the store as soon as it holds the lock.
+    if (owner?.role === 'owner') await owner.server.close();
+    const store = this._store;
+    this._store = null;
+    await store?.close();
+    if (owner?.role === 'owner') await owner.lock.release();
+    await opening?.catch(() => undefined);
+  }
+
+  /** The open store a served member runs on; rejects `engine_closed` when the engine is not connected. */
+  openStore(member: string): RustStore {
+    if (!this._store) throw mapStoreError({ code: 'store_closed' }, { member });
+    return this._store;
   }
 
   async reconnect(_ctx?: { error?: unknown }): Promise<void> {
@@ -114,11 +200,22 @@ export class RustEngine {
 /** The capability a BrainEngine member needs on Rust, or null when the shell implements it. */
 export function rustMemberCapability(member: string): Capability | null {
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
-  return cls === undefined || cls === 'implemented' ? null : (cls as Capability);
+  return cls === undefined || cls === 'implemented' || member in STORE_MEMBERS ? null : (cls as Capability);
+}
+
+for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
+  Object.defineProperty(RustEngine.prototype, member, {
+    configurable: true,
+    writable: true,
+    enumerable: false,
+    value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
+      return (impl as (brain: unknown, ...rest: unknown[]) => Promise<unknown>)(this.openStore(member).brain, ...args);
+    },
+  });
 }
 
 for (const [member, cls] of Object.entries(RUST_ENGINE_MEMBERS)) {
-  if (cls === 'implemented') continue;
+  if (cls === 'implemented' || member in STORE_MEMBERS) continue;
   const capability = cls as Capability;
   Object.defineProperty(RustEngine.prototype, member, {
     configurable: true,

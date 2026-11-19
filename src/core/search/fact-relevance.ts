@@ -45,6 +45,7 @@ import { supportsHnswIterativeScan } from '../vector-index.ts';
 import { VECTOR_EXTENSION_VERSION_SQL } from './vector-statement.ts';
 import { withVectorSettings } from './vector-settings.ts';
 import type { HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
+import { RETRACTION } from './saved-facts-match.ts';
 import type { SlotRow } from '../facts/slots.ts';
 
 const STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'our', 'your', 'their',
@@ -362,16 +363,83 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
  * the pool's read policy, so a row the caller cannot see never shapes a window the caller sees; ordered by valid_from, id.
  * A row whose stored valid_until has passed still ends the value before it; withdrawn and superseded rows never do.
  */
-export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<SlotRow[]> {
+export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<Array<SlotRow & Omit<FactCandidate, 'entity'>>> {
   if (!slots.length) return [];
   const { where, params } = poolPredicate(scope, { includeExpired: true });
   const n = params.length;
-  return engine.executeRaw<SlotRow>(
-    `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact FROM facts f
+  return engine.executeRaw<SlotRow & Omit<FactCandidate, 'entity'>>(
+    `SELECT ${COLS} FROM facts f
      WHERE ${where} AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
        AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
      ORDER BY f.valid_from, f.id`,
     [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);
+}
+
+/**
+ * GBRA-574 F (D1): the distinct (source_id, entity_slug) pairs among `keys` that hold an active fact in the pool under
+ * its read policy and have no live page at that slug (an unbacked name key), at most `limit`, by source then slug.
+ */
+export async function poolUnbackedKeys(engine: BrainEngine, scope: FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>> {
+  if (!keys.length) return [];
+  const { where, params } = poolPredicate(scope, undefined);
+  const n = params.length;
+  return engine.executeRaw<{ source_id: string; entity_slug: string }>(
+    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
+       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
+     ORDER BY f.source_id, f.entity_slug LIMIT $${n + 2}`, [...params, [...keys], limit]);
+}
+
+/** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words. Fixed, never configurable. */
+const CALLED_OFF = String.raw`rumour|rumor|called off|cancelled|canceled|fell through|not happening|never happened|no longer planned`;
+const CALL_OFF_SQL = String.raw`\m(${RETRACTION}|${CALLED_OFF})\M`;
+const CALL_OFF_WORDS = new RegExp(String.raw`\b(${RETRACTION}|${CALLED_OFF})\b`, 'gi');
+/** A cue a word or two after one of these is negated ("not cancelled", "wasn't called off", "isn't a rumour"). Fixed, never configurable. */
+const NEGATED = /(?:^|[^\p{L}\p{N}'’])(?:not|never|no|[\p{L}]+n['’]t)\s+(?:[\p{L}\p{N}'’-]+\s+)?$/iu;
+/** Cue facts read per entity at most, the newest first. */
+const CALL_OFF_DEPTH = 50;
+
+/**
+ * GBRA-574 B5: for each fact, the later facts that retract it or call it off, oldest first. One read of the cue facts
+ * about the facts' entities, the newest CALL_OFF_DEPTH per entity, under exactly the pool's read policy (active rows
+ * only, so a withdrawn, forgotten or superseded fact never comes back, nor one the caller cannot read). A cue fact
+ * answers a fact when it is about the same entity in the same source, is dated strictly after it, carries a cue no
+ * negation sits a word or two before (NEGATED; a cue that starts with one, "not happening", still counts), and either
+ * carries the same slot (dimension and value_hash) or, on content terms other than the entity's name and the cue words,
+ * has all of its terms (at least one) in the fact or shares at least two with it.
+ */
+export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope, facts: readonly FactCandidate[]): Promise<Map<number, FactCandidate[]>> {
+  const out = new Map<number, FactCandidate[]>();
+  const keyed = facts.filter(f => f.entity_slug);
+  if (!keyed.length) return out;
+  const pairs = [...new Map(keyed.map(f => [`${f.source_id}\u0000${f.entity_slug}`, f])).values()];
+  const { where, params } = poolPredicate(scope, undefined);
+  const n = params.length;
+  const cues = await engine.executeRaw<FactCandidate>(
+    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY f.valid_from DESC, f.id DESC) AS call_off_rank
+       FROM facts f WHERE ${where} AND f.fact ~* $${n + 1}
+         AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($${n + 2}::text[], $${n + 3}::text[]))) f
+     WHERE f.call_off_rank <= $${n + 4}`,
+    [...params, CALL_OFF_SQL, pairs.map(f => f.source_id), pairs.map(f => f.entity_slug), CALL_OFF_DEPTH]);
+  const time = (v: Date | string) => new Date(v).getTime();
+  const calledOff = (text: string) => [...text.matchAll(CALL_OFF_WORDS)].some(m => !NEGATED.test(text.slice(0, m.index)));
+  const terms = (slug: string, text: string) => {
+    const name = new Set(slug.toLowerCase().split(/[^\p{L}\p{N}]+/u));
+    return new Set(contentTerms(text).flatMap(w => w.replace(/'s$/, '').split('-')).filter(w => w.length >= 3 && !STOPWORDS.has(w) && !neutralWord(w) && !name.has(w)));
+  };
+  for (const f of keyed) {
+    const own = terms(f.entity_slug!, f.fact);
+    const answers = cues.filter(r => {
+      if (r.source_id !== f.source_id || r.entity_slug !== f.entity_slug || time(r.valid_from) <= time(f.valid_from) || !calledOff(r.fact)) return false;
+      if (f.dimension && f.value_hash && r.dimension === f.dimension && r.value_hash === f.value_hash) return true;
+      const theirs = [...terms(f.entity_slug!, r.fact.replace(CALL_OFF_WORDS, ' '))];
+      const shared = theirs.filter(t => own.has(t)).length;
+      return shared >= 2 || (theirs.length > 0 && shared === theirs.length);
+    })
+      .map(r => ({ ...r, id: Number(r.id), entity: false }))
+      .sort((a, b) => time(a.valid_from) - time(b.valid_from) || a.id - b.id);
+    if (answers.length) out.set(Number(f.id), answers);
+  }
+  return out;
 }
 
 /** The distinct (source_id, entity_slug) pairs with a fact in the authorized, filtered pool (the namesake check runs on these before any ranking). */

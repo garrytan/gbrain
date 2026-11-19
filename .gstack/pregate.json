@@ -96,6 +96,7 @@
     "scripts/bench/**": [],
     "docs/eval/system-one/runners/**": [],
     "docs/eval/system-one/generators/**": [],
+    "apple/helper/**": [],
     "docs/schemas/skill-resolver.v1.turn-input.json": ["test/skill-resolver-contract.test.ts"],
     "docs/schemas/skill-resolver.v1.turn-output.json": ["test/skill-resolver-contract.test.ts"],
     "scripts/check-skill-health.ts": ["test/skill-drift.test.ts", "test/skill-health.test.ts"],
@@ -112,7 +113,12 @@
     "rust/deny.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
     "rust/rust-toolchain.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
     "rust/scripts/**": ["rust/smoke/smoke.test.ts"],
-    "rust/smoke/**": ["rust/smoke/smoke.test.ts"]
+    "rust/smoke/**": ["rust/smoke/smoke.test.ts"],
+    "rust/bench/baseline/**": ["rust/bench/baseline/baseline.test.ts"],
+    "rust/bench/corpus/**": ["rust/bench/baseline/baseline.test.ts"],
+    "rust/bench/Cargo.lock": ["rust/bench/tests/sim_kill.rs"],
+    "rust/bench/.gitignore": ["rust/bench/tests/sim_kill.rs"],
+    "rust/crates/gbrain-store/tests/fixtures/**": ["rust/crates/gbrain-store/tests/graph_parity.rs"]
   },
   "guards": [
     {
@@ -244,6 +250,14 @@
       ],
       "pattern": "pglite-snapshot-(?:default-)?\\$\\{\\{ runner\\.os \\}\\}-\\$\\{\\{ hashFiles\\('(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+'(?:, '(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+')*\\) \\}\\}$",
       "reason": "GitHub Actions PGLite snapshot cache keys: the whole value is pglite-snapshot-[default-]${{ runner.os }}-${{ hashFiles(<args>) }} and every argument is a lowercase path or glob under src/, test/ or scripts/; an argument with digits, capitals or a ./ prefix is not covered and stays flagged"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "src/core/operation-loaders.generated.ts"
+      ],
+      "pattern": "\\[load_[a-z0-9_]+, \"(?:[a-z][A-Za-z]*Operations|[a-z]+(?:_[a-z]+)+)\"\\],?$",
+      "reason": "generated operation-loader table: each value is a loader identifier and an operations export name, never a credential; an operation named like a secret (reveal_secret) trips the key-name heuristic"
     }
   ]
 }

@@ -195,13 +195,25 @@ starts at the fact's `valid_from`: `remember` sets it from its `valid_from`
 parameter (when the fact was said or became true). A `valid_from` that only
 records the write time (within a minute of `created_at`) reads `unknown`, so a
 header never presents when a fact was written as when it became true. An open
-validity end reads `unknown`. A conversation fact that states where a person
-lives, who employs them or their role carries a slot (`location`, `employer`
-or `role`), and the facts block and the temporal fact reserve work out its end
+validity end reads `unknown`. When a conversation fact carries a slot
+(`location`, `employer` or `role`, tagged by a second small call after
+extraction on facts about a person whose page the extractor named exactly),
+the facts block and the temporal fact reserve work out its end
 at read time: the start of the next different value for the same person, when
 that value came from the same conversation or its fact says the value changed
 (moved, joined, left and similar words). Otherwise both values stay open and
-the end reads `unknown`. Nothing is written. The setting
+the end reads `unknown`. Nothing is written. A question that asks for history
+(a history word, "oldest first", "held", or the slot named in the plural, such
+as job titles, employers or cities) about one slot of one named person or
+company, and not for its current value ("now", "currently", "these days"),
+also gets every value that entity has had in that slot that the caller may
+read, oldest first, each with its own window, inside the block's share and
+row count. The entity is the page the question names or, when no page
+matches, the one name tag (a name of two or more words saved with no page)
+whose words the question holds in order; two candidates match none. A page
+written later at `people/<tag>` takes over the tag's facts on this read. If
+that read fails the block keeps its other rows and the response reports the
+degraded stage `facts_history_unavailable`. The setting
 applies to `search`, `query`, `recall`, `think` and `assemble_evidence`.
 
 ### Tail trim

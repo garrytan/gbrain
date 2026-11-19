@@ -150,6 +150,7 @@
     "check:pg-url-redaction": "bash scripts/check-pg-url-redaction.sh",
     "check:source-scope-onboard": "bash scripts/check-source-scope-onboard.sh",
     "check:getpage-scope": "node scripts/check-getpage-scoped-write.mjs",
+    "check:relative-dotdot": "node scripts/check-relative-dotdot.mjs",
     "check:origin-assignment": "node scripts/check-origin-assignment.mjs",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin",
@@ -174,6 +175,8 @@
     "check:dynamic-ci": "bun scripts/check-dynamic-ci.ts",
     "check:windows-hide": "bun scripts/check-windows-hide.ts",
     "check:engine-sql-ratchet": "bun scripts/check-engine-sql-ratchet.ts",
+    "check:engine-raw-sql-ratchet": "bun scripts/check-engine-raw-sql-ratchet.ts",
+    "check:engine-kind-branches": "bun scripts/check-engine-kind-branches.ts",
     "check:core-world-reads": "bun scripts/check-core-world-reads.ts",
     "check:derived-census": "bun scripts/check-derived-census.ts",
     "check:chunk-visibility": "bun scripts/check-chunk-visibility.ts",
@@ -263,7 +266,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.735.0",
+  "version": "0.60.741.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

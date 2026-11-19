@@ -99,6 +99,69 @@ tell two builds apart. It hashes, in sorted path order, each file under `rust/` 
 `.gitignore` and every `*.md`, so changing the README or a smoke test does not change the build.
 The rule lives in `crates/gbrain-napi/build.rs`.
 
+## The brain store
+
+`new addon.Brain(pool)` is one brain on disk, opened with `open` and run on the pool you pass it, so
+the event loop is never blocked. The records live in a directory (`~/.gbrain/brain.rust/` in the
+design): `FORMAT` (JSON: `format_version`, `engine_abi`, `catalog_version`, `schema_version`,
+`brain_id`, `created_by`) and `records.redb`. The store is `crates/gbrain-store`: redb behind a
+narrow key-value trait (`kv.rs`); only `redb_kv.rs` names redb. This is a bake-off store: keyword
+search is a plain BM25 and is not search parity with PGLite (design D5).
+
+Rules for every method:
+
+- Arguments and results are plain JSON-shaped values. Dates are ISO strings with microsecond
+  precision (`2026-08-10T12:00:00.000123Z`), never `Date`; the TypeScript wrapper converts. A result
+  is `null` where the PGLite method returns `null`.
+- Every call returns a promise. A failure rejects with an `Error` whose `code` is in the table
+  below. A call on a closed brain rejects `store_closed`.
+- One process owns a brain. A second `open`, from this process or another, rejects `store_locked`
+  while the first is open; nothing is waited for.
+- `FORMAT` is read before the records are opened. A `format_version` this build does not read
+  (`addon.formatVersions` lists them) rejects `format_unknown` and nothing is written. A missing
+  `FORMAT` is rebuilt from the records.
+
+### Lifecycle
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `new Brain(pool)` | the handle, closed | `PGLiteEngine` constructor |
+| `brain.open(path, options?)` | `{ brain_id, format_version, schema_version, created }` | `connect` and `initSchema` |
+| `brain.close()` | `undefined`; a closed handle is a no-op | `disconnect` |
+| `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
+| `brain.isOpen` | `boolean` (a getter, not a promise) | none |
+
+`options` is `{ schemaVersion?: number, createdBy?: string }`. `schemaVersion` is what a fresh brain
+stores as config `version`; pass `LATEST_SCHEMA_VERSION`. `close` waits for calls already running,
+then gives up the lock.
+
+### Methods by family
+
+Each family of store methods is documented in its own file under [`docs/store/`](docs/store/),
+one file per family, so documenting a new family adds a file and edits nothing here. The
+families, their files and their key tags are listed in
+[docs/designs/RUST_ENGINE_INTERFACES.md](../docs/designs/RUST_ENGINE_INTERFACES.md).
+
+### Deterministic simulation
+
+`crates/gbrain-store/tests/sim.rs` runs the store on redb over `gbrain-sim`'s fault-injecting disk. A
+seed fixes three simulated clients (put, journaled write, replay, tag, soft delete, restore, delete,
+chunks, version, admit, finish, link, batch link, unlink, walk, backlinks, timeline entry, timeline
+batch, timeline read), the clock and ids the store sees, and where the disk crashes, tears
+a write, fails an fsync or lies about one. After a reboot the recovered records must equal the
+replay of a prefix of the acknowledged commits (nothing lost, the batch in flight all or nothing),
+and the store's own invariants must hold: id index, chunks against postings, index totals, journal
+index and outstanding counters, each link against its three index keys and its pages, and each
+timeline entry against its dedup key, its page and the page's newest-entry time. A control run (every fsync lies, the checker is told the disk was
+honest) must report violations, or the harness is blind.
+
+```sh
+cd rust
+cargo test -p gbrain-store --test sim -- --nocapture          # 200 seeds per kind
+GBRAIN_SIM_SEEDS=10000 cargo test --release -p gbrain-store --test sim -- --nocapture crash fsync control
+GBRAIN_SIM_SEED=1234 cargo test -p gbrain-store --test sim     # repeat one seed
+```
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:
@@ -108,6 +171,26 @@ Errors from the addon are real `Error` objects with a `code`:
 | `cancelled` | A queued or running task was cancelled. Carries `completedSteps` and `started`. |
 | `internal_error` | Rust code panicked. Carries a `diagnosticId`; the panic text is not sent to the caller. |
 | `engine_shutdown` | A call arrived after shutdown began. |
+| `store_locked` | Another handle or process has the brain open. |
+| `format_unknown` | `FORMAT` or the format record is not a version this build reads. Nothing was written. |
+| `store_closed` | The brain is not open on this handle. |
+| `store_io` | The file system or the storage engine failed; the write did not commit. |
+| `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
+| `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
+| `invalid_argument` | A malformed argument. |
+| `invalid_slug` | The slug failed `validateSlug`. |
+| `source_not_found` | A page write named a source that does not exist. |
+| `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
+| `constraint_violation` | A write breaks a table constraint PGLite enforces: a `linkSource` outside its CHECK, or a `deletePage` whose origin clear collides with another link. |
+| `revision_conflict` | `expectedRevision` does not match the page. |
+| `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
+| `empty_overwrite` | A blank body would replace a page that has content. |
+| `origin_claimed` | A page write or `restorePage` would make a second live page of a source recording one `source_path`. The message is JSON (`source_id`, `source_path`, `holders`, `slug`); the binding maps it to `page_identity_changed`. |
+| `source_changed` | `sourceIncarnation` is not the source's current incarnation. |
+| `idempotency_conflict` | A request id was used for different content. |
+| `admission_refused` | The principal or the brain has too many unfinished writes. |
+| `writer_rejected` | A local writer registration is revoked, or its lane or credential does not match. |
+| `writer_not_initialized` | The brain has no persistence identity. |
 
 A typed-array argument of the wrong type, or a view of a `SharedArrayBuffer`, throws the
 standard Node-API `InvalidArg` error before any Rust code reads it. The addon decides by asking

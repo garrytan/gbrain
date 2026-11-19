@@ -24,6 +24,7 @@ import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
 import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
+import { credentialReadSources } from '../core/grants/shared-exposure.ts';
 import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, withCallerAccess } from '../core/search/private-visibility.ts';
 import { membersReadLineageOn, setMembersReadLineage } from '../core/access/lineage.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
@@ -91,13 +92,15 @@ Owner (one member who owns this brain; credentials bound to it read every page, 
 Serves several people (GST-363):
   gbrain access serves [--no-open-pages]     One or several, and why (config access.serves, else 2+ enabled members);
                                              on several, the pages every member's key reads (--no-open-pages skips the count)
-  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--labelled-only] [--yes]
+  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--labelled-only] [--owner <id>] [--yes]
                                              Preview first; --yes writes access.serves = several, adds each member,
                                              a folder rule people/<member>/ read only by that member, and one key
                                              bound to each member in a 0600 file under <config>/member-keys/.
                                              Both list the pages every member's key can still read (no rule or
                                              readable_by restricts them); --labelled-only keeps each member to the
-                                             pages labelled for it (never the owner)
+                                             pages labelled for it (never the owner); --owner names the brain owner
+                                             when none is set (an existing owner is kept) and lists the keys bound to
+                                             no member with the command that binds each; it rebinds none
 
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes]
@@ -137,7 +140,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return v;
 }
 
-const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind']);
+const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind', '--owner']);
 
 function positionals(args: string[]): string[] {
   const out: string[] = [];
@@ -246,6 +249,10 @@ export interface AccessCheckResult {
   labelled_only: boolean;
   explanation: string;
   audience?: Array<{ principal: string; covered_by_may_act_for: boolean }>;
+  /** GST-2898: the read-shared switch is on (also read every shared source, now and later). */
+  read_shared: boolean;
+  /** GST-2898: the sources it reads unqualified now, resolved through credentialReadSources (the switch included). */
+  reads_now: string[];
 }
 
 /** Every grant axis and the member identity of one credential, as the verifier and dispatch would see it. */
@@ -296,7 +303,9 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
     grant: { scopes: grant.scopes, sources: grant.sources, takes_holders: grant.takesHolders, private_pages: grant.privatePages,
       operations: grant.allowedOperations ?? 'unrestricted', revision: grant.revision },
     member, identity, may_act_for: mayActFor, verdict, reads_unscoped: readsUnscoped, owner, owner_reads_restricted: ownerReadsRestricted, members_read_lineage: memberLineage, labelled_only: labelledOnly, explanation,
+    read_shared: grant.readShared === true, reads_now: await credentialReadSources(engine, grant, boundId),
   };
+ 
   if (target.as !== undefined) {
     const audience: NonNullable<AccessCheckResult['audience']> = [];
     for (const entry of target.as.split(',').map(s => s.trim()).filter(Boolean)) {
@@ -554,6 +563,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           `  Sources: ${JSON.stringify(r.grant.sources)}`,
           `  Operations: ${r.grant.operations === 'unrestricted' ? 'every operation the scopes allow' : r.grant.operations.length}`,
           `  Private pages: ${r.grant.private_pages}`,
+          `  Reads now: ${r.reads_now.join(', ') || 'nothing'}${r.read_shared ? '  (read-shared on: sources shared later join automatically; guest sources and other members\' own sources never do)' : ''}`,
           `  Member: ${r.member ? `${r.member.id} (${r.member.status})` : 'none'}${r.member?.groups.length ? `  groups: ${r.member.groups.join(', ')}` : ''}${r.labelled_only ? '  labelled-only' : ''}`,
           `  May act for: ${r.may_act_for?.join(', ') ?? 'none'}`,
           ...(r.audience ? [`  Audience: ${r.audience.map(a => `${a.principal}${a.covered_by_may_act_for ? '' : ' (not in may_act_for)'}`).join(', ')}`] : []),

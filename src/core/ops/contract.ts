@@ -454,6 +454,13 @@ export interface AuthInfo {
    */
   privatePages?: { mode: 'granted_sources'; sources: string[] };
   /**
+   * GST-2898: the credential's read-shared switch is on, so `allowedSources` already holds its stored list plus every
+   * shared source (grants/read-shared.ts). `readSharedUnresolved`: the shared set could not be read, so it reads its
+   * stored list only and read results carry the `read_shared_unresolved` degraded notice.
+   */
+  readShared?: boolean;
+  readSharedUnresolved?: boolean;
+  /**
    * GBRA-575: the grant's `private_facts: granted_sources` axis, set at token
    * verification from the live row, with the same explicitly named sources.
    * MCP dispatch makes them the private-fact sources of each non-mutating call
@@ -565,6 +572,8 @@ export interface OperationContext {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /** #9669: the tool surface MCP dispatch served this call on; a remote agent job records it. Unset for the local CLI. */
+  surface?: 'verbs' | 'starter' | 'full';
   /**
    * GBRA-218 local `--as <member>`: the member identity a trusted local read previews. Set only by the
    * CLI with `applyRemoteReadPolicy`; `remote` stays false, so upload confinement and write trust are unchanged.
@@ -684,7 +693,7 @@ export interface OperationContext {
    * callable. Unset on local and in-process callers. Shape only, never
    * authority: dispatch enforces callability itself.
    */
-  isCallable?: (opName: string) => boolean;
+  isCallable?: (opName: string, args?: Record<string, unknown>) => boolean;
   /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers

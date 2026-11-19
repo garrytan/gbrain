@@ -10,12 +10,11 @@ import { join, relative } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { embeddedSettings, hostIdFor, isEmbeddedEngine, openEngine, processHasEmbeddedEngines, type EngineSettings } from '../src/core/engine-open.ts';
 import { markEmbeddedEngine, releaseEmbeddedEngine, settingsConnectionOptions } from '../src/core/embedded-engine.ts';
-import { existingHostIdFor, existingLocalHostId, hostIdentityPathsFor, localHostId, localHostIdentity, registerLocalWriter, registerLocalWriterValue, revokeLocalWriter } from '../src/core/persistence/identity.ts';
+import { existingHostIdFor, existingLocalHostId, hostIdentityPathsFor, localHostId, localHostIdentity, registerLocalWriter, registerLocalWriterValue, revokeLocalWriter, type LocalWriterEngine } from '../src/core/persistence/identity.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { readStoredEmbeddingIdentity } from '../src/core/stored-embedding-identity.ts';
 import { ConnectionManager } from '../src/core/connection-manager.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { SqlEngine } from '../src/core/persistence/model.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { engineKey } from '../src/core/engine-key.ts';
 import { awaitPendingTelemetryFlush, getTelemetryWriter, recordSearchTelemetry, _telemetryWriterCountForTest } from '../src/core/search/telemetry.ts';
@@ -42,12 +41,13 @@ const hostCtx = (engine: BrainEngine): OperationContext => ({
 } as unknown as OperationContext);
 const codeOf = async (work: Promise<unknown>) => { try { await work; return 'resolved'; } catch (error) { return (error as { code?: string }).code ?? String(error); } };
 /** `engine` whose next registration read answers no row, as when another caller registers between that read and the insert. */
-const racedRead = (engine: BrainEngine): SqlEngine => {
+const racedRead = (engine: BrainEngine): LocalWriterEngine => {
   let hidden = false;
-  return { executeRaw: (<T>(sql: string, params?: unknown[]) => {
-    if (!hidden && sql.startsWith('SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers')) { hidden = true; return Promise.resolve([] as T[]); }
-    return engine.executeRaw<T>(sql, params);
-  }) as SqlEngine['executeRaw'] };
+  return {
+    readPersistenceBrainId: () => engine.readPersistenceBrainId(),
+    readLocalWriterRow: (id, opts) => { if (!hidden) { hidden = true; return Promise.resolve(undefined); } return engine.readLocalWriterRow(id, opts); },
+    insertLocalWriterRow: row => engine.insertLocalWriterRow(row),
+  };
 };
 /** Ambient settings that must never reach an embedded engine: a clean GBRAIN_HOME, a canary HOME and bogus database URLs. */
 function canaries() {

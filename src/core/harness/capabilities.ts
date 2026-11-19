@@ -6,7 +6,7 @@ import { TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, normalizeGrantBrain, vali
 import { shellQuote } from '../mcp-registration.ts';
 import type { CatalogProvenance } from '../grants/profiles.ts';
 import type { Action, Notice } from '../agent-output.ts';
-import { EXECUTION_PREREQUISITES, requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
+import { EXECUTION_PREREQUISITES, addedOnlyByName, requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
 
 type GrantSurface = 'verbs' | 'starter' | 'full';
 
@@ -103,7 +103,8 @@ export async function grantOperationGaps(input: GrantGapInput): Promise<GrantGap
     import('../operations.ts'), import('../../mcp/surface.ts'),
   ]);
   const fence = { boundSlugPrefixes: input.boundSlugPrefixes, fenceProjectionDegraded: input.fenceProjectionDegraded, grantProjectionDegraded: input.grantProjectionDegraded };
-  const eligible = operations.filter(op => !op.localOnly && !input.disabled.has(op.name)
+  const named = new Set(input.allowedOperations ?? []);
+  const eligible = operations.filter(op => !op.localOnly && !input.disabled.has(op.name) && (!addedOnlyByName(op.name) || named.has(op.name))
     && operationScopesAllowed([...input.scopes], op) && opAllowedForBoundClient(fence, op));
   const outside = (surface: GrantSurface | null): string[] => {
     if (!surface || surface === 'full') return [];
@@ -283,7 +284,10 @@ export function grantBlockedNotice(d: GrantDiagnosis, opts: { refused: boolean }
   const reachable = d.blockers.filter(b => b.blocker !== 'scope');
   const scope = d.blockers.find(b => b.blocker === 'scope') as { missing_scopes: string[] } | undefined;
   const parts: string[] = [];
-  if (reachable.length && d.unreachable_count > 0) {
+  // GBRA-585: a snapshot whose left-out operations all existed when it was written is the owner's narrowing (a guest
+  // broker's --operations), so a call it can make carries no widen nudge; a refused call still says why.
+  const deliberate = d.grant_age.state === 'provenance_recorded' && d.grant_age.predates_count === 0 && reachable.every(b => b.blocker === 'operation_snapshot');
+  if (reachable.length && d.unreachable_count > 0 && (opts.refused || !deliberate)) {
     const n = d.unreachable_count;
     const age = 'statement' in d.grant_age ? ` ${d.grant_age.statement}` : '';
     parts.push(`This connection's grant cannot call ${n} operation${n === 1 ? '' : 's'} its scopes allow, blocked by ${reachable.map(blockerPhrase).join(' and by ')} (counted per blocker; an operation can sit behind more than one).${age}`

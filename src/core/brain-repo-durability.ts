@@ -50,7 +50,8 @@ import { readFix } from './ops/op-fix.ts';
 // don't ship their own — see resolveFilingRules().
 import filingRulesDoc from '../../skills/_brain-filing-rules.json';
 import { GIT_PATHSPEC_ENV_VARS, gitChildEnv } from './git-env.ts';
-import { commitAndPush, commitPathsLocked, readIntegrateConflict, SOURCE_ROOT_CONFIG } from './git/commit-push.ts';
+import { commitAndPush, commitPathsLocked, readCredentialRefusal, readIntegrateConflict, SOURCE_ROOT_CONFIG } from './git/commit-push.ts';
+import { relativeEscapesRoot } from './path-confine.ts';
 
 export { execFileBounded, type BoundedExecOptions } from './bounded-child-exec.ts';
 
@@ -545,7 +546,7 @@ function gitDirPath(repoPath: string, rel: string): string {
 
 function pathContains(parent: string, child: string): boolean {
   const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  return !relativeEscapesRoot(rel);
 }
 
 export function resolveHooksDir(repoPath: string): { dir: string; tracked: boolean } {
@@ -712,7 +713,7 @@ export function commitWriteThroughFile(
 ): boolean {
   try {
     const rel = relative(repoPath, absPath);
-    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
+    if (!rel || relativeEscapesRoot(rel)) return false;
     return commitPathsLocked(repoPath, [absPath], `gbrain: ${action} ${slug}`, { lockWaitMs: WRITE_THROUGH_LOCK_WAIT_MS }) !== null;
   } catch {
     return false;
@@ -783,6 +784,12 @@ export function getLastPushOutcome(branch: string, repo?: string): PushLogOutcom
   if (conflict && conflict.branch === branch) {
     return { status: 'needs_attention', at: conflict.at,
       detail: `unresolved integrate_conflict on ${branch} (${conflict.paths.join(', ')}): run gbrain git commit-push --push-only --expect-remote ${String(conflict.remote).slice(0, 12)} --resolve <path>=ours|theirs` };
+  }
+  const refused = repo ? readCredentialRefusal(repo) : null;
+  if (refused) {
+    const answered = refused.helpers.find(h => h.answered);
+    return { status: 'needs_attention', at: refused.at,
+      detail: `push_credential_refused since ${refused.since}: ${refused.url} refused the credential git used (${refused.kind === 'not_found' ? 'repository not found, HTTP 404' : 'HTTP 403'}${answered ? `, from ${answered.helper} (${answered.scope ?? 'scope unknown'})${refused.username ? ` for ${refused.username}` : ''}` : ''}); fix the credential, then run gbrain git commit-push --push-only` };
   }
   const log = pushLogPath();
   if (!existsSync(log)) return { status: 'unknown', detail: 'no push attempts logged yet' };
@@ -1144,7 +1151,7 @@ function recordSourceRoot(top: string, sourcePath: string): void {
     stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }) }).toString();
   try {
     const rel = relative(realpathSync(top), realpathSync(sourcePath)).split(sep).join('/');
-    if (rel.startsWith('..') || isAbsolute(rel)) return;
+    if (relativeEscapesRoot(rel)) return;
     let current: string[] = [];
     try { current = run(['--get-all', SOURCE_ROOT_CONFIG]).split('\n').map(v => v.trim()).filter(Boolean); } catch { /* unset */ }
     const value = rel || '.';

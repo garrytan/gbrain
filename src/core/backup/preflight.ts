@@ -74,6 +74,36 @@ export function physicalCopyFix(): Action {
   };
 }
 
+export const POSTGRES_BACKUP_DOCS = 'docs/guides/memory-boundaries.md#full-backup';
+
+const POSTGRES_DUMP_STEPS = 'This brain lives in Postgres, so back it up with a database dump of its database: ' +
+  '`pg_dump --format custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token); `pg_restore --list <DUMP_FILE>` reads it back. ' +
+  'Restore it into a new, empty database with `pg_restore --no-owner --dbname <NEW_DATABASE_URL> <DUMP_FILE>`, then run ' +
+  '`gbrain init --url <NEW_DATABASE_URL>` under a separate GBRAIN_HOME, which opens the restored brain. ' +
+  '`gbrain export` is not a backup: an import of it puts every page in one source and keeps no members, tokens or facts.';
+
+/** The full backup of a Postgres brain: the host admin dumps its database; pg_restore --list reads the dump back. */
+export function postgresDumpFix(): Action {
+  return {
+    argv: ['pg_dump', '--format', 'custom', '--file', '<DUMP_FILE>', '--dbname', '<DATABASE_URL>'],
+    consent: ['credentials'], actor: 'host_admin', requires_exclusive: false, docs: POSTGRES_BACKUP_DOCS,
+    why: 'A database dump keeps every source, page, fact, member, token and folder rule of a Postgres brain; a Markdown export keeps pages only.',
+    user_message: POSTGRES_DUMP_STEPS,
+    inputs: [
+      { name: 'DUMP_FILE', how: 'A new file outside the brain, in a directory only the user can read.' },
+      { name: 'DATABASE_URL', how: 'The brain\'s Postgres connection, preferably service=<name> from a pg_service file so no password lands in the command line.' },
+    ],
+  };
+}
+
+/** `gbrain backup create` on a Postgres brain: the same storage_error code, with the database dump as the fix. */
+export function postgresBackupRefusal(): OperationError {
+  return opError('storage_error',
+    `gbrain backup create snapshots PGLite brains only. ${POSTGRES_DUMP_STEPS}`,
+    'Tell the user to back up the Postgres database with pg_dump and restore it with pg_restore.',
+    { reason: 'pglite_required', why: 'Full local snapshots copy a PGLite data directory; a Postgres brain\'s data is in its database server.', fix: postgresDumpFix() });
+}
+
 /**
  * The refusal for a brain this recovery format cannot hold, or null when it can.
  * Reads only file metadata; `managedFileBytes` runs only for a managed layout.

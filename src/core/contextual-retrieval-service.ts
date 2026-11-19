@@ -42,6 +42,7 @@
 import { createHash } from 'crypto';
 import * as fs from 'node:fs';
 import { embedBatch } from './embedding.ts';
+import { embeddingSendBlocked, embeddingsDisabled } from './embedding-disabled.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
   buildContextualPrefix,
@@ -238,7 +239,7 @@ export type ReembedPageResult =
     }
   | {
       kind: 'skipped';
-      reason: 'mode_none' | 'no_chunks' | 'page_missing' | 'soft_deleted' | 'budget_limited' | 'purge_sweep_pending' | 'page_body_segmented';
+      reason: 'mode_none' | 'no_chunks' | 'page_missing' | 'soft_deleted' | 'budget_limited' | 'purge_sweep_pending' | 'page_body_segmented' | 'embedding_disabled';
     }
   | {
       kind: 'page_fallback';
@@ -312,6 +313,33 @@ export interface ReembedPageArgs {
 export async function reembedPageWithContextualRetrieval(
   args: ReembedPageArgs,
 ): Promise<ReembedPageResult> {
+  try {
+    await assertEmbeddingSendAllowed(args.engine);
+    return await reembedPage(args);
+  } catch (err) {
+    if (err instanceof EmbeddingSendBlocked) return err.result;
+    throw err;
+  }
+}
+
+/** #9715: thrown before any provider send once embedding is off (skipped) or its setting cannot be read (retried). */
+class EmbeddingSendBlocked extends Error {
+  constructor(readonly result: ReembedPageResult) { super('embedding send blocked'); }
+}
+
+/** A job queued, or a page already in flight, when the owner turned embedding off sends nothing more. */
+async function assertEmbeddingSendAllowed(engine: BrainEngine): Promise<void> {
+  if (!await embeddingSendBlocked(engine)) return;
+  throw new EmbeddingSendBlocked(await embeddingsDisabled(engine) ? { kind: 'skipped', reason: 'embedding_disabled' }
+    : { kind: 'transient_error', cause: 'db', detail: 'The embedding_disabled setting could not be read, so nothing was sent; the job retries.' });
+}
+
+async function sendEmbeddings(engine: BrainEngine, texts: string[], abortSignal: AbortSignal | undefined): Promise<Float32Array[]> {
+  await assertEmbeddingSendAllowed(engine);
+  return embedBatch(texts, { abortSignal });
+}
+
+async function reembedPage(args: ReembedPageArgs): Promise<ReembedPageResult> {
   // ── Load page + source + chunks ────────────────────────────────────
   const initial = await args.engine.getPage(args.pageSlug, { sourceId: args.sourceId });
   if (!initial) {
@@ -574,7 +602,7 @@ async function reembedSegmentedPage(args: ReembedPageArgs, initial: Page): Promi
         const tier: EmbeddingTier = Array.isArray(synopsized) ? 'per_chunk_synopsis' : 'title';
         const inputTexts = Array.isArray(synopsized) ? synopsized : todo.map(c => wrapChunkForEmbedding(c.chunk_text, titlePrefix, c.chunk_source));
         try {
-          return { kind: 'built' as const, tier, fallback: Array.isArray(synopsized) ? null : synopsized.cause, vectors: await embedBatch(inputTexts, { abortSignal: args.abortSignal }) };
+          return { kind: 'built' as const, tier, fallback: Array.isArray(synopsized) ? null : synopsized.cause, vectors: await sendEmbeddings(args.engine, inputTexts, args.abortSignal) };
         } catch (err) {
           return classifyEmbedError(err, err instanceof Error ? err.message : String(err));
         }
@@ -676,7 +704,7 @@ async function tryBuildPhase1(opts: {
     );
 
     try {
-      const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+      const embeddings = await sendEmbeddings(args.engine, wrappedTexts, args.abortSignal);
       return {
         kind: 'success',
         embeddedChunks: chunks.map((c, i) => ({
@@ -701,7 +729,7 @@ async function tryBuildPhase1(opts: {
 
   // All chunks synthesized successfully. Single batch embed (D27 P2-2).
   try {
-    const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+    const embeddings = await sendEmbeddings(args.engine, wrappedTexts, args.abortSignal);
     return {
       kind: 'success',
       embeddedChunks: chunks.map((c, i) => ({
@@ -801,6 +829,7 @@ async function buildWrappedChunkText(opts: {
       }
       leaseAcquired = true;
     }
+    await assertEmbeddingSendAllowed(args.engine);
     synopsisResult = await (args.generateSynopsis ?? generatePerChunkSynopsis)({
       documentText: sourceText,
       chunkText: c.chunk_text,
@@ -902,18 +931,13 @@ function readSourceTextWithFallback(page: Page, chunks: ChunkInput[]): string {
  */
 export class SourceRowNotFoundError extends Error {}
 
-export async function loadSourceRow(engine: BrainEngine, sourceId: string): Promise<SourceRow> {
-  const rows = await engine.executeRaw<SourceRow>(
-    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
-            contextual_retrieval_mode, trust_frontmatter_overrides
-     FROM sources WHERE id = $1`,
-    [sourceId],
-  );
-  // A missing result set (unit-test engine doubles) reads as no row.
-  if (!rows?.length) {
+export async function loadSourceRow(engine: Pick<BrainEngine, 'getSource'>, sourceId: string): Promise<SourceRow> {
+  const row = await engine.getSource(sourceId);
+  // A missing result (unit-test engine doubles) reads as no row.
+  if (!row) {
     throw new SourceRowNotFoundError(`Source not found: ${sourceId}`);
   }
-  return rows[0];
+  return row;
 }
 
 function sourcePolicy(source: SourceRow) {
@@ -931,6 +955,7 @@ function sameProjection(prepared: ProjectionSnapshot, current: ProjectionSnapsho
 }
 
 function classifyEmbedError(err: unknown, detail: string): Phase1Transient | Phase1Permanent {
+  if (err instanceof EmbeddingSendBlocked) throw err;
   const e = err as { status?: number; code?: string; name?: string };
   if (e.status === 401 || e.status === 403) {
     return { kind: 'permanent', cause: 'embed', detail };

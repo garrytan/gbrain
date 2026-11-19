@@ -2061,6 +2061,19 @@ also works on both.
 Explicit-only: `gbrain repair --all`, the maintenance cycle and the doctor
 remediation plan never run it.
 
+### Calls not scoped
+
+`gbrain import --calls` on a brain that serves two or more people keeps each new call to the brain owner plus the teammates its `Attendees:` or `Participants:` line names. When some caller that could be the owner's own would lose the call, the import stays open, exactly as before, and prints the `calls_not_scoped` notice with the reason and the one command that fixes it:
+
+| Reason | What it means | Fix |
+|---|---|---|
+| `owner_unset` | The brain names no owner, so no reader list could name one. | `gbrain access owner set <member>` |
+| `owner_inactive` | The owner member is not enabled. | `gbrain access member enable <owner>` |
+| `unbound_readers` | A token or OAuth client bound to no person still reads the brain (grace, `--reads-unscoped`, or a host that does not enforce binding). | The `gbrain auth rescope ... --member <member>` the notice names, for each one |
+| `stdio_unbound` | A local harness connection bound to nobody still reads the brain. | `gbrain setup <harness> --stdio-member <owner>` |
+
+Then import again. `--readers source` imports open on purpose and prints no notice. Calls imported before are not changed by an upgrade.
+
 ### Stale atoms
 
 `gbrain repair stale-atoms` (explicit-only) retires atoms that drifted from
@@ -3752,14 +3765,55 @@ gbrain repair file-drift --source <id> --held --json           # compare every h
 <a id="file-drift-compare-mirror"></a>On a [read-only mirror](multi-source-brains.md#read-only-mirror-sources)
 (GST-2843), the held comparison reads each held page's file too: a page that
 differs reads `prefer_file` or `needs_human` with its `evidence` (a held deleted
-page whose file differs reads `needs_human` and names the same route), one that
+page whose file differs reads `needs_human` and names
+[keeping the deletion](#mirror-keep-deleted) first and `gbrain sources
+mirror-writable <id>` second, never a `--prefer file` preview; a `purged_differs`
+page has no deletion to keep and names only `mirror-writable`), one that
 matches reads `release_hold`, and only a page whose file is gone reads
 `no_drift` with `database_only`. Every compared page in `details.pages`
-carries `evidence` (null when nothing was read). The comparison names no
-`--prefer` preview there, because a mirror's previews read every page as
-database-only and resolve nothing: a differing page stays held until the user
-makes the source writable again (`gbrain sources mirror-writable <id>`, which
-lets gbrain write files into its checkout) and picks a side then (GST-2869).
+carries `evidence` (null when nothing was read). The window previews read the
+same way, so `--held --side unknown --prefer file` lists a page whose file is
+newer `prefer_file`; the comparison names the [whole-class](#whole-class)
+preview of the side, which settles every such page with one approval and never
+writes the mirror's checkout.
+
+<a id="whole-class"></a>**Whole class.** `--whole-class` previews every window
+of one side (`--held --side unknown|database|both --prefer file`) as one class:
+one manifest, one hash, one approval. A large read-only mirror can hold
+thousands of pages, and a window preview covers 200.
+
+```bash
+gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class          # read-only: writes only a private manifest
+gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class --apply --expect <hash> --yes   # after the user agrees
+```
+
+The preview writes `repair-previews/file-drift/class-<hash>.json` under the
+gbrain config directory: per page its slug, path, revision, file blob, hold
+code, side, upstream version and lost lines. Its output (and `--json`) carries
+`details.class_manifest` with `path`, `hash`, `complete`, `pages`,
+`lost_lines_total`, `top` (the 50 pages that lose most lines) and `residual`
+(each kept group's count and next command), then the data-loss card: what is
+replaced, how many lines are lost, and how it comes back (`gbrain revert` from
+the page version saved first, and reconcile's private backup). Two groups stay
+held: `kept_newer_page` (edited in gbrain after the file's last commit) and,
+on a read-only mirror, `kept_protected_parts` (the file would need gbrain's
+protected keys, takes or private facts appended). A preview that stops early
+says `complete: false`, prints a resume command and no apply command.
+
+The apply needs the user's yes on the hash and the trusted local CLI. Each page
+is re-read: it applies only while its revision, file blob, hold code, side,
+upstream version and mirror flag still match and its lost lines did not grow,
+so a sync that only rewrote hold records keeps the approval; anything else is
+skipped and stays held. On a read-only mirror the file is imported into the
+page database-only, and the next sync releases each hold. A stopped apply
+prints its resume command first, then applied, skipped and remaining, and
+exits 1; a rerun resumes at the next window and applies no page twice.
+Refusals: `whole_class_prefer_unsupported` (`--prefer database` or `--side
+deleted`; use the window preview), `class_capacity_exceeded` (the backups would
+pass `persistence.limits.brain_recovery_bytes`; raising it is the user's call),
+`class_manifest_stale` (the manifest no longer matches its hash; preview again)
+and `class_apply_busy` (another apply of the same manifest is running). A brain
+with no repository has no held pages: the preview says so and exits 0.
 
 <a id="file-drift-kept-newer"></a>`--prefer file` never drops a page edited after its file's last commit in
 bulk. A `--held`, `--all-drifted` or `--request` preview lists such a page
@@ -5478,7 +5532,11 @@ whose snapshot was written before snapshots recorded their operation catalog
 says "this grant's snapshot excludes N currently eligible operations;
 original intent unknown", and only a grant with recorded catalog provenance
 says it predates operations. Operations outside the grant's scopes are never
-counted, so a writer is not told about admin-only operations.
+counted, so a writer is not told about admin-only operations. A snapshot the
+owner narrowed on purpose (catalog provenance recorded, and every operation it
+leaves out existed when it was written, as with a guest broker's
+`--operations` list) blocks nothing by mistake, so the notice comes only with a
+refused call, never on a call the grant can make.
 
 It arrives once per session: once per (principal, transport session) on
 stdio and HTTP, and for a stateless HTTP call with no session id once per

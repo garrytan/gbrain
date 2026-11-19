@@ -154,6 +154,11 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
   // 4xx (except 429) = config-level, non-retryable. A 403 whose body says the
   // project has no access to the model is a model problem, not a key problem.
   if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
+    // #9696: Ollama answers 400 while the runner behind a model restarts; a refused connection to it is an outage.
+    const body = (err as { responseBody?: unknown }).responseBody;
+    if (/\bconnect: connection refused\b|"error"\s*:\s*"connection refused"/.test(`${raw}\n${typeof body === 'string' ? body : ''}`)) {
+      return carryStatusFields(err, new AITransientError(`${ctxPrefix}${msg}`, err));
+    }
     return carryStatusFields(err, new AIConfigError(
       `${ctxPrefix}${msg}`,
       status === 404 || MODEL_NOT_FOUND_MESSAGE_RE.test(msg) ? modelNotFoundFix(context, routeHint)

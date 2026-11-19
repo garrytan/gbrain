@@ -74,6 +74,10 @@ process, delete its lock, or start another server to obtain administration.
   explain both consequences: removed authority applies immediately; expanded
   scopes require fresh native authorization or a newly issued machine token.
   Refresh cannot expand the original scope grant.
+- **Shared reads:** a member key that should also read every shared source,
+  now and later, gets `gbrain auth rescope --token NAME --read-shared on` on the
+  brain host (`--client ID` for a client). It needs a write source; narrow a
+  switched key with `--sources none --read-shared off` in one command.
 - **End access:** `invalidate-tokens ID`, `revoke ID`, and `delete ID` preview
   consequences by default; apply an authorized reviewed action with
   `--yes --if-version N`. Explain that invalidation removes access/refresh tokens
@@ -118,7 +122,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - A failed transport after a mutation was sent means the outcome is unknown: re-read the client list before retrying, never re-send blind.
 - A list call fails: a failed list is not an empty list; report the error.
 - A tool the grant should reach is missing (`unknown_tool`, or a write such as `put_pages` absent): read `grant_diagnosis` from `whoami` or `gbrain://capabilities`. It names the blocker (scope, operation snapshot, client pin or server ceiling) and counts the operations it hides without naming them. Relay its `fix` (`next: tell_user_to_run`) to the brain owner; on the host, `gbrain doctor` check `grant_new_ops_available` shows the exact commands. New memory-profile grants are on the full surface; older ones keep their stored surface until the owner changes it. An "original intent unknown" grant may be restricted on purpose: never widen it unasked, and offer `--operations all` (no snapshot, including operations later upgrades add) only as the user's explicit choice.
-- A `grant_blocked_operations` notice (once per session) is the same diagnosis delivered in band: relay its `fix` to the brain owner (preview, then the `then` command), confirm with `whoami` afterwards, and do not retry the blocked operations meanwhile. It never names operations, and a missing scope is named only when a call was refused.
+- A `grant_blocked_operations` notice (once per session; a grant the owner narrowed on purpose gets it only on a refused call) is the same diagnosis delivered in band: relay its `fix` to the brain owner (preview, then the `then` command), confirm with `whoami` afterwards, and do not retry the blocked operations meanwhile. It never names operations, and a missing scope is named only when a call was refused.
 - A `hidden_tool_content` notice means the result left out takes that a tool outside your tool list serves. Follow its `fix` as given: call `takes_list` when it names it, call `request_tools {surface}` when it names that (then `takes_list`), or relay the owner's repair when `next` is `tell_user_to_run`. Do not answer "not found" from that result alone.
 
 ## Anti-Patterns

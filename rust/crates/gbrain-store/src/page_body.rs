@@ -1,0 +1,2843 @@
+//! Segmented page bodies: segment texts, manifests, stagings, the generation flip and per-segment
+//! derivations, plus `refreshPageBody` (the narrow inline body rewrite). PGLite's SQL is
+//! `src/core/engine-sql/page-body.ts` and `engine-sql/pages.ts` (`refreshPageBody`); each member
+//! below follows it, refusals included. rust/docs/store/page_body.md lists what differs.
+//!
+//! Members served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts,
+//! stageManifestRows, readManifest, stageSegmentChunks, createSegmentedPageShell,
+//! flipBodyGeneration, openBodyStaging, setBodyStagingState, readSegmentDerivations,
+//! upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. Segment chunk rows go
+//! through the chunks family's segment-chunk helper (`chunks::append_segment_chunks` and friends).
+//! Not served (the TypeScript engine refuses it with `engine_capability_missing`): sweepSegments
+//! (its roots are version and journal rows this family cannot read).
+//!
+//! Keys. Every record starts with `keys::PAGE_BODY` (`b`) and one kind byte. Page ids are
+//! big-endian u64; occurrence ids and generations are signed and stored sign-flipped big-endian
+//! (`v ^ 1<<63`), so keys sort by value.
+//!
+//! - `b 0x01 <source> 0x00 <sha256: 32 bytes>`: a segment text (`TextRecord`, body as hex).
+//! - `b 0x02 <page id> <occurrence id> <gen_from> <staging id: 16 bytes>`: a manifest row
+//!   (`ManifestRow`). Published rows carry the nil staging id, as Postgres `staging_key` does.
+//! - `b 0x03 <staging id: lowercase uuid text>`: a body staging (`StagingRecord`).
+//! - `b 0x04 <page id> <kind> 0x00 <occurrence id>`: a segment derivation (`DerivationRecord`), so
+//!   a page's rows sort by kind, then occurrence.
+//! - `b 0x05 <page id>`: the segmented-body columns of a page (`BodyState`). A page without one is
+//!   inline at body generation 0.
+//! - `b 0x06 <principal kind> 0x00 <principal id> 0x00 <client request id>`: the staging's unique
+//!   client key; the value is the staging id.
+//! - `b 0x07 <staging id text> <sha256>`: a text a staging recorded; the value is the source id.
+//! - `b 0x08 <page id> <staging id text>`: stagings of a page, for the page-delete cascade.
+//! - `M next_body_occurrence_id`: the occurrence id counter (big-endian u64 of the next id).
+//!
+//! Refusals Postgres raises from a CHECK, foreign key or unique index are `constraint_violation`
+//! here; a value Postgres cannot parse (a bad uuid, hex or date) is `invalid_argument`. The flip
+//! and staging refusals PGLite raises as operation errors are `invalid_state` with the message
+//! `page_body:<json>`; `store-members/page-body.ts` rebuilds the PGLite error from the JSON.
+
+use crate::env::{is_uuid, parse_iso};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_STATE, REVISION_CONFLICT};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::page_columns::PageColumns;
+use crate::pages::{
+    PageRecord, PageText, clean, next_id, read_page, read_page_by_id, validate_slug, write_page,
+};
+use crate::{Result, Store, StoreError, get_json, keys, put_json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+const TEXT: u8 = 0x01;
+const MANIFEST: u8 = 0x02;
+const STAGING: u8 = 0x03;
+const DERIVATION: u8 = 0x04;
+const BODY: u8 = 0x05;
+const STAGING_CLIENT: u8 = 0x06;
+const STAGING_TEXT: u8 = 0x07;
+const STAGING_BY_PAGE: u8 = 0x08;
+
+/// The page id counter of `pages.rs` (its `NEXT_PAGE_ID`, private there): a shell takes its id
+/// from the same sequence `putPage` does.
+const NEXT_PAGE_ID: &str = "next_page_id";
+const NEXT_OCCURRENCE_ID: &str = "next_body_occurrence_id";
+/// `SEGMENTED_CHUNKER_VERSION` (src/core/page-body/segment-chunks.ts): the current segmented chunker.
+const SEGMENTED_CHUNKER_VERSION: i16 = 5;
+const NIL_STAGING: [u8; 16] = [0; 16];
+
+const LIVE_STAGING_STATES: [&str; 3] = ["open", "sealed", "prepared"];
+const STAGING_STATES: [&str; 6] = [
+    "open",
+    "sealed",
+    "prepared",
+    "committed",
+    "aborted",
+    "expired",
+];
+const STAGING_KINDS: [&str; 7] = [
+    "upload",
+    "import",
+    "sync",
+    "put",
+    "append",
+    "edit",
+    "resegment",
+];
+const STAGING_MODES: [&str; 3] = ["create", "replace", "append"];
+const REGIONS: [&str; 2] = ["truth", "timeline"];
+const CUT_KINDS: [&str; 7] = [
+    "heading",
+    "day",
+    "message",
+    "blank",
+    "forced",
+    "region_end",
+    "eof",
+];
+const DERIVATION_KINDS: [&str; 7] = [
+    "links",
+    "mentions",
+    "timeline",
+    "fences",
+    "conversation_facts",
+    "facts_backstop",
+    "synopsis",
+];
+const DERIVATION_STATES: [&str; 4] = ["done", "partial", "failed", "skipped"];
+/// `page_segment_texts.byte_len BETWEEN 1 AND 1048576`.
+const MAX_SEGMENT_BYTES: usize = 1_048_576;
+/// `BODY_STAGING_IDLE_MS` (`src/core/page-body/limits.ts`) in microseconds.
+const BODY_STAGING_IDLE_US: i64 = 60 * 60 * 1_000_000;
+/// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a segmented write stores at
+/// most one below it.
+const SAFE_FENCE_CHUNKER_VERSION: i64 = 4;
+
+// ---------------------------------------------------------------------------------------------
+// Records and inputs
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TextRecord {
+    byte_len: i64,
+    line_count: i64,
+    /// The segment bytes as lowercase hex.
+    body: String,
+    created_at_us: i64,
+}
+
+/// `SegmentTextInput`, its bytes as hex.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentTextInput {
+    pub sha256: String,
+    pub body: String,
+    pub line_count: i64,
+}
+
+/// `ManifestRowInput` in, `ManifestRow` out (and the stored record): bytes as hex, dates as
+/// `YYYY-MM-DD`. `genTo` is never read from input: staged rows start open.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestRow {
+    pub page_id: i64,
+    pub occurrence_id: i64,
+    pub gen_from: i64,
+    #[serde(default)]
+    pub gen_to: Option<i64>,
+    pub seq: i64,
+    pub region: String,
+    pub source_id: String,
+    pub sha256: String,
+    pub byte_start: i64,
+    pub byte_len: i64,
+    pub line_start: i64,
+    pub line_count: i64,
+    pub cut_kind: String,
+    #[serde(default)]
+    pub entry_state: Value,
+    #[serde(default)]
+    pub protected_regions: Value,
+    #[serde(default)]
+    pub facts_slots: Value,
+    pub static_proj_bytes: i64,
+    pub static_proj_lines: i64,
+    #[serde(default)]
+    pub outline: Value,
+    #[serde(default)]
+    pub date_min: Option<String>,
+    #[serde(default)]
+    pub date_max: Option<String>,
+    pub hash_state: String,
+    #[serde(default)]
+    pub staging_id: Option<String>,
+}
+
+/// The segmented-body columns of a page. Postgres keeps them on `pages`; the page record does not
+/// hold them, so they live under this family's tag.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BodyState {
+    body_storage: String,
+    body_generation: i64,
+    #[serde(default)]
+    body_bytes: Option<i64>,
+    #[serde(default)]
+    truth_bytes: Option<i64>,
+    #[serde(default)]
+    body_lines: Option<i64>,
+    #[serde(default)]
+    segment_count: Option<i64>,
+    #[serde(default)]
+    segmenter_version: Option<i64>,
+    #[serde(default)]
+    truth_lead: Option<String>,
+    #[serde(default)]
+    timeline_lead: Option<String>,
+    #[serde(default)]
+    body_flags: Option<Value>,
+    #[serde(default)]
+    chunker_version: Option<i64>,
+}
+
+/// `BodyStagingInput`; dates as ISO strings, `declaredSha256` as hex.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BodyStagingInput {
+    pub id: String,
+    pub kind: String,
+    pub principal_kind: String,
+    pub principal_id: String,
+    pub client_request_id: String,
+    pub source_id: String,
+    pub source_incarnation: String,
+    pub slug: String,
+    #[serde(default)]
+    pub page_id: Option<i64>,
+    pub mode: String,
+    #[serde(default)]
+    pub base_revision: Option<String>,
+    #[serde(default)]
+    pub base_generation: Option<i64>,
+    pub declared_bytes: i64,
+    #[serde(default)]
+    pub declared_sha256: Option<String>,
+    pub reserved_bytes: i64,
+    pub idle_expires_at: String,
+    pub hard_expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StagingRecord {
+    id: String,
+    kind: String,
+    principal_kind: String,
+    principal_id: String,
+    client_request_id: String,
+    source_id: String,
+    source_incarnation: String,
+    slug: String,
+    page_id: Option<u64>,
+    mode: String,
+    base_revision: Option<String>,
+    base_generation: Option<i64>,
+    declared_bytes: i64,
+    declared_sha256: Option<String>,
+    received_bytes: i64,
+    next_part: i64,
+    reserved_bytes: i64,
+    state: String,
+    commit_request_id: Option<String>,
+    idle_expires_at_us: i64,
+    hard_expires_at_us: i64,
+    created_at_us: i64,
+    updated_at_us: i64,
+}
+
+/// `SegmentDerivationInput`; hashes as hex.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentDerivationInput {
+    pub page_id: i64,
+    pub kind: String,
+    pub occurrence_id: i64,
+    pub version: i64,
+    pub segment_sha256: String,
+    pub context_hash: String,
+    pub state: String,
+    #[serde(default)]
+    pub output: Value,
+    #[serde(default)]
+    pub receipt: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DerivationRecord {
+    pipeline_version: i64,
+    segment_sha256: String,
+    context_hash: String,
+    state: String,
+    output: Value,
+    receipt: Value,
+    created_at_us: i64,
+    updated_at_us: i64,
+}
+
+/// `SegmentedPageMeta`; `effective_date` as an ISO string.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SegmentedPageMeta {
+    #[serde(rename = "type")]
+    pub page_type: Option<String>,
+    pub title: String,
+    pub frontmatter: Option<Map<String, Value>>,
+    pub page_kind: Option<String>,
+    pub effective_date: Option<String>,
+    pub effective_date_source: Option<String>,
+    pub import_filename: Option<String>,
+    pub source_path: Option<String>,
+    pub source_kind: Option<String>,
+    pub source_uri: Option<String>,
+    pub ingested_via: Option<String>,
+    pub chunker_version: Option<i64>,
+}
+
+/// `SegmentedBodyColumns`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SegmentedBodyColumns {
+    pub content_hash: String,
+    pub body_bytes: i64,
+    pub truth_bytes: i64,
+    pub body_lines: i64,
+    pub segment_count: i64,
+    pub segmenter_version: i64,
+    pub truth_lead: String,
+    pub timeline_lead: String,
+    #[serde(default)]
+    pub body_flags: Value,
+}
+
+/// `BodyFlipInput`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BodyFlipInput {
+    pub page_id: i64,
+    pub expected_generation: i64,
+    pub new_generation: i64,
+    pub staging_id: String,
+    #[serde(default)]
+    pub close_occurrences: Vec<i64>,
+    #[serde(default)]
+    pub retire_chunk_occurrences: Vec<i64>,
+    #[serde(default)]
+    pub retire_inline_chunks: Option<bool>,
+    pub retire_max_rows: i64,
+    pub body: SegmentedBodyColumns,
+    pub meta: SegmentedPageMeta,
+}
+
+/// `BodyFlipResult`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BodyFlipResult {
+    pub retired_chunks: u64,
+    pub retire_deferred: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct StageTextsOptions {
+    pub staging_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReadManifestOptions {
+    pub generation: Option<i64>,
+    pub staging_id: Option<String>,
+    pub region: Option<String>,
+    pub last_n: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ShellOptions {
+    pub source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct StagingStateOptions {
+    pub commit_request_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DerivationReadOptions {
+    pub kind: Option<String>,
+    pub occurrence_ids: Option<Vec<i64>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DerivationRetireOptions {
+    pub kind: Option<String>,
+}
+
+// ---------------------------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------------------------
+
+fn violation(message: impl Into<String>) -> StoreError {
+    StoreError::new(CONSTRAINT_VIOLATION, message)
+}
+
+/// A refusal PGLite raises as an operation error; page-body.ts rebuilds it from `detail`.
+fn body_error(detail: Value) -> StoreError {
+    StoreError::new(INVALID_STATE, format!("page_body:{detail}"))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(DIGITS[(b >> 4) as usize] as char);
+        out.push(DIGITS[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn from_hex(text: &str, what: &str) -> Result<Vec<u8>> {
+    let digit = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    };
+    let bytes = text.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
+        return Err(StoreError::invalid(format!("{what}: odd-length hex")));
+    }
+    bytes
+        .chunks(2)
+        .map(|pair| match (digit(pair[0]), digit(pair[1])) {
+            (Some(hi), Some(lo)) => Ok((hi << 4) | lo),
+            _ => Err(StoreError::invalid(format!("{what}: not hex"))),
+        })
+        .collect()
+}
+
+/// A uuid in its lowercase 8-4-4-4-12 form; anything else is what Postgres's `::uuid` refuses.
+fn norm_uuid(text: &str, what: &str) -> Result<String> {
+    if !is_uuid(text) {
+        return Err(StoreError::invalid(format!(
+            "{what}: invalid input syntax for type uuid: \"{text}\""
+        )));
+    }
+    Ok(text.to_ascii_lowercase())
+}
+
+fn uuid_bytes(normalized: &str) -> [u8; 16] {
+    let digits: String = normalized.chars().filter(|c| *c != '-').collect();
+    let mut out = [0u8; 16];
+    if let Ok(bytes) = from_hex(&digits, "uuid") {
+        out.copy_from_slice(&bytes);
+    }
+    out
+}
+
+fn no_nul(text: &str, what: &str) -> Result<()> {
+    if text.contains('\0') {
+        return Err(StoreError::invalid(format!(
+            "{what}: a text value cannot contain a NUL byte"
+        )));
+    }
+    Ok(())
+}
+
+/// An INTEGER column: Postgres refuses a value outside 32 bits.
+fn int4(value: i64, what: &str) -> Result<()> {
+    if i32::try_from(value).is_err() {
+        return Err(StoreError::invalid(format!(
+            "{what}: value {value} is out of range for type integer"
+        )));
+    }
+    Ok(())
+}
+
+/// A `DATE` value: `YYYY-MM-DD`, optionally followed by a time part, stored as `YYYY-MM-DD`.
+fn parse_date(text: &str, what: &str) -> Result<String> {
+    let bad = || {
+        StoreError::invalid(format!(
+            "{what}: invalid input syntax for type date: \"{text}\""
+        ))
+    };
+    let b = text.as_bytes();
+    if b.len() < 10
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || (b.len() > 10 && b[10] != b'T' && b[10] != b' ')
+    {
+        return Err(bad());
+    }
+    let num = |a: usize, z: usize| -> Option<i64> {
+        let s = text.get(a..z)?;
+        if s.bytes().all(|c| c.is_ascii_digit()) {
+            s.parse().ok()
+        } else {
+            None
+        }
+    };
+    let (y, m, d) = (
+        num(0, 4).ok_or_else(bad)?,
+        num(5, 7).ok_or_else(bad)?,
+        num(8, 10).ok_or_else(bad)?,
+    );
+    let days = crate::env::days_in_month(y, m).ok_or_else(bad)?;
+    if d < 1 || d > days {
+        return Err(bad());
+    }
+    Ok(text[..10].to_string())
+}
+
+fn parse_time(text: &str, what: &str) -> Result<i64> {
+    parse_iso(text)
+        .ok_or_else(|| StoreError::invalid(format!("{what}: not an ISO timestamp: \"{text}\"")))
+}
+
+fn signed(v: i64) -> [u8; 8] {
+    ((v as u64) ^ (1u64 << 63)).to_be_bytes()
+}
+
+/// A page id from JavaScript; ids start at 1, so anything else names no page.
+fn page_u64(id: i64) -> Option<u64> {
+    u64::try_from(id).ok().filter(|v| *v > 0)
+}
+
+fn kind_key(kind: u8) -> Vec<u8> {
+    vec![keys::PAGE_BODY, kind]
+}
+
+fn text_key(source_id: &str, sha: &[u8]) -> Vec<u8> {
+    let mut key = kind_key(TEXT);
+    key.extend_from_slice(source_id.as_bytes());
+    key.push(0);
+    key.extend_from_slice(sha);
+    key
+}
+
+fn manifest_prefix(page_id: u64) -> Vec<u8> {
+    let mut key = kind_key(MANIFEST);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+fn manifest_key(page_id: u64, occurrence: i64, gen_from: i64, staging: &[u8; 16]) -> Vec<u8> {
+    let mut key = manifest_prefix(page_id);
+    key.extend_from_slice(&signed(occurrence));
+    key.extend_from_slice(&signed(gen_from));
+    key.extend_from_slice(staging);
+    key
+}
+
+fn staging_key(id: &str) -> Vec<u8> {
+    let mut key = kind_key(STAGING);
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
+fn derivation_prefix(page_id: u64) -> Vec<u8> {
+    let mut key = kind_key(DERIVATION);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+fn derivation_key(page_id: u64, kind: &str, occurrence: i64) -> Vec<u8> {
+    let mut key = derivation_prefix(page_id);
+    key.extend_from_slice(kind.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&signed(occurrence));
+    key
+}
+
+fn body_key(page_id: u64) -> Vec<u8> {
+    let mut key = kind_key(BODY);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+fn client_key(principal_kind: &str, principal_id: &str, client_request_id: &str) -> Vec<u8> {
+    let mut key = kind_key(STAGING_CLIENT);
+    key.extend_from_slice(principal_kind.as_bytes());
+    key.push(0);
+    key.extend_from_slice(principal_id.as_bytes());
+    key.push(0);
+    key.extend_from_slice(client_request_id.as_bytes());
+    key
+}
+
+fn staging_text_prefix(staging_id: &str) -> Vec<u8> {
+    let mut key = kind_key(STAGING_TEXT);
+    key.extend_from_slice(staging_id.as_bytes());
+    key
+}
+
+fn staging_by_page_prefix(page_id: u64) -> Vec<u8> {
+    let mut key = kind_key(STAGING_BY_PAGE);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+fn collect<T: serde::de::DeserializeOwned>(
+    read: &dyn KvRead,
+    prefix: &[u8],
+) -> Result<Vec<(Vec<u8>, T)>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, prefix, false, &mut |k, v| {
+        match serde_json::from_slice::<T>(v) {
+            Ok(record) => out.push((k.to_vec(), record)),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
+fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
+    let mut found = Vec::new();
+    scan_prefix(&*tx, prefix, false, &mut |k, _| {
+        found.push(k.to_vec());
+        true
+    })?;
+    for key in found {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
+fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
+    get_json(read, &body_key(page_id))
+}
+
+/// The stored `timeline_lead` of page `page_id`: the lead a flip published, or `None` for an inline
+/// page, a shell no flip has published, or a missing page (PGLite's NULL column). A page with a
+/// NULL timeline (a segmented page) takes it for its keyword vector, as PGLite's
+/// `update_page_search_vector` does with `coalesce(timeline, timeline_lead, '')`.
+pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_body_state(read, page_id)?.and_then(|state| state.timeline_lead))
+}
+
+fn is_segmented(state: Option<&BodyState>) -> bool {
+    state.is_some_and(|s| s.body_storage == "segmented")
+}
+
+fn manifest_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<(Vec<u8>, ManifestRow)>> {
+    collect(read, &manifest_prefix(page_id))
+}
+
+fn live_published(row: &ManifestRow) -> bool {
+    row.gen_to.is_none() && row.staging_id.is_none()
+}
+
+/// Rows of generation `g` that are published: Postgres's
+/// `staging_id IS NULL AND gen_from <= g AND (gen_to IS NULL OR gen_to > g)`.
+fn in_generation(row: &ManifestRow, g: i64) -> bool {
+    row.staging_id.is_none() && row.gen_from <= g && row.gen_to.is_none_or(|to| to > g)
+}
+
+/// `metaParams`: `page_kind || 'markdown'`, and `ingested_at` is now when any provenance field is
+/// a non-empty string.
+fn meta_page_kind(meta: &SegmentedPageMeta) -> String {
+    meta.page_kind
+        .clone()
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| "markdown".into())
+}
+
+fn meta_ingested(meta: &SegmentedPageMeta) -> bool {
+    [&meta.source_kind, &meta.source_uri, &meta.ingested_via]
+        .iter()
+        .any(|v| v.as_deref().is_some_and(|s| !s.is_empty()))
+}
+
+fn meta_chunker_version(meta: &SegmentedPageMeta) -> Option<i64> {
+    meta.chunker_version
+        .map(|v| v.min(SAFE_FENCE_CHUNKER_VERSION - 1))
+}
+
+/// The page row's `chunker_version`, a SMALLINT column: Postgres refuses a value outside 16 bits.
+fn smallint_chunker_version(meta: &SegmentedPageMeta) -> Result<Option<i16>> {
+    meta_chunker_version(meta)
+        .map(|v| {
+            i16::try_from(v).map_err(|_| {
+                StoreError::invalid(format!(
+                    "chunker_version: value {v} is out of range for type smallint"
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn meta_type(meta: &SegmentedPageMeta) -> Result<String> {
+    meta.page_type.clone().ok_or_else(|| {
+        violation(
+            "null value in column \"type\" of relation \"pages\" violates not-null constraint",
+        )
+    })
+}
+
+/// `liveTilingSql` and `untiledSql`: the generation's published rows, by seq, start each at the
+/// sum of the lengths before it, and their lengths sum to `body_bytes`.
+fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
+    let mut sorted: Vec<&&ManifestRow> = rows.iter().collect();
+    sorted.sort_by_key(|r| r.seq);
+    let mut prior = 0i64;
+    let mut gapless = true;
+    for row in &sorted {
+        if row.byte_start != prior {
+            gapless = false;
+        }
+        prior += row.byte_len;
+    }
+    (sorted.len() as i64, prior, gapless)
+}
+
+/// Reads and checks a staging id (`::uuid`), returning its normalized text.
+fn staging_id_arg(id: &str) -> Result<String> {
+    norm_uuid(id, "staging id")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------------------------
+
+/// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`):
+/// its manifest rows, derivations and body columns, and the stagings that name the page (with
+/// their client keys and recorded texts), as the Postgres foreign keys cascade. Segment texts stay
+/// until a sweep, as in PGLite.
+pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    delete_prefix(tx, &manifest_prefix(page.id))?;
+    delete_prefix(tx, &derivation_prefix(page.id))?;
+    tx.delete(&body_key(page.id))?;
+    crate::chunks::forget_segment_view(tx, page.id)?;
+    let by_page = staging_by_page_prefix(page.id);
+    let mut stagings = Vec::new();
+    scan_prefix(&*tx, &by_page, false, &mut |k, _| {
+        stagings.push((
+            k.to_vec(),
+            String::from_utf8_lossy(&k[by_page.len()..]).into_owned(),
+        ));
+        true
+    })?;
+    for (index_key, id) in stagings {
+        if let Some(staging) = get_json::<StagingRecord>(&*tx, &staging_key(&id))? {
+            delete_staging(tx, &staging)?;
+        }
+        delete_prefix(tx, &staging_text_prefix(&id))?;
+        tx.delete(&index_key)?;
+    }
+    Ok(())
+}
+
+/// Deletes a staging with its client key, recorded texts and page index entry.
+fn delete_staging(tx: &mut dyn KvWrite, staging: &StagingRecord) -> Result<()> {
+    tx.delete(&client_key(
+        &staging.principal_kind,
+        &staging.principal_id,
+        &staging.client_request_id,
+    ))?;
+    tx.delete(&staging_key(&staging.id))?;
+    delete_prefix(tx, &staging_text_prefix(&staging.id))?;
+    if let Some(page_id) = staging.page_id {
+        let mut key = staging_by_page_prefix(page_id);
+        key.extend_from_slice(staging.id.as_bytes());
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
+/// Deletes this family's records of a source that is deleted (`cascade::remove_source_rows`), as
+/// the Postgres `ON DELETE CASCADE` of `sources.id` does: the source's segment texts and its
+/// stagings (with their client keys and recorded texts). Core removes the source's pages first,
+/// so their manifests, derivations and body columns are gone already. A manifest row of another
+/// source's page that still names one of these texts refuses the delete, as the manifest's
+/// `NO ACTION` foreign key to `page_segment_texts` does in Postgres.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let mut referenced = None;
+    let mut failure = None;
+    scan_prefix(&*tx, &kind_key(MANIFEST), false, &mut |_, v| {
+        match serde_json::from_slice::<ManifestRow>(v) {
+            Ok(row) if row.source_id == source_id => referenced = Some(row.page_id),
+            Ok(_) => {}
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        referenced.is_none() && failure.is_none()
+    })?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    if let Some(page_id) = referenced {
+        return Err(violation(format!(
+            "update or delete on table \"page_segment_texts\" violates foreign key constraint on table \"page_body_manifest\" (page {page_id} still names a text of source \"{source_id}\")"
+        )));
+    }
+    let mut texts = kind_key(TEXT);
+    texts.extend_from_slice(source_id.as_bytes());
+    texts.push(0);
+    delete_prefix(tx, &texts)?;
+    let stagings: Vec<StagingRecord> = collect::<StagingRecord>(&*tx, &kind_key(STAGING))?
+        .into_iter()
+        .map(|(_, s)| s)
+        .filter(|s| s.source_id == source_id)
+        .collect();
+    for staging in &stagings {
+        delete_staging(tx, staging)?;
+    }
+    Ok(())
+}
+
+/// Adds this family's `getPage` columns to a page (`page_columns::add_page_columns`): a segmented
+/// page's `body_storage` and `body_bytes`, as PGLite's `rowToPage` adds them. An inline page gets
+/// neither.
+pub(crate) fn page_columns(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    columns: &mut PageColumns,
+) -> Result<()> {
+    let state = read_body_state(read, page.id)?;
+    if let Some(state) = state.filter(|s| s.body_storage == "segmented") {
+        columns.set("body_storage", Value::String(state.body_storage));
+        columns.set("body_bytes", json!(state.body_bytes));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Members
+// ---------------------------------------------------------------------------------------------
+
+impl Store {
+    /// `allocateBodyOccurrenceIds(count)`: the next `count` occurrence ids, ascending; `[]` for a
+    /// count of 0 or less.
+    pub fn allocate_body_occurrence_ids(&self, count: i64) -> Result<Vec<i64>> {
+        if count <= 0 {
+            return Ok(Vec::new());
+        }
+        int4(count, "allocateBodyOccurrenceIds count")?;
+        self.write(|tx| {
+            let key = keys::meta(NEXT_OCCURRENCE_ID);
+            let first = match tx.get(&key)? {
+                Some(bytes) => keys::be8(&bytes).ok_or_else(|| {
+                    StoreError::new(crate::error::STORE_CORRUPT, "bad occurrence id counter")
+                })?,
+                None => 1,
+            };
+            let next = first + count as u64;
+            tx.put(&key, &next.to_be_bytes())?;
+            Ok((first..next).map(|v| v as i64).collect())
+        })
+    }
+
+    /// `stageSegmentTexts(sourceId, texts, { stagingId? })`: stores each text once per source
+    /// (the first of a repeated sha256 wins) and returns `{ inserted }`, the texts that were new.
+    /// A text already stored keeps its body and gets a fresh `created_at`. With `stagingId`, each
+    /// sha256 is recorded under the staging first.
+    pub fn stage_segment_texts(
+        &self,
+        source_id: &str,
+        texts: &[SegmentTextInput],
+        options: &StageTextsOptions,
+    ) -> Result<Value> {
+        if texts.is_empty() {
+            return Ok(json!({ "inserted": 0 }));
+        }
+        no_nul(source_id, "stageSegmentTexts sourceId")?;
+        let staging = options
+            .staging_id
+            .as_deref()
+            .map(staging_id_arg)
+            .transpose()?;
+        let mut seen = HashSet::new();
+        let mut batch = Vec::new();
+        for text in texts {
+            let sha = from_hex(&text.sha256, "stageSegmentTexts sha256")?;
+            if !seen.insert(sha.clone()) {
+                continue;
+            }
+            batch.push((sha, text));
+        }
+        let mut decoded = Vec::with_capacity(batch.len());
+        for (sha, text) in &batch {
+            if sha.len() != 32 {
+                return Err(violation(
+                    "new row for relation \"page_segment_texts\" violates check constraint (sha256 is not 32 bytes)",
+                ));
+            }
+            let body = from_hex(&text.body, "stageSegmentTexts body")?;
+            if body.is_empty() || body.len() > MAX_SEGMENT_BYTES {
+                return Err(violation(
+                    "new row for relation \"page_segment_texts\" violates check constraint (byte_len BETWEEN 1 AND 1048576)",
+                ));
+            }
+            int4(text.line_count, "stageSegmentTexts lineCount")?;
+            if text.line_count < 0 {
+                return Err(violation(
+                    "new row for relation \"page_segment_texts\" violates check constraint (line_count >= 0)",
+                ));
+            }
+            decoded.push((sha.clone(), body, text.line_count));
+        }
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            if let Some(staging) = &staging {
+                if tx.get(&staging_key(staging))?.is_none() {
+                    return Err(violation(format!(
+                        "insert into \"page_body_staging_texts\" violates foreign key: staging {staging} does not exist"
+                    )));
+                }
+                for (sha, _, _) in &decoded {
+                    let mut key = staging_text_prefix(staging);
+                    key.extend_from_slice(sha);
+                    if tx.get(&key)?.is_none() {
+                        put_json(tx, &key, &source_id)?;
+                    }
+                }
+            }
+            if crate::sources::read_source(&*tx, source_id)?.is_none() {
+                return Err(violation(format!(
+                    "insert into \"page_segment_texts\" violates foreign key: source \"{source_id}\" does not exist"
+                )));
+            }
+            let mut inserted = 0u64;
+            for (sha, body, line_count) in &decoded {
+                let key = text_key(source_id, sha);
+                let record = match get_json::<TextRecord>(&*tx, &key)? {
+                    Some(old) => TextRecord {
+                        created_at_us: now,
+                        ..old
+                    },
+                    None => {
+                        inserted += 1;
+                        TextRecord {
+                            byte_len: body.len() as i64,
+                            line_count: *line_count,
+                            body: to_hex(body),
+                            created_at_us: now,
+                        }
+                    }
+                };
+                put_json(tx, &key, &record)?;
+            }
+            Ok(json!({ "inserted": inserted }))
+        })
+    }
+
+    /// `readSegmentTexts(sourceId, sha256s)`: `[sha256 hex, body hex]` for each text of this
+    /// source that exists, in request order, each once.
+    pub fn read_segment_texts(
+        &self,
+        source_id: &str,
+        sha256s: &[String],
+    ) -> Result<Vec<(String, String)>> {
+        if sha256s.is_empty() {
+            return Ok(Vec::new());
+        }
+        no_nul(source_id, "readSegmentTexts sourceId")?;
+        let read = self.read()?;
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for sha in sha256s {
+            let bytes = from_hex(sha, "readSegmentTexts sha256")?;
+            if !seen.insert(bytes.clone()) {
+                continue;
+            }
+            if let Some(text) = get_json::<TextRecord>(&*read, &text_key(source_id, &bytes))? {
+                out.push((to_hex(&bytes), text.body));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `stageManifestRows(rows)`: inserts each row open (`gen_to` null). Refuses the whole batch
+    /// on a row whose page or text does not exist, whose region or cut kind is unknown, whose key
+    /// (page, occurrence, gen_from, staging) is taken, or that would publish a second live row at
+    /// one seq.
+    pub fn stage_manifest_rows(&self, rows: &[ManifestRow]) -> Result<()> {
+        let mut prepared = Vec::with_capacity(rows.len());
+        for row in rows {
+            prepared.push(prepare_manifest_row(row)?);
+        }
+        if prepared.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| {
+            let mut live_seqs: HashMap<u64, HashSet<i64>> = HashMap::new();
+            for (row, staging) in &prepared {
+                let Some(page_id) = page_u64(row.page_id).filter(|id| {
+                    matches!(read_page_by_id(&*tx, *id), Ok(Some(_)))
+                }) else {
+                    return Err(violation(format!(
+                        "insert into \"page_body_manifest\" violates foreign key: page {} does not exist",
+                        row.page_id
+                    )));
+                };
+                let sha = from_hex(&row.sha256, "manifest sha256")?;
+                if tx.get(&text_key(&row.source_id, &sha))?.is_none() {
+                    return Err(violation(format!(
+                        "insert into \"page_body_manifest\" violates foreign key: no segment text {} in source \"{}\"",
+                        row.sha256, row.source_id
+                    )));
+                }
+                let key = manifest_key(page_id, row.occurrence_id, row.gen_from, staging);
+                if tx.get(&key)?.is_some() {
+                    return Err(violation(format!(
+                        "duplicate key value violates unique constraint \"page_body_manifest_pkey\" (page {}, occurrence {}, gen_from {})",
+                        row.page_id, row.occurrence_id, row.gen_from
+                    )));
+                }
+                if row.staging_id.is_none() {
+                    let seqs = match live_seqs.entry(page_id) {
+                        std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(e) => e.insert(
+                            manifest_rows(&*tx, page_id)?
+                                .into_iter()
+                                .filter(|(_, r)| live_published(r))
+                                .map(|(_, r)| r.seq)
+                                .collect(),
+                        ),
+                    };
+                    if !seqs.insert(row.seq) {
+                        return Err(violation(format!(
+                            "duplicate key value violates unique constraint \"page_body_manifest_live_seq\" (page {}, seq {})",
+                            row.page_id, row.seq
+                        )));
+                    }
+                }
+                put_json(tx, &key, row)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? })`: with `stagingId`, that
+    /// staging's rows; otherwise the published rows of `generation` (default: the page's body
+    /// generation; none for a page that does not exist). By seq; `lastN` keeps the last n.
+    pub fn read_manifest(
+        &self,
+        page_id: i64,
+        options: &ReadManifestOptions,
+    ) -> Result<Vec<ManifestRow>> {
+        let staging = options
+            .staging_id
+            .as_deref()
+            .map(staging_id_arg)
+            .transpose()?;
+        if let Some(n) = options.last_n
+            && n < 0
+        {
+            return Err(StoreError::invalid(
+                "readManifest lastN: LIMIT must not be negative",
+            ));
+        }
+        let Some(page) = page_u64(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let generation = match (&staging, options.generation) {
+            (Some(_), _) => None,
+            (None, Some(g)) => Some(g),
+            (None, None) => match read_page_by_id(&*read, page)? {
+                Some(_) => Some(read_body_state(&*read, page)?.map_or(0, |s| s.body_generation)),
+                None => return Ok(Vec::new()),
+            },
+        };
+        let region = options.region.as_deref().filter(|r| !r.is_empty());
+        let mut rows: Vec<ManifestRow> = manifest_rows(&*read, page)?
+            .into_iter()
+            .map(|(_, r)| r)
+            .filter(|r| match (&staging, generation) {
+                (Some(id), _) => r.staging_id.as_deref() == Some(id.as_str()),
+                (None, Some(g)) => in_generation(r, g),
+                (None, None) => false,
+            })
+            .filter(|r| region.is_none_or(|want| r.region == want))
+            .collect();
+        rows.sort_by_key(|r| r.seq);
+        if let Some(n) = options.last_n {
+            let n = n as usize;
+            if rows.len() > n {
+                rows.drain(..rows.len() - n);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// `createSegmentedPageShell(slug, meta, { sourceId })`: a segmented page at body generation 0
+    /// with an empty body; returns `{ id }`. Refuses a slug already taken in the source (deleted
+    /// pages included).
+    pub fn create_segmented_page_shell(
+        &self,
+        slug: &str,
+        meta: &SegmentedPageMeta,
+        options: &ShellOptions,
+    ) -> Result<Value> {
+        let slug = validate_slug(slug)?;
+        let source_id = options.source_id.clone().ok_or_else(|| {
+            violation("null value in column \"source_id\" of relation \"pages\" violates not-null constraint")
+        })?;
+        let page_type = meta_type(meta)?;
+        let effective_date = meta
+            .effective_date
+            .as_deref()
+            .map(|d| parse_time(d, "createSegmentedPageShell effective_date"))
+            .transpose()?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            if crate::sources::read_source(&*tx, &source_id)?.is_none() {
+                return Err(violation(format!(
+                    "insert into \"pages\" violates foreign key: source \"{source_id}\" does not exist"
+                )));
+            }
+            if read_page(&*tx, &source_id, &slug)?.is_some() {
+                return Err(violation(format!(
+                    "duplicate key value violates unique constraint \"pages_source_slug_key\" ({source_id}, {slug})"
+                )));
+            }
+            // One live page per recorded origin (PGLite's pages_live_origin_key).
+            crate::pages::assert_origin_unclaimed(&*tx, &source_id, &slug, None, meta.source_path.as_deref())?;
+            let record = PageRecord {
+                id: next_id(tx, NEXT_PAGE_ID)?,
+                source_id: source_id.clone(),
+                slug: slug.clone(),
+                page_type: page_type.clone(),
+                page_kind: meta_page_kind(meta),
+                title: clean(&meta.title),
+                // A shell holds no inline body and no hash until a flip publishes one, as in PGLite.
+                compiled_truth: PageText::null(),
+                timeline: PageText::null(),
+                frontmatter: meta.frontmatter.clone().unwrap_or_default(),
+                content_hash: None,
+                chunker_version: Some(smallint_chunker_version(meta)?.unwrap_or(0)),
+                source_path: meta.source_path.clone(),
+                knowledge_revision: self.env.new_uuid(),
+                text_projection_revision: None,
+                created_at_us: now,
+                updated_at_us: now,
+                deleted_at_us: None,
+                effective_date_us: effective_date,
+                effective_date_source: meta.effective_date_source.clone(),
+                import_filename: meta.import_filename.clone(),
+                source_kind: meta.source_kind.clone(),
+                source_uri: meta.source_uri.clone(),
+                ingested_via: meta.ingested_via.clone(),
+                ingested_at_us: meta_ingested(meta).then_some(now),
+                tags: Vec::new(),
+                tag_sources: Default::default(),
+            };
+            write_page(tx, &record)?;
+            let state = BodyState {
+                body_storage: "segmented".into(),
+                body_generation: 0,
+                body_bytes: Some(0),
+                chunker_version: Some(meta_chunker_version(meta).unwrap_or(0)),
+                ..BodyState::default()
+            };
+            put_json(tx, &body_key(record.id), &state)?;
+            Ok(json!({ "id": record.id }))
+        })
+    }
+
+    /// `flipBodyGeneration(input)`: publishes the staging's rows as generation
+    /// `expectedGeneration + 1` in one write. Closes `closeOccurrences`, retires the page's inline
+    /// chunks when `retireInlineChunks` (unless more than `retireMaxRows`, which defers them), sets
+    /// the page segmented with the new body columns and meta, and refuses (writing nothing) when
+    /// the page is gone, its generation moved, the staging is not live, or the new generation does
+    /// not tile the body.
+    pub fn flip_body_generation(&self, input: &BodyFlipInput) -> Result<BodyFlipResult> {
+        if input.new_generation != input.expected_generation.wrapping_add(1) {
+            return Err(StoreError::invalid(
+                "newGeneration must be expectedGeneration + 1",
+            ));
+        }
+        let staging = staging_id_arg(&input.staging_id)?;
+        let page_type = meta_type(&input.meta)?;
+        let effective_date = input
+            .meta
+            .effective_date
+            .as_deref()
+            .map(|d| parse_time(d, "flipBodyGeneration effective_date"))
+            .transpose()?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let Some(mut page) = page_u64(input.page_id)
+                .map(|id| read_page_by_id(&*tx, id))
+                .transpose()?
+                .flatten()
+            else {
+                return Err(body_error(json!({ "kind": "page_identity_changed", "page_id": input.page_id })));
+            };
+            let old_state = read_body_state(&*tx, page.id)?;
+            let current = old_state.as_ref().map_or(0, |s| s.body_generation);
+            if current != input.expected_generation {
+                return Err(body_error(json!({
+                    "kind": "revision_changed", "slug": page.slug, "source_id": page.source_id,
+                    "expected": input.expected_generation, "current": current,
+                })));
+            }
+            // The flip keeps or sets the page's origin and revives a deleted page, so it must not take an
+            // origin another live page holds (PGLite's pages_live_origin_key).
+            crate::pages::assert_origin_unclaimed(&*tx, &page.source_id, &page.slug, Some(&page), input.meta.source_path.as_deref())?;
+            let staged: Option<StagingRecord> = get_json(&*tx, &staging_key(&staging))?;
+            if !staged
+                .as_ref()
+                .is_some_and(|s| LIVE_STAGING_STATES.contains(&s.state.as_str()))
+            {
+                return Err(body_error(json!({
+                    "kind": "staging_gone", "slug": page.slug, "staging_id": staging,
+                    "state": staged.map(|s| s.state),
+                })));
+            }
+            let close: HashSet<i64> = input.close_occurrences.iter().copied().collect();
+            let rows = manifest_rows(&*tx, page.id)?;
+            // PGLite's retire predicate, read before any manifest row moves: chunks of
+            // `retireChunkOccurrences` at or below the expected generation, the inline chunks
+            // when asked, and chunks staged for the new generation whose occurrence is not live in
+            // it (`newLive`: this staging's rows plus the open published rows it does not close).
+            let new_live: BTreeSet<u64> = rows
+                .iter()
+                .filter(|(_, r)| {
+                    r.staging_id.as_deref() == Some(staging.as_str())
+                        || (live_published(r) && !close.contains(&r.occurrence_id))
+                })
+                .filter_map(|(_, r)| u64::try_from(r.occurrence_id).ok())
+                .collect();
+            let retire_occurrences: BTreeSet<u64> = input
+                .retire_chunk_occurrences
+                .iter()
+                .filter_map(|o| u64::try_from(*o).ok())
+                .collect();
+            let retire_inline = input.retire_inline_chunks == Some(true);
+            // Both generations are at least 0 here: the expected one equals the stored one.
+            let expected_generation = u64::try_from(input.expected_generation).unwrap_or(0);
+            let new_generation = u64::try_from(input.new_generation).unwrap_or(0);
+            let retire = |c: &crate::chunks::ChunkRecord| {
+                crate::chunks::occurrence_match(c.segment, &retire_occurrences, Some(expected_generation))
+                    || (retire_inline && c.segment.is_none())
+                    || crate::chunks::generation_match(c.segment, new_generation, &new_live)
+            };
+            let to_retire = crate::chunks::count_chunks_matching(&*tx, page.id, &retire)? as u64;
+            let retire_deferred = i128::from(to_retire) > i128::from(input.retire_max_rows);
+            let staging_bytes = uuid_bytes(&staging);
+            let mut live_seqs: HashSet<i64> = HashSet::new();
+            let mut moved = Vec::new();
+            for (key, mut row) in rows {
+                if live_published(&row) && close.contains(&row.occurrence_id) {
+                    row.gen_to = Some(input.new_generation);
+                    put_json(tx, &key, &row)?;
+                } else if row.staging_id.as_deref() == Some(staging.as_str()) {
+                    moved.push((key, row));
+                    continue;
+                }
+                if live_published(&row) {
+                    live_seqs.insert(row.seq);
+                }
+            }
+            let retired = if retire_deferred || to_retire == 0 {
+                0
+            } else {
+                crate::chunks::delete_chunks_matching(tx, page.id, &retire)?.len() as u64
+            };
+            for (key, _) in &moved {
+                tx.delete(key)?;
+            }
+            for (key, mut row) in moved {
+                debug_assert!(key.ends_with(&staging_bytes));
+                row.staging_id = None;
+                let page_id = page.id;
+                let published = manifest_key(page_id, row.occurrence_id, row.gen_from, &NIL_STAGING);
+                if tx.get(&published)?.is_some() {
+                    return Err(violation(format!(
+                        "duplicate key value violates unique constraint \"page_body_manifest_pkey\" (page {page_id}, occurrence {}, gen_from {})",
+                        row.occurrence_id, row.gen_from
+                    )));
+                }
+                if row.gen_to.is_none() && !live_seqs.insert(row.seq) {
+                    return Err(violation(format!(
+                        "duplicate key value violates unique constraint \"page_body_manifest_live_seq\" (page {page_id}, seq {})",
+                        row.seq
+                    )));
+                }
+                put_json(tx, &published, &row)?;
+            }
+            let meta = &input.meta;
+            let body = &input.body;
+            page.page_type = page_type.clone();
+            page.page_kind = meta_page_kind(meta);
+            page.title = clean(&meta.title);
+            page.frontmatter = meta.frontmatter.clone().unwrap_or_default();
+            page.compiled_truth = PageText::null();
+            page.timeline = PageText::null();
+            page.content_hash = Some(body.content_hash.clone());
+            page.chunker_version = smallint_chunker_version(meta)?.or(page.chunker_version);
+            page.updated_at_us = now;
+            page.deleted_at_us = None;
+            page.effective_date_us = effective_date.or(page.effective_date_us);
+            page.effective_date_source = meta.effective_date_source.clone().or(page.effective_date_source.take());
+            page.import_filename = meta.import_filename.clone().or(page.import_filename.take());
+            page.source_path = meta.source_path.clone().or(page.source_path.take());
+            page.source_kind = meta.source_kind.clone().or(page.source_kind.take());
+            page.source_uri = meta.source_uri.clone().or(page.source_uri.take());
+            page.ingested_via = meta.ingested_via.clone().or(page.ingested_via.take());
+            if meta_ingested(meta) {
+                page.ingested_at_us = Some(now);
+            }
+            // The body generation moved, so Postgres's revision trigger always advances it.
+            page.knowledge_revision = self.env.new_uuid();
+            page.text_projection_revision = None;
+            write_page(tx, &page)?;
+            // The flip sets the title, timeline and timeline lead, so PGLite's search vector trigger
+            // fires, also when the title is unchanged: the sealed search timeline goes.
+            crate::pages::forget_search_timeline(tx, page.id)?;
+            let state = BodyState {
+                body_storage: "segmented".into(),
+                body_generation: input.new_generation,
+                body_bytes: Some(body.body_bytes),
+                truth_bytes: Some(body.truth_bytes),
+                body_lines: Some(body.body_lines),
+                segment_count: Some(body.segment_count),
+                segmenter_version: Some(body.segmenter_version),
+                truth_lead: Some(clean(&body.truth_lead)),
+                timeline_lead: Some(clean(&body.timeline_lead)),
+                body_flags: Some(body.body_flags.clone()),
+                chunker_version: meta_chunker_version(meta)
+                    .or(old_state.as_ref().and_then(|s| s.chunker_version)),
+            };
+            put_json(tx, &body_key(page.id), &state)?;
+            let live: Vec<ManifestRow> = manifest_rows(&*tx, page.id)?
+                .into_iter()
+                .map(|(_, r)| r)
+                .filter(|r| in_generation(r, input.new_generation))
+                .collect();
+            let refs: Vec<&ManifestRow> = live.iter().collect();
+            let (n, covered, gapless) = tiling(&refs);
+            if !gapless || covered != body.body_bytes {
+                return Err(body_error(json!({
+                    "kind": "generation_incomplete", "slug": page.slug, "staging_id": staging,
+                    "rows": n, "covered": covered, "gapless": gapless,
+                    "body_bytes": body.body_bytes, "segment_count": body.segment_count,
+                })));
+            }
+            // Chunks staged for the new generation become visible, ordered by the byte_start of
+            // their occurrence's live row.
+            let offsets = live
+                .iter()
+                .filter_map(|r| Some((u64::try_from(r.occurrence_id).ok()?, u64::try_from(r.byte_start).ok()?)))
+                .collect();
+            crate::chunks::publish_segment_chunks(tx, page.id, new_generation, offsets)?;
+            Ok(BodyFlipResult {
+                retired_chunks: retired,
+                retire_deferred,
+            })
+        })
+    }
+
+    /// `stageSegmentChunks(pageId, generation, chunks)`: writes the chunks of a segmented write
+    /// for body generation `generation` at the indexes after the page's highest `chunk_index` and
+    /// returns those indexes. They stay hidden until a flip publishes that generation. Refuses
+    /// (writing nothing) with `revision_changed` when the page is gone, the generation is below the
+    /// page's, or the generation is the page's and the page is inline or an occurrence has no
+    /// published row in it, as PGLite does. No chunks: no read, no write, `[]`.
+    pub fn stage_segment_chunks(
+        &self,
+        page_id: i64,
+        generation: i64,
+        chunks: &[crate::chunks::SegmentChunkInput],
+    ) -> Result<Vec<u32>> {
+        if chunks.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.write(|tx| {
+            let page = page_u64(page_id)
+                .map(|id| read_page_by_id(&*tx, id))
+                .transpose()?
+                .flatten();
+            let refuse = |slug: Option<&str>, live: Option<i64>| {
+                body_error(json!({
+                    "kind": "chunks_stale", "page_id": page_id, "slug": slug,
+                    "staged_generation": generation, "current_generation": live,
+                }))
+            };
+            let Some(page) = page else {
+                return Err(refuse(None, None));
+            };
+            let state = read_body_state(&*tx, page.id)?;
+            let live = state.as_ref().map_or(0, |s| s.body_generation);
+            let segmented = is_segmented(state.as_ref());
+            let stale = generation < live
+                || (generation == live && !segmented)
+                || (generation == live && {
+                    let rows = manifest_rows(&*tx, page.id)?;
+                    let published: HashSet<i64> = rows
+                        .iter()
+                        .filter(|(_, r)| in_generation(r, generation))
+                        .map(|(_, r)| r.occurrence_id)
+                        .collect();
+                    chunks.iter().any(|c| {
+                        i64::try_from(c.occurrence_id).map_or(true, |o| !published.contains(&o))
+                    })
+                });
+            if stale {
+                return Err(refuse(Some(&page.slug), Some(live)));
+            }
+            // Not stale, so the generation is at or above the page's, which is at least 0.
+            let at = u64::try_from(generation).unwrap_or(0);
+            crate::chunks::append_segment_chunks(tx, page.id, at, chunks)
+        })
+    }
+
+    /// The stored timeline lead of page `page_id` (`""` when none was published) with the page's
+    /// `knowledge_revision`, or `None` for a missing page. Not a member: `sealSegmentedPage`'s
+    /// TypeScript side reads it, sanitizes the lead, and passes the revision back to
+    /// [`Store::seal_segmented_page`].
+    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<(String, String)>> {
+        let read = self.read()?;
+        let Some(page) = page_u64(page_id)
+            .map(|id| read_page_by_id(&*read, id))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(None);
+        };
+        let lead = timeline_lead(&*read, page.id)?.unwrap_or_default();
+        Ok(Some((lead, page.knowledge_revision)))
+    }
+
+    /// `sealSegmentedPage(pageId, opts)`: seals the page's text projection at its current revision
+    /// (its chunks become visible) and records `timeline`, the lead TypeScript sanitized, as the
+    /// timeline text of its keyword vector (`pages::record_search_timeline`). The chunker stamp
+    /// keeps an older segmented chunker (at or above `SAFE_FENCE_CHUNKER_VERSION`, below
+    /// `SEGMENTED_CHUNKER_VERSION`) while any segment chunk from before the page's body generation
+    /// is still stored, and is `SEGMENTED_CHUNKER_VERSION` otherwise; an inline chunk never counts,
+    /// as PGLite's NULL `body_generation` does not. A missing page is a no-op. Refuses with
+    /// `revision_conflict` when `expected_revision` is given and the page moved past it since the
+    /// lead was read.
+    pub fn seal_segmented_page(
+        &self,
+        page_id: i64,
+        timeline: &str,
+        expected_revision: Option<&str>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut page) = page_u64(page_id)
+                .map(|id| read_page_by_id(&*tx, id))
+                .transpose()?
+                .flatten()
+            else {
+                return Ok(());
+            };
+            if expected_revision.is_some_and(|r| !r.eq_ignore_ascii_case(&page.knowledge_revision)) {
+                return Err(StoreError::new(
+                    REVISION_CONFLICT,
+                    "The page changed after its timeline lead was read. Read it again before sealing.",
+                ));
+            }
+            let mut state = read_body_state(&*tx, page.id)?;
+            let generation = state.as_ref().map_or(0, |s| s.body_generation);
+            let stamped = page.chunker_version.unwrap_or(0);
+            let older = (SAFE_FENCE_CHUNKER_VERSION..i64::from(SEGMENTED_CHUNKER_VERSION))
+                .contains(&i64::from(stamped))
+                && crate::chunks::count_chunks_matching(&*tx, page.id, &|c| {
+                    c.segment
+                        .is_some_and(|place| i64::try_from(place.body_generation).is_ok_and(|g| g < generation))
+                })? > 0;
+            let version = if older { stamped } else { SEGMENTED_CHUNKER_VERSION };
+            page.chunker_version = Some(version);
+            page.text_projection_revision = Some(page.knowledge_revision.clone());
+            write_page(tx, &page)?;
+            if let Some(state) = state.as_mut() {
+                state.chunker_version = Some(i64::from(version));
+                put_json(tx, &body_key(page.id), state)?;
+            }
+            crate::pages::record_search_timeline(tx, page.id, &page.knowledge_revision, timeline)
+        })
+    }
+
+    /// `openBodyStaging(input)`: a new staging in state `open`. Refuses a taken id or client
+    /// request (principal kind, principal id, client request id), an unknown source or page, an
+    /// unknown kind or mode, and negative declared bytes.
+    pub fn open_body_staging(&self, input: &BodyStagingInput) -> Result<()> {
+        let id = norm_uuid(&input.id, "openBodyStaging id")?;
+        let client_request_id =
+            norm_uuid(&input.client_request_id, "openBodyStaging clientRequestId")?;
+        let source_incarnation = norm_uuid(
+            &input.source_incarnation,
+            "openBodyStaging sourceIncarnation",
+        )?;
+        let base_revision = input
+            .base_revision
+            .as_deref()
+            .map(|r| norm_uuid(r, "openBodyStaging baseRevision"))
+            .transpose()?;
+        let declared_sha256 = input
+            .declared_sha256
+            .as_deref()
+            .map(|s| from_hex(s, "openBodyStaging declaredSha256").map(|b| to_hex(&b)))
+            .transpose()?;
+        for (text, what) in [
+            (&input.principal_kind, "principalKind"),
+            (&input.principal_id, "principalId"),
+            (&input.source_id, "sourceId"),
+            (&input.slug, "slug"),
+        ] {
+            no_nul(text, what)?;
+        }
+        let idle = parse_time(&input.idle_expires_at, "openBodyStaging idleExpiresAt")?;
+        let hard = parse_time(&input.hard_expires_at, "openBodyStaging hardExpiresAt")?;
+        if !STAGING_KINDS.contains(&input.kind.as_str()) {
+            return Err(violation(format!(
+                "new row for relation \"page_body_stagings\" violates check constraint (kind \"{}\")",
+                input.kind
+            )));
+        }
+        if !STAGING_MODES.contains(&input.mode.as_str()) {
+            return Err(violation(format!(
+                "new row for relation \"page_body_stagings\" violates check constraint (mode \"{}\")",
+                input.mode
+            )));
+        }
+        if input.declared_bytes < 0 {
+            return Err(violation(
+                "new row for relation \"page_body_stagings\" violates check constraint (declared_bytes >= 0)",
+            ));
+        }
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            if tx.get(&staging_key(&id))?.is_some() {
+                return Err(violation(format!(
+                    "duplicate key value violates unique constraint \"page_body_stagings_pkey\" ({id})"
+                )));
+            }
+            let client = client_key(&input.principal_kind, &input.principal_id, &client_request_id);
+            if tx.get(&client)?.is_some() {
+                return Err(violation(
+                    "duplicate key value violates unique constraint (principal_kind, principal_id, client_request_id)",
+                ));
+            }
+            if crate::sources::read_source(&*tx, &input.source_id)?.is_none() {
+                return Err(violation(format!(
+                    "insert into \"page_body_stagings\" violates foreign key: source \"{}\" does not exist",
+                    input.source_id
+                )));
+            }
+            let page_id = match input.page_id {
+                None => None,
+                Some(raw) => match page_u64(raw).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_)))) {
+                    Some(id) => Some(id),
+                    None => {
+                        return Err(violation(format!(
+                            "insert into \"page_body_stagings\" violates foreign key: page {raw} does not exist"
+                        )));
+                    }
+                },
+            };
+            let record = StagingRecord {
+                id: id.clone(),
+                kind: input.kind.clone(),
+                principal_kind: input.principal_kind.clone(),
+                principal_id: input.principal_id.clone(),
+                client_request_id: client_request_id.clone(),
+                source_id: input.source_id.clone(),
+                source_incarnation: source_incarnation.clone(),
+                slug: input.slug.clone(),
+                page_id,
+                mode: input.mode.clone(),
+                base_revision: base_revision.clone(),
+                base_generation: input.base_generation,
+                declared_bytes: input.declared_bytes,
+                declared_sha256: declared_sha256.clone(),
+                received_bytes: 0,
+                next_part: 0,
+                reserved_bytes: input.reserved_bytes,
+                state: "open".into(),
+                commit_request_id: None,
+                idle_expires_at_us: idle,
+                hard_expires_at_us: hard,
+                created_at_us: now,
+                updated_at_us: now,
+            };
+            put_json(tx, &staging_key(&id), &record)?;
+            put_json(tx, &client, &id)?;
+            if let Some(page_id) = page_id {
+                let mut key = staging_by_page_prefix(page_id);
+                key.extend_from_slice(id.as_bytes());
+                tx.put(&key, b"")?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `setBodyStagingState(id, state, { commitRequestId? })`: moves a live staging to `state`
+    /// (a live state restarts its idle deadline, never past the hard one). For a staging that is
+    /// not live: an abort or expiry, or a move to the state it holds, changes nothing; anything
+    /// else refuses as `staging_gone`.
+    pub fn set_body_staging_state(
+        &self,
+        id: &str,
+        state: &str,
+        options: &StagingStateOptions,
+    ) -> Result<()> {
+        let id = staging_id_arg(id)?;
+        let commit = options
+            .commit_request_id
+            .as_deref()
+            .map(|c| norm_uuid(c, "setBodyStagingState commitRequestId"))
+            .transpose()?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let record: Option<StagingRecord> = get_json(&*tx, &staging_key(&id))?;
+            if let Some(mut record) = record
+                .clone()
+                .filter(|r| LIVE_STAGING_STATES.contains(&r.state.as_str()))
+            {
+                if !STAGING_STATES.contains(&state) {
+                    return Err(violation(format!(
+                        "new row for relation \"page_body_stagings\" violates check constraint (state \"{state}\")"
+                    )));
+                }
+                record.state = state.to_string();
+                record.updated_at_us = now;
+                if LIVE_STAGING_STATES.contains(&state) {
+                    record.idle_expires_at_us = record
+                        .hard_expires_at_us
+                        .min(now.saturating_add(BODY_STAGING_IDLE_US));
+                }
+                if let Some(commit) = &commit {
+                    record.commit_request_id = Some(commit.clone());
+                }
+                return put_json(tx, &staging_key(&id), &record);
+            }
+            if state == "aborted" || state == "expired" {
+                return Ok(());
+            }
+            if record.as_ref().is_some_and(|r| r.state == state) {
+                return Ok(());
+            }
+            Err(body_error(json!({
+                "kind": "staging_gone",
+                "slug": record.as_ref().map(|r| r.slug.clone()),
+                "staging_id": id,
+                "state": record.map(|r| r.state),
+            })))
+        })
+    }
+
+    /// `readSegmentDerivations(pageId, { kind?, occurrenceIds? })`: the page's derivation rows,
+    /// by kind then occurrence; `[]` for an empty `occurrenceIds`.
+    pub fn read_segment_derivations(
+        &self,
+        page_id: i64,
+        options: &DerivationReadOptions,
+    ) -> Result<Vec<Value>> {
+        if options
+            .occurrence_ids
+            .as_ref()
+            .is_some_and(|ids| ids.is_empty())
+        {
+            return Ok(Vec::new());
+        }
+        let Some(page) = page_u64(page_id) else {
+            return Ok(Vec::new());
+        };
+        let wanted: Option<HashSet<i64>> = options
+            .occurrence_ids
+            .as_ref()
+            .map(|ids| ids.iter().copied().collect());
+        let read = self.read()?;
+        let prefix = derivation_prefix(page);
+        let mut out = Vec::new();
+        for (key, record) in collect::<DerivationRecord>(&*read, &prefix)? {
+            let rest = &key[prefix.len()..];
+            let Some(split) = rest.iter().position(|b| *b == 0) else {
+                continue;
+            };
+            let kind = String::from_utf8_lossy(&rest[..split]).into_owned();
+            let Some(occurrence) = keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64)
+            else {
+                continue;
+            };
+            if options.kind.as_deref().is_some_and(|k| k != kind) {
+                continue;
+            }
+            if wanted.as_ref().is_some_and(|w| !w.contains(&occurrence)) {
+                continue;
+            }
+            out.push(json!({
+                "pageId": page_id,
+                "kind": kind,
+                "occurrenceId": occurrence,
+                "version": record.pipeline_version,
+                "segmentSha256": record.segment_sha256,
+                "contextHash": record.context_hash,
+                "state": record.state,
+                "output": record.output,
+                "receipt": record.receipt,
+                "createdAt": crate::env::iso(record.created_at_us),
+                "updatedAt": crate::env::iso(record.updated_at_us),
+            }));
+        }
+        Ok(out)
+    }
+
+    /// `upsertSegmentDerivations(rows)`: inserts or replaces each row keyed (page, kind,
+    /// occurrence); a replaced row keeps its `createdAt`. Refuses the batch on an unknown page,
+    /// kind or state, a negative version, a hash that is not 32 bytes, or a key repeated in it.
+    pub fn upsert_segment_derivations(&self, rows: &[SegmentDerivationInput]) -> Result<()> {
+        let mut prepared = Vec::with_capacity(rows.len());
+        for row in rows {
+            let segment = from_hex(
+                &row.segment_sha256,
+                "upsertSegmentDerivations segmentSha256",
+            )?;
+            let context = from_hex(&row.context_hash, "upsertSegmentDerivations contextHash")?;
+            int4(row.version, "upsertSegmentDerivations version")?;
+            if !DERIVATION_KINDS.contains(&row.kind.as_str())
+                || !DERIVATION_STATES.contains(&row.state.as_str())
+                || row.version < 0
+                || segment.len() != 32
+                || context.len() != 32
+            {
+                return Err(violation(format!(
+                    "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
+                    row.page_id, row.kind, row.occurrence_id
+                )));
+            }
+            prepared.push((row, to_hex(&segment), to_hex(&context)));
+        }
+        if prepared.is_empty() {
+            return Ok(());
+        }
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let mut seen = HashSet::new();
+            for (row, segment, context) in &prepared {
+                let Some(page_id) = page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_)))) else {
+                    return Err(violation(format!(
+                        "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
+                        row.page_id
+                    )));
+                };
+                if !seen.insert((page_id, row.kind.clone(), row.occurrence_id)) {
+                    return Err(violation(
+                        "ON CONFLICT DO UPDATE command cannot affect row a second time (a derivation key repeats in the batch)",
+                    ));
+                }
+                let key = derivation_key(page_id, &row.kind, row.occurrence_id);
+                let created = get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
+                let record = DerivationRecord {
+                    pipeline_version: row.version,
+                    segment_sha256: segment.clone(),
+                    context_hash: context.clone(),
+                    state: row.state.clone(),
+                    output: row.output.clone(),
+                    receipt: row.receipt.clone(),
+                    created_at_us: created,
+                    updated_at_us: now,
+                };
+                put_json(tx, &key, &record)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? })`: deletes the page's rows
+    /// (every kind, or `kind`) whose occurrence is not live; returns how many.
+    pub fn retire_segment_derivations(
+        &self,
+        page_id: i64,
+        live_occurrence_ids: &[i64],
+        options: &DerivationRetireOptions,
+    ) -> Result<u64> {
+        let Some(page) = page_u64(page_id) else {
+            return Ok(0);
+        };
+        let live: HashSet<i64> = live_occurrence_ids.iter().copied().collect();
+        self.write(|tx| {
+            let prefix = derivation_prefix(page);
+            let mut doomed = Vec::new();
+            scan_prefix(&*tx, &prefix, false, &mut |k, _| {
+                let rest = &k[prefix.len()..];
+                if let Some(split) = rest.iter().position(|b| *b == 0) {
+                    let kind = &rest[..split];
+                    let occurrence =
+                        keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64);
+                    let kind_matches = options
+                        .kind
+                        .as_deref()
+                        .is_none_or(|want| want.as_bytes() == kind);
+                    if kind_matches && occurrence.is_some_and(|o| !live.contains(&o)) {
+                        doomed.push(k.to_vec());
+                    }
+                }
+                true
+            })?;
+            for key in &doomed {
+                tx.delete(key)?;
+            }
+            Ok(doomed.len() as u64)
+        })
+    }
+
+    /// `refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash)`: rewrites the body,
+    /// timeline and content hash of a live inline page and leaves everything else (chunks, tags,
+    /// frontmatter) as it is. A missing or soft-deleted page is a no-op; a segmented page refuses
+    /// (Postgres's `pages_body_storage_chk`). The text is stored as given: Postgres refuses a NUL
+    /// byte, and so does this (`invalid_argument`).
+    pub fn refresh_page_body(
+        &self,
+        slug: &str,
+        source_id: &str,
+        compiled_truth: &str,
+        timeline: &str,
+        content_hash: &str,
+    ) -> Result<()> {
+        for (text, what) in [
+            (slug, "slug"),
+            (source_id, "sourceId"),
+            (compiled_truth, "compiledTruth"),
+            (timeline, "timeline"),
+            (content_hash, "contentHash"),
+        ] {
+            no_nul(text, &format!("refreshPageBody {what}"))?;
+        }
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let Some(mut page) = read_page(&*tx, source_id, slug)? else {
+                return Ok(());
+            };
+            if page.deleted_at_us.is_some() {
+                return Ok(());
+            }
+            if is_segmented(read_body_state(&*tx, page.id)?.as_ref()) {
+                return Err(violation(
+                    "new row for relation \"pages\" violates check constraint \"pages_body_storage_chk\"",
+                ));
+            }
+            if page.compiled_truth != compiled_truth || page.timeline != timeline {
+                page.knowledge_revision = self.env.new_uuid();
+                page.text_projection_revision = None;
+            }
+            page.compiled_truth = compiled_truth.into();
+            page.timeline = timeline.into();
+            page.content_hash = Some(content_hash.to_string());
+            page.updated_at_us = now;
+            write_page(tx, &page)?;
+            // The statement sets the timeline, so PGLite's search vector trigger fires, also when
+            // the text is unchanged: the sealed search timeline goes.
+            crate::pages::forget_search_timeline(tx, page.id)
+        })
+    }
+}
+
+/// Checks one manifest row against what Postgres checks before touching a table (types, CHECKs
+/// and NOT NULLs) and returns it normalized (lowercase hex and uuid, `YYYY-MM-DD` dates, open).
+fn prepare_manifest_row(row: &ManifestRow) -> Result<(ManifestRow, [u8; 16])> {
+    let mut out = row.clone();
+    out.gen_to = None;
+    for (value, what) in [
+        (row.seq, "seq"),
+        (row.byte_len, "byteLen"),
+        (row.line_count, "lineCount"),
+        (row.static_proj_lines, "staticProjLines"),
+        (row.page_id, "pageId"),
+    ] {
+        int4(value, &format!("stageManifestRows {what}"))?;
+    }
+    no_nul(&row.source_id, "stageManifestRows sourceId")?;
+    out.sha256 = to_hex(&from_hex(&row.sha256, "stageManifestRows sha256")?);
+    out.hash_state = to_hex(&from_hex(&row.hash_state, "stageManifestRows hashState")?);
+    out.date_min = row
+        .date_min
+        .as_deref()
+        .map(|d| parse_date(d, "stageManifestRows dateMin"))
+        .transpose()?;
+    out.date_max = row
+        .date_max
+        .as_deref()
+        .map(|d| parse_date(d, "stageManifestRows dateMax"))
+        .transpose()?;
+    let staging = match row.staging_id.as_deref() {
+        Some(id) => {
+            let id = norm_uuid(id, "stageManifestRows stagingId")?;
+            let bytes = uuid_bytes(&id);
+            out.staging_id = Some(id);
+            bytes
+        }
+        None => NIL_STAGING,
+    };
+    if !REGIONS.contains(&row.region.as_str()) {
+        return Err(violation(format!(
+            "new row for relation \"page_body_manifest\" violates check constraint (region \"{}\")",
+            row.region
+        )));
+    }
+    if !CUT_KINDS.contains(&row.cut_kind.as_str()) {
+        return Err(violation(format!(
+            "new row for relation \"page_body_manifest\" violates check constraint (cut_kind \"{}\")",
+            row.cut_kind
+        )));
+    }
+    for (value, what) in [
+        (&row.entry_state, "entry_state"),
+        (&row.protected_regions, "protected_regions"),
+        (&row.facts_slots, "facts_slots"),
+        (&row.outline, "outline"),
+    ] {
+        if value.is_null() {
+            return Err(violation(format!(
+                "null value in column \"{what}\" of relation \"page_body_manifest\" violates not-null constraint"
+            )));
+        }
+    }
+    Ok((out, staging))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pages::{PageInput, PutPageOptions, ReadScope};
+
+    fn sha(text: &str) -> String {
+        use sha2::{Digest, Sha256};
+        to_hex(&Sha256::digest(text.as_bytes()))
+    }
+
+    fn text(body: &str) -> SegmentTextInput {
+        SegmentTextInput {
+            sha256: sha(body),
+            body: to_hex(body.as_bytes()),
+            line_count: 1,
+        }
+    }
+
+    fn meta(title: &str) -> SegmentedPageMeta {
+        SegmentedPageMeta {
+            page_type: Some("note".into()),
+            title: title.into(),
+            ..SegmentedPageMeta::default()
+        }
+    }
+
+    #[test]
+    fn hex_and_dates_round_trip() {
+        assert_eq!(to_hex(&from_hex("00Ff10", "x").unwrap()), "00ff10");
+        assert!(from_hex("abc", "x").is_err());
+        assert!(from_hex("zz", "x").is_err());
+        assert_eq!(parse_date("2026-01-02", "d").unwrap(), "2026-01-02");
+        assert_eq!(
+            parse_date("2026-01-02T10:00:00Z", "d").unwrap(),
+            "2026-01-02"
+        );
+        assert!(parse_date("2026-02-30", "d").is_err());
+        assert!(parse_date("2026/01/02", "d").is_err());
+        assert_eq!(uuid_bytes("00000000-0000-0000-0000-000000000001")[15], 1);
+    }
+
+    #[test]
+    fn signed_keys_sort_by_value() {
+        let mut values = [5i64, -3, 0, i64::MAX, i64::MIN, 1];
+        let mut keyed: Vec<[u8; 8]> = values.iter().map(|v| signed(*v)).collect();
+        keyed.sort();
+        values.sort();
+        assert_eq!(keyed, values.iter().map(|v| signed(*v)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_segmented_page_reports_its_body_columns_and_an_inline_page_none() {
+        let store = crate::test_support::store();
+        let shell = store
+            .create_segmented_page_shell(
+                "notes/seg",
+                &meta("Seg"),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap();
+        assert!(shell["id"].as_u64().unwrap() > 0);
+        store
+            .put_page(
+                "notes/inline",
+                &PageInput {
+                    page_type: "note".into(),
+                    title: "Inline".into(),
+                    compiled_truth: "body".into(),
+                    ..PageInput::default()
+                },
+                &PutPageOptions::default(),
+            )
+            .unwrap();
+        let seg = store
+            .read_page_snapshot("notes/seg", &ReadScope::default())
+            .unwrap()
+            .unwrap()["page"]
+            .clone();
+        assert_eq!(seg["body_storage"], json!("segmented"));
+        assert_eq!(seg["body_bytes"], json!(0));
+        let inline = store
+            .read_page_snapshot("notes/inline", &ReadScope::default())
+            .unwrap()
+            .unwrap()["page"]
+            .clone();
+        assert!(inline.get("body_storage").is_none());
+        assert!(inline.get("body_bytes").is_none());
+    }
+
+    #[test]
+    fn deleting_a_page_for_good_removes_its_body_records() {
+        let store = crate::test_support::store();
+        let id = store
+            .create_segmented_page_shell(
+                "notes/gone",
+                &meta("Gone"),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let one = text("one\n");
+        store
+            .stage_segment_texts(
+                "default",
+                std::slice::from_ref(&one),
+                &StageTextsOptions::default(),
+            )
+            .unwrap();
+        store
+            .upsert_segment_derivations(&[SegmentDerivationInput {
+                page_id: id as i64,
+                kind: "links".into(),
+                occurrence_id: 1,
+                version: 1,
+                segment_sha256: sha("a"),
+                context_hash: sha("b"),
+                state: "done".into(),
+                output: Value::Null,
+                receipt: Value::Null,
+            }])
+            .unwrap();
+        store.delete_page("notes/gone", None).unwrap();
+        let read = store.read().unwrap();
+        for prefix in [manifest_prefix(id), derivation_prefix(id), body_key(id)] {
+            let mut n = 0;
+            scan_prefix(&*read, &prefix, false, &mut |_, _| {
+                n += 1;
+                true
+            })
+            .unwrap();
+            assert_eq!(n, 0);
+        }
+        // Texts stay until a sweep, as in PGLite.
+        assert_eq!(
+            store
+                .read_segment_texts("default", &[one.sha256])
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    fn staging_input(
+        id: &str,
+        source: &str,
+        page_id: Option<i64>,
+        client: &str,
+    ) -> BodyStagingInput {
+        serde_json::from_value(json!({
+            "id": id, "kind": "put", "principalKind": "local", "principalId": "cli",
+            "clientRequestId": client, "sourceId": source,
+            "sourceIncarnation": "33333333-3333-4333-8333-333333333333", "slug": "notes/a",
+            "pageId": page_id, "mode": "replace", "declaredBytes": 1, "reservedBytes": 1,
+            "idleExpiresAt": "2099-01-01T00:00:00Z", "hardExpiresAt": "2099-01-02T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    fn count(store: &Store, prefix: &[u8]) -> usize {
+        let read = store.read().unwrap();
+        let mut n = 0;
+        scan_prefix(&*read, prefix, false, &mut |_, _| {
+            n += 1;
+            true
+        })
+        .unwrap();
+        n
+    }
+
+    fn other_source(store: &Store) {
+        store
+            .upsert_source(
+                &serde_json::from_value(json!({"id": "other", "name": "other"})).unwrap(),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn deleting_a_source_removes_its_texts_and_stagings_only() {
+        let store = crate::test_support::store();
+        other_source(&store);
+        let other_page = store
+            .create_segmented_page_shell(
+                "notes/o",
+                &meta("O"),
+                &ShellOptions {
+                    source_id: Some("other".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let gone = "11111111-1111-4111-8111-111111111111";
+        let kept = "22222222-2222-4222-8222-222222222222";
+        let gone_client = "44444444-4444-4444-8444-444444444444";
+        store
+            .open_body_staging(&staging_input(gone, "default", None, gone_client))
+            .unwrap();
+        store
+            .open_body_staging(&staging_input(
+                kept,
+                "other",
+                Some(other_page),
+                "55555555-5555-4555-8555-555555555555",
+            ))
+            .unwrap();
+        let in_staging = StageTextsOptions {
+            staging_id: Some(gone.into()),
+        };
+        store
+            .stage_segment_texts("default", &[text("one\n"), text("two\n")], &in_staging)
+            .unwrap();
+        store
+            .stage_segment_texts("other", &[text("one\n")], &StageTextsOptions::default())
+            .unwrap();
+
+        store.write(|tx| remove_source_rows(tx, "default")).unwrap();
+
+        assert!(
+            store
+                .read_segment_texts("default", &[sha("one\n"), sha("two\n")])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .read_segment_texts("other", &[sha("one\n")])
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(count(&store, &staging_key(gone)), 0);
+        assert_eq!(count(&store, &staging_text_prefix(gone)), 0);
+        assert_eq!(count(&store, &client_key("local", "cli", gone_client)), 0);
+        assert_eq!(count(&store, &staging_key(kept)), 1);
+        assert_eq!(count(&store, &staging_by_page_prefix(other_page as u64)), 1);
+        // The id and client request are free again.
+        store
+            .open_body_staging(&staging_input(gone, "default", None, gone_client))
+            .unwrap();
+    }
+
+    #[test]
+    fn deleting_a_source_refuses_while_another_page_names_its_text() {
+        let store = crate::test_support::store();
+        other_source(&store);
+        let page = store
+            .create_segmented_page_shell(
+                "notes/o",
+                &meta("O"),
+                &ShellOptions {
+                    source_id: Some("other".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        store
+            .stage_segment_texts("default", &[text("one\n")], &StageTextsOptions::default())
+            .unwrap();
+        let row: ManifestRow = serde_json::from_value(json!({
+            "pageId": page, "occurrenceId": 1, "genFrom": 1, "seq": 0, "region": "truth",
+            "sourceId": "default", "sha256": sha("one\n"), "byteStart": 0, "byteLen": 4,
+            "lineStart": 0, "lineCount": 1, "cutKind": "eof", "entryState": {},
+            "protectedRegions": [], "factsSlots": [], "staticProjBytes": 4, "staticProjLines": 1,
+            "outline": [], "hashState": sha("s"),
+        }))
+        .unwrap();
+        store.stage_manifest_rows(&[row]).unwrap();
+        let err = store
+            .write(|tx| remove_source_rows(tx, "default"))
+            .unwrap_err();
+        assert_eq!(err.code, CONSTRAINT_VIOLATION);
+        assert_eq!(
+            store
+                .read_segment_texts("default", &[sha("one\n")])
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}
+
+/// Segment chunks through the page-body members. A flip unseals the page (as in PGLite), and
+/// `get_chunks` answers nothing for an unsealed page, so visibility is read with
+/// `chunks::visible_chunks`, the list `get_chunks` returns once the page is sealed.
+#[cfg(test)]
+mod segment_chunk_tests {
+    use super::*;
+    use crate::chunks::{SegmentChunkInput, visible_chunks};
+
+    const STAGING: &str = "11111111-1111-4111-8111-111111111111";
+    const STAGING_2: &str = "22222222-2222-4222-8222-222222222222";
+
+    fn sha(text: &str) -> String {
+        use sha2::{Digest, Sha256};
+        to_hex(&Sha256::digest(text.as_bytes()))
+    }
+
+    fn text(body: &str) -> SegmentTextInput {
+        SegmentTextInput {
+            sha256: sha(body),
+            body: to_hex(body.as_bytes()),
+            line_count: 1,
+        }
+    }
+
+    fn staging(id: &str, page_id: i64, client: &str) -> BodyStagingInput {
+        serde_json::from_value(json!({
+            "id": id, "kind": "put", "principalKind": "local", "principalId": "cli",
+            "clientRequestId": client, "sourceId": "default",
+            "sourceIncarnation": "33333333-3333-4333-8333-333333333333", "slug": "notes/a",
+            "pageId": page_id, "mode": "replace", "declaredBytes": 1, "reservedBytes": 1,
+            "idleExpiresAt": "2099-01-01T00:00:00Z", "hardExpiresAt": "2099-01-02T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    fn row(
+        page_id: i64,
+        occurrence: i64,
+        gen_from: i64,
+        seq: i64,
+        start: i64,
+        body: &str,
+        staging: &str,
+    ) -> ManifestRow {
+        serde_json::from_value(json!({
+            "pageId": page_id, "occurrenceId": occurrence, "genFrom": gen_from, "seq": seq,
+            "region": "truth", "sourceId": "default", "sha256": sha(body), "byteStart": start,
+            "byteLen": body.len(), "lineStart": 0, "lineCount": 1, "cutKind": "heading",
+            "entryState": {"depth": 0}, "protectedRegions": [], "factsSlots": [], "outline": [],
+            "staticProjBytes": body.len(), "staticProjLines": 1, "hashState": sha("state"),
+            "stagingId": staging,
+        }))
+        .unwrap()
+    }
+
+    fn flip(
+        page_id: i64,
+        expected: i64,
+        staging: &str,
+        body_bytes: i64,
+        extra: Value,
+    ) -> BodyFlipInput {
+        let mut input = json!({
+            "pageId": page_id, "expectedGeneration": expected, "newGeneration": expected + 1,
+            "stagingId": staging, "retireMaxRows": 1000,
+            "body": {
+                "content_hash": "h", "body_bytes": body_bytes, "truth_bytes": body_bytes,
+                "body_lines": 2, "segment_count": 2, "segmenter_version": 1,
+                "truth_lead": "", "timeline_lead": "", "body_flags": {},
+            },
+            "meta": {"type": "note", "title": "Flipped"},
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            input[k] = v.clone();
+        }
+        serde_json::from_value(input).unwrap()
+    }
+
+    fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
+        serde_json::from_value(json!({
+            "chunk_text": body, "chunk_source": "compiled_truth", "model": "m",
+            "occurrence_id": occurrence, "local_ordinal": ordinal,
+            "raw_byte_start": 0, "raw_byte_end": body.len(),
+        }))
+        .unwrap()
+    }
+
+    fn visible(store: &Store, id: i64) -> Vec<String> {
+        visible_chunks(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.chunk_text)
+            .collect()
+    }
+
+    /// A shell published at generation 1 from occurrences 1 ("one\n" at 0) and 2 ("two\n" at 4).
+    fn published(store: &Store) -> i64 {
+        let id = store
+            .create_segmented_page_shell(
+                "notes/a",
+                &serde_json::from_value(json!({"type": "note", "title": "A"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        store
+            .open_body_staging(&staging(
+                STAGING,
+                id,
+                "44444444-4444-4444-8444-444444444444",
+            ))
+            .unwrap();
+        store
+            .stage_segment_texts(
+                "default",
+                &[text("one\n"), text("two\n")],
+                &StageTextsOptions {
+                    staging_id: Some(STAGING.into()),
+                },
+            )
+            .unwrap();
+        store
+            .stage_manifest_rows(&[
+                row(id, 1, 1, 0, 0, "one\n", STAGING),
+                row(id, 2, 1, 1, 4, "two\n", STAGING),
+            ])
+            .unwrap();
+        store
+            .flip_body_generation(&flip(id, 0, STAGING, 8, json!({})))
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn a_shell_holds_a_null_body_and_hash_until_a_flip_publishes_the_hash() {
+        let store = crate::test_support::store();
+        let id = store
+            .create_segmented_page_shell(
+                "notes/shell",
+                &serde_json::from_value(json!({"type": "note", "title": "Shell"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let shell = read_page_by_id(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .unwrap();
+        assert!(shell.compiled_truth.is_null() && shell.timeline.is_null());
+        assert_eq!(shell.content_hash, None);
+        assert_eq!(shell.chunker_version, Some(0));
+        let id = published(&store);
+        let page = read_page_by_id(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .unwrap();
+        assert!(page.compiled_truth.is_null() && page.timeline.is_null());
+        assert_eq!(page.content_hash.as_deref(), Some("h"));
+    }
+
+    /// Generation 2 staged: occurrence 3 replaces occurrence 2 at byte 4, with a chunk for
+    /// occurrence 3 and one for occurrence 9, which has no row in generation 2.
+    fn second_generation(store: &Store, id: i64) {
+        store
+            .open_body_staging(&staging(
+                STAGING_2,
+                id,
+                "55555555-5555-4555-8555-555555555555",
+            ))
+            .unwrap();
+        store
+            .stage_segment_texts(
+                "default",
+                &[text("TWO!\n")],
+                &StageTextsOptions {
+                    staging_id: Some(STAGING_2.into()),
+                },
+            )
+            .unwrap();
+        store
+            .stage_manifest_rows(&[row(id, 3, 2, 1, 4, "TWO!\n", STAGING_2)])
+            .unwrap();
+        store
+            .stage_segment_chunks(id, 2, &[chunk(3, 0, "TWO!"), chunk(9, 0, "orphan")])
+            .unwrap();
+    }
+
+    #[test]
+    fn staged_chunks_take_new_indexes_and_read_in_document_order() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(
+            store.stage_segment_chunks(id, 1, &[]).unwrap(),
+            Vec::<u32>::new()
+        );
+        // Occurrence 2 first: document order is the occurrence's byte_start, then the ordinal.
+        let first = store
+            .stage_segment_chunks(id, 1, &[chunk(2, 0, "two"), chunk(1, 1, "one b")])
+            .unwrap();
+        assert_eq!(first, vec![0, 1]);
+        assert_eq!(
+            store
+                .stage_segment_chunks(id, 1, &[chunk(1, 0, "one a")])
+                .unwrap(),
+            vec![2]
+        );
+        assert_eq!(visible(&store, id), vec!["one a", "one b", "two"]);
+    }
+
+    fn lead(store: &Store, id: i64) -> Option<String> {
+        timeline_lead(&*store.read().unwrap(), id as u64).unwrap()
+    }
+
+    #[test]
+    fn the_timeline_lead_is_the_one_a_flip_published_and_none_otherwise() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        // The fixture flips with an empty lead: a published lead is never NULL.
+        assert_eq!(lead(&store, id), Some(String::new()));
+        second_generation(&store, id);
+        let mut input = flip(id, 1, STAGING_2, 9, json!({"closeOccurrences": [2]}));
+        input.body.timeline_lead = "- 2026-01-02: lead\0 entry".into();
+        store.flip_body_generation(&input).unwrap();
+        // NUL goes, as with every stored body column.
+        assert_eq!(
+            lead(&store, id).as_deref(),
+            Some("- 2026-01-02: lead entry")
+        );
+
+        // A shell no flip has published, an inline page and a missing page have none.
+        let shell = store
+            .create_segmented_page_shell(
+                "notes/shell",
+                &serde_json::from_value(json!({"type": "note", "title": "S"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        assert_eq!(lead(&store, shell), None);
+        let inline = store
+            .put_page(
+                "notes/inline",
+                &crate::pages::PageInput {
+                    page_type: "note".into(),
+                    title: "Inline".into(),
+                    compiled_truth: "body".into(),
+                    timeline: Some("- 2026-01-02: entry".into()),
+                    ..crate::pages::PageInput::default()
+                },
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(lead(&store, inline["id"].as_i64().unwrap()), None);
+        assert_eq!(lead(&store, 999_999), None);
+    }
+
+    fn kept_timeline(store: &Store, id: i64) -> Option<crate::pages::SearchTimeline> {
+        crate::pages::search_timeline(&*store.read().unwrap(), id as u64).unwrap()
+    }
+
+    fn keep_timeline(store: &Store, id: i64) {
+        store
+            .write(|tx| crate::pages::record_search_timeline(tx, id as u64, "rev", "sealed"))
+            .unwrap();
+        assert!(kept_timeline(store, id).is_some());
+    }
+
+    #[test]
+    fn a_flip_forgets_the_search_timeline_and_a_refused_flip_keeps_it() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        keep_timeline(&store, id);
+        second_generation(&store, id);
+        // A flip refused after the page write (the rows do not tile 99 bytes) writes nothing, so
+        // the record stays.
+        assert!(
+            store
+                .flip_body_generation(&flip(
+                    id,
+                    1,
+                    STAGING_2,
+                    99,
+                    json!({"closeOccurrences": [2]})
+                ))
+                .is_err()
+        );
+        assert!(kept_timeline(&store, id).is_some());
+        // The fixture's title is "Flipped" both times: the flip forgets the record anyway.
+        store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 9, json!({"closeOccurrences": [2]})))
+            .unwrap();
+        assert_eq!(kept_timeline(&store, id), None);
+    }
+
+    #[test]
+    fn a_refresh_forgets_the_search_timeline_also_with_the_same_text() {
+        let store = crate::test_support::store();
+        let page = store
+            .put_page(
+                "notes/r",
+                &crate::pages::PageInput {
+                    page_type: "note".into(),
+                    title: "R".into(),
+                    compiled_truth: "body".into(),
+                    timeline: Some("tl".into()),
+                    ..crate::pages::PageInput::default()
+                },
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        let id = page["id"].as_i64().unwrap();
+        // A seal that sends the text records it.
+        store
+            .upsert_chunks(
+                "notes/r",
+                &[],
+                &crate::chunks::UpsertChunksOptions {
+                    seal: true,
+                    search_timeline: Some("tl".into()),
+                    ..crate::chunks::UpsertChunksOptions::default()
+                },
+            )
+            .unwrap();
+        assert!(kept_timeline(&store, id).is_some());
+        // A refresh of another page, or of a missing one, leaves it.
+        store
+            .refresh_page_body("notes/missing", "default", "x", "", "h")
+            .unwrap();
+        assert!(kept_timeline(&store, id).is_some());
+        // The same body and timeline: PGLite's trigger still fires on the SET list.
+        store
+            .refresh_page_body("notes/r", "default", "body", "tl", "h2")
+            .unwrap();
+        assert_eq!(kept_timeline(&store, id), None);
+    }
+
+    fn sealed_texts(store: &Store) -> Vec<String> {
+        let mut texts: Vec<String> = store
+            .get_chunks("notes/a", &crate::pages::ReadScope::default())
+            .unwrap()
+            .into_iter()
+            .map(|c| c["chunk_text"].as_str().unwrap().to_owned())
+            .collect();
+        texts.sort();
+        texts
+    }
+
+    fn stamp(store: &Store, id: i64) -> Option<i16> {
+        read_page_by_id(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .unwrap()
+            .chunker_version
+    }
+
+    #[test]
+    fn a_seal_shows_the_chunks_and_records_the_lead_at_the_revision() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        assert!(sealed_texts(&store).is_empty());
+        // The fixture flip publishes an empty lead.
+        let (lead, revision) = store.read_segmented_seal_lead(id).unwrap().unwrap();
+        assert_eq!(lead, "");
+        store
+            .seal_segmented_page(id, "lead\0 text", Some(&revision))
+            .unwrap();
+        assert_eq!(sealed_texts(&store), ["one", "two"]);
+        let kept = kept_timeline(&store, id).unwrap();
+        assert_eq!(
+            (kept.revision.as_str(), kept.timeline.as_str()),
+            (revision.as_str(), "lead text")
+        );
+        assert_eq!(stamp(&store, id), Some(SEGMENTED_CHUNKER_VERSION));
+    }
+
+    #[test]
+    fn a_seal_keeps_an_older_chunker_only_while_older_segment_chunks_remain() {
+        // Stamped 4 (an older segmented chunker; a flip stores at most 3, so the test sets it), with
+        // occurrence 1's generation-1 chunk still stored after the flip to generation 2: the seal keeps 4.
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        store.seal_segmented_page(id, "", None).unwrap();
+        second_generation(&store, id);
+        store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2]}),
+            ))
+            .unwrap();
+        store
+            .write(|tx| {
+                let mut page = read_page_by_id(&*tx, id as u64)?.unwrap();
+                page.chunker_version = Some(4);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        store.seal_segmented_page(id, "", None).unwrap();
+        assert_eq!(stamp(&store, id), Some(4));
+        assert_eq!(sealed_texts(&store), ["TWO!", "one"]);
+        // Once no chunk predates the generation, the next seal stamps the current chunker.
+        store
+            .write(|tx| {
+                crate::chunks::delete_chunks_matching(tx, id as u64, &|c| {
+                    c.segment.is_some_and(|place| place.body_generation < 2)
+                })
+                .map(|_| ())
+            })
+            .unwrap();
+        store.seal_segmented_page(id, "", None).unwrap();
+        assert_eq!(stamp(&store, id), Some(SEGMENTED_CHUNKER_VERSION));
+    }
+
+    #[test]
+    fn a_seal_of_a_missing_page_is_a_no_op_and_a_moved_revision_refuses() {
+        let store = crate::test_support::store();
+        assert!(
+            store
+                .read_segmented_seal_lead(987_654_321)
+                .unwrap()
+                .is_none()
+        );
+        store.seal_segmented_page(987_654_321, "x", None).unwrap();
+        store.seal_segmented_page(0, "x", None).unwrap();
+        let id = published(&store);
+        let err = store
+            .seal_segmented_page(id, "x", Some("00000000-0000-4000-8000-000000000000"))
+            .unwrap_err();
+        assert_eq!(err.code, REVISION_CONFLICT);
+        assert_eq!(kept_timeline(&store, id), None);
+        assert!(sealed_texts(&store).is_empty());
+    }
+
+    #[test]
+    fn a_flip_publishes_staged_chunks_and_defers_retirement_past_the_cap() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        second_generation(&store, id);
+        assert_eq!(visible(&store, id), vec!["one", "two"]);
+        // Two rows match (occurrence 2 at generation 1, and the orphan), over the cap of 1.
+        let result = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2], "retireMaxRows": 1}),
+            ))
+            .unwrap();
+        assert_eq!(
+            result,
+            BodyFlipResult {
+                retired_chunks: 0,
+                retire_deferred: true
+            }
+        );
+        // Deferred rows stay until a later delete. Rows without a live offset read last.
+        assert_eq!(visible(&store, id), vec!["one", "TWO!", "two", "orphan"]);
+    }
+
+    #[test]
+    fn a_flip_deletes_retired_segment_chunks_under_the_cap() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        second_generation(&store, id);
+        let result = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2]}),
+            ))
+            .unwrap();
+        assert_eq!(
+            result,
+            BodyFlipResult {
+                retired_chunks: 2,
+                retire_deferred: false
+            }
+        );
+        assert_eq!(visible(&store, id), vec!["one", "TWO!"]);
+        // The next index follows the highest row left (index 2), as PGLite's MAX(chunk_index) + 1.
+        assert_eq!(
+            store
+                .stage_segment_chunks(id, 2, &[chunk(1, 1, "more")])
+                .unwrap(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn a_refused_flip_publishes_nothing() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        second_generation(&store, id);
+        // The body would end at 10 while the rows cover 9: the flip refuses and the staged
+        // chunks stay hidden.
+        assert!(
+            store
+                .flip_body_generation(&flip(
+                    id,
+                    1,
+                    STAGING_2,
+                    10,
+                    json!({"closeOccurrences": [2]})
+                ))
+                .is_err()
+        );
+        assert!(visible(&store, id).is_empty());
+    }
+
+    #[test]
+    fn deleting_a_page_for_good_forgets_its_segment_view() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        let view = keys::meta(&format!("chunk_segment_view/{id}"));
+        assert!(store.read().unwrap().get(&view).unwrap().is_some());
+        store.delete_page("notes/a", None).unwrap();
+        assert!(store.read().unwrap().get(&view).unwrap().is_none());
+    }
+
+    fn holder(store: &Store, slug: &str, origin: &str) {
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "inline body".into(),
+            source_path: Some(origin.into()),
+            ..crate::pages::PageInput::default()
+        };
+        store
+            .put_page(slug, &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn a_shell_cannot_claim_an_origin_a_live_page_holds() {
+        let store = crate::test_support::store();
+        holder(&store, "notes/holder", "docs/a.md");
+        let err = store
+            .create_segmented_page_shell(
+                "notes/twin",
+                &serde_json::from_value(
+                    json!({"type": "note", "title": "Twin", "source_path": "docs/a.md"}),
+                )
+                .unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::ORIGIN_CLAIMED);
+        assert!(
+            read_page(&*store.read().unwrap(), "default", "notes/twin")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_flip_cannot_move_a_page_onto_or_revive_it_into_a_claimed_origin() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        holder(&store, "notes/holder", "docs/a.md");
+        let stage = |staging_id: &str, client: &str| {
+            store
+                .open_body_staging(&staging(staging_id, id, client))
+                .unwrap();
+            store
+                .stage_segment_texts(
+                    "default",
+                    &[text("one\n"), text("two\n")],
+                    &StageTextsOptions {
+                        staging_id: Some(staging_id.into()),
+                    },
+                )
+                .unwrap();
+            store
+                .stage_manifest_rows(&[
+                    row(id, 3, 2, 0, 0, "one\n", staging_id),
+                    row(id, 4, 2, 1, 4, "two\n", staging_id),
+                ])
+                .unwrap();
+        };
+        stage(STAGING_2, "55555555-5555-4555-8555-555555555555");
+        // A flip that names the holder's origin.
+        let err = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                8,
+                json!({"meta": {"type": "note", "title": "Moved", "source_path": "docs/a.md"}}),
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::ORIGIN_CLAIMED);
+        let page = read_page(&*store.read().unwrap(), "default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.title, "Flipped");
+        assert_eq!(page.source_path, None);
+        assert_eq!(
+            read_body_state(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .unwrap()
+                .body_generation,
+            1
+        );
+        // A deleted page whose origin another page took is not revived by a flip that keeps its origin.
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "notes/a")?.unwrap();
+                page.source_path = Some("docs/b.md".into());
+                page.deleted_at_us = Some(1);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        holder(&store, "notes/taker", "docs/b.md");
+        let err = store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 8, json!({})))
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::ORIGIN_CLAIMED);
+        let page = read_page(&*store.read().unwrap(), "default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert!(page.deleted_at_us.is_some());
+        assert_eq!(
+            read_body_state(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .unwrap()
+                .body_generation,
+            1
+        );
+    }
+}

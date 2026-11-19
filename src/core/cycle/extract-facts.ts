@@ -102,6 +102,7 @@ import {
   type PhantomPassResult,
 } from './phantom-redirect.ts';
 import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
+import { embeddingSendBlocked } from '../embedding-disabled.ts';
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
@@ -466,7 +467,7 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     return fact && fact.visibility !== 'world' && (f.visibility ?? 'private') === 'world' ? [Number(fact.id)] : [];
   });
   const heldWidening = new Set(widening.length ? (await db.executeRaw<{ id: number }>(
-    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action = 'supersede_fact' AND related_table = 'facts'
+    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action IN ('supersede_fact', 'confirm') AND related_table = 'facts'
       AND related_id = ANY($2::bigint[]) AND status IN ('pending', 'rejected', 'undone') AND before_state->'visibility' IS NOT NULL`,
     [sourceId, widening])).map(r => Number(r.id)) : []);
   const updates = extracted.map((f): FenceExtractedFact => {
@@ -1052,7 +1053,7 @@ export async function runExtractFacts(
     // them. Rows updated in place keep their vectors: the claim text is
     // unchanged. Falls open without an embedding provider, with a warning.
     if (toInsert.length > 0 && !opts.deferEmbedding) {
-      if (isAvailable('embedding')) {
+      if (isAvailable('embedding') && !await embeddingSendBlocked(engine)) {
         try {
           const texts = toInsert.map(e => e.fact);
           const embeddingModel = getEmbeddingModel();

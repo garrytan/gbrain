@@ -33,6 +33,12 @@ export type OwnerRole =
 
 export interface ElectOptions extends OwnerServerOptions {
   waitMs?: number;
+  /**
+   * Runs once this process holds the owner lock and before its socket serves (the Rust engine opens its store here).
+   * It returns the step that undoes it, run before the lock is released when serving fails. When it throws, the lock
+   * is released and the election ends with that error.
+   */
+  onLock?: () => Promise<(() => Promise<void>) | void>;
 }
 
 function retryable(error: unknown): boolean {
@@ -53,13 +59,18 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
   for (;;) {
     const lock = await tryAcquireNativeLock(lockPath);
     if (lock) {
+      let undo: (() => Promise<void>) | void = undefined;
+      try { undo = await opts.onLock?.(); }
+      catch (error) { await lock.release(); throw error; }
       try {
-        const server = await serveOwnerEngine(engine, socketPath, { ...opts, serve: opts.serve ?? processIsServe() });
+        const { waitMs: _waitMs, onLock: _onLock, ...serverOpts } = opts;
+        const server = await serveOwnerEngine(engine, socketPath, { ...serverOpts, serve: opts.serve ?? processIsServe() });
         if (server) return { role: 'owner', lock, server };
         lastError = new Error('The owner socket is claimed by another process.');
       } catch (error) {
         lastError = error;
       }
+      if (undo) await undo();
       await lock.release();
     } else {
       try {

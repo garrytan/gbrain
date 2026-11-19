@@ -6,7 +6,7 @@
  * one running reports `restart_required`).
  */
 import type { BrainEngine } from '../engine.ts';
-import { readJournalLimits } from '../persistence/limits.ts';
+import { outstandingAdmissionWindow } from '../persistence/limits.ts';
 import { isTerminalWriteState } from '../persistence/types.ts';
 import type { RepairItem } from './core.ts';
 
@@ -15,8 +15,7 @@ export interface SettledRepair extends PendingRepair { state: string; error_code
 
 /** Unresolved receipts one run keeps at once: half the principal's outstanding-request cap, at most 64. */
 export async function repairAdmissionWindow(engine: BrainEngine): Promise<number> {
-  const limits = await readJournalLimits(engine);
-  return Math.max(1, Math.min(64, Math.floor(limits.principalOutstanding / 2)));
+  return outstandingAdmissionWindow(engine);
 }
 
 /**

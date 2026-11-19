@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/vendor/postgres/cjs/src/connection.js
-index 07f6716..848e9e5 100644
+index 07f6716..174846a 100644
 --- a/cjs/src/connection.js
 +++ b/vendor/postgres/cjs/src/connection.js
 @@ -20,6 +20,7 @@
@@ -384,7 +384,23 @@ index 07f6716..848e9e5 100644
    function queryError(query, err) {
      if (query.reserve)
        return query.reject(err)
-@@ -437,20 +647,53 @@
+@@ -428,7 +638,14 @@
+     if (socket) {
+       socket.removeListener('data', data)
+       socket.removeListener('connect', connected)
+-      socket.readyState === 'open' && socket.end(b().X().end())
++      // GBrain (#8155 follow-up): a peer that never answers the Terminate never sends the FIN that closes the socket, and
++      // the pool counts the connection as open until it closes. Destroy it once the grace for a clean close has passed.
++      if (socket.readyState === 'open') {
++        const closing = socket
++        closing.end(b().X().end())
++        const grace = setTimeout(() => closing.destroyed || closing.destroy(), 2000)
++        grace && grace.unref && grace.unref()
++      }
+     }
+     ended && (ended(), ending = ended = null)
+   }
+@@ -437,20 +654,53 @@
      incoming = Buffer.alloc(0)
      remaining = 0
      incomings = null
@@ -440,7 +456,7 @@ index 07f6716..848e9e5 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -459,6 +702,10 @@
+@@ -459,6 +709,10 @@
  
    /* Handlers */
    function handle(xs, x = xs[0]) {
@@ -451,7 +467,7 @@ index 07f6716..848e9e5 100644
      (
        x === 68 ? DataRow :                   // D
        x === 100 ? CopyData :                 // d
-@@ -489,6 +736,39 @@
+@@ -489,6 +743,39 @@
      )(xs)
    }
  
@@ -491,7 +507,7 @@ index 07f6716..848e9e5 100644
    function DataRow(x) {
      let index = 7
      let length
-@@ -533,13 +813,26 @@
+@@ -533,13 +820,26 @@
    }
  
    function ReadyForQuery(x) {
@@ -519,7 +535,7 @@ index 07f6716..848e9e5 100644
        } else {
          query.resolve(results || result)
        }
-@@ -547,9 +840,16 @@
+@@ -547,9 +847,16 @@
        errored(errorResponse)
      }
  
@@ -536,7 +552,7 @@ index 07f6716..848e9e5 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -559,28 +859,54 @@
+@@ -559,28 +866,54 @@
            return terminate()
        }
  
@@ -597,7 +613,7 @@ index 07f6716..848e9e5 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -629,8 +955,13 @@
+@@ -629,8 +962,13 @@
      for (let i = 0; i < length; ++i)
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
@@ -612,7 +628,7 @@ index 07f6716..848e9e5 100644
    }
  
    function RowDescription(x) {
-@@ -767,15 +1098,23 @@
+@@ -767,15 +1105,23 @@
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -644,7 +660,7 @@ index 07f6716..848e9e5 100644
    }
  
    function addArrayType(oid, typarray) {
-@@ -821,7 +1160,16 @@
+@@ -821,7 +1167,16 @@
    function retry(q, error) {
      delete statements[q.signature]
      q.retried = error
@@ -662,7 +678,7 @@ index 07f6716..848e9e5 100644
    }
  
    function NotificationResponse(x) {
-@@ -1039,6 +1387,59 @@
+@@ -1039,6 +1394,59 @@
    return buffer
  }
  
@@ -1300,7 +1316,7 @@ index 0578284..e80a868 100644
  
    return '$' + (types.push(
 diff --git a/src/connection.js b/vendor/postgres/src/connection.js
-index 1b1cccd..64f43ba 100644
+index 1b1cccd..061a315 100644
 --- a/src/connection.js
 +++ b/vendor/postgres/src/connection.js
 @@ -20,6 +20,7 @@
@@ -1685,7 +1701,23 @@ index 1b1cccd..64f43ba 100644
    function queryError(query, err) {
      if (query.reserve)
        return query.reject(err)
-@@ -437,20 +647,53 @@
+@@ -428,7 +638,14 @@
+     if (socket) {
+       socket.removeListener('data', data)
+       socket.removeListener('connect', connected)
+-      socket.readyState === 'open' && socket.end(b().X().end())
++      // GBrain (#8155 follow-up): a peer that never answers the Terminate never sends the FIN that closes the socket, and
++      // the pool counts the connection as open until it closes. Destroy it once the grace for a clean close has passed.
++      if (socket.readyState === 'open') {
++        const closing = socket
++        closing.end(b().X().end())
++        const grace = setTimeout(() => closing.destroyed || closing.destroy(), 2000)
++        grace && grace.unref && grace.unref()
++      }
+     }
+     ended && (ended(), ending = ended = null)
+   }
+@@ -437,20 +654,53 @@
      incoming = Buffer.alloc(0)
      remaining = 0
      incomings = null
@@ -1741,7 +1773,7 @@ index 1b1cccd..64f43ba 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -459,6 +702,10 @@
+@@ -459,6 +709,10 @@
  
    /* Handlers */
    function handle(xs, x = xs[0]) {
@@ -1752,7 +1784,7 @@ index 1b1cccd..64f43ba 100644
      (
        x === 68 ? DataRow :                   // D
        x === 100 ? CopyData :                 // d
-@@ -489,6 +736,39 @@
+@@ -489,6 +743,39 @@
      )(xs)
    }
  
@@ -1792,7 +1824,7 @@ index 1b1cccd..64f43ba 100644
    function DataRow(x) {
      let index = 7
      let length
-@@ -533,13 +813,26 @@
+@@ -533,13 +820,26 @@
    }
  
    function ReadyForQuery(x) {
@@ -1820,7 +1852,7 @@ index 1b1cccd..64f43ba 100644
        } else {
          query.resolve(results || result)
        }
-@@ -547,9 +840,16 @@
+@@ -547,9 +847,16 @@
        errored(errorResponse)
      }
  
@@ -1837,7 +1869,7 @@ index 1b1cccd..64f43ba 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -559,28 +859,54 @@
+@@ -559,28 +866,54 @@
            return terminate()
        }
  
@@ -1898,7 +1930,7 @@ index 1b1cccd..64f43ba 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -629,8 +955,13 @@
+@@ -629,8 +962,13 @@
      for (let i = 0; i < length; ++i)
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
@@ -1913,7 +1945,7 @@ index 1b1cccd..64f43ba 100644
    }
  
    function RowDescription(x) {
-@@ -767,15 +1098,23 @@
+@@ -767,15 +1105,23 @@
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -1945,7 +1977,7 @@ index 1b1cccd..64f43ba 100644
    }
  
    function addArrayType(oid, typarray) {
-@@ -821,7 +1160,16 @@
+@@ -821,7 +1167,16 @@
    function retry(q, error) {
      delete statements[q.signature]
      q.retried = error
@@ -1963,7 +1995,7 @@ index 1b1cccd..64f43ba 100644
    }
  
    function NotificationResponse(x) {
-@@ -1039,6 +1387,59 @@
+@@ -1039,6 +1394,59 @@
    return buffer
  }
  

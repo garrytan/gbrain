@@ -1,0 +1,4 @@
+---
+kind: add
+---
+A key can now also read every shared source, now and later, while it writes to one: gbrain auth create <name> --sources <write-source> --read-shared on, or gbrain auth rescope --token <name> --read-shared on (--client <id> for an OAuth client; auth register-client takes --read-shared too). Shared means default plus every federated source, never a guest source and, for a key bound to a member, never another member's own source; a source federated later is read on the next call with no re-grant. Writes stay in the write source, and a write naming another source now says which source the key reads and the one it writes. Every existing key reads exactly what it read before: the switch is off until you turn it on, and a narrowing rescope lists the sources the key stops reading. gbrain sources federate now names the keys that read the newly shared source and those that do not.

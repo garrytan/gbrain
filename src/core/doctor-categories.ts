@@ -273,6 +273,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'memory_proposals_pending',
   // #7160: title-prefixed person pages that likely duplicate an unprefixed page (preview only).
   'person_title_duplicates',
+  // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages (read-only, gbrain dedupe --preview).
+  'entity_duplicates',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
@@ -501,6 +503,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'function_search_path',
   // GST-2885: every purge and withdrawal guard carries its row_security_active ledger check (#7632/#7659).
   'guard_ledger_checks',
+  // GST-3032: the owner-only delete triggers that mark rows derived from a removed owner-only origin (v322).
+  'owner_only_marks_triggers',
   // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
   'database_encoding',
   'rls_event_trigger',

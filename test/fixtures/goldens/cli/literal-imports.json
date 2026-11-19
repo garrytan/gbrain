@@ -55,6 +55,9 @@
       "core": [
         "./commands/core.ts"
       ],
+      "dedupe": [
+        "./commands/dedupe.ts"
+      ],
       "diag": [
         "./commands/diag.ts"
       ],
@@ -195,6 +198,9 @@
       ],
       "salience": [
         "./commands/salience.ts"
+      ],
+      "secrets": [
+        "./commands/secrets.ts"
       ],
       "serve": [
         "./core/serve-log.ts",

@@ -9,6 +9,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, w
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ownedEntryFingerprint } from '../../src/core/bootstrap/adopted-connections.ts';
+import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runCli, type CliResult } from './cli-spawn.ts';
 
 export const ROSTER = ['alice-example', 'bob-example'];
@@ -27,6 +28,20 @@ export const removeTempDirs = () => { for (const r of roots.splice(0)) rmSync(r,
 export const CLI = resolve(import.meta.dir, '..', '..', 'src', 'cli.ts');
 export const CLEAN = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
 export interface Box { root: string; home: string; bin: string }
+
+/** The PGLite brain under a box's (or any) HOME, opened after the spawned CLI is done with it; the caller disconnects it. */
+export async function openBrainFile(home: string): Promise<PGLiteEngine> {
+  const engine = new PGLiteEngine();
+  await engine.connect({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite') } as never);
+  return engine;
+}
+/** An in-memory PGLite brain with the schema, for a beforeAll; the caller disconnects it in afterAll. */
+export async function memoryBrain(): Promise<PGLiteEngine> {
+  const engine = new PGLiteEngine();
+  await engine.connect({ engine: 'pglite' } as never);
+  await engine.initSchema();
+  return engine;
+}
 
 export function box(): Box {
   const root = tempDir('gbrain-setup-serves-');

@@ -307,7 +307,7 @@ Each has a fixture generated from PGLite under `rust/fixtures/` and a test on th
 
 ### Track 2 rules
 
-- One subsystem (or one file family) per PR. The SQL moves into `src/core/engine-sql/<domain>.ts` behind typed methods, and both Postgres-dialect engines delegate, following the "Storage method" row of `CONTRIBUTING.md` "Where does my change go?". No behavior change; changed assertions explained in the PR body.
+- One subsystem (or one file family) per PR. The SQL moves into `src/core/engine-sql/<domain>.ts` behind typed methods, and both Postgres-dialect engines delegate, following the "Storage method" row of `CONTRIBUTING.md` "Where does my change go?". No behavior change, except an engine-parity fix the PR names with a test that fails before it (for example, ranked reads add stable `ORDER BY` tiebreakers); changed assertions explained in the PR body.
 - Methods are named for what they mean (`journal.claimNext(...)`), not for the SQL they replace.
 - New methods are grouped as domain objects on the engine (`engine.journal`, `engine.queue`, `engine.access`, ...), each declared in its own module and referenced from `engine.ts` with one line, so `engine.ts` grows by one line per domain, not per method. This limits contention on a shared file and its `check:module-size` ceiling.
 - A new shrink-only ratchet, `check:engine-raw-sql-ratchet` with `scripts/engine-raw-sql-baseline.tsv`, counts raw-SQL call sites per file outside the engines, including helpers that take the engine or an executor. It runs in `verify`. A new raw-SQL call site outside an engine fails it. Decision D6.
@@ -387,7 +387,7 @@ All must hold at one pinned commit, on every platform where PGLite would be depr
 
 1. Capability coverage is complete: `check:rust-capability-coverage` reports no operation, command, phase or handler that a PGLite brain can run and a Rust brain refuses (Postgres-only administration excluded by name).
 2. The raw-SQL ratchet shows zero call sites reachable from those entries.
-3. Every file in the `testBackends()` set has a Rust arm listed in `test/rust-unit-arms.txt` and passing, except rows in a reviewed `test/rust-expected-divergence.tsv` limited to Postgres-dialect tests (SQL-text goldens, prepared-statement and RLS-role tests), each with a reason.
+3. Every file in the `testBackends()` set has a Rust arm listed in `test/rust-unit-arms.txt` and passing, except rows in a reviewed `test/rust-expected-divergence/` (one file per family) limited to Postgres-dialect tests (SQL-text goldens, prepared-statement and RLS-role tests), each with a reason.
 4. CLI, agent-contract, catalog, decide and trust goldens are identical on a Rust brain; doctor goldens differ only in the listed engine-specific checks.
 5. Eval gates E1 to E4 pass.
 6. The Rust engine is no slower than PGLite on any `scripts/scale/budgets.json` entry, meets the targets below at 200k and 1M chunks, and meets the D17 bar: equal or better than Postgres and PGLite on every metric in "Performance".
@@ -447,7 +447,7 @@ S1 to S4 start after PR 17, with S2's provisional report first; S5 waits for PRs
 - `testBackends()` (`test/helpers/test-backends.ts:15`) gains a `rust` backend selected only by `GBRAIN_TEST_BACKEND=rust` and only for files listed in `test/rust-unit-arms.txt`. Default developer runs are unchanged and need no Rust toolchain. Selecting `rust` without a loadable addon fails loudly, as `requirePostgresTestDatabase` does for Postgres.
 - Most test files choose their engine with a two-way branch such as `backend === 'postgres' ? requirePostgresTestDatabase() : undefined`, which would build a PGLite brain under a `[rust]` label and pass. So the arm is selected by a runner, `scripts/rust-unit-arms.ts`, modeled on `scripts/postgres-unit-arms.ts`, which runs only the listed files with `GBRAIN_TEST_BACKEND=rust`; an exhaustive engine-for-backend helper replaces the two-way branch in a file before it is listed; and every engine opened under the Rust arm must report `kind === 'rust'`, or the file fails. A check refuses a listed file that still has a two-way backend branch.
 - The Rust CI lane builds the addon once and runs the listed files, sharded like the unit lane.
-- Divergences live in `test/rust-expected-divergence.tsv` and run as `test.failing`, the `EXPECTED_FAILURES` pattern of `test/helpers/two-engine.ts:308`, so an unexpected pass fails.
+- Divergences live in `test/rust-expected-divergence/` (one file per family) and run as `test.failing`, the `EXPECTED_FAILURES` pattern of `test/helpers/two-engine.ts:308`, so an unexpected pass fails.
 - Targets beyond the unit files: `test/e2e/engine-parity.test.ts` with a Rust half; the two-engine isolation suite; `test/memory-verbs-conformance.test.ts`; the 81 black-box CLI files (`research/10` section 7) run against a temporary Rust brain.
 
 ### Goldens
