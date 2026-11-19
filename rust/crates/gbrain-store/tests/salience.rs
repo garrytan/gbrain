@@ -445,7 +445,7 @@ fn recent_salience_under_exclude_private_drops_the_pages_the_page_policy_hides()
         "default:sal/secret",
         "no policy reads every page"
     );
-    let policy = |honor_aliases: bool, entity_privacy: bool| json!({"exclude_private": {"honorAliases": honor_aliases, "entityPrivacy": entity_privacy}});
+    let policy = |honor_aliases: bool, entity_privacy: bool| json!({"exclude_private": {"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "lineage"}});
     assert_eq!(
         sorted(policy(true, true)),
         ["default:sal/alias-world", "default:sal/open"]
