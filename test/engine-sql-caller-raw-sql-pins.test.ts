@@ -73,6 +73,16 @@ const PINS: Pin[] = [
         WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${predicate()}
         LIMIT 1`],
   })),
+  {
+    from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
+    case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
+    texts: [`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true')) AS present`],
+  },
+  {
+    from: 'src/core/access/owner-only.ts:66 sourceIsOwnerOnly',
+    case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
+    texts: ['SELECT config FROM sources WHERE id = $1'],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

@@ -477,7 +477,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
-  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
+  'listLocalPathSources': 'sources', 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
@@ -1371,4 +1371,6 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
   ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
   ...variants('selectClaimableEffect', [['default', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, []))], ['dead', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, ['1:n:2']))]]),
+  ...variants('readOwnerOnlySourcesPresent', [['default', (e) => e.readOwnerOnlySourcesPresent()]]),
+  ...variants('readOwnerOnlySourceConfig', [['default', (e) => e.readOwnerOnlySourceConfig(SRC)]]),
 ];

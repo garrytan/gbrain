@@ -110,6 +110,8 @@ export const RUST_ENGINE_MEMBERS = {
   getSource: 'sources',
   listSourceLocalPaths: 'sources',
   listLocalPathSources: 'sources',
+  readOwnerOnlySourcesPresent: 'sources',
+  readOwnerOnlySourceConfig: 'sources',
   listSourceRoutingRows: 'sources',
   countDefaultSourceSplit: 'sources',
   listStaleSyncSourceIds: 'sources',

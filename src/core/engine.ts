@@ -1348,6 +1348,9 @@ export interface BrainEngine {
 
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
+  /** Owner-only reads (access/owner-only.ts): does any source carry the owner-only rule; one source's raw config, or null. */
+  readOwnerOnlySourcesPresent(): Promise<boolean>;
+  readOwnerOnlySourceConfig(sourceId: string): Promise<{ config: unknown } | null>;
   listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
   /** Live sources last synced more than seven days ago by the database clock, by id (engine-sql/sources.ts). */
