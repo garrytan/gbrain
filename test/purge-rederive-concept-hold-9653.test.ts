@@ -86,6 +86,17 @@ for (const backend of testBackends()) {
       }, 300_000);
     }
 
+    test('deleting a concept the input purge already hid ends the hold', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        await concept(engine, ctx, root);
+        expect(await purge(engine, { automatic: true })).toEqual([atom(0)]);
+        const hidden = await engine.readPageSnapshot(CONCEPT, { sourceId: 'default', includeDeleted: true });
+        await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: CONCEPT, expected_revision: hidden!.revision, request_id: randomUUID() } });
+        await age(engine, CONCEPT);
+        expect(await purge(engine, { automatic: true })).toEqual([CONCEPT]);
+      }, { databaseUrl });
+    }, 300_000);
+
     test('a concept a person deleted is purged on time, also when an input purge marks it afterwards', async () => {
       await managedBrain(async ({ engine, ctx, root }) => {
         await engine.setConfig('models.dream.synthesize', MODEL);
