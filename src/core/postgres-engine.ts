@@ -179,6 +179,7 @@ import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
 import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
+import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -1174,6 +1175,35 @@ export class PostgresEngine implements BrainEngine {
   hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.executeRaw.bind(this), store); }
   countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.executeRaw.bind(this), column); }
   countPageChildOrphans(target: doctorReadsImpl.PageChildTarget) { return doctorReadsImpl.countPageChildOrphans(this.executeRaw.bind(this), target); }
+
+  // Doctor reads, second set (engine-sql/doctor-derived.ts).
+  readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }) { return doctorDerivedImpl.readIgnoredPrivacyLabelCounts(this.executeRaw.bind(this), opts); }
+  countSafeIndexPending(sourceIds?: string[]) { return doctorDerivedImpl.countSafeIndexPending(this.executeRaw.bind(this), sourceIds); }
+  countCredentialProjectionPending(sourceIds?: string[]) { return doctorDerivedImpl.countCredentialProjectionPending(this.executeRaw.bind(this), sourceIds); }
+  countPagesByTypeAndOwner(sourceIds?: string[]) { return doctorDerivedImpl.countPagesByTypeAndOwner(this.executeRaw.bind(this), sourceIds); }
+  listRecordedTombstones(hours: string, released: readonly number[]) { return doctorDerivedImpl.listRecordedTombstones(this.executeRaw.bind(this), hours, released); }
+  countDerivedVisibility(sourceIds: string[], timeoutMs: number) { return doctorDerivedImpl.countDerivedVisibility(this.executeRaw.bind(this), sourceIds, timeoutMs); }
+  listUntiledSegmentedPageRows(sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number) { return doctorDerivedImpl.listUntiledSegmentedPageRows(this.executeRaw.bind(this), sourceIds, slugs, limit); }
+  listTimelineHistoryBatch(sourceIds: string[], afterId: number) { return doctorDerivedImpl.listTimelineHistoryBatch(this.executeRaw.bind(this), sourceIds, afterId); }
+  listAtomFenceCandidates(opts: { sourceIds: string[]; atomId: number | null; after: number; limit: number; timeoutMs?: number }) { return doctorDerivedImpl.listAtomFenceCandidates(this.executeRaw.bind(this), opts); }
+  readPageCompiledTruths(ids: number[], timeoutMs?: number) { return doctorDerivedImpl.readPageCompiledTruths(this.executeRaw.bind(this), ids, timeoutMs); }
+  readEmbeddingBacklogAge(column: string) { return doctorDerivedImpl.readEmbeddingBacklogAge(this.executeRaw.bind(this), column); }
+  listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }) { return doctorDerivedImpl.listBudgetLimitedRows(this.executeRaw.bind(this), opts); }
+  readBudgetHoldAge() { return doctorDerivedImpl.readBudgetHoldAge(this.executeRaw.bind(this)); }
+  listImageAssetFiles() { return doctorDerivedImpl.listImageAssetFiles(this.executeRaw.bind(this)); }
+  listAmbiguousExtractionInputs() { return doctorDerivedImpl.listAmbiguousExtractionInputs(this.executeRaw.bind(this)); }
+  listExtractionInputReceipts() { return doctorDerivedImpl.listExtractionInputReceipts(this.executeRaw.bind(this)); }
+  listUnpricedDerivationModels() { return doctorDerivedImpl.listUnpricedDerivationModels(this.executeRaw.bind(this)); }
+  listRestorableAtomRetirements(sourceIds: string[]) { return doctorDerivedImpl.listRestorableAtomRetirements(this.executeRaw.bind(this), sourceIds); }
+  countLedgerCoveredAtomRetirements(sourceIds: string[]) { return doctorDerivedImpl.countLedgerCoveredAtomRetirements(this.executeRaw.bind(this), sourceIds); }
+  listLiveGenerationRetirements(sourceIds: string[], restoreDays: number) { return doctorDerivedImpl.listLiveGenerationRetirements(this.executeRaw.bind(this), sourceIds, restoreDays); }
+  listHeldGenerations(sourceIds: string[]) { return doctorDerivedImpl.listHeldGenerations(this.executeRaw.bind(this), sourceIds); }
+  listPendingGenerationMembers(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listPendingGenerationMembers(this.executeRaw.bind(this), sourceIds, kind); }
+  listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listOrphanGenerationCandidates(this.executeRaw.bind(this), sourceIds, kind); }
+  listOntologyFactCandidates(sourceIds: string[]) { return doctorDerivedImpl.listOntologyFactCandidates(this.executeRaw.bind(this), sourceIds); }
+  readAtomProvenanceCounts() { return doctorDerivedImpl.readAtomProvenanceCounts(this.executeRaw.bind(this)); }
+  readExtractRollup7d(withExpected: boolean) { return doctorDerivedImpl.readExtractRollup7d(this.executeRaw.bind(this), withExpected); }
+  listRecordedHaltReasons7d() { return doctorDerivedImpl.listRecordedHaltReasons7d(this.executeRaw.bind(this)); }
   upsertFactRelinkAttempt(sourceId: string, attempt: factRelinkImpl.FactRelinkAttempt, opts: factRelinkImpl.FactRelinkUpsertOpts = {}) { return factRelinkImpl.upsertFactRelinkAttempt(this.engineSql, sourceId, attempt, opts); }
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]) { return factRelinkImpl.listFactRelinkOutcomes(this.executeRaw.bind(this), sourceId, factIds, outcomes); }
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string) { return factRelinkImpl.deleteFactRelinkMemos(this.engineSql, sourceId, tier, targetSlug); }

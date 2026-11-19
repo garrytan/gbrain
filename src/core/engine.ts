@@ -12,6 +12,7 @@ import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, Extrac
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
+import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -4173,4 +4174,60 @@ export interface BrainEngine {
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
   /** Rows of a page-child relation (`<table>.<column>`) whose page row is gone; a NULL reference of a SET NULL column is not one. */
   countPageChildOrphans(target: DoctorReadsSql.PageChildTarget): Promise<number>;
+
+  // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
+  /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */
+  readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }): Promise<DoctorDerivedSql.IgnoredPrivacyLabelRow[]>;
+  /** Live pages of unarchived sources chunked below the safe-chunk fence: the ones a repair rebuilds and the ones it keeps. */
+  countSafeIndexPending(sourceIds?: string[]): Promise<DoctorDerivedSql.RebuildableCounts>;
+  /** Live pages whose text projection is behind and whose body holds a private key block: rebuildable and kept. */
+  countCredentialProjectionPending(sourceIds?: string[]): Promise<DoctorDerivedSql.RebuildableCounts>;
+  /** Live pages per source and stored type, split by whether gbrain writers wrote them. */
+  countPagesByTypeAndOwner(sourceIds?: string[]): Promise<DoctorDerivedSql.PageTypeOwnerRow[]>;
+  /** Expired tombstones of a source the belief ledger records, in scan order. */
+  listRecordedTombstones(hours: string, released: readonly number[]): Promise<DoctorDerivedSql.RecordedTombstoneRow[]>;
+  /** The derived-page visibility counts of `sourceIds` under a statement deadline. */
+  countDerivedVisibility(sourceIds: string[], timeoutMs: number): Promise<DoctorDerivedSql.DerivedVisibilityCounts>;
+  /** Live segmented pages of unarchived sources whose live generation rows do not tile the body. */
+  listUntiledSegmentedPageRows(sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number): Promise<DoctorDerivedSql.UntiledPageRow[]>;
+  /** The next 200 inline pages after `afterId` carrying a timeline row no event page owns. */
+  listTimelineHistoryBatch(sourceIds: string[], afterId: number): Promise<DoctorDerivedSql.TimelineHistoryPageRow[]>;
+  /** One keyset batch of world atoms whose source page names a facts or takes fence. */
+  listAtomFenceCandidates(opts: { sourceIds: string[]; atomId: number | null; after: number; limit: number; timeoutMs?: number }): Promise<DoctorDerivedSql.AtomFenceCandidateRow[]>;
+  /** The compiled text of pages by id. */
+  readPageCompiledTruths(ids: number[], timeoutMs?: number): Promise<Array<{ id: number; body: string | null }>>;
+  /** Age of the oldest live chunk with no vector in `column`, the chunks with no pending-since stamp, and whether the oldest predates the backfill. */
+  readEmbeddingBacklogAge(column: string): Promise<DoctorDerivedSql.EmbeddingBacklogAgeRow | undefined>;
+  /** Held and capped large pages with chunks still waiting for `column`, by source, state and reason. */
+  listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }): Promise<DoctorDerivedSql.BudgetLimitedRow[]>;
+  /** How many applying budget holds are older than a day, and the oldest update time. */
+  readBudgetHoldAge(): Promise<DoctorDerivedSql.BudgetHoldAge | undefined>;
+  /** The first 1000 image file rows with their source root and page source path. */
+  listImageAssetFiles(): Promise<DoctorDerivedSql.ImageAssetFileRow[]>;
+  /** Conversation pages held for an undetected format (at most 20, newest first) with the total. */
+  listAmbiguousExtractionInputs(): Promise<DoctorDerivedSql.AmbiguousExtractionRow[]>;
+  /** Page extraction receipts that read only part of their input, by pipeline and kind. */
+  listExtractionInputReceipts(): Promise<DoctorDerivedSql.ExtractionReceiptRow[]>;
+  /** Models whose derivation receipts say they had no price, with pipelines and pages. */
+  listUnpricedDerivationModels(): Promise<DoctorDerivedSql.UnpricedModelRow[]>;
+  /** Restorable re-extraction retirements no live generation ledger records, per source. */
+  listRestorableAtomRetirements(sourceIds: string[]): Promise<DoctorDerivedSql.RestorableAtomRetirementRow[]>;
+  /** Restorable re-extraction retirements a live generation ledger records. */
+  countLedgerCoveredAtomRetirements(sourceIds: string[]): Promise<number>;
+  /** Live generations that retired items within the last `restoreDays` days, by source and kind. */
+  listLiveGenerationRetirements(sourceIds: string[], restoreDays: number): Promise<DoctorDerivedSql.GenerationRetirementRow[]>;
+  /** Held derived generations by source, kind and reason. */
+  listHeldGenerations(sourceIds: string[]): Promise<DoctorDerivedSql.HeldGenerationRow[]>;
+  /** Items live generations still wait on a member request for. */
+  listPendingGenerationMembers(sourceIds: readonly string[], kind: string | null): Promise<DoctorDerivedSql.PendingGenerationMemberRow[]>;
+  /** Pages a create member wrote for an activation that never happened and no live generation owns. */
+  listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null): Promise<DoctorDerivedSql.OrphanGenerationCandidateRow[]>;
+  /** Facts the ontology fence step moved, with withdrawn, consolidated and duplicate verdicts. */
+  listOntologyFactCandidates(sourceIds: string[]): Promise<DoctorDerivedSql.OntologyFactRow[]>;
+  /** The atom provenance drift counts (none when the aggregate returned no row). */
+  readAtomProvenanceCounts(): Promise<DoctorDerivedSql.AtomProvenanceCounts | undefined>;
+  /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text. */
+  readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
+  /** The recorded halt reasons of the 7-day extract rollup, per kind and reason. */
+  listRecordedHaltReasons7d(): Promise<DoctorDerivedSql.RecordedHaltReasonRow[]>;
 }

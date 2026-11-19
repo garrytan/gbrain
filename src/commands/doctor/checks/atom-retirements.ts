@@ -10,7 +10,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
-import { ATOM_RESTORE_HOLD_DAYS, atomRetirementsSql } from '../../../core/persistence/atom-retirement-hold.ts';
+import { ATOM_RESTORE_HOLD_DAYS } from '../../../core/persistence/atom-retirement-hold.ts';
 import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/guides/repair.md#atoms-restore';
@@ -18,21 +18,15 @@ const DOCS = 'docs/guides/repair.md#atoms-restore';
 export async function atomRetirementsRestorableCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
     const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
-    const rows = await engine.executeRaw<{ source_id: string; count: number; origins: number; oldest: string | null; newest: string | null; hold_until: string }>(`
-      SELECT p.source_id, count(*)::int AS count,
-             count(DISTINCT c.origin_kind||':'||c.origin)::int AS origins, min(c.retired_at) AS oldest, max(c.retired_at) AS newest,
-             to_char((min(p.deleted_at) + interval '${ATOM_RESTORE_HOLD_DAYS} days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS hold_until
-        FROM (${atomRetirementsSql('p.source_id=ANY($1::text[])')}) c JOIN pages p ON p.id=c.id
-       WHERE c.restorable AND c.ledger_generation IS NULL GROUP BY p.source_id ORDER BY p.source_id`, [sources]);
-    const [covered] = await engine.executeRaw<{ count: number }>(
-      `SELECT count(*)::int AS count FROM (${atomRetirementsSql('p.source_id=ANY($1::text[])')}) c WHERE c.restorable AND c.ledger_generation IS NOT NULL`, [sources]);
+    const rows = await engine.listRestorableAtomRetirements(sources);
+    const covered = await engine.countLedgerCoveredAtomRetirements(sources);
     const bySource = rows.map(row => ({ ...row, count: Number(row.count), origins: Number(row.origins) }));
     const count = bySource.reduce((sum, row) => sum + row.count, 0);
     const details = { count, origins: bySource.reduce((sum, row) => sum + row.origins, 0),
       oldest_retired_at: bySource.map(row => row.oldest).filter(Boolean).sort()[0] ?? null,
       newest_retired_at: bySource.map(row => row.newest).filter(Boolean).sort().at(-1) ?? null,
       hold_until: bySource.map(row => row.hold_until).sort()[0] ?? null,
-      source_ids: bySource.map(row => row.source_id), by_source: bySource, ledger_covered: Number(covered?.count ?? 0), repair: 'atoms-restore', docs: DOCS };
+      source_ids: bySource.map(row => row.source_id), by_source: bySource, ledger_covered: covered, repair: 'atoms-restore', docs: DOCS };
     if (!count) {
       return { name: 'atom_retirements_restorable', status: 'ok', details,
         message: details.ledger_covered ? `No legacy atom retirement is waiting to be restored; ${details.ledger_covered} retirement(s) the generation ledger records are reported by generation_retirements.`

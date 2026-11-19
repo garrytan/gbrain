@@ -82,14 +82,10 @@ export function haltReasonsWithUnknown(haltCount: number, recorded: Record<strin
  * whose schema is behind v239 has no column: every halt then reads as
  * `unknown` (a backfill never runs; `unknown` is computed on read).
  */
-export async function readRecordedHaltReasons7d(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, Record<string, number>>> {
+export async function readRecordedHaltReasons7d(engine: Pick<BrainEngine, 'listRecordedHaltReasons7d'>): Promise<Map<string, Record<string, number>>> {
   const recorded = new Map<string, Record<string, number>>();
   try {
-    const rows = await engine.executeRaw<{ kind: string; reason: string; n: number | string }>(
-      `SELECT r.kind, e.key AS reason, SUM(e.value::int) AS n
-         FROM extract_rollup_7d r, jsonb_each_text(r.halt_reasons) e
-        WHERE r.day >= CURRENT_DATE - 7
-        GROUP BY r.kind, e.key`, []);
+    const rows = await engine.listRecordedHaltReasons7d();
     for (const row of rows) {
       const perKind = recorded.get(row.kind) ?? {};
       perKind[row.reason] = Number(row.n) || 0;
