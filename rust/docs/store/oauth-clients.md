@@ -35,10 +35,7 @@ Grant members (`src/jobs/client_grants.rs`, NAPI `families/jobs/grants.rs`; the 
 | `brain.readSourceGrantState(id)` / `brain.replaceSourceConfig(id, config)` | a source's `{archived, config}` and a whole-config replace (the engine members `readSourceAttestState` and `replaceSourceConfig` are these two, for the `--attest-sources` check and mark) |
 | `brain.writeClientBinding(clientId, binding)` | whether the client exists after setting `member_id`, `may_act_for` and the three attest columns from `binding` (`{ member, may_act_for, attest_actor, attest_ops, attest_sources, attest_read }`); no grant column changes. No constraint covers these columns |
 | `brain.writeClientReadsUnscoped(clientId, on)` | whether the client exists after setting `reads_unscoped` to the store clock (`on`) or clearing it |
-
-`oauthClientHoldsAuthorization(clientId)` is TypeScript-only and is false here: the store keeps no OAuth tokens or codes
-for a client, so a client at revision 0 can take its first consent even when a token exists on a real brain (this holds
-until the `oauth_tokens` store lands).
+| `brain.oauthClientHoldsAuthorization(clientId)` | whether the client holds an OAuth token or an authorization code, expired ones included (first consent's check, the `EXISTS` pair of `CLIENT_GRANT_SQL.holds_authorization`) |
 
 Defaults when a column is left out: `grant_types` `{client_credentials}` (an explicit null stays null), `federated_read`
 and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace` `prefixes`, `grant_revision` 0,

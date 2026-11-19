@@ -17,9 +17,9 @@ never logs one.
 | `brain.readOauthCodeChallenge(hash, clientId, now)` | the PKCE challenge of an unexpired code (`expires_at` after `now`, epoch seconds) of this client whose client exists and is not soft-deleted, or null. |
 | `brain.issueOauthTokens(rows)` | nothing. Writes the access token and the refresh token of one grant in **one** write: both or neither (see [oauth-tokens.md](oauth-tokens.md)). |
 | `brain.deleteExpiredOauthCredentials(now)` | how many expired tokens and codes the startup sweep deleted, in one write. |
-| `brain.clientHoldsOauthCode(clientId)` | whether any code row names this client (the store fn `client_holds_oauth_code`; the first-consent check of `grants/service.ts` asks it). |
+| `brain.clientHoldsOauthCode(clientId)` | whether any code row names this client (the store fn `client_holds_oauth_code`; first consent asks `oauthClientHoldsAuthorization`, which reads it with the token half). |
 
-The grant's client lock (`readOauthClientLocked`) is the client row read through the same transaction: PostgreSQL takes
+The grant's client lock (`readOauthClientForUpdate`) is the client row read through the same transaction: PostgreSQL takes
 `FOR UPDATE`, the store reads inside its write.
 
 ## Constraints

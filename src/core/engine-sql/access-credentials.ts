@@ -505,11 +505,10 @@ export async function convertLegacyAccessTokenGrant(tx: Raw, id: string, columns
 /**
  * The `oauth_codes` and grant-transaction statements of `OAuthGrants` (oauth-grants.ts) and the provider's code lookup
  * (oauth-provider.ts challengeForAuthorizationCode), byte for byte as the SqlQuery tag sent them at d8d9956871: each `${}`
- * is the next `$n`. `client_for_update` is the grant transaction's client lock (`locked`); `issueOauthTokens` runs after it
- * on the same transaction.
+ * is the next `$n`. The grant transaction's client lock is `readOauthClientForUpdate`
+ * (client-grants.ts `CLIENT_GRANT_SQL.client_for_update`); `issueOauthTokens` runs after it on the same transaction.
  */
 export const OAUTH_CODE_SQL = {
-  client_for_update: 'SELECT * FROM oauth_clients WHERE client_id = $1 FOR UPDATE',
   insert: `
           INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
             code_challenge_method, redirect_uri, state, resource, expires_at)
@@ -564,12 +563,6 @@ export function normalizeOauthCodeRow(raw: Record<string, unknown>): OauthCodeRo
   return row as unknown as OauthCodeRow;
 }
 
-/** The client row under its grant lock (`SELECT ... FOR UPDATE`; a single-writer store takes none), or null for no such client. */
-export async function readOauthClientLocked(tx: Raw, clientId: string): Promise<OauthClientRow | null> {
-  const [row] = await tx.executeRaw<Record<string, unknown>>(OAUTH_CODE_SQL.client_for_update, [clientId]);
-  return row ? normalizeOauthClientRow(row) : null;
-}
-
 /** Insert one authorization code. A repeated hash is 23505 (`oauth_codes_pkey`), a client with no row 23503 (`oauth_codes_client_id_fkey`). */
 export async function insertOauthCode(tx: Raw, row: OauthCodeInsert): Promise<void> {
   await tx.executeRaw(OAUTH_CODE_SQL.insert, [row.code_hash, row.client_id, oauthPgArray(row.scopes), row.code_challenge,
@@ -595,7 +588,7 @@ export async function readOauthCodeChallenge(tx: Raw, codeHash: string, clientId
 
 /**
  * Insert the tokens of one grant (the access token and, for a code or refresh exchange, its refresh token) on the grant
- * transaction's executor, after `readOauthClientLocked` took the client row: the same INSERTs `insertOauthToken` runs, in
+ * transaction's executor, after `readOauthClientForUpdate` took the client row: the same INSERTs `insertOauthToken` runs, in
  * order, and all or none. Pass the transaction, never the pool: a second connection would wait on the client row lock
  * through the foreign key while the transaction waits for it.
  */

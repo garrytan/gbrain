@@ -42,7 +42,7 @@ Keys: `m 0x2C token_hash -> record` (times in microseconds, except `expires_at`)
 
 The bearer check (`verifyAccessToken`, `src/core/oauth-provider.ts`) calls `readOauthAccessTokenRows`. Tests and tools
 insert through `insertOauthToken`. `OAuthGrants.issue` (`src/core/oauth-grants.ts`) writes the tokens of a grant through `issueOauthTokens`
-on the grant transaction's engine handle, after `readOauthClientLocked` took the client row: on PostgreSQL and PGLite the
+on the grant transaction's engine handle, after `readOauthClientForUpdate` took the client row: on PostgreSQL and PGLite the
 handle is the transaction's executor, never the pool (a write on another pooled connection would wait for the client row
 lock on the foreign key and deadlock), and on the store both reads and writes are one `Store::write`. A grant built
 without the handle keeps the same statements through the SqlQuery. The sweep of
@@ -68,8 +68,8 @@ All of them run in the store's write transaction, so a revoke is one write.
   (`delete_oauth_token_by_hash`). A hash another client owns, or none, deletes nothing.
 - `deleteOauthClientTokens(clientId)`: every token of the client (`delete_oauth_client_tokens`).
 - `softDeleteOauthClient(clientId)`: `deleted_at = now()` on the client row, whatever it held (`soft_delete_oauth_client`).
-- `deleteOauthClientCodes(clientId)`: a no-op on the Rust store for now; the store's `oauth_codes` delete is wired in
-  the integration commit that follows.
+- `deleteOauthClientCodes(clientId)`: `DELETE FROM oauth_codes WHERE client_id = $1` (`delete_oauth_client_codes`), so a
+  revoked client keeps no code it could still exchange.
 
 ## Client lifecycle members
 

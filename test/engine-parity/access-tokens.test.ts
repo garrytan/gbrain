@@ -374,7 +374,7 @@ describe('engine parity: access_tokens members', () => {
   const failure = async (run: () => Promise<unknown>) => { try { await run(); return null; } catch (e) { return `${(e as Error).constructor.name}: ${(e as Error).message}`; } };
 
   parityTest('an authorization code is issued, exchanged for tokens once, and a second exchange is refused (OAuthGrants over the engine transaction)',
-    { methods: ['insertOauthClient', 'readOauthClient', 'readOauthClientLocked', 'insertOauthCode', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine) => {
+    { methods: ['insertOauthClient', 'readOauthClient', 'readOauthClientForUpdate', 'insertOauthCode', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine) => {
       await engine.insertOauthClient({ client_id: 'oc-code', client_name: 'Client oc-code', scope: 'read', grant_types: ['authorization_code', 'refresh_token'],
         redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none', client_id_issued_at: 1_700_000_000 });
       const grants = grantsFor(engine);
@@ -424,14 +424,14 @@ describe('engine parity: access_tokens members', () => {
     });
 
   parityTest('the grant members on one transaction: the client lock read, a code read and deleted by its own client only, a token pair written all or none',
-    { methods: ['insertOauthClient', 'readOauthClientLocked', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows', 'transaction'] }, async (engine) => {
+    { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows', 'transaction'] }, async (engine) => {
       const now = Math.floor(Date.now() / 1000);
       for (const id of ['oc-tx', 'oc-tx-other']) await engine.insertOauthClient({ client_id: id, client_name: id, scope: 'read', client_id_issued_at: 1_700_000_000 });
       const token = (name: string, type: 'access' | 'refresh') => ({ token_hash: hashToken(name), token_type: type, client_id: 'oc-tx', scopes: ['read'], expires_at: now + 60, resource: null, created_at: now });
       const out: Record<string, unknown> = {};
       out.inside = await engine.transaction(async tx => {
-        const locked = await tx.readOauthClientLocked('oc-tx');
-        const none = await tx.readOauthClientLocked('nobody');
+        const locked = await tx.readOauthClientForUpdate('oc-tx');
+        const none = await tx.readOauthClientForUpdate('nobody');
         await tx.insertOauthCode({ code_hash: hashToken('code-tx'), client_id: 'oc-tx', scopes: ['read', 'write'], code_challenge: CHALLENGE, code_challenge_method: 'S256',
           redirect_uri: REDIRECT, state: 'st', resource: 'https://r.example/', expires_at: now + 600 });
         const row = await tx.readOauthCodeForUpdate(hashToken('code-tx'), 'oc-tx');
@@ -455,7 +455,7 @@ describe('engine parity: access_tokens members', () => {
     });
 
   parityTest('two grants for one client at the same time both finish and both tokens exist',
-    { methods: ['insertOauthClient', 'readOauthClientLocked', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine) => {
+    { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine) => {
       await engine.insertOauthClient({ client_id: 'oc-two', client_name: 'two', scope: 'read', grant_types: ['client_credentials'],
         client_secret_hash: hashToken('secret'), client_secret_expires_at: 0, client_id_issued_at: 1_700_000_000 });
       const grants = grantsFor(engine);

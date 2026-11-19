@@ -60,6 +60,33 @@ pub struct OauthTokenInsert {
     pub grant_type: Option<String>,
 }
 
+/// `EXISTS (SELECT 1 FROM oauth_tokens WHERE client_id = $1)`: whether the client holds a token (expired ones count).
+pub(super) fn client_holds_token(read: &dyn KvRead, client_id: &str) -> Result<bool> {
+    let mut held = false;
+    let mut bad = None;
+    scan_prefix(read, &prefix(OAUTH_TOKEN), false, &mut |_, v| {
+        match serde_json::from_slice::<OauthTokenRecord>(v) {
+            Ok(r) => {
+                if r.client_id == client_id {
+                    held = true;
+                    return false;
+                }
+            }
+            Err(e) => {
+                bad = Some(StoreError::invalid(format!(
+                    "unreadable OAuth token record: {e}"
+                )));
+                return false;
+            }
+        }
+        true
+    })?;
+    match bad {
+        Some(e) => Err(e),
+        None => Ok(held),
+    }
+}
+
 /// `ON DELETE CASCADE` of `oauth_tokens_client_id_fkey`: every token of the client goes, in the client's write.
 pub(super) fn delete_client_tokens(tx: &mut dyn KvWrite, client_id: &str) -> Result<()> {
     let mut keys = Vec::new();

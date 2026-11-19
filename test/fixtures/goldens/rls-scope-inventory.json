@@ -6613,7 +6613,6 @@
         "readOauthClient": "none",
         "readOauthClientColumns": "none",
         "readOauthClientForUpdate": "none",
-        "readOauthClientLocked": "none",
         "readOauthCodeChallenge": "none",
         "readOauthCodeForUpdate": "none",
         "readOldestVersionAttribution": "none",

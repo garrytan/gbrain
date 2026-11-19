@@ -1774,7 +1774,6 @@ export class PGLiteEngine implements BrainEngine {
   countOauthAccessTokens(from: number, to: number | null) { return accessCredentials.countOauthAccessTokens(this, from, to); }
   convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns) { return accessCredentials.convertLegacyAccessTokenGrant(this, id, columns); }
   insertOauthToken(row: OauthTokenInsert) { return accessCredentials.insertOauthToken(this, row); }
-  readOauthClientLocked(clientId: string) { return accessCredentials.readOauthClientLocked(this, clientId); }
   insertOauthCode(row: OauthCodeInsert) { return accessCredentials.insertOauthCode(this, row); }
   readOauthCodeForUpdate(codeHash: string, clientId: string) { return accessCredentials.readOauthCodeForUpdate(this, codeHash, clientId); }
   deleteOauthCode(codeHash: string, clientId: string) { return accessCredentials.deleteOauthCode(this, codeHash, clientId); }

@@ -20,6 +20,7 @@ import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesF
 import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
 import { CREDENTIAL_SQL, OAUTH_CODE_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
@@ -990,7 +991,7 @@ describe('the OAuth code flow and the token grant send the same statements throu
   test('the member texts are the constants the templates were captured into', async () => {
     const sent = await sentBy('flow-constants', flow(true));
     const texts = new Set(sent.map(s => s.text));
-    for (const text of [OAUTH_CODE_SQL.client_for_update, OAUTH_CODE_SQL.insert, OAUTH_CODE_SQL.for_update, OAUTH_CODE_SQL.delete, OAUTH_CODE_SQL.challenge, OAUTH_TOKEN_SQL.insert_grant]) {
+    for (const text of [CLIENT_GRANT_SQL.client_for_update, OAUTH_CODE_SQL.insert, OAUTH_CODE_SQL.for_update, OAUTH_CODE_SQL.delete, OAUTH_CODE_SQL.challenge, OAUTH_TOKEN_SQL.insert_grant]) {
       expect(texts.has(text)).toBe(true);
     }
   });
@@ -999,7 +1000,7 @@ describe('the OAuth code flow and the token grant send the same statements throu
     const used: string[] = [];
     const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'issue', variant: 'handle', rows: [[/FROM oauth_clients WHERE client_id = \$1/, [CLIENT]]],
       run: async pool => {
-        const names = ['readOauthClientLocked', 'issueOauthTokens'];
+        const names = ['readOauthClientForUpdate', 'issueOauthTokens'];
         const originals = Object.fromEntries(names.map(name => [name, (pool as any)[name].bind(pool)]));
         const tx = Object.create(pool);
         for (const name of names) {
@@ -1010,6 +1011,6 @@ describe('the OAuth code flow and the token grant send the same statements throu
         await g.clientCredentials('pin-code', 'secret');
       } }));
     expect(capture.error).toBeUndefined();
-    expect(used).toEqual(['tx.readOauthClientLocked', 'tx.issueOauthTokens']);
+    expect(used).toEqual(['tx.readOauthClientForUpdate', 'tx.issueOauthTokens']);
   });
 });

@@ -153,7 +153,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed',
     'deleteExpiredOauthCredentials', 'insertOauthToken', 'convertLegacyAccessTokenGrant',
     // OAuth authorization codes and the grant transaction (engine-sql/access-credentials.ts OAUTH_CODE_SQL)
-    'readOauthClientLocked', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens',
+    'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens',
     // grant writes and reads for rescope, first consent and attest sources (engine-sql/client-grants.ts)
     'readOauthClientForUpdate', 'readLiveOauthClients', 'readLiveAccessTokenRows', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'readSourceAttestState', 'replaceSourceConfig', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit',
     // revoke deletes of a token and a client, and the client lifecycle writes (engine-sql/oauth-revocation.ts)

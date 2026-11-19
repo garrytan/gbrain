@@ -645,7 +645,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'readScopeSourceConfigs': OOS.callerRawSql,
   'readOauthAccessTokenRows': OOS.callerRawSql,
   'insertOauthToken': OOS.callerRawSql,
-  'readOauthClientLocked': OOS.callerRawSql,
   'insertOauthCode': OOS.callerRawSql,
   'readOauthCodeForUpdate': OOS.callerRawSql,
   'deleteOauthCode': OOS.callerRawSql,

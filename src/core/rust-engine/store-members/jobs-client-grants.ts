@@ -23,8 +23,9 @@ export const readLiveAccessTokenRows: StoreMember<[], Record<string, unknown>[]>
   return raw.map(r => ({ ...r, created_at: new Date(String(r.created_at)) }));
 };
 
-/** The store keeps no OAuth tokens and no authorization codes, so no client holds one. */
-export const oauthClientHoldsAuthorization: StoreMember<[clientId: string], boolean> = async () => false;
+/** Whether the client holds an OAuth token or an authorization code (expired ones count), as the SQL engines' EXISTS pair. */
+export const oauthClientHoldsAuthorization: StoreMember<[clientId: string], boolean> = async (brain, clientId) =>
+  (await storeCall({ member: 'oauthClientHoldsAuthorization' }, () => brain.oauthClientHoldsAuthorization(clientId))) === true;
 
 export const readSourceArchivedForShare: StoreMember<[id: string], boolean | null> = async (brain, id) => {
   const state = await storeCall({ member: 'readSourceArchivedForShare', sourceId: id }, () => brain.readSourceGrantState(id)) as { archived: boolean } | null;

@@ -1,10 +1,11 @@
 //! Jobs: the revoke writes over `oauth_clients` and `oauth_tokens` that `OAuthGrants.revokeToken` and `revokeClient`
 //! (and the client lifecycle) make, as the members of `src/core/engine-sql/oauth-revocation.ts` run them
 //! (rust/docs/store/oauth-tokens.md, oauth-clients.md): delete one token of a client, delete every token of a client,
-//! soft-delete a client. Each is one write, so inside a store transaction it joins that transaction.
+//! soft-delete a client, delete every authorization code of a client, and first consent's "holds an authorization" check. Each is one write, so inside a store transaction it joins that transaction.
 
 use super::oauth_clients::{load_client, put_client};
-use super::oauth_tokens::{delete_client_tokens, delete_token_of_client};
+use super::oauth_codes::{client_holds_code, delete_client_codes};
+use super::oauth_tokens::{client_holds_token, delete_client_tokens, delete_token_of_client};
 use super::*;
 
 impl Store {
@@ -51,5 +52,18 @@ impl Store {
             put_client(tx, &record)?;
             Ok(true)
         })
+    }
+
+    /// `deleteOauthClientCodes(clientId)`: `DELETE FROM oauth_codes WHERE client_id = $1`, so a revoked client keeps no
+    /// code it could still exchange.
+    pub fn delete_oauth_client_codes(&self, client_id: &str) -> Result<()> {
+        self.write(|tx| delete_client_codes(tx, client_id))
+    }
+
+    /// `oauthClientHoldsAuthorization(clientId)`: `EXISTS (SELECT 1 FROM oauth_tokens WHERE client_id = $1) OR EXISTS
+    /// (SELECT 1 FROM oauth_codes WHERE client_id = $2)`. Expired tokens and codes count, as on the SQL engines.
+    pub fn oauth_client_holds_authorization(&self, client_id: &str) -> Result<bool> {
+        let read = self.read()?;
+        Ok(client_holds_token(&*read, client_id)? || client_holds_code(&*read, client_id)?)
     }
 }

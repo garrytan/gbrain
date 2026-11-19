@@ -3910,8 +3910,6 @@ export interface BrainEngine {
   convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns): Promise<Record<string, unknown> | null>;
   /** Insert one OAuth token (the INSERTs of `OAuthGrants.issue`); a repeated hash is 23505, a client with no row 23503. */
   insertOauthToken(row: OauthTokenInsert): Promise<void>;
-  /** The client row under the grant transaction's lock (`SELECT ... FOR UPDATE`), or null; run it on the transaction handle. */
-  readOauthClientLocked(clientId: string): Promise<OauthClientRow | null>;
   /** Insert one authorization code (OAuthGrants.decide); a repeated hash is 23505, a client with no row 23503. */
   insertOauthCode(row: OauthCodeInsert): Promise<void>;
   /** The code of this hash and client taken FOR UPDATE, or null (the caller checks expiry). */

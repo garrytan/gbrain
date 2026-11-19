@@ -17,8 +17,9 @@ export const deleteOauthClientTokens: StoreMember<[clientId: string], void> = as
   await storeCall({ member: 'deleteOauthClientTokens' }, () => brain.deleteOauthClientTokens(clientId));
 };
 
-/** The store keeps no authorization codes yet, so a client has none to delete. */
-export const deleteOauthClientCodes: StoreMember<[clientId: string], void> = async () => {};
+export const deleteOauthClientCodes: StoreMember<[clientId: string], void> = async (brain, clientId) => {
+  await storeCall({ member: 'deleteOauthClientCodes' }, () => brain.deleteOauthClientCodes(clientId));
+};
 
 /** The store deletes the client's tokens with the row; the return of its delete (the row it removed) is not needed here. */
 export const deleteOauthClientRow: StoreMember<[clientId: string], void> = async (brain, clientId) => {

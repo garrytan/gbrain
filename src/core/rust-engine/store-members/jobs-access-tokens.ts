@@ -72,12 +72,6 @@ export const insertOauthToken: StoreMember<[row: OauthTokenInsert], void> = asyn
 export const deleteExpiredOauthCredentials: StoreMember<[nowEpochSeconds: number], number> = async (brain, now) =>
   Number(await storeCall({ member: 'deleteExpiredOauthCredentials' }, () => brain.deleteExpiredOauthCredentials(now)));
 
-/** The grant transaction's client read: the store's one write transaction is the lock `FOR UPDATE` takes on the SQL engines. */
-export const readOauthClientLocked: StoreMember<[clientId: string], OauthClientRow | null> = async (brain, clientId) => {
-  const raw = await storeCall({ member: 'readOauthClientLocked' }, () => brain.readOauthClient(clientId)) as Record<string, unknown> | null;
-  return raw ? normalizeOauthClientRow(raw) : null;
-};
-
 /** One authorization code; a repeated hash and a client with no row are refused as 23505 and 23503, as the SQL engines refuse them. */
 export const insertOauthCode: StoreMember<[row: OauthCodeInsert], void> = async (brain, row) => {
   await refusing('insertOauthCode', () => brain.insertOauthCode({ ...row, scopes: [...row.scopes] }));

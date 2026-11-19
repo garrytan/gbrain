@@ -35,6 +35,26 @@ impl Brain {
         self.run(env, move |s| s.delete_oauth_client_tokens(&client_id))
     }
 
+    /// `deleteOauthClientCodes(clientId)`: null.
+    #[napi]
+    pub fn delete_oauth_client_codes<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_oauth_client_codes(&client_id))
+    }
+
+    /// `oauthClientHoldsAuthorization(clientId)`: whether the client holds an OAuth token or an authorization code.
+    #[napi]
+    pub fn oauth_client_holds_authorization<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.oauth_client_holds_authorization(&client_id))
+    }
+
     /// `softDeleteOauthClient(clientId)`: whether a client has the id.
     #[napi]
     pub fn soft_delete_oauth_client<'env>(

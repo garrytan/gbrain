@@ -97,6 +97,11 @@ fn scan_codes(
     }
 }
 
+/// `EXISTS (SELECT 1 FROM oauth_codes WHERE client_id = $1)`: an expired code counts.
+pub(super) fn client_holds_code(read: &dyn KvRead, client_id: &str) -> Result<bool> {
+    Ok(!scan_codes(read, |r| r.client_id == client_id)?.is_empty())
+}
+
 /// `ON DELETE CASCADE` of `oauth_codes_client_id_fkey`: every code of the client goes, in the client's write.
 pub(super) fn delete_client_codes(tx: &mut dyn KvWrite, client_id: &str) -> Result<()> {
     for key in scan_codes(&*tx, |r| r.client_id == client_id)? {
@@ -189,7 +194,7 @@ impl Store {
     /// authorization" check, `SELECT EXISTS (SELECT 1 FROM oauth_codes WHERE client_id = $1)`): an expired code counts.
     pub fn client_holds_oauth_code(&self, client_id: &str) -> Result<bool> {
         let read = self.read()?;
-        Ok(!scan_codes(&*read, |r| r.client_id == client_id)?.is_empty())
+        client_holds_code(&*read, client_id)
     }
 
     /// `DELETE FROM oauth_tokens WHERE expires_at < $1` and `DELETE FROM oauth_codes WHERE expires_at < $1` of the

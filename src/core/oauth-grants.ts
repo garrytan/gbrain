@@ -146,7 +146,7 @@ export class OAuthGrants {
     // anything, so the second run is safe even when the caller's transaction is not a real one (mcp-provision).
     let entered = false;
     const run = () => options.transaction!(async (sql, tx) => {
-      const row: ClientRow | undefined = tx ? asRow(await tx.readOauthClientLocked(clientId))
+      const row: ClientRow | undefined = tx ? asRow(await tx.readOauthClientForUpdate(clientId))
         : (await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`)[0];
       entered = true;
       assertActive(row);

@@ -14,9 +14,9 @@
  *    refresh token or a code usable after its client was revoked, or is refused on one engine, differently per arm.
  *  - Why existing coverage misses it: test/oauth.test.ts and test/oauth-consent-security.test.ts run the grants on PGLite
  *    with raw SQL and read the tables back with raw SQL.
- *  - Seam: none. Real engines and the real `OAuthGrants`; the tables are read through typed members only. The codes
- *    table has no typed insert in this file's arms (the Rust store keeps none yet), so a code's deletion is covered on
- *    PGLite by test/oauth-revocation.test.ts.
+ *    `revokeClient` also deletes the client's authorization codes and no other client's, and first consent's
+ *    `oauthClientHoldsAuthorization` sees a token or a code (expired ones count) and nothing after the revoke.
+ *  - Seam: none. Real engines and the real `OAuthGrants`; the tables are read through typed members only.
  */
 import { describe } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -111,6 +111,31 @@ describe('engine parity: OAuth revoke writes', () => {
       const again = await refusal(() => g.revokeClient('c1'));
       const afterRevoke = await refusal(() => g.revokeToken('c1', 'a1'));
       return { unknown, first, kept: row?.client_id, stamped: row?.deleted_at instanceof Date, live, tokens, again, afterRevoke };
+    });
+
+  parityTest('revokeClient deletes the client\'s authorization codes and no other client\'s, and the client then holds no authorization',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'insertOauthCode', 'readOauthCodeForUpdate', 'oauthClientHoldsAuthorization', 'readOauthClientForUpdate', 'softDeleteOauthClient', 'deleteOauthClientCodes', 'deleteOauthClientTokens'] }, async engine => {
+      await client(engine, 'c1');
+      await client(engine, 'c2');
+      await client(engine, 'c3');
+      await client(engine, 'c4');
+      const code = (name: string, clientId: string, expires: number) => engine.insertOauthCode({ code_hash: hashToken(name), client_id: clientId,
+        scopes: ['read'], code_challenge: 'challenge', code_challenge_method: 'S256', redirect_uri: 'https://app.example/cb', state: null, resource: null, expires_at: expires });
+      await code('k1', 'c1', 4_000_000_000);
+      await code('k1-old', 'c1', 1_000);
+      await code('k2', 'c2', 4_000_000_000);
+      await token(engine, 'a3', 'c3');
+      const holds = async () => ({ c1: await engine.oauthClientHoldsAuthorization('c1'), c2: await engine.oauthClientHoldsAuthorization('c2'),
+        c3: await engine.oauthClientHoldsAuthorization('c3'), c4: await engine.oauthClientHoldsAuthorization('c4') });
+      const before = await holds();
+      const revoked = await refusal(() => grants(engine).revokeClient('c1'));
+      const codes = {
+        k1: (await engine.readOauthCodeForUpdate(hashToken('k1'), 'c1')) !== null,
+        k1Old: (await engine.readOauthCodeForUpdate(hashToken('k1-old'), 'c1')) !== null,
+        k2: (await engine.readOauthCodeForUpdate(hashToken('k2'), 'c2')) !== null,
+      };
+      const after = await holds();
+      return { before, revoked, codes, after };
     });
 
   parityTest('the revoke members run in the caller\'s transaction: a failure after the soft delete leaves the client live and its tokens kept',
