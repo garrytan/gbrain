@@ -3,22 +3,18 @@
  * store (rust/crates/gbrain-store/src/trust/belief_{events,lifetimes,redactions}.rs; rust/docs/store/trust.md, "The
  * belief ledger"). Each member sends the arguments of its BrainEngine member as one JSON value.
  *
- * `readBeliefTombstones` answers the take half from the take purge ledger. Its fact half is answered only when no fact
- * fingerprint is asked or the source has no fact purge tombstone; otherwise it is refused, since the store does not yet
- * read a fact tombstone's fingerprint by hash.
+ * `readBeliefTombstones` answers the fact half from the fact purge ledger and the take half from the take purge ledger.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-interface TombstoneAnswer { fps: string[]; factPathUnread: boolean }
+interface TombstoneAnswer { fps: string[] }
 
 export const readBeliefTombstones: Member<'readBeliefTombstones'> = async (brain, sourceId, factFps, takeFps) => {
-  const member = 'readBeliefTombstones';
-  const answer = await storeCall({ member, sourceId },
+  const answer = await storeCall({ member: 'readBeliefTombstones', sourceId },
     () => brain.readBeliefTombstones({ sourceId, factFps: [...factFps], takeFps: [...takeFps] })) as TombstoneAnswer;
-  if (answer.factPathUnread) refuseMember(member, 'a fact purge tombstone of the source, read by fingerprint');
   return answer.fps;
 };
 

@@ -261,7 +261,7 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
-    'readBeliefTombstones finds a fact purge tombstone by fingerprint, alongside a take one (Rust refuses the fact half for now)',
+    'readBeliefTombstones finds a fact purge tombstone by fingerprint, alongside a take one (tombstones seeded through insertFactPurge until the Rust purge commit writes them)',
     { methods: ['insertFactPurge', 'insertTakePurge', 'readBeliefTombstones'] },
     async (engine) => {
       await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: 'fp1', requestId: PURGE, actor: 'owner:local', reason: 'parity' });
@@ -270,6 +270,28 @@ describe('engine parity: belief ledger writes', () => {
         both: (await engine.readBeliefTombstones('default', ['fp1', 'fp2'], ['tp1'])).sort(),
         takesOnly: await engine.readBeliefTombstones('default', [], ['tp1']),
       };
+    },
+  );
+
+  parityTest(
+    'readBeliefTombstones reads fact tombstones at any visibility and subject of the source only, each fingerprint once (seeded through insertFactPurge until the Rust purge commit writes them)',
+    { methods: ['insertSource', 'insertFactPurge', 'insertTakePurge', 'readBeliefTombstones'] },
+    async (engine) => {
+      await engine.insertSource({ id: 'team', name: 'team', local_path: null, config: {} });
+      const fact = (sourceId: string, visibility: 'world' | 'private', subject: string, factHash: string) =>
+        engine.insertFactPurge({ sourceId, visibility, subject, factHash, requestId: PURGE, actor: 'owner:local', reason: null });
+      await fact('default', 'private', 'notes/a', 'fp2');
+      await fact('default', 'world', 'notes/b', 'shared');
+      await fact('default', 'world', '*', 'fp9');
+      await fact('team', 'world', '*', 'fp3');
+      await engine.insertTakePurge({ sourceId: 'default', subject: '*', claimHash: 'shared', requestId: PURGE });
+      const answer = {
+        mixed: (await engine.readBeliefTombstones('default', ['fp2', 'fp3', 'fp4', 'shared', 'fp2'], ['shared', 'tp9'])).sort(),
+        otherSource: (await engine.readBeliefTombstones('team', ['fp2', 'fp3'], [])).sort(),
+        none: await engine.readBeliefTombstones('default', [], []),
+      };
+      expect(answer).toEqual({ mixed: ['fp2', 'shared'], otherSource: ['fp3'], none: [] });
+      return answer;
     },
   );
 });

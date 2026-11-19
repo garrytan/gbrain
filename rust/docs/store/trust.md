@@ -287,9 +287,9 @@ carries `subject_kind`, as `belief_events_subject` does; and `t 0x09 0x04` is ne
   twice, as the `unnest` join does. `readMovedBeliefLifetimes` matches the page by id in any source, deleted or not.
 - `readBeliefRedactions` answers each matching suppression once, in id order. `releaseBeliefRedactions` updates the
   listed ids in any source.
-- `readBeliefTombstones` reads the take half from the take purge ledger (`facts.md`, "The take purge ledger"). The
-  store does not yet read a fact purge tombstone by fingerprint: when fact fingerprints are asked and the source has
-  a fact purge tombstone, the answer says so (`factPathUnread`) and the member refuses.
+- `readBeliefTombstones` reads the fact half from the fact purge ledger (`F 0x0F`, any visibility and any subject)
+  and the take half from the take purge ledger (`facts.md`, "The take purge ledger"). A fingerprint found in both
+  halves, or asked twice, is answered once.
 - `readBeliefHistoryRows` reads the source's current incarnation by id, ascending or descending, in batches, with
   the slug, subject key, recorded-time window, subject key list and `beforeId` filters. Each row carries
   `stream_visible` (the stream lifetime is open, its page live at the same source and slug, the same page when the

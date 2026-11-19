@@ -133,14 +133,11 @@ pub struct TombstoneQuery {
     pub take_fps: Vec<String>,
 }
 
-/// `readBeliefTombstones`' answer: the take fingerprints found, and whether the fact half was
-/// left unread (fact fingerprints were asked and the source has a fact purge tombstone), which the
-/// member refuses.
+/// `readBeliefTombstones`' answer: the fact and take fingerprints found, each once.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tombstones {
     pub fps: Vec<String>,
-    pub fact_path_unread: bool,
 }
 
 pub(crate) fn part_key(head: &[u8], parts: &[&str], id: Option<u64>) -> Vec<u8> {
@@ -396,18 +393,20 @@ impl Store {
         })
     }
 
-    /// `readBeliefTombstones`: the take fingerprints among `takeFps` that a take purge tombstone
-    /// of the source names (any subject), each once. The fact half is answered only when no fact
-    /// fingerprint is asked or the source has no fact purge tombstone; otherwise
-    /// `fact_path_unread` is set (rust/docs/store/trust.md).
+    /// `readBeliefTombstones`: the fingerprints among `factFps` that a fact purge tombstone of the
+    /// source names (any visibility, any subject) and among `takeFps` that a take purge tombstone
+    /// names (any subject), each once, as the `UNION` does.
     pub fn read_belief_tombstones(&self, q: &TombstoneQuery) -> Result<Tombstones> {
         let read = self.read()?;
-        let fact_path_unread = !q.fact_fps.is_empty()
-            && crate::facts::purge_ledger::has_fact_purges(&*read, &q.source_id)?;
-        let fps = crate::facts::take_purges::tombstoned_hashes(&*read, &q.source_id, &q.take_fps)?;
+        let mut fps =
+            crate::facts::purge_ledger::tombstoned_fact_hashes(&*read, &q.source_id, &q.fact_fps)?;
+        fps.extend(crate::facts::take_purges::tombstoned_hashes(
+            &*read,
+            &q.source_id,
+            &q.take_fps,
+        )?);
         Ok(Tombstones {
             fps: fps.into_iter().collect(),
-            fact_path_unread,
         })
     }
 }
@@ -596,44 +595,71 @@ mod tests {
         assert!(store.mark_belief_commits(&["nope".into()]).is_err());
     }
 
+    /// Seeded through `insertFactPurge`: the Rust purge commit does not write tombstones yet.
     #[test]
-    fn tombstones_answer_take_fingerprints_and_flag_an_unread_fact_half() {
+    fn tombstones_answer_fact_and_take_fingerprints_seeded_through_insert_fact_purge() {
+        use crate::facts::purge_ledger::FactPurgeInsert;
         use crate::facts::take_purges::TakePurgeInsert;
         let store = store();
-        let purge = TakePurgeInsert {
-            source_id: "default".into(),
-            subject: "*".into(),
-            claim_hash: "tp1".into(),
-            request_id: None,
-        };
-        store.insert_take_purge(&purge).unwrap();
-        let q = |facts: &[&str]| TombstoneQuery {
-            source_id: "default".into(),
-            fact_fps: facts.iter().map(|s| s.to_string()).collect(),
-            take_fps: vec!["tp1".into(), "tp2".into(), "tp1".into()],
-        };
-        let want = Tombstones {
-            fps: vec!["tp1".into()],
-            fact_path_unread: false,
-        };
-        assert_eq!(store.read_belief_tombstones(&q(&[])).unwrap(), want);
-        // No fact purge tombstone: the fact half is empty, so it is answered.
-        assert_eq!(store.read_belief_tombstones(&q(&["ff1"])).unwrap(), want);
-        let fact = crate::facts::purge_ledger::FactPurgeInsert {
-            source_id: "default".into(),
-            visibility: "world".into(),
-            subject: "*".into(),
-            fact_hash: "ff1".into(),
+        let team: crate::sources::SourceInput =
+            serde_json::from_value(serde_json::json!({ "id": "team" })).unwrap();
+        store.upsert_source(&team).unwrap();
+        store
+            .insert_take_purge(&TakePurgeInsert {
+                source_id: "default".into(),
+                subject: "*".into(),
+                claim_hash: "tp1".into(),
+                request_id: None,
+            })
+            .unwrap();
+        let fact = |source: &str, visibility: &str, subject: &str, hash: &str| FactPurgeInsert {
+            source_id: source.into(),
+            visibility: visibility.into(),
+            subject: subject.into(),
+            fact_hash: hash.into(),
             request_id: None,
             actor: None,
             reason: None,
         };
-        store.insert_fact_purge(&fact).unwrap();
-        let unread = Tombstones {
-            fact_path_unread: true,
-            ..want.clone()
+        let q = |facts: &[&str], takes: &[&str]| TombstoneQuery {
+            source_id: "default".into(),
+            fact_fps: facts.iter().map(|s| s.to_string()).collect(),
+            take_fps: takes.iter().map(|s| s.to_string()).collect(),
         };
-        assert_eq!(store.read_belief_tombstones(&q(&["ff1"])).unwrap(), unread);
-        assert_eq!(store.read_belief_tombstones(&q(&[])).unwrap(), want);
+        let fps = |v: &[&str]| Tombstones {
+            fps: v.iter().map(|s| s.to_string()).collect(),
+        };
+        let tp = ["tp1", "tp2", "tp1"];
+        assert_eq!(
+            store.read_belief_tombstones(&q(&[], &tp)).unwrap(),
+            fps(&["tp1"])
+        );
+        assert_eq!(
+            store.read_belief_tombstones(&q(&["ff1"], &tp)).unwrap(),
+            fps(&["tp1"])
+        );
+        // Any visibility and any subject; another source's tombstone and an unasked hash stay out.
+        for row in [
+            fact("default", "world", "*", "ff1"),
+            fact("default", "private", "notes/a", "ff2"),
+            fact("default", "world", "notes/b", "tp1"),
+            fact("default", "world", "*", "ff9"),
+            fact("team", "world", "*", "ff3"),
+        ] {
+            store.insert_fact_purge(&row).unwrap();
+        }
+        let asked = ["ff1", "ff2", "ff3", "ff4", "tp1", "ff1"];
+        assert_eq!(
+            store.read_belief_tombstones(&q(&asked, &tp)).unwrap(),
+            fps(&["ff1", "ff2", "tp1"])
+        );
+        assert_eq!(
+            store.read_belief_tombstones(&q(&[], &tp)).unwrap(),
+            fps(&["tp1"])
+        );
+        assert_eq!(
+            store.read_belief_tombstones(&q(&["ff2"], &[])).unwrap(),
+            fps(&["ff2"])
+        );
     }
 }

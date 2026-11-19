@@ -30,7 +30,7 @@ struct RenameArgs {
 
 #[napi]
 impl Brain {
-    /// `readBeliefTombstones({ sourceId, factFps, takeFps })`: resolves `{ fps, factPathUnread }`.
+    /// `readBeliefTombstones({ sourceId, factFps, takeFps })`: resolves `{ fps }`.
     #[napi]
     pub fn read_belief_tombstones<'env>(
         &self,
