@@ -40,10 +40,10 @@ async function refuseDedupeMember(ctx: Parameters<Operation['handler']>[0], slug
   if (!member) return;
   throw opError('identity_link_owned_by_dedupe',
     `${op}: ${sourceId}:${slug} was linked into ${member.entity_id} by gbrain dedupe confirm, so it is not moved or removed by hand; nothing changed.`,
-    `Run gbrain dedupe reject ${member.entity_id} on the brain host to record that the pages are different people and remove the link.`,
+    `Run gbrain dedupe reject ${member.entity_id} on the brain host to record that the pages are different people or companies and remove the link.`,
     { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', member.entity_id], consent: [], actor: 'user', requires_exclusive: false,
-      why: 'Records the "different people" decision (in git on a brain with a repository) and removes the confirmed link.',
-      user_message: `${sourceId}:${slug} is in the group you confirmed as one person (${member.entity_id}). Should I record that they are different people?`,
+      why: 'Records the "different people or companies" decision (in git on a brain with a repository) and removes the confirmed link.',
+      user_message: `${sourceId}:${slug} is in the group you confirmed as one person or company (${member.entity_id}). Should I record that they are different people or companies?`,
       verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
 }
 

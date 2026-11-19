@@ -1,5 +1,6 @@
 import { load, dump, Type, DEFAULT_SCHEMA, type Schema } from 'js-yaml';
 import { NAIVE_DATETIME } from './effective-date.ts';
+import { withoutNulJson } from './text-safe.ts';
 
 // js-yaml's timestamp type builds `2024-02-30` as March 1 (Date.UTC rolls the
 // day over). A calendar-invalid timestamp stays the string the author wrote,
@@ -146,7 +147,8 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
     throw new Error('Frontmatter must be a YAML or JSON object');
   }
   return {
-    data: (value ?? {}) as Record<string, unknown>,
+    // GST-3170: a YAML or JSON escape (`"\0"`, `"\u0000"`) still reads as U+0000, which Postgres text and jsonb cannot store.
+    data: withoutNulJson((value ?? {}) as Record<string, unknown>),
     content: fenced.content ?? '',
     hasFrontmatter: true,
   };
