@@ -60,9 +60,13 @@ final class FakeMessages: MessagesPort {
     var askedPermission = false
     var gate: DispatchSemaphore?
     var onSend: ((String, String) -> Void)?
+    var preparing: DispatchSemaphore?
+    var prepareGate: DispatchSemaphore?
 
     func prepare(askPermission: Bool) -> PrepareResult {
         if askPermission { askedPermission = true }
+        preparing?.signal()
+        prepareGate?.wait()
         return prepareResult
     }
 
@@ -643,7 +647,7 @@ final class Harness {
         #expect(admin(h, ["action": "add_key", "name": "bad", "public_key": "abc"]).1["code"] as? String == "bad_param")
     }
 
-    @Test func aSendSeeingTheSwitchOffDuringTouchIDMakesTheOwnerRerunTheChange() {
+    @Test func aSendSeeingTheSwitchOffDuringTouchIDRefusesTheChange() {
         let h = Harness()
         h.presence.gate = DispatchSemaphore(value: 0)
         h.presence.entered = DispatchSemaphore(value: 0)
@@ -659,7 +663,7 @@ final class Harness {
         #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
         h.presence.gate?.signal()
         #expect(group.wait(timeout: .now() + 10) == .success)
-        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(reply.1["code"] as? String == "send_disabled")
         #expect(h.store.state?.keys.map(\.name) == ["box"])
         #expect(h.store.state?.enabled == false)
         #expect(h.messages.count == 0)
@@ -777,6 +781,48 @@ final class Harness {
         h.presence.gate?.signal()
         #expect(group.wait(timeout: .now() + 10) == .success)
         #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.store.state?.enabled == false)
+    }
+
+    @Test(arguments: [["action": "off"], ["action": "remove_key", "name": "box"]])
+    func aSendHeldBeforeMessagesIsStoppedByAChangeThatAlreadyReturned(fields: [String: String]) {
+        let h = Harness()
+        h.messages.preparing = DispatchSemaphore(value: 0)
+        h.messages.prepareGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.preparing?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, fields).0 == 200)
+        h.messages.prepareGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.json["code"] as? String == (fields["action"] == "off" ? "send_disabled" : "unknown_send_key"))
+        #expect(h.messages.count == 0)
+    }
+
+    @Test(arguments: [true, false])
+    func aSetupApprovedAfterTheConfigSwitchWentOffIsRefused(helperHeardOff: Bool) {
+        let h = Harness()
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "setup"])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        h.switchedOn = false
+        if helperHeardOff { #expect(admin(h, ["action": "off"]).0 == 200) }
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "send_disabled")
         #expect(h.store.state?.enabled == false)
     }
 

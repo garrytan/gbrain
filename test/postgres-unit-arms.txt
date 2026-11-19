@@ -80,6 +80,7 @@ test/code-edges-parity.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
+test/concept-purge-rebuild-9653.test.ts
 test/concept-rename-history-gst2687.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
@@ -710,6 +711,7 @@ test/search/page-rank-cut.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
 test/secret-store-backup.test.ts
+test/secret-store-purge.test.ts
 test/secret-store.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
