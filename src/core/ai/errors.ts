@@ -251,7 +251,7 @@ export function providerContentBlockReason(err: unknown): string | undefined {
   return undefined;
 }
 
-const CONTEXT_OVERFLOW_RE = /context[_ ]length|maximum context|prompt is too long|too many (?:input )?tokens|input (?:is )?too long/i;
+const CONTEXT_OVERFLOW_RE = /context[_ ]length|maximum context|prompt is too long|too many (?:input )?tokens|input (?:is )?too long|exceeds the available context size/i;
 
 /**
  * GBRA-130: a provider refusal of one request's own input, which fails the same
