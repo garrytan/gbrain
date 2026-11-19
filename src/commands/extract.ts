@@ -272,6 +272,8 @@ export interface ExtractedLink {
 }
 
 interface ExtractResult {
+  /** A busy page guard was deferred without changing its graph or watermark. */
+  skipped_lock_busy?: number;
   links_created: number;
   timeline_entries_created: number;
   pages_processed: number;
@@ -914,6 +916,7 @@ async function extractFromDB(engine: BrainEngine, result: ExtractResult, subcomm
       result.skipped_cross_source = r.skippedCrossSource;
       if (r.skippedAttendanceIncomplete) result.skipped_attendance_incomplete = r.skippedAttendanceIncomplete;
       if (r.skippedConcurrentWrite) result.skipped_concurrent_write = r.skippedConcurrentWrite;
+      if (r.skippedLockBusy) result.skipped_lock_busy = r.skippedLockBusy;
       if (r.unknownSource.length) { result.skipped_unknown_source = r.unknownSource.length; result.unknown_source_pages = r.unknownSource.slice(0, 20); }
     }
     if (subcommand === 'timeline' || subcommand === 'all') {
@@ -1862,6 +1865,10 @@ export function filterRefsSince<T extends { updated_at: Date }>(
   return refs.filter(r => r.updated_at.getTime() > sinceMs);
 }
 
+// Bound page-guard acquisition, not publication or unrelated storage failures.
+const DB_LINK_LOCK_TIMEOUT_MS = 1_000;
+const lockBusySkipLine = (n: number) => `Skipped ${n} page(s) whose write lock was busy; prior links and watermarks were kept. Re-run extraction to retry them.`;
+
 async function extractLinksFromDB(
   engine: BrainEngine,
   dryRun: boolean,
@@ -1869,7 +1876,7 @@ async function extractLinksFromDB(
   typeFilter: PageType | undefined,
   since: string | undefined,
   opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string; completed?: Set<string> },
-): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[]; skippedMissingTarget: number; skippedCrossSource: number; skippedAttendanceIncomplete: number; skippedConcurrentWrite?: number; unknownSource: UnknownSourceSkip[] }> {
+): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[]; skippedMissingTarget: number; skippedCrossSource: number; skippedAttendanceIncomplete: number; skippedConcurrentWrite?: number; skippedLockBusy?: number; unknownSource: UnknownSourceSkip[] }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
   const sourceIdFilter = opts?.sourceIdFilter;
   // C3 (D6) + S4 (P2.18): the links_extracted_at watermark covers links AND timeline, so this phase never stamps it;
@@ -1944,7 +1951,7 @@ async function extractLinksFromDB(
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   const grammar = await readLineGrammarSettings(engine), lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
-  let skippedSettingsChanged = 0, skippedConcurrentWrite = 0;
+  let skippedSettingsChanged = 0, skippedConcurrentWrite = 0, skippedLockBusy = 0;
   const unknownSource: UnknownSourceSkip[] = [];
   progress.start('extract.links_db', walkRefs.length);
   const plannerTick = dryRun ? async () => {} : await plannerStatsForLinkDrain(engine, async () => walkRefs.length);
@@ -1965,6 +1972,7 @@ async function extractLinksFromDB(
       const written = results[i];
       if (written === 'settings_changed') skippedSettingsChanged++;
       else if (written === 'concurrent_write') skippedConcurrentWrite++;
+      else if (written === 'lock_busy') skippedLockBusy++;
       else if ('unknownSource' in written) unknownSource.push({ slug, source_id, missing_source: written.unknownSource });
       else { created += written.created; processed++; if (!dryRun) opts?.completed?.add(extractCompletionKey(source_id, slug, item.origin.expectedRevision)); }
       progress.tick(1);
@@ -2054,7 +2062,7 @@ async function extractLinksFromDB(
           crossSourceAllowed: federatedSourceIds.has(source_id) || crossSource, resolve: c => resolveCandidateSources(c, slug, source_id,
             allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
         pendingWrites.push({ slug, source_id, item: { origin: { slug, sourceId: source_id, expectedRevision: snapshot.revision,
-          sourceIncarnation: snapshot.sourceIncarnation }, links: batch, opts: { includeFrontmatter, lineGrammar: grammar,
+          sourceIncarnation: snapshot.sourceIncarnation }, links: batch, opts: { includeFrontmatter, lineGrammar: grammar, lockTimeoutMs: DB_LINK_LOCK_TIMEOUT_MS,
           ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}),
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] : ['body'], rows: wanted, readAt },
           expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata, { slug, sourceId: source_id }) } } });
@@ -2076,6 +2084,7 @@ async function extractLinksFromDB(
     if (skippedAttendanceIncomplete) console.log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
     if (skippedSettingsChanged) console.log(settingsChangedSkipLine(skippedSettingsChanged));
     if (skippedConcurrentWrite) console.log(concurrentWriteSkipLine(skippedConcurrentWrite));
+    if (skippedLockBusy) console.log(lockBusySkipLine(skippedLockBusy));
     if (unknownSource.length) console.log(unknownSourceSkipLine(unknownSource));
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
@@ -2101,7 +2110,7 @@ async function extractLinksFromDB(
   // #2589: the counters ride the return value so machine consumers (and the
   // --json path, which has no summary event on this path) can see the drops —
   // "counted, never silent" must hold beyond human-mode console lines.
-  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource, skippedAttendanceIncomplete, ...(skippedSettingsChanged ? { skippedSettingsChanged } : {}), ...(skippedConcurrentWrite ? { skippedConcurrentWrite } : {}), unknownSource };
+  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource, skippedAttendanceIncomplete, ...(skippedSettingsChanged ? { skippedSettingsChanged } : {}), ...(skippedConcurrentWrite ? { skippedConcurrentWrite } : {}), ...(skippedLockBusy ? { skippedLockBusy } : {}), unknownSource };
 }
 
 /**
@@ -2141,7 +2150,7 @@ export async function extractStaleFromDB(
     /** GBRA-130 A-1 (managed brains): clear held link-extraction failures first. */ retryHeld?: boolean;
     /** GBRA-438: an abort (idle upkeep's budget, or a tool call) stops the sweep between batches, like timeBudgetMs. */ signal?: AbortSignal;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; skippedUnknownSource?: number; mentions?: MentionPassResult;
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; skippedLockBusy?: number; skippedUnknownSource?: number; mentions?: MentionPassResult;
   linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[] }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
@@ -2231,7 +2240,7 @@ export async function extractStaleFromDB(
   // in a source other than the origin's or 'default' — default-deny by
   // design (source isolation) unless the #3908 flag is on, but distinct
   // from a genuinely missing target.
-  let skippedCrossSource = 0, skippedChanged = 0, skippedConcurrentWrite = 0;
+  let skippedCrossSource = 0, skippedChanged = 0, skippedConcurrentWrite = 0, skippedLockBusy = 0;
   const unknownSource: UnknownSourceSkip[] = [];
   const contentFailures: string[] = [];
 
@@ -2311,7 +2320,7 @@ export async function extractStaleFromDB(
           frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: page.source_id,
           crossSourceAllowed: federatedSourceIds.has(page.source_id) || crossSource, resolve: c => resolveCandidateSources(c, page.slug,
             page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
-        const linkOpts = { includeFrontmatter, lineGrammar: grammar, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata, origin),
+        const linkOpts = { includeFrontmatter, lineGrammar: grammar, lockTimeoutMs: DB_LINK_LOCK_TIMEOUT_MS, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata, origin),
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted, readAt },
           ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}) };
         const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
@@ -2319,6 +2328,7 @@ export async function extractStaleFromDB(
         // Settings moved, or a concurrent writer moved the page or an endpoint (#6272): not stamped, re-extracts next run.
         if (written === 'settings_changed') { skippedChanged++; continue; }
         if (written === 'concurrent_write') { skippedConcurrentWrite++; continue; }
+        if (written === 'lock_busy') { skippedLockBusy++; continue; }
         if ('unknownSource' in written) { unknownSource.push({ slug: page.slug, source_id: page.source_id, missing_source: written.unknownSource }); continue; }
         linksCreated += written.created;
         const timelineText = fullContent ?? await segmentedTimelineText(engine, snapshot.page);
@@ -2380,6 +2390,7 @@ export async function extractStaleFromDB(
     if (skippedAttendanceIncomplete) log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
     if (skippedChanged) log(settingsChangedSkipLine(skippedChanged));
     if (skippedConcurrentWrite) log(concurrentWriteSkipLine(skippedConcurrentWrite));
+    if (skippedLockBusy) log(lockBusySkipLine(skippedLockBusy));
     if (unknownSource.length) log(unknownSourceSkipLine(unknownSource));
     if (contentFailures.length) log(`${contentFailures.length} page(s) failed link extraction and stay stale; the other pages were derived:\n  ${contentFailures.slice(0, 20).join('\n  ')}`);
     if (skippedMissingTarget > 0) {
@@ -2399,11 +2410,13 @@ export async function extractStaleFromDB(
       skipped_missing_target: skippedMissingTarget, skipped_cross_source: skippedCrossSource,
       ...(skippedAttendanceIncomplete ? { skipped_attendance_incomplete: skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skipped_changed: skippedChanged } : {}),
       ...(skippedConcurrentWrite ? { skipped_concurrent_write: skippedConcurrentWrite } : {}),
+      ...(skippedLockBusy ? { skipped_lock_busy: skippedLockBusy } : {}),
       ...(unknownSource.length ? { skipped_unknown_source: unknownSource.length, unknown_source_pages: unknownSource.slice(0, 20) } : {}), ...mentionJsonFields(mentions), ...counts,
       ...(contentFailures.length ? { failed: contentFailures.length, failures: contentFailures.slice(0, 20) } : {}),
     }) + '\n');
   }
   return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource,
+    ...(skippedLockBusy ? { skippedLockBusy } : {}),
     ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skippedChanged } : {}), ...(skippedConcurrentWrite ? { skippedConcurrentWrite } : {}), ...(unknownSource.length ? { skippedUnknownSource: unknownSource.length } : {}), ...(contentFailures.length ? { linkFailed: contentFailures.length } : {}), mentions };
 }
 

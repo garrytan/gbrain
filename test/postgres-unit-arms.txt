@@ -179,6 +179,7 @@ test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-facts-fence-failure-health-8758.test.ts
+test/extract-lock-busy-9535.serial.test.ts
 test/extract-stale-frontmatter-loop-9295.test.ts
 test/extract-stale-managed-signal-gbra438.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
