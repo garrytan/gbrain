@@ -53,20 +53,19 @@ interface Pending {
   cleanup(): void;
 }
 
-const connections = new WeakMap<object, OwnerConnection>();
-/** The step that replaces a lost owner for an engine (a new election), registered by installOwnerClient. */
-const recoveries = new WeakMap<object, () => Promise<void>>();
+/** Each client engine's owner connection, and the step that replaces a lost owner (a new election) when it has one. */
+const connections = new WeakMap<object, { connection: OwnerConnection; recover?: () => Promise<void> }>();
 /** countPagesBy grouper functions the client resolved to a fixed table; they cross the socket as that table. */
 const grouperTables = new WeakMap<object, { types: string[]; groups: string[] }>();
 
 /** The owner connection an engine reaches its brain through, or undefined when the engine owns it (or is no client). */
 export function ownerConnectionFor(engine: object): OwnerConnection | undefined {
-  return connections.get(engineKey(engine));
+  return connections.get(engineKey(engine))?.connection;
 }
 
 /** The step that replaces the engine's lost owner, when the engine has one (installOwnerClient `recover`). */
 export function ownerRecoveryFor(engine: object): (() => Promise<void>) | undefined {
-  return recoveries.get(engineKey(engine));
+  return connections.get(engineKey(engine))?.recover;
 }
 
 function lastKey(path: string): string {
@@ -314,13 +313,12 @@ export function installOwnerClient(
   const own = capabilities instanceof Set ? [...capabilities] : [];
   if (capabilities instanceof Set) { capabilities.clear(); for (const c of connection.hello.capabilities) capabilities.add(c); }
   const key = engineKey(engine);
-  connections.set(key, connection);
-  if (recover) recoveries.set(key, recover);
+  const entry = { connection, ...(recover ? { recover } : {}) };
+  connections.set(key, entry);
   return () => {
     for (const member of installed) delete record[member];
     if (capabilities instanceof Set) { capabilities.clear(); for (const c of own) capabilities.add(c); }
-    if (connections.get(key) === connection) connections.delete(key);
-    if (recoveries.get(key) === recover) recoveries.delete(key);
+    if (connections.get(key) === entry) connections.delete(key);
     connection.close();
   };
 }
