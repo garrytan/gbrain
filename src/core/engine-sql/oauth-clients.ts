@@ -173,6 +173,18 @@ export async function readOauthClient(tx: Raw, clientId: string): Promise<OauthC
   return rows[0] ? normalizeOauthClientRow(rows[0]) : null;
 }
 
+/**
+ * Every client's whole row, by name then id in byte order (`COLLATE "C"`, so every engine sorts alike). A brain from
+ * before a column returns rows without it, so the caller picks the columns it needs and reads a missing one as the
+ * old brains did (`gbrain auth clients`).
+ */
+export async function listOauthClients(tx: Raw): Promise<OauthClientRow[]> {
+  const rows = await tx.executeRaw<Record<string, unknown>>(
+    'SELECT * FROM oauth_clients ORDER BY client_name COLLATE "C", client_id COLLATE "C"',
+  );
+  return rows.map(normalizeOauthClientRow);
+}
+
 /** The columns `patchOauthClient` sets: a key left out (or `undefined`) is untouched, `null` clears the column. */
 export interface OauthClientPatch {
   client_secret_hash?: string | null;
@@ -182,10 +194,16 @@ export interface OauthClientPatch {
   surface_set_by?: string | null;
 }
 
-/** Which client rows a patch may touch: `live` skips a deleted client; `unless_surface_set_by` skips a client whose `surface_set_by` is that value (NULL is not equal to it). */
+/**
+ * Which client rows a patch may touch: `live` skips a deleted client; `unless_surface_set_by` skips a client whose
+ * `surface_set_by` is that value (NULL is not equal to it); `client_secret_hash_is` touches the client only while its
+ * secret hash is still that value (a compare-and-set, so a caller that read the hash and lost a race to another writer
+ * changes nothing).
+ */
 export interface OauthClientPatchGuard {
   live?: boolean;
   unless_surface_set_by?: string;
+  client_secret_hash_is?: string;
 }
 
 /** The five patchable columns, as they were before the patch. */
@@ -217,12 +235,13 @@ export async function patchOauthClient(
        surface_set_by = CASE WHEN $11::boolean THEN $12::text ELSE c.surface_set_by END
      FROM prior
      WHERE c.client_id = prior.client_id AND ($13::text IS NULL OR prior.surface_set_by IS DISTINCT FROM $13::text)
+       AND ($14::text IS NULL OR prior.client_secret_hash = $14::text)
      RETURNING c.*, prior.client_secret_hash AS prior_client_secret_hash, prior.token_ttl AS prior_token_ttl,
        prior.min_trust AS prior_min_trust, prior.surface AS prior_surface, prior.surface_set_by AS prior_surface_set_by`,
     [clientId, guard.live === true,
       has('client_secret_hash'), patch.client_secret_hash ?? null, has('token_ttl'), patch.token_ttl ?? null,
       has('min_trust'), patch.min_trust ?? null, has('surface'), patch.surface ?? null,
-      has('surface_set_by'), patch.surface_set_by ?? null, guard.unless_surface_set_by ?? null]);
+      has('surface_set_by'), patch.surface_set_by ?? null, guard.unless_surface_set_by ?? null, guard.client_secret_hash_is ?? null]);
   const found = rows[0];
   if (!found) return null;
   const row: Record<string, unknown> = {};
@@ -258,4 +277,4 @@ export function requireOauthClientColumns<T extends object>(row: T, columns: rea
 }
 
 /** The members of this file a fake engine takes (test/helpers/queue-engine-members.ts). */
-export const OAUTH_CLIENT_MEMBER_NAMES = ['insertOauthClient', 'readOauthClient', 'patchOauthClient'] as const;
+export const OAUTH_CLIENT_MEMBER_NAMES = ['insertOauthClient', 'readOauthClient', 'listOauthClients', 'patchOauthClient'] as const;

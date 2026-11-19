@@ -613,7 +613,7 @@ Transaction-level (released at COMMIT or ROLLBACK):
 | `hashtextextended('gbrain:page-body-chunks:'||pageId, 0)` | rechunk per page | src/core/engine-sql/page-body.ts:197 |
 | `hashtextextended(source||':'||entitySlug, 0)` | facts per entity | src/core/engine-sql/facts.ts:122, 151 |
 | `hashtext(generationKeyLock(key))` | generation fence and publish | src/core/generations/fence.ts:128; publish.ts:71; managed.ts:151; adapters/fact-rows.ts:124, 147 |
-| `hashtext(registerClientNameLockKey(name))` | agent client registration | src/commands/agent-register.ts:546, 818; src/commands/serve-http-registration.ts:199; src/commands/mcp-provision.ts:36 |
+| `hashtext(registerClientNameLockKey(name))` | agent client registration | src/commands/agent-register.ts:546; src/commands/serve-http-registration.ts:199; src/commands/mcp-provision.ts:36 |
 | `hashtextextended('gbrain:origin:'||[source,key], 0)` | origin guard | src/core/persistence/origin-guard.ts:126 |
 | `hashtext('memory_proposals:'||principal)` | memory proposal serialization | src/core/persistence/memory-proposals.ts:121 |
 | `hashtext('gbrain:mention-entries:'||sourceId)` | mention pass | src/core/mentions/pass.ts:481 |

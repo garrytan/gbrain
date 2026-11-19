@@ -84,7 +84,7 @@ export const WORKSPACE_SUFFIX = '-workspace';
 /** SOURCE_ID_RE caps ids at 32 chars; '-workspace' is 10. */
 export const WORKSPACE_NAME_MAX = 22;
 
-/** Advisory-lock key for name-scoped registration/rotation serialization.
+/** Advisory-lock key for name-scoped registration serialization (secret rotation takes none: it is one compare-and-set).
  * Cross-process wire contract (pinned in test/lock-keys.test.ts) — every
  * writer hashing a different string holds a different lock. */
 export function registerClientNameLockKey(name: string): string {
@@ -105,6 +105,7 @@ export type RegisterFailReason =
   | 'thin_client'
   | 'pglite_live_serve'
   | 'reissue_invalid_target'
+  | 'reissue_conflict'
   | 'mint_failed'
   | 'brain_too_old'
   | 'serve_too_old'
@@ -766,7 +767,7 @@ async function runReissue(
     throw new RegisterError('reissue_invalid_target', `client "${clientId}" has no client_credentials grant — nothing to reissue.`);
   }
 
-  const newSecret = await rotateClientSecret(engine, clientId, String(row.client_name));
+  const newSecret = await rotateClientSecret(engine, clientId, String(row.client_secret_hash));
 
   const registered: RegisteredClient = {
     clientId,
@@ -799,18 +800,22 @@ async function runReissue(
   return out;
 }
 
-/** Rotate a confidential client's secret under the same name-scoped advisory
- * lock registration uses. Rotation is NOT revocation: outstanding access
- * tokens stay valid until they expire. Exported for the unit suite. */
-export async function rotateClientSecret(engine: BrainEngine, clientId: string, clientName: string): Promise<string> {
-  let newSecret!: string;
-  await engine.transaction(async (tx) => {
-    await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(clientName)]);
-    newSecret = generateToken('gbrain_cs_');
-    const updated = await tx.patchOauthClient(clientId, { client_secret_hash: hashToken(newSecret) });
-    if (!updated) throw new RegisterError('reissue_invalid_target', `client "${clientId}" vanished mid-rotation.`);
-  });
-  return newSecret;
+/**
+ * Rotate a confidential client's secret, but only if it is still the one the caller read (`readSecretHash`): the check
+ * and the write are one statement on every engine (one `Store::write` on the Rust store), so of two reissues that read
+ * the same secret exactly one wins and the other fails with `reissue_conflict` instead of silently replacing the
+ * winner's secret with a second one the first caller never sees. There is no advisory lock: rotation changes no name,
+ * so it has nothing to serialize against registration's duplicate-name check. Rotation is NOT revocation: outstanding
+ * access tokens stay valid until they expire. Exported for the unit suite.
+ */
+export async function rotateClientSecret(engine: BrainEngine, clientId: string, readSecretHash: string): Promise<string> {
+  const newSecret = generateToken('gbrain_cs_');
+  const updated = await engine.patchOauthClient(clientId, { client_secret_hash: hashToken(newSecret) }, { client_secret_hash_is: readSecretHash });
+  if (updated) return newSecret;
+  if (!(await engine.readOauthClient(clientId))) {
+    throw new RegisterError('reissue_invalid_target', `client "${clientId}" vanished mid-rotation.`);
+  }
+  throw new RegisterError('reissue_conflict', `client "${clientId}"'s secret changed while it was being rotated (another reissue won) — nothing was replaced; run --reissue again for a fresh secret.`);
 }
 
 // ── rendering ─────────────────────────────────────────────────────────────

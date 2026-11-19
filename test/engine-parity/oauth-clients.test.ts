@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity: the whole `oauth_clients` row and the constraints a write to it meets (engine-sql/oauth-clients.ts):
- * `insertOauthClient`, `readOauthClient`, `updateOauthClientBudget`, `patchOauthClient`.
+ * `insertOauthClient`, `readOauthClient`, `listOauthClients`, `updateOauthClientBudget`, `patchOauthClient`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the same calls return the same rows and the same refusals on every engine arm (PGLite always; Postgres with
@@ -25,9 +25,12 @@
  *  - Seam: none. Real engines, typed methods only; the sources a row names are made by the harness fixture. The row's
  *    own clock (`created_at`) is compared as a Date when given and as present when defaulted.
  */
-import { describe } from 'bun:test';
+import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OauthClientInsert } from '../../src/core/engine-sql/oauth-clients.ts';
+import { rotateClientSecret } from '../../src/commands/agent-register.ts';
+import { listClientRows } from '../../src/commands/auth-client-rows.ts';
+import { hashToken } from '../../src/core/utils.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -186,5 +189,47 @@ describe('engine parity: oauth_clients rows and constraints', () => {
       out.afterBad = await seen('a');
       return out;
     });
-});
 
+  parityTest('listOauthClients returns every client row by name then id, and the auth clients listing narrows it the same way',
+    { methods: ['insertOauthClient', 'listOauthClients'] }, async (engine) => {
+      const day = (r: Awaited<ReturnType<BrainEngine['listOauthClients']>>[number]) => ({ ...r, created_at: r.created_at instanceof Date });
+      const empty = { rows: await engine.listOauthClients(), listing: await listClientRows(engine) };
+      await engine.insertOauthClient({ client_id: 'c-beta', client_name: 'beta', scope: 'read write', surface: 'minimal', surface_set_by: 'operator', federated_read: ['default'], private_pages: 'granted_sources' });
+      await engine.insertOauthClient({ client_id: 'c-alpha', client_name: 'alpha', scope: null });
+      await engine.insertOauthClient({ client_id: 'z-twin', client_name: 'twin' });
+      await engine.insertOauthClient({ client_id: 'y-twin', client_name: 'twin', deleted_at: new Date('2025-02-03T04:05:06.789Z'), allowed_operations: [] });
+      // Upper case sorts before lower case in byte order, whatever the database's collation says.
+      await engine.insertOauthClient({ client_id: 'c-upper', client_name: 'Zeta' });
+      await engine.insertOauthClient({ client_id: 'c-under', client_name: 'alpha_two' });
+      const rows = await engine.listOauthClients();
+      expect(rows.map(r => r.client_id)).toEqual(['c-upper', 'c-alpha', 'c-under', 'c-beta', 'y-twin', 'z-twin']);
+      return {
+        empty,
+        order: rows.map(r => [r.client_name, r.client_id]),
+        rows: rows.map(day),
+        listing: await listClientRows(engine),
+      };
+    });
+
+  parityTest('two concurrent secret rotations of one client: exactly one wins, the other gets the same error, and the winner\'s secret is the one kept',
+    { methods: ['insertOauthClient', 'readOauthClient', 'patchOauthClient'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'rot', client_name: 'rot', client_secret_hash: 'h0', grant_types: ['client_credentials'] });
+      const settled = await Promise.allSettled([rotateClientSecret(engine, 'rot', 'h0'), rotateClientSecret(engine, 'rot', 'h0')]);
+      const won = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
+      const lost = settled.flatMap(r => (r.status === 'rejected' ? [r.reason as { reason?: unknown; message?: unknown }] : []));
+      expect(won.length).toBe(1);
+      expect(lost.length).toBe(1);
+      const kept = (await engine.readOauthClient('rot'))?.client_secret_hash;
+      const failure = async (run: () => Promise<unknown>) => run().then(() => null, (e: { reason?: unknown; message?: unknown }) => ({ reason: e.reason, message: e.message }));
+      // A reissue that read a secret which has since been replaced, one for a client that is not there, and one that read the secret that is current.
+      const stale = await failure(() => rotateClientSecret(engine, 'rot', 'h0'));
+      const absent = await failure(() => rotateClientSecret(engine, 'nope', 'h0'));
+      const fresh = await rotateClientSecret(engine, 'rot', kept!);
+      return {
+        winners: won.length,
+        losers: lost.map(e => ({ reason: e.reason, message: e.message })),
+        keptIsWinners: won.length === 1 && kept === hashToken(won[0]!),
+        stale, absent, freshIsKept: (await engine.readOauthClient('rot'))?.client_secret_hash === hashToken(fresh),
+      };
+    });
+});

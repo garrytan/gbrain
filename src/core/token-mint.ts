@@ -22,7 +22,7 @@ import type { SqlQuery } from './sql-query.ts';
 import { forgetWakePrincipal } from './wakeshift/forget.ts';
 import { opError } from './ops/contract.ts';
 import { generateToken, hashToken, isUndefinedColumnError } from './utils.ts';
-import { permissionsMirror, privatePagesFromColumn, tokenGrantColumnValues, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant, type PrivatePagesGrant } from './grants/model.ts';
+import { permissionsMirror, privatePagesFromColumn, tokenGrantColumnArrays, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant, type PrivatePagesGrant } from './grants/model.ts';
 
 /** Canonical token-id shape — shared with the `auth revoke --id` CLI gate. */
 export const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -105,15 +105,12 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
   name: string; tokenHash: string; scopes?: string[];
   grant: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>;
 }): Promise<Array<{ id: string }>> {
-  const scopes = opts.scopes === undefined ? null : `{${opts.scopes.join(',')}}`;
   const { assertScopeSourceGrant, sourcesOf } = await import('./access/attest-sources.ts');
   const reads = sourcesOf(opts.grant.sources).reads;
-  const insert = (db: BrainEngine) => db.executeRaw<{ id: string }>(
-    `INSERT INTO access_tokens (name, token_hash, scopes, permissions, ${TOKEN_GRANT_COLUMNS.join(', ')}, grant_revision)
-     VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1)
-     RETURNING id`,
-    [opts.name, opts.tokenHash, scopes, permissionsMirror(opts.grant, {}), ...tokenGrantColumnValues(opts.grant)],
-  );
+  const insert = async (db: BrainEngine) => [await db.insertAccessToken({
+    name: opts.name, token_hash: opts.tokenHash, scopes: opts.scopes === undefined ? null : [...opts.scopes],
+    permissions: permissionsMirror(opts.grant, {}), ...tokenGrantColumnArrays(opts.grant),
+  })];
   try {
     // GST-1113: a grant reading a named source checks it and inserts in one transaction, under the source row locks.
     if (!reads.some(s => s !== 'default')) return await insert(engine);
