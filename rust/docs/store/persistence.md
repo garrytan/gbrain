@@ -216,6 +216,28 @@ a worktree, and a Rust brain has none, so they find no row. `projection_last` is
 (`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
 is not a uuid refuses with the uuid cast message.
 
+## No-op embedding settle
+
+`settleNoopEmbeddingEffects` (`persistence/embedding-noop-settle.ts`) settles, in bulk, queued page
+embedding effects whose chunks already carry current vectors. Its four members:
+
+- `brain.probeNoopEmbeddingSettle(from)`: whether a `queued` embedding effect with no attempts and no
+  recovery has an id past `from`.
+- `brain.lockNoopEmbeddingWindow({ from, limit })`: `{ newest, rows }`, the newest effect id as text,
+  then the next `limit` such effects by id as `{ id, page_id }`. `page_id` reads `data.page_id` as
+  `::int` does: a value that is not an integer, or one out of the integer range, refuses with the
+  Postgres message. The store is single-writer, so the lock has nothing to skip.
+- `brain.readNoopEmbeddingCandidates(spec)`: the window effects whose page id is in `spec.pageIds`, due
+  now, with none of the data keys `targets`, `source_scan`, `retry_slugs` or `parked`, on no worktree,
+  with no withdrawal mirror of the request left to commit, whose page is in the effect's source, live,
+  at the effect's revision with its text projection sealed there and stamped with `spec.signature`, and
+  whose every chunk has a vector, `embedded_at`, an embedded text hash equal to the md5 of its text and
+  the model `spec.expectedModel` (`null` matches a chunk with no model). Only the `embedding` column is
+  served; another column refuses as a missing member.
+- `brain.settleNoopEmbeddingRows(ids)`: each `queued` effect with no recovery among `ids` becomes
+  `committed` with no error, one more attempt, no claim, outcome `{}` and the data keys `retry_slugs`,
+  `target_failures` and `failing_target` removed; it returns `{ id, request_id }` for each.
+
 ## Projection queue
 
 Every page write updates the queue in the same store transaction, as PGLite's

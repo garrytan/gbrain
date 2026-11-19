@@ -492,7 +492,7 @@ fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     Ok(out)
 }
 
-fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+pub(crate) fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     read.get(&signature_key(page_id))?
         .map(|bytes| String::from_utf8(bytes).map_err(|_| corrupt("page signature")))
         .transpose()

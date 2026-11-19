@@ -42,7 +42,7 @@ const COMPLETED_DROPS: [&str; 6] = [
 ];
 
 /// `$1` as Postgres casts an effect id to bigint: surrounding whitespace and a sign are accepted.
-fn effect_id(text: &str) -> Result<i64> {
+pub(super) fn effect_id(text: &str) -> Result<i64> {
     text.trim().parse::<i64>().map_err(|_| {
         StoreError::invalid(format!("invalid input syntax for type bigint: \"{text}\""))
     })
@@ -73,7 +73,7 @@ fn has_parked(data: &Value) -> Result<bool> {
 
 /// `data - key - key ...` on an object; any other value is returned as it is (`-` on a scalar
 /// refuses on Postgres, and the worker stores objects only).
-fn without(data: &Value, drop: &[&str]) -> Value {
+pub(super) fn without(data: &Value, drop: &[&str]) -> Value {
     match data {
         Value::Object(map) => Value::Object(
             map.iter()

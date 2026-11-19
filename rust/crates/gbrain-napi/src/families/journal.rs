@@ -510,6 +510,51 @@ impl Brain {
         })
     }
 
+    /// `probeNoopEmbeddingSettle(from)`: whether an unattempted queued embedding effect lies past
+    /// effect id `from`.
+    #[napi]
+    pub fn probe_noop_embedding_settle<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.probe_noop_embedding_settle(&from))
+    }
+
+    /// `lockNoopEmbeddingWindow({ from, limit })`: the newest effect id and the next `limit`
+    /// unattempted embedding effects past `from` (`{ newest, rows }`).
+    #[napi]
+    pub fn lock_noop_embedding_window<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+        limit: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_noop_embedding_window(&from, limit))
+    }
+
+    /// `readNoopEmbeddingCandidates(spec)`: the window effects with nothing left to embed.
+    #[napi]
+    pub fn read_noop_embedding_candidates<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_noop_embedding_candidates(&required(spec, "readNoopEmbeddingCandidates spec")?)
+        })
+    }
+
+    /// `settleNoopEmbeddingRows(ids)`: settles these queued effects; `[{ id, request_id }]`.
+    #[napi]
+    pub fn settle_noop_embedding_rows<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.settle_noop_embedding_rows(&ids))
+    }
+
     /// One effect settle statement, `action` naming the member (`renewEffectClaim`,
     /// `advanceEffectRow`, `completeEffectRow`, `retryEffectRow`, `retryBusyEffectRow`,
     /// `requeueEffectRow`, `parkEffectRow`, `failEffectRow`): `true` when it matched the claim.

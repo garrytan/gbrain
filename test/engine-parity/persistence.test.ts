@@ -18,7 +18,8 @@
  *    sequence, time stamps, the source incarnation) are compared by shape or left out of the returned value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { basisEmbedding, createSource, parityArms } from './harness.ts';
+import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
@@ -636,6 +637,54 @@ describe('engine parity: write journal', () => {
     const answers = { empty, queued, excluded, effect };
     const idle = { work: false, projection_work: false, projection_last: null };
     expect(answers).toEqual({ empty: idle, queued: { ...idle, work: true }, excluded: idle, effect: { ...idle, work: true } });
+    return answers;
+  });
+
+  parityTest('the no-op embedding settle finds a queued effect whose page already carries current vectors and settles it once', {
+    methods: ['probeNoopEmbeddingSettle', 'lockNoopEmbeddingWindow', 'readNoopEmbeddingCandidates', 'settleNoopEmbeddingRows', 'putPage', 'sealChunks',
+      'setPageEmbeddingSignature', 'getPage', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'insertPublicationEffects',
+      'transactionDirect', 'declarePersistence', 'readRequestEffects'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    await engine.putPage('notes/settle', { type: 'note', title: 'Settle', compiled_truth: 'settle body', timeline: '' });
+    await installChunks(engine, 'notes/settle', [chunk(0, 'settle body', { embedding: basisEmbedding(3), model: 'model-a' })]);
+    await engine.setPageEmbeddingSignature('notes/settle', { signature: 'sig-a' });
+    const page = (await engine.getPage('notes/settle'))!;
+    const requestId = 'b0000000-0000-4000-8000-0000000000b6';
+    const empty = await engine.probeNoopEmbeddingSettle('0');
+    const id = await admitDirect(engine, requestId);
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: page.knowledge_revision!, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { page_id: page.id } }] });
+    });
+    const due = await engine.probeNoopEmbeddingSettle('0');
+    const candidates = (spec: { signature?: string; expectedModel?: string | null } = {}) => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const { newest, rows } = await tx.lockNoopEmbeddingWindow({ from: '0', limit: 50 });
+      const found = await tx.readNoopEmbeddingCandidates({ hostId: HOST, signature: spec.signature ?? 'sig-a',
+        expectedModel: spec.expectedModel === undefined ? 'model-a' : spec.expectedModel, column: 'embedding', window: rows.map(row => row.id),
+        pageIds: rows.flatMap(row => row.page_id === null ? [] : [row.page_id]) });
+      return { newestIsLast: newest === rows[rows.length - 1]?.id, pages: rows.map(row => row.page_id === page.id), found: found.map(c => ({ kind: c.kind, source_id: c.source_id, worktree_id: c.worktree_id, effect: c.id === rows[0]?.id })) };
+    });
+    const wrongSignature = await candidates({ signature: 'sig-b' });
+    const wrongModel = await candidates({ expectedModel: 'model-b' });
+    const noModel = await candidates({ expectedModel: null });
+    const window = await candidates();
+    const settle = () => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const { rows } = await tx.lockNoopEmbeddingWindow({ from: '0', limit: 50 });
+      return (await tx.settleNoopEmbeddingRows(rows.map(row => row.id))).map(row => row.request_id);
+    });
+    const settled = await settle();
+    const again = await settle();
+    const after = await engine.probeNoopEmbeddingSettle('0');
+    const effects = (await engine.readRequestEffects(id)).map(e => ({ kind: e.kind, state: e.state, error_code: e.error_code, outcome: e.outcome }));
+    const answers = { empty, due, wrongSignature, wrongModel, noModel, window, settled: settled.map(r => r === id), again, after, effects };
+    const none = { newestIsLast: true, pages: [true], found: [] };
+    expect(answers).toEqual({ empty: false, due: true, wrongSignature: none, wrongModel: none, noModel: none,
+      window: { newestIsLast: true, pages: [true], found: [{ kind: 'embedding', source_id: 'default', worktree_id: null, effect: true }] },
+      settled: [true], again: [], after: false, effects: [{ kind: 'embedding', state: 'committed', error_code: null, outcome: {} }] });
     return answers;
   });
 

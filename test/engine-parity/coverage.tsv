@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 661/661
+# covered: 665/665
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 11/11
-# persistence_journal: 61/61
+# persistence_journal: 65/65
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -72,14 +72,14 @@ reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
 transaction	lifecycle	yes	53	no	yes	yes	serves
-transactionDirect	lifecycle	yes	8	no	yes	yes	serves
+transactionDirect	lifecycle	yes	9	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	71	yes	yes	yes	serves
+getPage	pages	yes	72	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	298	yes	yes	yes	serves
+putPage	pages	yes	299	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -174,13 +174,13 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	3	no	yes	yes	serves
 upsertChunks	chunks	yes	24	yes	yes	yes	serves
-sealChunks	chunks	yes	40	no	yes	yes	serves
+sealChunks	chunks	yes	41	no	yes	yes	serves
 getChunks	chunks	yes	27	yes	yes	yes	serves
 getChunkPage	chunks	yes	5	no	yes	yes	serves
 getChunkWindows	chunks	yes	3	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
 sumStaleChunkChars	chunks	yes	2	no	yes	yes	serves
-setPageEmbeddingSignature	chunks	yes	1	no	yes	yes	serves
+setPageEmbeddingSignature	chunks	yes	2	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
 invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
 listStaleChunks	chunks	yes	2	no	yes	yes	serves
@@ -354,7 +354,7 @@ readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
-declarePersistence	persistence_journal	yes	11	no	yes	yes	serves
+declarePersistence	persistence_journal	yes	12	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -366,13 +366,13 @@ countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	27	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	27	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	28	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	28	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	18	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	13	no	yes	yes	serves
-insertPublicationEffects	persistence_journal	yes	5	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	28	no	yes	yes	serves
+insertPublicationEffects	persistence_journal	yes	6	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	29	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -398,7 +398,7 @@ selectProjectionWindowJobs	persistence_journal	yes	3	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	3	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	2	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	3	no	yes	yes	serves
 stampEffectClaim	persistence_journal	yes	2	no	yes	yes	serves
 renewEffectClaim	persistence_journal	yes	1	no	yes	yes	serves
 advanceEffectRow	persistence_journal	yes	1	no	yes	yes	serves
@@ -412,6 +412,10 @@ readMirrorGateRows	persistence_journal	yes	1	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
 hasRearmableTargets	persistence_journal	yes	1	no	yes	yes	serves
 probeIdleWork	persistence_journal	yes	1	no	yes	yes	serves
+probeNoopEmbeddingSettle	persistence_journal	yes	1	no	yes	yes	serves
+lockNoopEmbeddingWindow	persistence_journal	yes	1	no	yes	yes	serves
+readNoopEmbeddingCandidates	persistence_journal	yes	1	no	yes	yes	serves
+settleNoopEmbeddingRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
 listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves

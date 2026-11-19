@@ -39,6 +39,7 @@ import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerPr
 import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
 import type { IdleProbeRow, IdleProbeSpec } from './engine-sql/persistence-idle-probe.ts';
+import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettledRow, NoopSettleWindow } from './engine-sql/persistence-embedding-noop-settle.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
@@ -3466,6 +3467,18 @@ export interface BrainEngine {
    * when given, else on the Postgres direct lane when `opts.direct`, else on the engine; `opts.signal` cancels it.
    */
   probeIdleWork(spec: IdleProbeSpec, opts?: { signal?: AbortSignal; lane?: ReservedConnection; direct?: boolean }): Promise<IdleProbeRow | null>;
+
+  // No-op embedding settle (engine-sql/persistence-embedding-noop-settle.ts): the statements embedding-noop-settle.ts
+  // sends to settle, in bulk, queued page embedding effects whose chunks already carry current vectors. The caller
+  // runs the last three in one transaction and keeps the source guard, the cursor and the true-up.
+  /** Whether an unattempted queued embedding effect lies past effect id `from` (`probeNoopEmbeddingSettle`). */
+  probeNoopEmbeddingSettle(from: string): Promise<boolean>;
+  /** The newest effect id, then the next `limit` unattempted embedding effects past `from`, locked skip-locked (`lockNoopEmbeddingWindow`). */
+  lockNoopEmbeddingWindow(spec: { from: string; limit: number }): Promise<NoopSettleWindow>;
+  /** The window effects the runner would find nothing to embed for, before their source guard; share-locks their pages (`readNoopEmbeddingCandidates`). */
+  readNoopEmbeddingCandidates(spec: NoopSettleCandidateSpec): Promise<NoopSettleCandidate[]>;
+  /** Settles these queued effects as the runner's claim and completion of a no-op leave them (`settleNoopEmbeddingRows`). */
+  settleNoopEmbeddingRows(ids: readonly string[]): Promise<NoopSettledRow[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

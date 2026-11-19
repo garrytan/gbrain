@@ -2996,6 +2996,17 @@
         ],
         "flagOnScopes": []
       },
+      "lockNoopEmbeddingWindow#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "lockPageKeys#default": {
         "flagOffLanes": [
           "tx"
@@ -3118,6 +3129,17 @@
         "flagOnScopes": []
       },
       "probeIdleWork#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "probeNoopEmbeddingSettle#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3467,6 +3489,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readNoopEmbeddingCandidates#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
         ],
         "flagOnScopes": []
       },
@@ -4388,6 +4421,17 @@
         ],
         "flagOnScopes": []
       },
+      "settleNoopEmbeddingRows#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "softDeletePage#default": {
         "flagOffLanes": [
           "pool"
@@ -5251,6 +5295,7 @@
         "loadContradictionsTrend": "none",
         "loadPurgeTarget": "none",
         "lockEffectGuard": "none",
+        "lockNoopEmbeddingWindow": "none",
         "lockOAuthClient": "none",
         "lockPageKeys": "none",
         "lockPersistenceCounters": "none",
@@ -5292,6 +5337,7 @@
         "preparationRead": "none",
         "probeIdleWork": "none",
         "probeLiveConsumerRows": "none",
+        "probeNoopEmbeddingSettle": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",
         "pruneFrontmatterTags": "none",
@@ -5353,6 +5399,7 @@
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
         "readMirrorGateRows": "none",
+        "readNoopEmbeddingCandidates": "none",
         "readOldestWaitingAge": "none",
         "readPageAliasRows": "none",
         "readPageOrigin": "none",
@@ -5474,6 +5521,7 @@
         "setPageEmbeddingSignature": "none",
         "setSourceChunkerVersion": "none",
         "setWriteContext": "none",
+        "settleNoopEmbeddingRows": "none",
         "settleSpendReservation": "none",
         "settleWakeForget": "none",
         "settleWakeWatch": "none",

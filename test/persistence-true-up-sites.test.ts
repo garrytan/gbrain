@@ -22,7 +22,7 @@ const SITES: Record<string, string> = {
   'src/core/engine-sql/persistence-effect-worker.ts': 'src/core/persistence/effects.ts',
   'src/core/persistence/effects.ts': 'src/core/persistence/effects.ts',
   'src/core/persistence/embedding-settlement.ts': 'src/core/persistence/embedding-settlement.ts',
-  'src/core/persistence/embedding-noop-settle.ts': 'src/core/persistence/embedding-noop-settle.ts',
+  'src/core/engine-sql/persistence-embedding-noop-settle.ts': 'src/core/persistence/embedding-noop-settle.ts',
   'src/core/persistence/effect-retry.ts': 'src/core/persistence/effect-retry.ts',
   'src/core/shared-skills/restore.ts': 'src/core/backup/snapshot.ts',
 };

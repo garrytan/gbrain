@@ -59,6 +59,7 @@ import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
 import * as effectWorker from './effect-worker.ts';
+import * as noopSettle from './noop-settle.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as linkTemporal from './link-temporal.ts';
@@ -106,7 +107,7 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
-  ...persistence, ...housekeeping, ...effectScans, ...effectWorker,
+  ...persistence, ...housekeeping, ...effectScans, ...effectWorker, ...noopSettle,
   ...writeMisc,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,

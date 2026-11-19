@@ -677,7 +677,6 @@ src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
 src/core/persistence/effects.ts	execute_raw	19
-src/core/persistence/embedding-noop-settle.ts	execute_raw	5
 src/core/persistence/embedding-settlement.ts	execute_raw	7
 src/core/persistence/engine-graduation.ts	execute_raw	18
 src/core/persistence/facts-maintenance.ts	execute_raw	4

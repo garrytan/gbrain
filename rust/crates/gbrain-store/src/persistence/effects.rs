@@ -138,7 +138,7 @@ struct OrderEntry {
 }
 
 /// The largest effect id stored, or 0.
-fn max_effect_id(read: &dyn KvRead) -> Result<i64> {
+pub(super) fn max_effect_id(read: &dyn KvRead) -> Result<i64> {
     let mut last = 0i64;
     scan_prefix(
         read,

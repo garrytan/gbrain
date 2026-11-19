@@ -55,6 +55,7 @@ import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persis
 import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
+import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIMED_SQL } from '../src/core/page-state/projections.ts';
 
 const completion = (purgeColumns: string) => `WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
@@ -395,5 +396,85 @@ describe('the idle probe is one text on both engines', () => {
     const shared = (m: Record<string, unknown[][]>) => Object.fromEntries(Object.entries(m).filter(([k]) => !k.endsWith('#direct')));
     expect(shared(postgres)).toEqual(shared(pglite));
     expectGolden('sql-text-extra/persistence-idle-probe', shared(pglite), defineNormalizer<Record<string, unknown[][]>>('idle-probe-statements-v1', m => m));
+  });
+});
+
+describe('the no-op embedding settle statements are one text on both engines', () => {
+  // embedding-noop-settle.ts sent these statements inline before it called the engine members. `original` is its
+  // candidate builder, kept here verbatim over refreshFenceClear and quoteIdentifier, so the engine-sql copy
+  // (persistence-embedding-noop-settle.ts) cannot drift from what the settle pass sent.
+  const H = 'f0000000-0000-4000-8000-0000000000e3';
+  const spec = { hostId: H, signature: 'sig-1', expectedModel: 'model-a', column: 'embedding', window: ['7', '9'], pageIds: [3, 4] };
+  function original(s: typeof spec): { sql: string; params: unknown[] } {
+    const vector = quoteIdentifier(s.column);
+    return { sql: `SELECT e.id::text AS id, e.kind, e.source_id, e.source_incarnation, e.worktree_id
+      FROM persistence_effects e
+      JOIN pages p ON p.id=(e.data->>'page_id')::int AND p.source_id=e.source_id
+      WHERE e.id=ANY($4::text[]::bigint[]) AND p.id=ANY($5::int[]) AND e.next_attempt_at<=now()
+        AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'retry_slugs') AND NOT (e.data ? 'parked')
+        AND (e.worktree_id IS NULL OR (EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=e.worktree_id AND w.owner_host_id=$1::uuid)
+          AND ${refreshFenceClear('e')}))
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')
+        AND p.deleted_at IS NULL AND p.knowledge_revision=e.revision AND p.text_projection_revision=p.knowledge_revision
+        AND p.embedding_signature=$2
+        AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id=p.id AND NOT (cc.${vector} IS NOT NULL
+          AND cc.embedded_at IS NOT NULL AND cc.embedded_text_hash IS NOT DISTINCT FROM md5(cc.chunk_text) AND cc.model IS NOT DISTINCT FROM $3))
+      ORDER BY e.id
+      FOR SHARE OF p`, params: [s.hostId, s.signature, s.expectedModel, s.window, s.pageIds] };
+  }
+  function bound({ sql, params }: { sql: string; params: unknown[] }): string {
+    return sql.replace(/\$(\d+)/g, (_, n: string) => {
+      const i = Number(n) - 1;
+      expect(i).toBeLessThan(params.length);
+      return `<${JSON.stringify(params[i])}>`;
+    });
+  }
+  async function record(proto: object): Promise<Record<string, unknown[][]>> {
+    const calls: [string, (e: any) => Promise<unknown>][] = [
+      ['probeNoopEmbeddingSettle', e => e.probeNoopEmbeddingSettle('5')],
+      ['lockNoopEmbeddingWindow', e => e.lockNoopEmbeddingWindow({ from: '5', limit: 50 })],
+      ['readNoopEmbeddingCandidates', e => e.readNoopEmbeddingCandidates(spec)],
+      ['readNoopEmbeddingCandidates#null-model', e => e.readNoopEmbeddingCandidates({ ...spec, expectedModel: null })],
+      ['settleNoopEmbeddingRows', e => e.settleNoopEmbeddingRows(['7', '9'])],
+    ];
+    const out: Record<string, unknown[][]> = {};
+    for (const [name, run] of calls) {
+      const sent: unknown[][] = [];
+      const send = async (sql: string, params?: unknown[]) => { sent.push([sql, params ?? []]); return [{ newest: '9' }]; };
+      await run(Object.create(proto, { executeRaw: { value: send } }));
+      out[name] = sent;
+    }
+    return out;
+  }
+
+  test('the candidate read is the one the settle pass built, value for value; the others are its texts', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const sent = await record(PGLiteEngine.prototype);
+    const [candidates] = sent.readNoopEmbeddingCandidates as [string, unknown[]][];
+    expect(bound({ sql: candidates![0], params: candidates![1] })).toBe(bound(original(spec)));
+    const [nullModel] = sent['readNoopEmbeddingCandidates#null-model'] as [string, unknown[]][];
+    expect(bound({ sql: nullModel![0], params: nullModel![1] })).toBe(bound(original({ ...spec, expectedModel: null as never })));
+    expect(sent.probeNoopEmbeddingSettle).toEqual([[`SELECT 1 FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued'
+    AND e.attempts=0 AND e.recovery IS NULL ORDER BY e.id LIMIT 1`, ['5']]]);
+    expect(sent.lockNoopEmbeddingWindow).toEqual([
+      ['SELECT COALESCE(max(id),0)::text AS newest FROM persistence_effects', []],
+      [`SELECT e.id::text AS id, (e.data->>'page_id')::int AS page_id
+      FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued' AND e.attempts=0 AND e.recovery IS NULL
+      ORDER BY e.id LIMIT $2 FOR UPDATE SKIP LOCKED`, ['5', 50]],
+    ]);
+    expect(sent.settleNoopEmbeddingRows).toEqual([[`UPDATE persistence_effects SET state='committed', error_code=NULL, attempts=attempts+1,
+        data=data-'retry_slugs'-'target_failures'-'failing_target', execution_token=NULL, claim_expires_at=NULL, claim_owner=NULL, outcome='{}'::jsonb, updated_at=now()
+      WHERE id=ANY($1::text[]::bigint[]) AND state='queued' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id, request_id`, [['7', '9']]]]);
+  });
+
+  test('PGLite and Postgres send the pinned statements with the same bound values', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    const pglite = await record(PGLiteEngine.prototype);
+    expect(await record(PostgresEngine.prototype)).toEqual(pglite);
+    expectGolden('sql-text-extra/persistence-embedding-noop-settle', pglite, defineNormalizer<Record<string, unknown[][]>>('noop-settle-statements-v1', m => m));
   });
 });
