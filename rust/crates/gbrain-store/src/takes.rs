@@ -27,14 +27,17 @@ use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
+use crate::trust::TrustPolicy;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod reads;
+pub(crate) mod trust;
 
 pub use reads::{McpResolvedInput, PurgeTakesInput};
+pub(crate) use trust::TakeTrust;
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
@@ -142,6 +145,11 @@ pub(crate) struct TakeRecord {
     /// Goes up by one each time the claim changes.
     #[serde(default)]
     pub claim_rev: u64,
+    /// `trust_tier` and `write_origin` ([`trust::stamp`]). Absent in a record stored before the
+    /// store kept them, and omitted while the tier is `unknown` with no origin: both read as the
+    /// column defaults.
+    #[serde(default, skip_serializing_if = "TakeTrust::is_empty")]
+    pub trust: TakeTrust,
 }
 
 /// One `synthesis_evidence` row (the key holds the three key columns).
@@ -230,6 +238,10 @@ pub struct ListTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the take's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a take `activationSuppressedSql('takes')` flags.
+    pub suppress_flagged: bool,
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     pub exclude_private: Option<PrivacyPolicy>,
 }
@@ -252,6 +264,10 @@ pub struct SearchTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the take's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a take `activationSuppressedSql('takes')` flags.
+    pub suppress_flagged: bool,
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     pub exclude_private: Option<PrivacyPolicy>,
 }
@@ -486,13 +502,20 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
         .collect()
 }
 
-/// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed).
+/// Writes a changed take's record (its row index never changes: `page_id` and `row_num` are
+/// fixed), stamped first against the stored row under the open write's trust context
+/// ([`trust::stamp`], the `BEFORE UPDATE` trigger).
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    put_json(tx, &take_key(take.id), take)
+    let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
+    let take = trust::stamp(old.as_ref(), take)?;
+    put_json(tx, &take_key(take.id), &take)
 }
 
+/// Inserts a new take and its row index, stamped as an insert ([`trust::stamp`], the
+/// `BEFORE INSERT` trigger).
 fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    write_take(tx, take)?;
+    let take = trust::stamp(None, take)?;
+    put_json(tx, &take_key(take.id), &take)?;
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
 }
 
@@ -816,6 +839,9 @@ impl Store {
             let mut missing_page = false;
             for (r, (page_id, row_num, weight, superseded_by)) in rows.iter().zip(parsed.iter()) {
                 let id = next_id(tx, NEXT_TAKE_ID)?;
+                // The BEFORE INSERT trigger runs on every proposed row, before its NOT NULL and
+                // CHECK constraints and before ON CONFLICT decides (`trust::check_insert`).
+                trust::check_insert()?;
                 let page_id = page_id.ok_or_else(|| not_null(TAKES, "page_id"))?;
                 let row_num = row_num.ok_or_else(|| not_null(TAKES, "row_num"))?;
                 let claim = r.claim.clone().ok_or_else(|| not_null(TAKES, "claim"))?;
@@ -904,6 +930,7 @@ impl Store {
                             created_at_us: now,
                             updated_at_us: now,
                             claim_rev: 0,
+                            trust: TakeTrust::default(),
                         },
                     )?;
                 }
@@ -946,6 +973,7 @@ impl Store {
             }
         };
         let limit = options.limit.unwrap_or(100) as usize;
+        let trust = TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?;
         let read = self.read()?;
         let takes = match page_id {
             Some(p) => match u64::try_from(p) {
@@ -971,6 +999,7 @@ impl Store {
                     .resolved
                     .is_some_and(|r| r != take.resolved_at_us.is_some())
                 || !allowed(&options.allow_list, &take.holder)
+                || !trust.admits(&*read, TAKES, take.id, take.trust.tier())?
             {
                 continue;
             }
@@ -1068,6 +1097,7 @@ impl Store {
             return Ok(Vec::new());
         };
         let limit = options.limit.unwrap_or(30) as usize;
+        let trust = TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?;
         let read = self.read()?;
         let mut pages = PageCache::new(&*read);
         let mut hits: Vec<(f32, TakeRecord, String)> = Vec::new();
@@ -1085,6 +1115,7 @@ impl Store {
             if !in_scope(&options.source_ids, &page.source_id)
                 || (options.eligible_only && !eligible_page(page))
                 || private_page(&*read, page, &options.exclude_private)?
+                || !trust.admits(&*read, TAKES, take.id, take.trust.tier())?
             {
                 continue;
             }
@@ -1241,6 +1272,7 @@ impl Store {
                     created_at_us: now,
                     updated_at_us: now,
                     claim_rev: 0,
+                    trust: TakeTrust::default(),
                 },
             )?;
             old.active = false;

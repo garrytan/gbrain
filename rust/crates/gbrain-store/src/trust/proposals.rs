@@ -346,6 +346,35 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
     Ok(false)
 }
 
+/// `contestedRefSql(table, alias)` (src/core/eligibility/sql.ts) for one row: `tp<id>:challenger`
+/// when the first pending `supersede_fact` / `supersede_take` proposal naming the row names it as
+/// `related`, `tp<id>:challenged` when it names it as `target` only, `None` when no such proposal
+/// names it. "First" is the lowest id (`ORDER BY elig_tp.id LIMIT 1`).
+pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: u64) -> Result<Option<String>> {
+    let Ok(row_id) = i64::try_from(row_id) else {
+        return Ok(None);
+    };
+    let mut ids = ids_naming(read, table, row_id)?;
+    ids.sort_unstable();
+    for id in ids {
+        let p = read_record(read, id)?.ok_or_else(|| corrupt("row index entry without its row"))?;
+        if p.status == "pending"
+            && matches!(p.action.as_str(), "supersede_fact" | "supersede_take")
+            && p.names(table, row_id)
+        {
+            let challenger =
+                p.related_table.as_deref() == Some(table) && p.related_id == Some(row_id);
+            let side = if challenger {
+                "challenger"
+            } else {
+                "challenged"
+            };
+            return Ok(Some(format!("tp{}:{side}", p.id)));
+        }
+    }
+    Ok(None)
+}
+
 impl Store {
     /// `insertTrustProposal(input)`: inserts a pending proposal and returns `{ id, created: true }`,
     /// or returns the pending proposal already recorded for the same action, target and related
