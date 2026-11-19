@@ -453,7 +453,8 @@ gbrain sources add <id> --url <git-url> [--pat-file <p>] [--clone-dir <path>] [-
                                Clone + register a remote repo in one step; auto-hardens
                                for durability when a PAT is provided (see "Durability" below).
 gbrain sources list [--json]   List all sources with page counts + federation state.
-gbrain sources archive <id>    Soft-delete: hide from search, keep data for a TTL
+gbrain sources archive <id>    Soft-delete: hide from search and from every read
+                               (API tokens included), keep data for a TTL
                                grace window. Prefer this over `remove`.
 gbrain sources restore <id>    Un-archive. `gbrain sources archived` lists expiries;
                                `gbrain sources purge` permanently deletes expired archives —

@@ -196,8 +196,17 @@
               "array<string>",
               "string"
             ],
-            "sql": "DELETE FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2 RETURNING slug",
-            "textSha256": "f2b7a55d8e378066ca8966102867a9cc197b072f657a22a1025fe9c06bad47d1"
+            "sql": "SELECT id FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2",
+            "textSha256": "370d7538499f9ec2e65f3145bac4a24f19ba14c018773e6393047a16338f0b82"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "string"
+            ],
+            "sql": "DELETE FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2 RETURNING slug, id",
+            "textSha256": "7273a5a8e45fc218ddd7f65bde3349d0e1f60bf396ac2ec77af0a23dac777631"
           },
           {
             "event": "commit",
@@ -895,8 +904,16 @@
             "params": [
               "number"
             ],
-            "sql": "DELETE FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval -- #6729: the old page of an open rename-identity downgrade waits for its disposition (identityDowngradePurgeHold). AND NOT EXISTS (SELECT 1 FROM op_checkpoints dg WHERE dg.op = 'sync-identity-downgrade' AND dg.fingerprint = pages.id::text AND dg.completed_keys->0->>'disposition' IS NULL AND pages.deleted_at = (dg.completed_keys->0->>'old_deleted_at')::timestamptz) -- #7013: a restorable re-extraction retirement waits out its hold (atomRetirementPurgeHold). AND NOT (pages.type='atom' AND pages.frontmatter->>'retired_by'='managed-reextract' AND pages.deleted_at > now() - interval '30 days' AND pages.id IN (SELECT held.id FROM (WITH retired AS ( SELECT p.id, p.source_id, p.slug, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug') WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, NULLIF(p.frontmatter->>'source_slug','') AS origin_slug, COALESCE(NULLIF(p.frontmatter->>'source_slug',''), p.frontmatter->>'source_path') AS origin, regexp_replace(COALESCE(p.frontmatter->>'source_hash',''),'^pending:','') AS hash, p.frontmatter->>'retired_at' AS retired_at FROM pages p WHERE p.type='atom' AND p.deleted_at IS NOT NULL AND p.frontmatter->>'retired_by'='managed-reextract' AND NULLIF(p.frontmatter->>'imported_from','') IS NULL AND (true) ), latest AS ( SELECT DISTINCT ON (source_id, okey) source_id, okey, hash FROM retired WHERE okey IS NOT NULL ORDER BY source_id, okey, retired_at DESC NULLS LAST, id DESC ), live AS ( SELECT p.source_id, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug') WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, array_agg(DISTINCT regexp_replace(COALESCE(p.frontmatter->>'source_hash',''),'^pending:','')) AS hashes FROM pages p WHERE p.type='atom' AND p.deleted_at IS NULL AND NULLIF(p.frontmatter->>'imported_from','') IS NULL AND (true) GROUP BY 1, 2 ) SELECT r.id, r.source_id, r.slug, CASE WHEN r.origin_slug IS NOT NULL THEN 'page' ELSE 'transcript' END AS origin_kind, r.origin, o.id AS origin_page_id, r.hash, r.retired_at, (r.okey IS NOT NULL AND (r.origin_slug IS NULL OR o.id IS NOT NULL)) AS origin_live, (lv.hashes IS NOT NULL AND NOT (lv.hashes <@ ARRAY[r.hash])) AS replaced, COALESCE(l.hash = r.hash, false) AS latest, (r.okey IS NOT NULL AND (r.origin_slug IS NULL OR o.id IS NOT NULL) AND NOT COALESCE(lv.hashes IS NOT NULL AND NOT (lv.hashes <@ ARRAY[r.hash]), false) AND COALESCE(l.hash = r.hash, false)) AS restorable, (SELECT g.id FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id WHERE g.source_id=r.source_id AND g.kind='atom' AND g.state='live' AND i.item_key=r.slug AND i.action='retired' ORDER BY g.id DESC LIMIT 1) AS ledger_generation FROM retired r LEFT JOIN pages o ON o.source_id=r.source_id AND o.slug=r.origin_slug AND o.deleted_at IS NULL LEFT JOIN live lv ON lv.source_id=r.source_id AND lv.okey=r.okey LEFT JOIN latest l ON l.source_id=r.source_id AND l.okey=r.okey) held WHERE held.restorable)) -- GBRA-161: every derived retirement waits out its hold (derivedRetirementPurgeHold). AND NOT (COALESCE(pages.frontmatter->>'retired_by','') IN ('extract-atoms','managed-reextract','stale-atoms','life-chronicle','generation-restore','synthesis-resynthesis','synthesis-cleanup') AND pages.deleted_at > now() - interval '1 day' * (SELECT COALESCE(MAX(CASE WHEN c.value ~ '^[0-9]{1,3}$' THEN CASE WHEN c.value::int BETWEEN 3 AND 365 THEN c.value::int END END), 30) FROM config c WHERE c.key = 'generations.restore_days')) -- GST-2689: an origin whose derived pages could not be labelled private stays parked (derivedOriginPurgeHold). AND NOT EXISTS (SELECT 1 FROM op_checkpoints dop WHERE dop.op = 'derived-origin-park' AND dop.fingerprint = pages.id::text) RETURNING slug, source_id, deleted_at::text AS deleted_at",
-            "textSha256": "0aa3be82c72ae8fb9b6fa261c4b967abae7b29c1d1b7cb1b1a2c50a84a7105d5"
+            "sql": "SELECT id FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval",
+            "textSha256": "ff785a0e13d0da07c7b32d439852edcc41150e2f7bcf5c2f1e0f0337ee0c15c6"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number"
+            ],
+            "sql": "DELETE FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval -- #6729: the old page of an open rename-identity downgrade waits for its disposition (identityDowngradePurgeHold). AND NOT EXISTS (SELECT 1 FROM op_checkpoints dg WHERE dg.op = 'sync-identity-downgrade' AND dg.fingerprint = pages.id::text AND dg.completed_keys->0->>'disposition' IS NULL AND pages.deleted_at = (dg.completed_keys->0->>'old_deleted_at')::timestamptz) -- #7013: a restorable re-extraction retirement waits out its hold (atomRetirementPurgeHold). AND NOT (pages.type='atom' AND pages.frontmatter->>'retired_by'='managed-reextract' AND pages.deleted_at > now() - interval '30 days' AND pages.id IN (SELECT held.id FROM (WITH retired AS ( SELECT p.id, p.source_id, p.slug, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug') WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, NULLIF(p.frontmatter->>'source_slug','') AS origin_slug, COALESCE(NULLIF(p.frontmatter->>'source_slug',''), p.frontmatter->>'source_path') AS origin, regexp_replace(COALESCE(p.frontmatter->>'source_hash',''),'^pending:','') AS hash, p.frontmatter->>'retired_at' AS retired_at FROM pages p WHERE p.type='atom' AND p.deleted_at IS NOT NULL AND p.frontmatter->>'retired_by'='managed-reextract' AND NULLIF(p.frontmatter->>'imported_from','') IS NULL AND (true) ), latest AS ( SELECT DISTINCT ON (source_id, okey) source_id, okey, hash FROM retired WHERE okey IS NOT NULL ORDER BY source_id, okey, retired_at DESC NULLS LAST, id DESC ), live AS ( SELECT p.source_id, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug') WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, array_agg(DISTINCT regexp_replace(COALESCE(p.frontmatter->>'source_hash',''),'^pending:','')) AS hashes FROM pages p WHERE p.type='atom' AND p.deleted_at IS NULL AND NULLIF(p.frontmatter->>'imported_from','') IS NULL AND (true) GROUP BY 1, 2 ) SELECT r.id, r.source_id, r.slug, CASE WHEN r.origin_slug IS NOT NULL THEN 'page' ELSE 'transcript' END AS origin_kind, r.origin, o.id AS origin_page_id, r.hash, r.retired_at, (r.okey IS NOT NULL AND (r.origin_slug IS NULL OR o.id IS NOT NULL)) AS origin_live, (lv.hashes IS NOT NULL AND NOT (lv.hashes <@ ARRAY[r.hash])) AS replaced, COALESCE(l.hash = r.hash, false) AS latest, (r.okey IS NOT NULL AND (r.origin_slug IS NULL OR o.id IS NOT NULL) AND NOT COALESCE(lv.hashes IS NOT NULL AND NOT (lv.hashes <@ ARRAY[r.hash]), false) AND COALESCE(l.hash = r.hash, false)) AS restorable, (SELECT g.id FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id WHERE g.source_id=r.source_id AND g.kind='atom' AND g.state='live' AND i.item_key=r.slug AND i.action='retired' ORDER BY g.id DESC LIMIT 1) AS ledger_generation FROM retired r LEFT JOIN pages o ON o.source_id=r.source_id AND o.slug=r.origin_slug AND o.deleted_at IS NULL LEFT JOIN live lv ON lv.source_id=r.source_id AND lv.okey=r.okey LEFT JOIN latest l ON l.source_id=r.source_id AND l.okey=r.okey) held WHERE held.restorable)) -- GBRA-161: every derived retirement waits out its hold (derivedRetirementPurgeHold). AND NOT (COALESCE(pages.frontmatter->>'retired_by','') IN ('extract-atoms','managed-reextract','stale-atoms','life-chronicle','generation-restore','synthesis-resynthesis','synthesis-cleanup') AND pages.deleted_at > now() - interval '1 day' * (SELECT COALESCE(MAX(CASE WHEN c.value ~ '^[0-9]{1,3}$' THEN CASE WHEN c.value::int BETWEEN 3 AND 365 THEN c.value::int END END), 30) FROM config c WHERE c.key = 'generations.restore_days')) -- GST-2689: an origin whose derived pages could not be labelled private stays parked (derivedOriginPurgeHold). AND NOT EXISTS (SELECT 1 FROM op_checkpoints dop WHERE dop.op = 'derived-origin-park' AND dop.fingerprint = pages.id::text) RETURNING id, slug, source_id, deleted_at::text AS deleted_at",
+            "textSha256": "5b4a19bc345dba9c332376eab80ce65efe98645536cdf5ca7801239751381e3d"
           },
           {
             "event": "commit",
@@ -1960,6 +1977,27 @@
             ],
             "sql": "UPDATE page_aliases SET slug = $1 WHERE source_id = $2 AND slug = $3",
             "textSha256": "7cf5d76156aba2755c6c33970eeac62435381611239e18c52c2cfeb3706d73d7"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE secret_store_occurrence SET slug = $1 WHERE source_id = $2 AND slug = $3 AND commit_sha IS NULL AND (page_id IS NULL OR page_id IN (SELECT id FROM pages WHERE source_id = $4 AND slug IN ($5, $6)))",
+            "textSha256": "dc82a72d28c14eaf8b2e4848234a3c3ce9b4281001969f91ef6f47a969eb4e3c"
           },
           {
             "event": "savepoint-release",
