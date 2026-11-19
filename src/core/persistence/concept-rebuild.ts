@@ -14,6 +14,10 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import type { MaintenanceAuthority } from './prepared-maintenance.ts';
+import type { ClaimPhaseClock } from './claim-phase.ts';
+import type { GBrainConfig } from '../config.ts';
+import type { PreparedMutation } from './coordinator.ts';
+import type { WriteRequest } from './model.ts';
 import { linkStreamSlugs } from './page-purge.ts';
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
@@ -261,6 +265,12 @@ export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, 
   });
   if (report.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);
   if (parked) throw Object.assign(new Error(parked), { code: 'revision_conflict' });
+}
+
+/** GST-3179: the write owner's preparer for that maintenance kind: the same retention purge a delete_page prepares. */
+export async function prepareConceptPurge(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  const { preparePageMutation } = await import('./page-prepare.ts');
+  return preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { clock });
 }
 
 /**
