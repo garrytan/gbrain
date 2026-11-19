@@ -14,7 +14,7 @@
 import { resolve } from 'node:path';
 import { currentSubmissionAuthority } from '../../minions/submission-authority.ts';
 import { currentVerifiedLocalWriter } from '../../persistence/identity.ts';
-import { ownerConnectionFor } from './client.ts';
+import { ownerConnectionFor, ownerRecoveryFor } from './client.ts';
 import { ownerIpcRefusal } from './routes.ts';
 
 export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
@@ -40,6 +40,18 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
 export function forwardWholeOperation<T>(engine: object, name: WholeOperationName, args: unknown[]): Promise<T> | undefined {
   const connection = ownerConnectionFor(engine);
   if (!connection) return undefined;
+  const recover = connection.closed ? ownerRecoveryFor(engine) : undefined;
+  // The owner went away before this operation was sent: elect again, then send it to the new owner, or run it here
+  // when this process won (owner-ops.ts holds the entry points; it is loaded late to keep the import cycle open).
+  if (recover) {
+    return recover().then(async () => {
+      const again = ownerConnectionFor(engine) === connection ? undefined : forwardWholeOperation<T>(engine, name, args);
+      if (again) return again;
+      if (ownerConnectionFor(engine) === connection) throw ownerIpcRefusal(name, 'the brain owner went away and no new owner took over');
+      const { ownerWholeOperations } = await import('./owner-ops.ts');
+      return ownerWholeOperations()[name](engine as never, ...args) as Promise<T>;
+    });
+  }
   const caller = currentSubmissionAuthority();
   if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
     return Promise.reject(ownerIpcRefusal(name, 'a remote caller\'s whole operation is not sent to the brain owner'));

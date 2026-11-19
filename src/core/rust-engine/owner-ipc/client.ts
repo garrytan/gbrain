@@ -8,8 +8,10 @@
  *   its own in case the owner is stuck.
  * - The caller's AbortSignals (the request signal of request-signal.ts and any signal argument) end the call at once
  *   with `cancelled`, or `timeout` when the signal's reason is a TimeoutError, and tell the owner to stop it.
- * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and every later
- *   call with `owner_unavailable` (`not_sent`). There is no owner handoff in this release.
+ * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and is never sent
+ *   again, so a write the owner may have committed is not applied twice. A later call first runs the engine's
+ *   `recover` step (a new election, rust-engine.ts) and then runs on the new owner, or in this process when it won.
+ *   Without `recover`, a later call ends with `owner_unavailable` (`not_sent`).
  * - The socket holds the event loop open only while a call is in flight, so a finished CLI command exits.
  */
 import net, { type Socket } from 'node:net';
@@ -52,12 +54,19 @@ interface Pending {
 }
 
 const connections = new WeakMap<object, OwnerConnection>();
+/** The step that replaces a lost owner for an engine (a new election), registered by installOwnerClient. */
+const recoveries = new WeakMap<object, () => Promise<void>>();
 /** countPagesBy grouper functions the client resolved to a fixed table; they cross the socket as that table. */
 const grouperTables = new WeakMap<object, { types: string[]; groups: string[] }>();
 
 /** The owner connection an engine reaches its brain through, or undefined when the engine owns it (or is no client). */
 export function ownerConnectionFor(engine: object): OwnerConnection | undefined {
   return connections.get(engineKey(engine));
+}
+
+/** The step that replaces the engine's lost owner, when the engine has one (installOwnerClient `recover`). */
+export function ownerRecoveryFor(engine: object): (() => Promise<void>) | undefined {
+  return recoveries.get(engineKey(engine));
 }
 
 function lastKey(path: string): string {
@@ -266,10 +275,28 @@ async function countPagesByThroughOwner(connection: OwnerConnection, args: unkno
  * call, each refused member rejects with `engine_capability_missing`, and the engine's capability set mirrors the
  * owner's. Returns the function that undoes it (on disconnect or when the owner goes away), which also restores the
  * engine's own capability set.
+ *
+ * `recover` replaces a lost owner. Once the connection has closed, a call that was not sent runs it and then calls the
+ * member again on the engine (now a client of the new owner, or the owner itself); a call in flight when the owner
+ * went away still ends with `owner_unavailable` (`outcome_unknown`).
  */
-export function installOwnerClient(engine: object, connection: OwnerConnection): () => void {
+export function installOwnerClient(
+  engine: object, connection: OwnerConnection, opts: { recover?: () => Promise<void> } = {},
+): () => void {
   const record = engine as EngineRecord;
   const installed: string[] = [];
+  const recover = opts.recover;
+  const viaOwner = (member: string, send: (...args: unknown[]) => Promise<unknown>) => {
+    const value = (...args: unknown[]): Promise<unknown> => {
+      if (!recover || !connection.closed) return send(...args);
+      return recover().then(() => {
+        const next = record[member];
+        if (next === value || typeof next !== 'function') throw ownerGone(member, connection.hello.pid, false);
+        return (next as (...a: unknown[]) => Promise<unknown>).apply(engine, args);
+      });
+    };
+    return value;
+  };
   for (const [member, route] of Object.entries(OWNER_IPC_ROUTES)) {
     if (route === 'local') continue;
     const missing = missingOnRustOwner(connection.hello, member);
@@ -278,8 +305,8 @@ export function installOwnerClient(engine: object, connection: OwnerConnection):
       : route === 'refuse'
       ? () => Promise.reject(ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
       : member === 'countPagesBy'
-        ? (...args: unknown[]) => countPagesByThroughOwner(connection, args)
-        : (...args: unknown[]) => connection.request('call', member, args);
+        ? viaOwner(member, (...args: unknown[]) => countPagesByThroughOwner(connection, args))
+        : viaOwner(member, (...args: unknown[]) => connection.request('call', member, args));
     Object.defineProperty(record, member, { value, writable: true, configurable: true, enumerable: false });
     installed.push(member);
   }
@@ -288,10 +315,12 @@ export function installOwnerClient(engine: object, connection: OwnerConnection):
   if (capabilities instanceof Set) { capabilities.clear(); for (const c of connection.hello.capabilities) capabilities.add(c); }
   const key = engineKey(engine);
   connections.set(key, connection);
+  if (recover) recoveries.set(key, recover);
   return () => {
     for (const member of installed) delete record[member];
     if (capabilities instanceof Set) { capabilities.clear(); for (const c of own) capabilities.add(c); }
     if (connections.get(key) === connection) connections.delete(key);
+    if (recoveries.get(key) === recover) recoveries.delete(key);
     connection.close();
   };
 }

@@ -5,8 +5,9 @@
  * there as a client instead of failing with `store_locked`.
  *
  * Election retries for a bounded time: an owner that holds the lock but has not bound its socket yet, or one that just
- * exited, is waited for; once the lock is free this process takes it. Handing the brain over while calls are in
- * flight is not part of this release (routes.ts `ownerGone`).
+ * exited, is waited for; once the lock is free this process takes it. When an owner goes away, the calls it had not
+ * answered end with `owner_unavailable` (`outcome_unknown`) and are never sent again; the client's next call runs this
+ * election again (rust-engine.ts), so one of the remaining processes becomes the owner.
  */
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

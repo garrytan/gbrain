@@ -12,7 +12,9 @@
  * One process owns a Rust brain at a time (rust-engine/owner-ipc/). `connect` takes the brain's owner lock, opens the
  * store and serves this engine on the owner socket, or, when another process holds the lock, makes this engine a
  * client of that owner without opening the store: its data members then run on the owner, and the members that need
- * a transaction refuse (owner-ipc/routes.ts).
+ * a transaction refuse (owner-ipc/routes.ts). When the owner goes away, the calls it had not answered end with
+ * `owner_unavailable` (`outcome_unknown`, never sent again), and the next call runs the election again: this process
+ * becomes the owner or a client of the new one, and the call runs there.
  */
 import type { BrainEngine } from './engine.ts';
 import type { Capability, EngineCapabilities } from './engine-capabilities.ts';
@@ -58,7 +60,7 @@ export class RustEngine {
   private _savedConfig: EngineConfig | null = null;
   private _connected = false;
   private _store: RustStore | null = null;
-  /** The election in progress. */
+  /** The election in progress (the first connect, or a takeover after the owner went away). */
   private _opening: Promise<void> | null = null;
   /** Bumped by every `disconnect`, so an election that started before it knows it was abandoned. */
   private _generation = 0;
@@ -76,7 +78,7 @@ export class RustEngine {
   /** True between `connect()` and `disconnect()`. */
   get connected(): boolean { return this._connected; }
 
-  /** `owner` when this process owns the brain, `client` when it reaches the owner, null before connect. */
+  /** `owner` when this process owns the brain, `client` when it reaches the owner, null before connect or mid-takeover. */
   get ownerRole(): 'owner' | 'client' | null { return this._owner?.role ?? null; }
 
   /** The owner's call pool, when this process owns the brain. */
@@ -112,7 +114,7 @@ export class RustEngine {
       wholeOperations: ownerWholeOperations(),
       ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
       // Holding the owner lock: stop forwarding to any owner that went away, then open the store before the socket
-      // serves, so no call reaches this engine without it.
+      // serves, so no call reaches this engine without it. A call that comes meanwhile waits for this election.
       onLock: async () => {
         this._leaveClient();
         const store = await openRustStore(this.addon, this.databasePath);
@@ -141,9 +143,16 @@ export class RustEngine {
     }
     if (role.role === 'client') {
       this._leaveClient();
-      this._leaveOwner = installOwnerClient(this, role.connection);
+      this._leaveOwner = installOwnerClient(this, role.connection, { recover: () => this._takeOver(role) });
     }
     this._owner = role;
+  }
+
+  /** The owner on `lost` went away: run the election again, once, for every call that saw it. */
+  private _takeOver(lost: OwnerRole): Promise<void> {
+    if (this._owner === lost) this._owner = null;
+    if (!this._connected) return Promise.reject(mapStoreError({ code: 'store_closed' }, { member: 'connect' }));
+    return this._owner ? Promise.resolve() : this._elect();
   }
 
   private _leaveClient(): void {
@@ -184,6 +193,21 @@ export class RustEngine {
     return this._store;
   }
 
+  /** The open store, or null. */
+  openStoreIfOpen(): RustStore | null { return this._store; }
+
+  /**
+   * The store a served member runs on, after any election in progress (a takeover once the owner went away). Null
+   * when that election made this engine a client: the member then runs on the new owner.
+   */
+  async storeAfterElection(member: string): Promise<RustStore | null> {
+    while (!this._store && this._connected) {
+      if (this._owner?.role === 'client') return null;
+      await this._elect();
+    }
+    return this.openStore(member);
+  }
+
   async reconnect(_ctx?: { error?: unknown }): Promise<void> {
     if (!this._savedConfig) return; // never connected; nothing to restore
     const config = this._savedConfig;
@@ -209,7 +233,13 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
     writable: true,
     enumerable: false,
     value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
-      return (impl as (brain: unknown, ...rest: unknown[]) => Promise<unknown>)(this.openStore(member).brain, ...args);
+      const store = this.openStoreIfOpen() ?? await this.storeAfterElection(member);
+      if (!store) {
+        // A client forwards the member with an own property (owner-ipc/client.ts); without one it cannot run here.
+        if (!Object.hasOwn(this, member)) throw mapStoreError({ code: 'store_closed' }, { member });
+        return ((this as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[member]!)(...args);
+      }
+      return (impl as (brain: unknown, ...rest: unknown[]) => Promise<unknown>)(store.brain, ...args);
     },
   });
 }
