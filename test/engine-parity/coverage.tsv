@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 853/853
+# covered: 855/855
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -41,7 +41,7 @@
 # minion_subagent: 17/17
 # cli_reads_ops: 11/11
 # facts_doctor: 11/11
-# embedding_catalog: 5/5
+# embedding_catalog: 7/7
 # doctor_reads: 1/1
 # doctor_derived: 27/27
 # doctor_persistence: 38/38
@@ -95,13 +95,13 @@ getPage	pages	yes	95	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	442	yes	yes	yes	serves
+putPage	pages	yes	443	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	16	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	144	yes	yes	yes	serves
+softDeletePage	pages	yes	145	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -191,9 +191,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
-upsertChunks	chunks	yes	30	yes	yes	yes	serves
+upsertChunks	chunks	yes	32	yes	yes	yes	serves
 sealChunks	chunks	yes	48	no	yes	yes	serves
-getChunks	chunks	yes	27	yes	yes	yes	serves
+getChunks	chunks	yes	28	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
 getChunkWindows	chunks	yes	4	no	yes	yes	serves
 countStaleChunks	chunks	yes	6	no	yes	yes	serves
@@ -355,7 +355,7 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	13	no	yes	yes	serves
+getConfig	config	yes	14	no	yes	yes	serves
 setConfig	config	yes	28	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -557,6 +557,8 @@ readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
 hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
+readChunkColumnTypes	embedding_catalog	yes	1	no	yes	yes	serves
+countChunkColumnCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 countPageChildOrphans	doctor_reads	yes	1	no	yes	yes	serves
 readIgnoredPrivacyLabelCounts	doctor_derived	yes	1	no	yes	yes	serves
 countSafeIndexPending	doctor_derived	yes	1	no	yes	yes	serves

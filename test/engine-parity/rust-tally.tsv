@@ -25,7 +25,7 @@ test/engine-parity/doctor-sources.test.ts	2	0
 test/engine-parity/doctor-sync.test.ts	1	0
 test/engine-parity/doctor-terminal.test.ts	2	0
 test/engine-parity/effect-scans.test.ts	3	0
-test/engine-parity/embedding-catalog.test.ts	7	0
+test/engine-parity/embedding-catalog.test.ts	8	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-reads.test.ts	9	0
 test/engine-parity/extraction.test.ts	6	0

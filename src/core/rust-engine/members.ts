@@ -351,6 +351,8 @@ export const RUST_ENGINE_MEMBERS = {
   listEmbeddingStores: 'embeddings',
   hasStoredVectors: 'embeddings',
   countChunkVectorCoverage: 'embeddings',
+  readChunkColumnTypes: 'embeddings',
+  countChunkColumnCoverage: 'embeddings',
   countPageChildOrphans: 'health',
   listCapacityCounters: 'persistence_journal',
   listOutstandingHolders: 'persistence_journal',

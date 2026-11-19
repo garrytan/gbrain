@@ -146,6 +146,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listEmbeddingStores': OOS.embeddingCatalog,
   'hasStoredVectors': OOS.embeddingCatalog,
   'countChunkVectorCoverage': OOS.embeddingCatalog,
+  'readChunkColumnTypes': OOS.embeddingCatalog,
+  'countChunkColumnCoverage': OOS.embeddingCatalog,
   'countPageChildOrphans': OOS.doctorReads,
   'readIgnoredPrivacyLabelCounts': OOS.doctorDerived,
   'countSafeIndexPending': OOS.doctorDerived,
