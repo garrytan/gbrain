@@ -16,6 +16,7 @@ same members. No store call returns a token hash, and the store never logs one. 
 | `brain.setAccessTokenMinTrust(id, tier)` | null. Sets the token's read floor, or clears it with null. An id no token has changes nothing |
 | `brain.listAccessTokens()` | every token, revoked ones too, newest first (`ORDER BY created_at DESC`; a tie by id): `{ id, name, scopes, created_at, last_used_at, revoked_at }` plus the grant columns `gbrain auth list` prints. `last_used_at` is always null (not kept) |
 | `brain.readActiveAccessTokenGrant(id)` | `{ permissions, private_pages }` of the token not revoked with this id, or null. `private_pages` is not kept, so it reads as the column default `none`; the TypeScript member returns the field the caller asked for |
+| `brain.readAccessToken(id)` | the whole row of the token with this id (a UUID, so any case), revoked or not, or null: the same columns as `readActiveAccessTokenByHash` below, without `token_hash`. It serves the legacy-token read of `readJobPrincipal` (`SELECT * FROM access_tokens WHERE id = $1`); the TypeScript member makes the three times Dates. An id that is not a UUID finds nothing, where PostgreSQL refuses it with 22P02 |
 | `brain.accessTokenLive(id)` | whether a token not revoked has this id, compared as text (`id::text = $1`) |
 | `brain.revokeAccessTokensNamed(name)` | the ids it revoked, by id: stamps `revoked_at` on every token not revoked with exactly this name, in one write |
 | `brain.revokeAccessToken(id)` | the name of the token not revoked with this id after stamping its `revoked_at`, or null |
@@ -36,7 +37,9 @@ the token's wake watches. `readActiveTokenPrivatePages` and `readActiveTokenPerm
 engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-transport.ts` call
 `readActiveAccessTokenByHash` and `touchAccessTokenLastUsed`; the OAuth token read before it
 (`readOauthAccessTokenRows`) reads the OAuth tokens the store keeps ([oauth-tokens.md](oauth-tokens.md)), and
-`touchAccessTokenLastUsed` stamps `last_used_at` (below).
+`touchAccessTokenLastUsed` stamps `last_used_at` (below). The remote job principal check
+(`assertCurrentRemoteJobPrincipal` in `src/core/minions/submission-authority.ts`) reads a legacy token through
+`readJobPrincipal`, which calls `readAccessToken`.
 
 ## Constraints
 

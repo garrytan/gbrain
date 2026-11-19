@@ -130,7 +130,7 @@ function batchItems(batches: Approved[], hash: string): BatchItem[] {
 }
 
 const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [ids]);
+  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id = ANY($1::text[]) ORDER BY id COLLATE "C"', [ids]);
 
 export const purgedPageFactsRepair: RepairHandler = {
   kind: COMMAND,

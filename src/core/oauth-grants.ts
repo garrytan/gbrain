@@ -180,7 +180,7 @@ export class OAuthGrants {
       && !row.grant_types.includes('client_credentials') && row.source_grant !== 'none'
       && !await clientHoldsAuthorization(this.options.sql, clientId);
     const options = editable
-      ? (await this.options.sql`SELECT id, name FROM sources WHERE archived = false ORDER BY id`).map(r => ({ id: String(r.id), name: String(r.name) }))
+      ? (await this.options.sql`SELECT id, name FROM sources WHERE archived = false ORDER BY id COLLATE "C"`).map(r => ({ id: String(r.id), name: String(r.name) }))
       : [];
     // No await between the capacity check and insert: concurrent DB reads cannot overfill the store or a client's budget.
     this.assertCapacity(clientId);

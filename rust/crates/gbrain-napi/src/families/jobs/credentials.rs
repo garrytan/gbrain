@@ -28,6 +28,16 @@ impl Brain {
         self.run(env, move |s| s.read_active_access_token_grant(&id))
     }
 
+    /// `readJobPrincipal` for a legacy token: the token's whole row without its hash, revoked or not, or null.
+    #[napi]
+    pub fn read_access_token<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token(&id))
+    }
+
     /// `readActiveAccessTokenByHash(hash)`: the active token's whole row without its hash, or null.
     #[napi]
     pub fn read_active_access_token_by_hash<'env>(

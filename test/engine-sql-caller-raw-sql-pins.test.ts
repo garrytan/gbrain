@@ -1179,12 +1179,12 @@ const PINS: Pin[] = [
     ['all', {}],
     ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
   ] as const).map(([variant, opts]): Pin => ({
-    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant})`,
+    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant}, at f549f444af)`,
     case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
     texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
     JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
     WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`],
+    ORDER BY s.id COLLATE "C",h.fingerprint`],
   })),
   {
     from: 'src/core/sync-dispatch-read.ts:51 syncDispatchRow',

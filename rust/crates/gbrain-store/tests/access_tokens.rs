@@ -249,6 +249,44 @@ fn the_bearer_read_finds_the_active_token_by_hash_without_the_hash_and_not_after
     );
 }
 
+#[test]
+fn the_job_principal_read_finds_the_token_by_id_in_any_case_revoked_or_not_without_the_hash() {
+    let b = brain("tokens-by-id");
+    let id = insert(
+        &b,
+        token(
+            "legacy",
+            "hash-l",
+            json!({ "scopes": ["admin"], "source_grant": null }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    let row = b
+        .read_access_token(&id.to_ascii_uppercase())
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["id"], json!(id));
+    assert_eq!(row["name"], json!("legacy"));
+    assert_eq!(row["scopes"], json!(["admin"]));
+    assert_eq!(row["permissions"], json!({ "source_id": "wiki" }));
+    assert_eq!(row["source_grant"], Value::Null);
+    assert_eq!(row["revoked_at"], Value::Null);
+    assert!(row.get("token_hash").is_none());
+    assert_eq!(
+        b.read_access_token("00000000-0000-4000-8000-0000000000c9")
+            .unwrap(),
+        None
+    );
+    b.revoke_access_token(&id).unwrap();
+    let revoked = b.read_access_token(&id).unwrap().unwrap();
+    assert_eq!(revoked["name"], json!("legacy"));
+    assert!(
+        revoked["revoked_at"].is_string(),
+        "a revoked token is read with its revoked_at"
+    );
+}
+
 const MINUTE_US: i64 = 60_000_000;
 
 #[test]

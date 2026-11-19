@@ -235,7 +235,7 @@ function previewCommand(scope: RepairScope, all: string[], includeAmbiguous: boo
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(row => row.id);
 }
 
 function pageItem(page: CapturedFactsPage, hash: string, index: number, last: boolean): PageItem {

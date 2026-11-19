@@ -3,7 +3,8 @@
 //!
 //! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, and the credential members of
 //! `src/core/engine-sql/access-credentials.ts`: listAccessTokens, readActiveAccessTokenGrant, accessTokenLive,
-//! readActiveAccessTokenByHash (the bearer checks), revokeAccessTokensNamed and revokeAccessToken.
+//! readActiveAccessTokenByHash (the bearer checks), revokeAccessTokensNamed and revokeAccessToken; and the legacy-token
+//! read of readJobPrincipal (`src/core/engine-sql/access-control.ts`), through read_access_token.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
@@ -281,6 +282,17 @@ impl Store {
             get_json::<TokenRecord>(&*read, &token_key(&id.to_ascii_lowercase()))?
                 .filter(|t| t.revoked_at.is_none())
                 .map(|t| json!({ "permissions": t.permissions, "private_pages": "none" })),
+        )
+    }
+
+    /// `readJobPrincipal({ kind: 'legacy_token', id })` (`SELECT * FROM access_tokens WHERE id = $1`): the whole row of
+    /// the token with this id (a UUID, so any case), revoked or not, or None. The caller reads `revoked_at` itself and
+    /// names it when it denies a job. The row has the same columns as the bearer read's and leaves out `token_hash`.
+    pub fn read_access_token(&self, id: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(
+            get_json::<TokenRecord>(&*read, &token_key(&id.to_ascii_lowercase()))?
+                .map(|t| t.whole_row()),
         )
     }
 

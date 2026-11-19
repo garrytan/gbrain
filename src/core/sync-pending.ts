@@ -209,7 +209,7 @@ export async function loadPendingRoster(engine: Pick<BrainEngine, 'executeRaw'>,
        LEFT JOIN persistence_host_bindings h ON h.worktree_id = b.worktree_id AND h.host_id::text = $2
       WHERE s.archived IS NOT TRUE AND (b.source_id IS NOT NULL OR s.local_path IS NOT NULL)
         AND ($1::text[] IS NULL OR s.id = ANY($1::text[]))
-      ORDER BY s.id`, [sourceIds ?? null, existingHostIdFor(engine)]);
+      ORDER BY s.id COLLATE "C"`, [sourceIds ?? null, existingHostIdFor(engine)]);
   return rows.filter(row => !isSyncDisabledConfig(row.config))
     .map(row => ({ id: row.id, last_commit: row.last_commit, root: row.root, managed: row.managed === true || row.managed === 't' }));
 }

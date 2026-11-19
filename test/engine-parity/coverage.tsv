@@ -104,7 +104,7 @@ countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
-listAllSources	pages	yes	6	no	yes	yes	serves
+listAllSources	pages	yes	8	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
 getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -644,7 +644,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	11	no	yes	yes	serves
 listOauthClients	minion_queue	yes	1	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	10	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	12	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
@@ -737,7 +737,7 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	3	no	yes	yes	serves
-loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
+loopFactDrift	facts_repair	yes	3	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
@@ -771,7 +771,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	6	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -867,7 +867,7 @@ listAppliedPolicyRevisions	write_misc	yes	3	no	yes	yes	serves
 readLiveMember	write_misc	yes	7	no	yes	yes	serves
 readFolderAccess	write_misc	yes	7	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
-readJobPrincipal	write_misc	yes	2	no	yes	yes	serves
+readJobPrincipal	write_misc	yes	4	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	3	no	yes	yes	serves
 readAccessStoreConfig	write_misc	no	0	no	-	-	-
 writeAccessStoreConfig	write_misc	no	0	no	-	-	-
@@ -890,7 +890,7 @@ replaceAccessInvalidCoverage	write_misc	no	0	no	-	-	-
 readAccessMembers	write_misc	yes	8	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	3	no	yes	yes	serves
-revokeAccessToken	write_misc	yes	6	no	yes	yes	serves
+revokeAccessToken	write_misc	yes	7	no	yes	yes	serves
 deleteOAuthClient	write_misc	yes	5	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readAccessGroups	write_misc	yes	3	no	yes	yes	serves

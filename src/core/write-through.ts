@@ -310,7 +310,7 @@ export async function scannerSlugRootMode(engine: BrainEngine, sourceId: string,
  */
 export async function otherSourceOwning(engine: BrainEngine, sourceId: string, path: string, relativeOwns = true): Promise<string | null> {
   const rows = await engine.executeRaw<{ id: string; local_path: string; archived: boolean }>(
-    `SELECT id, local_path, archived IS TRUE AS archived FROM sources WHERE id <> $1 AND local_path IS NOT NULL AND local_path <> '' ORDER BY id`,
+    `SELECT id, local_path, archived IS TRUE AS archived FROM sources WHERE id <> $1 AND local_path IS NOT NULL AND local_path <> '' ORDER BY id COLLATE "C"`,
     [sourceId],
   );
   const identity = (spelling: string) => { try { return canonicalFilesystemPath(msysToNativePath(spelling)); } catch { return null; } };

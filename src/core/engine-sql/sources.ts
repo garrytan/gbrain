@@ -159,7 +159,7 @@ export async function lockAllSourceRows(exec: SqlExecutor, mode: 'update' | 'sha
  */
 export async function listStaleSyncSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id`,
+    `SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id COLLATE "C"`,
   );
   return rows.map(r => r.id);
 }
@@ -243,7 +243,7 @@ export async function readPlainSyncSource(exec: LegacyUnscopedRead, sourceId: st
  */
 export async function listSourceRoutingRows(exec: LegacyUnscopedRead): Promise<SourceRoutingRow[]> {
   return exec.executeRaw<SourceRoutingRow>(
-    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id`,
+    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE "C"`,
   );
 }
 

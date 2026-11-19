@@ -121,7 +121,7 @@ async function membersPastStart(engine: BrainEngine, row: Pick<WorktreeRefreshRo
   const members = await engine.executeRaw<{ id: string; last_commit: string | null; imported: boolean }>(`SELECT s.id,s.last_commit,
     EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=s.id AND $2::bigint IS NOT NULL AND r.sequence > $2::bigint
       AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.state NOT IN ('failed','conflict','cancelled')) AS imported
-    FROM sources s WHERE s.id = ANY($1::text[]) ORDER BY s.id`, [row.source_ids, row.barrier_sequence == null ? null : String(row.barrier_sequence)]);
+    FROM sources s WHERE s.id = ANY($1::text[]) ORDER BY s.id COLLATE "C"`, [row.source_ids, row.barrier_sequence == null ? null : String(row.barrier_sequence)]);
   const moved = members.filter(member => member.imported || (member.last_commit !== null && member.last_commit !== row.old_head));
   return withGit(async git => {
     const past: string[] = [];
@@ -138,7 +138,7 @@ async function membersPastStart(engine: BrainEngine, row: Pick<WorktreeRefreshRo
  */
 type WayOut = { kind: 'forward'; head: string } | { kind: 'diverged'; tips: string[] } | { kind: 'unplaced'; members: Array<{ source_id: string; commit: string }> };
 async function keepPagesWayOut(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 'source_ids' | 'old_head' | 'target_head'>, root: string): Promise<WayOut> {
-  const members = (await engine.executeRaw<{ id: string; last_commit: string | null }>('SELECT id,last_commit FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [row.source_ids]))
+  const members = (await engine.executeRaw<{ id: string; last_commit: string | null }>('SELECT id,last_commit FROM sources WHERE id = ANY($1::text[]) ORDER BY id COLLATE "C"', [row.source_ids]))
     .filter((member): member is { id: string; last_commit: string } => !!member.last_commit);
   const unplaced = (commits: string[]): WayOut => ({ kind: 'unplaced', members: members.filter(member => commits.includes(member.last_commit)).map(member => ({ source_id: member.id, commit: member.last_commit })) });
   return withGit(async git => {

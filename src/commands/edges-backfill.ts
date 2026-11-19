@@ -86,7 +86,7 @@ export async function runEdgesBackfill(engine: BrainEngine, args: string[]): Pro
   if (opts.allSources) {
     try {
       const rows = await engine.executeRaw<{ id: string }>(
-        `SELECT id FROM sources WHERE archived = false ORDER BY id`,
+        `SELECT id FROM sources WHERE archived = false ORDER BY id COLLATE "C"`,
         [],
       );
       sourceIds = rows.map((r) => r.id);

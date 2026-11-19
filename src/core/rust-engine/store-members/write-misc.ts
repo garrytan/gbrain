@@ -139,12 +139,17 @@ export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string
   via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
 
 /**
- * A queued remote job's principal: an OAuth client's row comes from the store's client read (readOauthClient, as
- * minions/submission-authority.ts reads it); the store's token reads return no whole legacy token row, so a legacy
- * token has none and the job is denied as revoked.
+ * A queued remote job's principal, revoked and deleted rows included: an OAuth client's row comes from the store's client
+ * read (readOauthClient, as minions/submission-authority.ts reads it), a legacy token's from the token the store keeps
+ * (`brain.readAccessToken`), with its times as Dates as PGLite and Postgres return them. The row leaves out `token_hash`.
  */
-export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async (brain, principal) =>
-  principal.kind === 'oauth_client' ? (await readOauthClient(brain, principal.id) as unknown as Record<string, unknown> | null) : null;
+export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async (brain, principal) => {
+  if (principal.kind === 'oauth_client') return await readOauthClient(brain, principal.id) as unknown as Record<string, unknown> | null;
+  const raw = await storeCall({ member: 'readJobPrincipal' }, () => brain.readAccessToken(principal.id)) as Record<string, unknown> | null;
+  if (!raw) return null;
+  const date = (v: unknown) => v == null ? null : new Date(String(v));
+  return { ...raw, created_at: date(raw.created_at), last_used_at: date(raw.last_used_at), revoked_at: date(raw.revoked_at) };
+};
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;

@@ -131,7 +131,7 @@ export const ontologyFactsRepair: RepairHandler = {
       const facts = await classifyOntologyFacts(engine, scope.source_ids);
       const restorable = facts.filter(f => f.class === 'restorable');
       const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-        'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+        'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]);
       const hash = previewHash({ kind: 'ontology-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, facts });
       if (restorable.length) await saveApprovedSet<ApprovedFact>(engine, { command: 'ontology-facts', hash }, restorable.map(f => ({ ...f, selection: scope.source_ids })));
       const residuals: Record<string, number> = {};
@@ -145,7 +145,7 @@ export const ontologyFactsRepair: RepairHandler = {
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }
     const approved = await loadApprovedSet<ApprovedFact>(engine, { command: 'ontology-facts', hash: opts.expect, previewCommand: command,
-      emptyHash: async () => previewHash({ kind: 'ontology-facts-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection: { source_ids: scope.source_ids }, facts: [] }) });
+      emptyHash: async () => previewHash({ kind: 'ontology-facts-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids])), selection: { source_ids: scope.source_ids }, facts: [] }) });
     if (approved.items.some(f => JSON.stringify(f.selection) !== JSON.stringify(scope.source_ids))) throw previewChangedError(opts.expect, command);
     const items = approved.items.map(({ selection: _selection, ...f }, index) => item(f, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };

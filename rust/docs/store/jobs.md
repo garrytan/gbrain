@@ -111,10 +111,9 @@ is denied on the store as on PGLite; a current source goes on to the owner's `oa
 The archived-source branch is pinned by cargo only (`job_source_state_reads_archived_and_the_creation_stamp` in
 `tests/jobs_slice2.rs`). The parity suite cannot reach it: no member the Rust engine serves archives a source, so
 a mutant that always reads `archived` as false passes parity and fails cargo.
-A generic remote job (`remote_generic`) reads its principal first (`SELECT client_id, deleted_at, scope, source_id,
-bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1`, or `SELECT * FROM
-access_tokens WHERE id = $1` for a legacy token), so its retry refuses at that read until the legacy-token read is in
-the store. A policy that got past the
+A generic remote job (`remote_generic`) reads its principal first, through the typed `readOauthClient` or
+`readJobPrincipal` (both served by the store), then its source registration (`SELECT id, local_path, config, archived,
+created_at FROM sources WHERE id = $1`, caller raw SQL), so its submit and its retry refuse at that source read. A policy that got past the
 lock would still refuse before the write: the lock, the capacity count and the write are separate store calls, so
 they are not one admission. `lockOAuthClient` called directly is not served and refuses the same way.
 

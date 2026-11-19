@@ -43,6 +43,13 @@ import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 import { assertScopeSourceGrant, markedScopeSources } from '../../src/core/access/attest-sources.ts';
 import { GrantError } from '../../src/core/grants/model.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { assertCurrentRemoteJobPrincipal, prepareRemoteJob, type RemoteJobAuthority } from '../../src/core/minions/submission-authority.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import type { AccessTokenInsert } from '../../src/core/engine-sql/access-tokens.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -677,8 +684,9 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: the member returns the revoked or deleted row as stored (the caller names which one denied the job), and
-  // a token id named as a client, or a client id named as a token, finds nothing. The Rust member answers no legacy
-  // token (rust/docs/store/write_misc.md), so the raw token write stops on the raw_sql refusal.
+  // a token id named as a client, or a client id named as a token, finds nothing. The fixture writes raw SQL, which a
+  // Rust brain refuses, so the write stops on the raw_sql refusal; the legacy-token job cases below mint through the
+  // typed insertAccessToken and cover Rust.
   parityTest('readJobPrincipal reads only the row it names, revoked and deleted rows included', { methods: ['readJobPrincipal'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_tokens (id, name, token_hash, scopes, revoked_at) VALUES
@@ -715,6 +723,66 @@ describe('engine parity: write misc', () => {
       clientAsToken: 'refused',
     });
     return seen;
+  });
+
+  // A remote job's principal check for a legacy token (assertCurrentRemoteJobPrincipal, at submit and before every run).
+  // Leak case: a live admin token for the job's source passes; the same token once revoked, an id no token has, a
+  // read-only token and a token for another source are denied, on every arm. The Rust store reads the token it keeps.
+  parityTest('a remote job\'s legacy-token principal passes while the token is live and is denied once revoked, unknown, read-only or for another source', { methods: ['readJobPrincipal', 'insertAccessToken', 'revokeAccessToken'] }, async (engine) => {
+    const mint = async (name: string, scopes: string[], sourceId: string) => (await engine.insertAccessToken({
+      name, token_hash: `hash-${name}`, scopes, permissions: { source_id: sourceId }, source_grant: null, source_id: null,
+      federated_read: null, allowed_operations: null, takes_holders: null,
+    } satisfies AccessTokenInsert)).id;
+    const authority = (id: string): RemoteJobAuthority => ({
+      version: 1, kind: 'remote_generic', principal: { kind: 'legacy_token', id },
+      grant: { scopes: ['admin'], sourceId: 'default', sourceCreatedAt: new Date(0).toISOString(), canonicalRoot: '/brain', worktreeRoot: '/brain', jobName: 'lint', allowedOperations: null },
+      payloadHash: 'unused-by-the-principal-check',
+    });
+    const check = (id: string) => assertCurrentRemoteJobPrincipal(engine, authority(id)).then(() => 'accepted', (e: Error) => e.message);
+    const live = await mint('legacy-admin', ['admin'], 'default');
+    const reader = await mint('legacy-reader', ['read'], 'default');
+    const elsewhere = await mint('legacy-elsewhere', ['admin'], 'other');
+    const before = await check(live);
+    await engine.revokeAccessToken(live);
+    const seen = {
+      before, revoked: await check(live), unknown: await check('00000000-0000-4000-8000-0000000000c9'),
+      readOnly: await check(reader), otherSource: await check(elsewhere),
+    };
+    const denied = 'Queued job authorization: legacy token is missing or revoked';
+    const outOfGrant = 'Queued job authorization: the original grant and current principal must both authorize this source and admin operation';
+    expect(seen).toEqual({ before: 'accepted', revoked: denied, unknown: denied, readOnly: outOfGrant, otherSource: outOfGrant });
+    return seen;
+  });
+
+  // The submit path end to end: prepareRemoteJob reads the source registration, then the principal. PGLite and Postgres
+  // accept a live legacy admin token's lint job. The source read is still caller raw SQL (rust/docs/store/jobs.md), so a
+  // Rust brain stops there, before the principal check, for every principal kind.
+  parityTest('a remote lint job submitted with a live legacy admin token is accepted, with the token as its principal', { methods: ['readJobPrincipal', 'insertAccessToken'] }, async (engine, backend) => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-legacy-job-'));
+    try {
+      execFileSync('git', ['init', '-q', root]);
+      await createSource(engine, backend, 'jobs', {}, root);
+      const { id } = await engine.insertAccessToken({
+        name: 'legacy-jobs', token_hash: 'hash-legacy-jobs', scopes: ['admin'], permissions: { source_id: 'jobs' }, source_grant: null,
+        source_id: null, federated_read: null, allowed_operations: null, takes_holders: null,
+      });
+      const ctx: OperationContext = {
+        engine, config: {} as OperationContext['config'], dryRun: false, remote: true, sourceId: 'jobs',
+        logger: { info() {}, warn() {}, error() {} },
+        auth: { token: 'test-only', clientId: 'legacy-jobs', principal: { kind: 'legacy_token', id }, scopes: ['admin'], sourceId: 'jobs' },
+      };
+      const submitted = await prepareRemoteJob(ctx, 'lint', {}).then(r => r, (e: unknown) => e);
+      if (backend === 'rust') {
+        expect(isCapabilityRefusal(submitted, 'raw_sql')).toBe(true);
+        throw submitted;
+      }
+      const accepted = submitted as Awaited<ReturnType<typeof prepareRemoteJob>>;
+      const seen = { principal: accepted.authority.principal, sourceId: accepted.data.sourceId, jobName: accepted.authority.grant.jobName };
+      expect(seen).toEqual({ principal: { kind: 'legacy_token', id }, sourceId: 'jobs', jobName: 'lint' });
+      return { ...seen, principal: { kind: 'legacy_token' } };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   parityTest('readAudiencePrincipals reads nothing for an empty audience and finds no member or group on a brain with none', { methods: ['readAudiencePrincipals'] }, async (engine) => {

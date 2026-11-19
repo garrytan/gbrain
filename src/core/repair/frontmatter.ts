@@ -197,7 +197,7 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
 async function sourceRoots(engine: BrainEngine, scope: RepairScope, residuals: Record<string, number>, warnings: string[]): Promise<SourceRoot[]> {
   const managed = await managedPersistenceEnabled(engine);
   const rows = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
-    'SELECT id, incarnation::text AS incarnation, local_path FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    'SELECT id, incarnation::text AS incarnation, local_path FROM sources WHERE id = ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]);
   const roots: SourceRoot[] = [];
   for (const row of rows) {
     if (managed) {
@@ -455,7 +455,7 @@ export const frontmatterRepair: RepairHandler = {
           `Preview first: ${shellQuote(preview)} — show the user the per-file diffs, then run the apply command it prints (with --yes --expect <preview-hash>).`);
       }
       const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview),
-        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection, items: [] }) });
+        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids])), selection, items: [] }) });
       if (approved.items.some(entry => !sameSelection(entry.selection, selection))) throw previewChangedError(opts.expect, shellQuote(preview));
       for (const sourceId of new Set(approved.items.map(entry => entry.source_id))) {
         const named = await busySyncPath(engine, sourceId, approved.items.filter(entry => entry.source_id === sourceId));
@@ -476,7 +476,7 @@ export const frontmatterRepair: RepairHandler = {
     const found = await scan(engine, scope, selection, residuals, warnings);
     await reportSkippedSegmented(engine, scope.source_ids, residuals, warnings);
     for (const path of found.unknownOnly) warnings.push(`--only ${path}: no such Markdown file or hold in scope; check the source-relative path.`);
-    const sources = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    const sources = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]);
     const approvedItems = found.prepared.map(entry => entry.approved);
     const hash = previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources, selection, items: approvedItems });
     if (approvedItems.length) await saveApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash }, approvedItems.map(entry => ({ ...entry, selection })));

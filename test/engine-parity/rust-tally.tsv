@@ -88,6 +88,7 @@ test/engine-parity/search.test.ts	17	2
 test/engine-parity/segmented-body.test.ts	16	0
 test/engine-parity/session-state-cap.test.ts	11	0
 test/engine-parity/session-state.test.ts	7	0
+test/engine-parity/source-order-callers.test.ts	2	3
 test/engine-parity/source-resolver-reads.test.ts	20	0
 test/engine-parity/spend-log.test.ts	10	0
 test/engine-parity/stats-vectors.test.ts	3	0
@@ -114,7 +115,7 @@ test/engine-parity/versions-raw.test.ts	12	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/write-attribution.test.ts	4	2
 test/engine-parity/write-guards.test.ts	10	0
-test/engine-parity/write-misc.test.ts	49	16
+test/engine-parity/write-misc.test.ts	50	17
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0
 test/engine-parity/writer-registration.test.ts	2	0

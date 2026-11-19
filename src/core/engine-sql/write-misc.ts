@@ -117,7 +117,7 @@ export async function readHealthMemoClock(exec: LegacyUnscopedRead): Promise<str
 /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
 export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE "C"`);
   return rows.map(r => r.id);
 }
 

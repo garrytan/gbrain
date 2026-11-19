@@ -74,7 +74,7 @@ async function sourceFindings(engine: BrainEngine, s: GuestSourceRow): Promise<F
 
 /** A schema behind the guest-notes migration has no guest_sources table: only a config can mark a guest source, and nothing enforces it. */
 async function behindGuestMigration(engine: BrainEngine): Promise<Check> {
-  const marked = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE COALESCE(config->>'guest' = 'true', false) ORDER BY id");
+  const marked = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE COALESCE(config->>'guest' = 'true', false) ORDER BY id COLLATE \"C\"");
   const behind = `this brain's schema is behind the guest-notes migration (v${GUEST_NOTES_MIGRATION}); gbrain apply-migrations --yes brings it up to date`;
   if (!marked.length) return infoCheck(name, `Not applicable: ${behind}.`, 'not_applicable');
   return { name, status: 'warn', message: `Source(s) ${marked.map(s => s.id).join(', ')} say guest: true in their config, but ${behind}; until then nothing enforces their writer list or trust ceiling.` };

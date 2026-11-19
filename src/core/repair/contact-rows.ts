@@ -39,7 +39,7 @@ function previewCommand(scope: RepairScope, slugs: string[]): string {
 }
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) => previewHash({ kind: 'contact-rows-v1', brain_id: scope.brain_id,
-  sources: await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]),
+  sources: await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]),
   selection, pages });
 
 /** One request id per page of an approved set: a resumed apply replays it, and the plan knows which pages already published. */

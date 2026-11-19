@@ -213,6 +213,7 @@ test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts
+test/engine-parity/source-order-callers.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts

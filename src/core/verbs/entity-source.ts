@@ -71,7 +71,7 @@ export async function entitySources(ctx: OperationContext, p: { source_id?: unkn
   const scope = federatedSearchScope(ctx, undefined);
   let readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : [ctx.sourceId ?? 'default']);
   if (ctx.remote === false && readable.length === 1 && readable[0] === ALL_SOURCES) {
-    readable = (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+    readable = (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(r => r.id);
   }
   const binding = ctx.auth?.allowedSources === undefined ? ctx.explicitReadBinding : undefined;
   if (binding && readable.length === 1 && readable[0] === binding.sourceId) readable = binding.sourceIds;

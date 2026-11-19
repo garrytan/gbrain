@@ -8,7 +8,7 @@ export interface OutdatedFrontmatterHook { source_id: string; hook_path: string;
 export async function outdatedFrontmatterHooks(engine: BrainEngine, sourceIds?: string[]): Promise<OutdatedFrontmatterHook[]> {
   const { inspectFrontmatterHook } = await import('../../frontmatter-install-hook.ts');
   const rows = await engine.executeRaw<{ id: string; local_path: string }>(
-    'SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND ($1::text[] IS NULL OR id = ANY($1::text[])) ORDER BY id', [sourceIds ?? null]);
+    'SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND ($1::text[] IS NULL OR id = ANY($1::text[])) ORDER BY id COLLATE "C"', [sourceIds ?? null]);
   const seen = new Set<string>();
   const out: OutdatedFrontmatterHook[] = [];
   for (const row of rows) {

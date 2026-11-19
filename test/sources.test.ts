@@ -84,6 +84,8 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     listActiveAccessMembers: async () => [],
     // The audience check reads client usage through a typed method; no clients means a personal brain.
     readClientOpUsage: async () => [],
+    // The scope-source check reads source configs through a typed method; no source here is a scope source.
+    readScopeSourceConfigs: async () => [],
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,

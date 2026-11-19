@@ -271,7 +271,7 @@ export async function skillPreconditionsCheck(
                WHERE p.source_id = s.id
                  AND p.deleted_at IS NULL
             )
-            ORDER BY s.id`,
+            ORDER BY s.id COLLATE "C"`,
         );
         return rows.map(r => r.id);
       } catch { return []; }

@@ -83,7 +83,7 @@ function previewCommand(scope: RepairScope): string {
 }
 
 const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]);
 
 const hashOf = (scope: RepairScope, sources: unknown, entities: PagelessEntity[]) =>
   previewHash({ kind: 'facts-rehome-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, entities });

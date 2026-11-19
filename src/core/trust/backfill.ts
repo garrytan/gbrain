@@ -421,8 +421,8 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
   if (!cols.has('pages', 'trust_tier') || !cols.has('pages', 'write_origin') || !cols.has('sources', 'config')) return { mode, tables: [], rows: 0, sample: [], sources: [] };
   const targets = opts.sources
     ? await engine.executeRaw<{ id: string; claimed: boolean }>(`SELECT s.id, ${claimedSourceSql('s')} AS claimed FROM sources s
-        WHERE s.id = ANY($1::text[]) AND ${notConnectorSourceSql('s')} ORDER BY s.id`, [[...opts.sources]])
-    : await engine.executeRaw<{ id: string; claimed: boolean }>(`SELECT s.id, true AS claimed FROM sources s WHERE ${claimedSourceSql('s')} ORDER BY s.id`);
+        WHERE s.id = ANY($1::text[]) AND ${notConnectorSourceSql('s')} ORDER BY s.id COLLATE "C"`, [[...opts.sources]])
+    : await engine.executeRaw<{ id: string; claimed: boolean }>(`SELECT s.id, true AS claimed FROM sources s WHERE ${claimedSourceSql('s')} ORDER BY s.id COLLATE "C"`);
   const claimed = targets.map(r => r.id);
   const ended = targets.filter(r => !r.claimed).map(r => r.id);
   const { forTable } = classifier(cols, ended, await readLegacyCeilings(engine).catch(() => null), true);

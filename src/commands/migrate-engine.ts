@@ -133,12 +133,16 @@ interface MigratedSourceRow {
 }
 
 export async function copyMigrationSources(source: BrainEngine, target: BrainEngine): Promise<number> {
+  // Raw on purpose: the copy needs every column, and no typed member reads them all. Both sides are SQL engines
+  // (runMigrateEngine refuses a Rust source before any read). `default` first, then ids with COLLATE "C", so a Postgres
+  // with a linguistic locale copies in the byte order PGLite uses. The target belongs to this migration alone, so the
+  // write order takes no lock another writer waits on.
   const sources = await source.executeRaw<MigratedSourceRow>(`
     SELECT id, name, local_path, last_commit, last_sync_at, config::text AS config_json, archived,
            archived_at, archive_expires_at, contextual_retrieval_mode,
            trust_frontmatter_overrides, newest_content_at, created_at
       FROM sources
-     ORDER BY (id = 'default') DESC, id`);
+     ORDER BY (id = 'default') DESC, id COLLATE "C"`);
 
   for (const row of sources) {
     await target.executeRaw(`

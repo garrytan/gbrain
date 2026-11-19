@@ -131,7 +131,7 @@ export interface TrustScanOptions {
 export async function runTrustScan(engine: BrainEngine, opts: TrustScanOptions = {}): Promise<TrustScanReport> {
   const batchSize = Math.max(1, Math.min(opts.batchSize ?? DEFAULT_SCAN_BATCH, 10_000));
   // A claimed source's legacy rows are owner tier once its lift finishes; scanning them first would flag the owner's own notes.
-  const pending = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE ${claimPendingSql('s')} ORDER BY s.id`);
+  const pending = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE ${claimPendingSql('s')} ORDER BY s.id COLLATE "C"`);
   if (pending.length) {
     throw opError('recovery_required', `Claimed source(s) ${pending.map(r => r.id).join(', ')} have not finished their lift, so the scan would treat the owner's notes as unverified.`,
       'Run the fix (it finishes the claim the owner already confirmed), then run the scan again.', {

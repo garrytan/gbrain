@@ -127,6 +127,7 @@
   "test/engine-parity/search-reads.test.ts": 6869,
   "test/engine-parity/search.test.ts": 11152,
   "test/engine-parity/segmented-body.test.ts": 9916,
+  "test/engine-parity/source-order-callers.test.ts": 2400,
   "test/engine-parity/sync-aliases.test.ts": 8439,
   "test/engine-parity/takes.test.ts": 8967,
   "test/engine-parity/timeline.test.ts": 8097,

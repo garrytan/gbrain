@@ -272,7 +272,7 @@ export interface PurgeReplayResult { state: PurgeReplayState; replays: ReplayRec
 export async function replayPurgesInRestore(tx: BrainEngine, input: { lines: PurgeMirrorLine[] | null; archivedAt: string; restoreId: string; allTimes?: boolean }):
   Promise<PurgeReplayResult> {
   const ledger = (await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('belief_events') IS NOT NULL AS present"))[0]?.present === true;
-  const sources = await tx.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources ORDER BY id');
+  const sources = await tx.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources ORDER BY id COLLATE "C"');
   const replays: ReplayRecord[] = [];
   if (input.lines) {
     const committed = new Set(input.lines.filter(l => l.kind === 'committed').map(l => l.request));
