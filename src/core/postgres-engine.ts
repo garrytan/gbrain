@@ -1781,8 +1781,8 @@ export class PostgresEngine implements BrainEngine {
     }
     // Two-stage CTE (v0.22): a pure-distance candidate ORDER BY keeps HNSW usable; outer stages re-rank by source factor.
     // Shape, freshness (#5824), pool counts and the stale flag live in search/vector-statement.ts (shared, doctor too).
-    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this, this);
-    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
+    const scope = await this.vectorScope(opts); // the stale flag's probe runs inside each attempt's bounded transaction (runVectorAttempt)
+    const statementFor = vectorStatementForms((chunkManifest, staleProbe) => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
     const walked = await searchIndexWalk(stmt, limit, async walk => readVectorPool(await this.runVectorAttempt(statementFor, walk, iterative, opts, (tx, sql, bound) => tx.unsafe(sql, bound))));
@@ -1813,8 +1813,8 @@ export class PostgresEngine implements BrainEngine {
    */
   async explainVectorSearch(embedding: Float32Array, opts?: SearchOpts): Promise<Record<string, unknown>> {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
-    const scope = await this.vectorScope(opts), staleProbe = await this.timelineStale.reads(this, this);
-    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
+    const scope = await this.vectorScope(opts); // the stale flag's probe runs inside each attempt's bounded transaction (runVectorAttempt)
+    const statementFor = vectorStatementForms((chunkManifest, staleProbe) => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, staleProbe }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
     const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: stmt.indexWalkSql || stmt.scopeScanSql ? Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch) : POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };
@@ -1845,7 +1845,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private runVectorAttempt(
-    statementFor: (chunkManifest: boolean) => VectorSearchStatement,
+    statementFor: (chunkManifest: boolean, staleProbe?: boolean) => VectorSearchStatement,
     { innerLimit, maxScanTuples, remainingMs, exact, indexWalk, scopeScan }: VectorPoolAttempt,
     iterative: boolean,
     opts: SearchOpts | undefined,
@@ -1855,7 +1855,7 @@ export class PostgresEngine implements BrainEngine {
     const shape = statementFor(true);
     const walk = indexWalk && !!shape.indexWalkSql;
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
-      const stmt = statementFor(await chunkManifestReads(this, this.engineSqlOn(tx)));
+      const exec = this.engineSqlOn(tx), stmt = statementFor(await chunkManifestReads(this, exec), await this.timelineStale.reads(this, exec));
       const bound = [...stmt.params];
       bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);

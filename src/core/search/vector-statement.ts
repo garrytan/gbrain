@@ -296,16 +296,18 @@ export function vectorScopeLoader(
 }
 
 /**
- * The statement in both chunkManifestReads forms, each built on first use. The forms differ only in SQL text, so
- * either one answers for the shape (windows, params, walk and scope-scan presence). A Postgres search attempt picks
- * its form with the probe it runs inside its own transaction, after the settings, so the attempt's statement_timeout
- * bounds the probe as well (a probe before the transaction waited on a content_chunks lock with no bound).
+ * The statement in each chunkManifestReads x stale-flag form, each built on first use. The forms differ only in SQL
+ * text, so any one answers for the shape (windows, params, walk and scope-scan presence). A Postgres search attempt
+ * picks its form with the manifest and timeline_entries probes it runs inside its own transaction, after the
+ * settings, so the attempt's statement_timeout bounds both probes (a probe before the transaction waited on a lock
+ * with no bound, and an engine that never connected sent it to the pool).
  */
-export function vectorStatementForms(build: (chunkManifest: boolean) => VectorSearchStatement): (chunkManifest: boolean) => VectorSearchStatement {
-  const forms = new Map<boolean, VectorSearchStatement>();
-  return chunkManifest => {
-    let stmt = forms.get(chunkManifest);
-    if (!stmt) forms.set(chunkManifest, stmt = build(chunkManifest));
+export function vectorStatementForms(build: (chunkManifest: boolean, staleProbe: boolean) => VectorSearchStatement): (chunkManifest: boolean, staleProbe?: boolean) => VectorSearchStatement {
+  const forms = new Map<string, VectorSearchStatement>();
+  return (chunkManifest, staleProbe = true) => {
+    const key = `${chunkManifest}:${staleProbe}`;
+    let stmt = forms.get(key);
+    if (!stmt) forms.set(key, stmt = build(chunkManifest, staleProbe));
     return stmt;
   };
 }
