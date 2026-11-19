@@ -198,7 +198,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   write_misc: ['readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding',
     'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
-    'attachSourcePath', 'readMemoryProposal'],
+    'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary'],
   // telemetry: search telemetry, MCP usage and the chat usage ledger (engine-sql/telemetry.ts, engine-sql/chat-usage.ts)
   telemetry: [
     'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',

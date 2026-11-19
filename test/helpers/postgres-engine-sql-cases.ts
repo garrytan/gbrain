@@ -543,7 +543,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'expireMemoryProposals': OOS.writeMisc,
   'attachSourcePath': OOS.writeMisc,
   'listAwaitingMemoryProposals': OOS.writeMisc, 'readMemoryProposal': OOS.writeMisc,
-  'purgeMemoryProposals': OOS.writeMisc,
+  'purgeMemoryProposals': OOS.writeMisc, 'readPendingProposalSummary': OOS.writeMisc,
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal,

@@ -397,10 +397,9 @@ export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?
 }
 
 /** Pending count and the oldest pending proposal's age, for doctor and status; zero on a schema that predates v300. */
-export async function pendingProposalSummary(engine: SqlEngine): Promise<{ pending: number; oldest_hours: number | null }> {
+export async function pendingProposalSummary(engine: Pick<BrainEngine, 'readPendingProposalSummary'>): Promise<{ pending: number; oldest_hours: number | null }> {
   try {
-    const [row] = await engine.executeRaw<{ n: number | string; oldest: number | string | null }>(`SELECT count(*) AS n,
-      EXTRACT(EPOCH FROM now() - min(created_at)) / 3600 AS oldest FROM memory_proposals WHERE state='awaiting_owner' AND expires_at>now()`);
+    const row = await engine.readPendingProposalSummary();
     const pending = Number(row?.n ?? 0);
     return { pending, oldest_hours: pending && row?.oldest !== null && row?.oldest !== undefined ? Math.floor(Number(row.oldest)) : null };
   } catch (error) {

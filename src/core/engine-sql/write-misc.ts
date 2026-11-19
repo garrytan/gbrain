@@ -170,6 +170,16 @@ export async function readMemoryProposal(exec: LegacyUnscopedRead, principalKind
   return row ?? null;
 }
 
+/** The pending-proposal count and the oldest pending proposal's age in hours (null with none), as Postgres returns them. */
+export interface PendingProposalRow { n: number | string; oldest: number | string | null }
+
+/** How many memory proposals still await their owner unexpired, and how old the oldest is (status and doctor). */
+export async function readPendingProposalSummary(exec: LegacyUnscopedRead): Promise<PendingProposalRow | null> {
+  const [row] = await exec.executeRaw<PendingProposalRow>(`SELECT count(*) AS n,
+      EXTRACT(EPOCH FROM now() - min(created_at)) / 3600 AS oldest FROM memory_proposals WHERE state='awaiting_owner' AND expires_at>now()`);
+  return row ?? null;
+}
+
 /** Deletes every closed memory proposal decided (or last updated) at least `retentionDays` days ago; returns how many. */
 export async function purgeMemoryProposals(exec: SqlExecutor, retentionDays: number): Promise<number> {
   const rows = await exec.executeRaw(`DELETE FROM memory_proposals WHERE state<>'awaiting_owner'

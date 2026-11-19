@@ -5107,6 +5107,7 @@
         "readPageTitle": "none",
         "readPageTrustRows": "none",
         "readPageVersionEdition": "none",
+        "readPendingProposalSummary": "none",
         "readPersistenceBrainId": "none",
         "readPrivateQueueState": "none",
         "readProjectionReadiness": "none",
