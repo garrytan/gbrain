@@ -59,4 +59,20 @@ impl Brain {
             s.read_export_page_rows(&required::<Vec<String>>(ids, "readExportPageRows ids")?)
         })
     }
+
+    /// `normalizeFenceLines(bodies, timelines)`: each pair lower-cased and whitespace-folded per line.
+    #[napi]
+    pub fn normalize_fence_lines<'env>(
+        &self,
+        env: &'env Env,
+        bodies: Value,
+        timelines: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.normalize_fence_lines(
+                &required::<Vec<String>>(bodies, "normalizeFenceLines bodies")?,
+                &required::<Vec<String>>(timelines, "normalizeFenceLines timelines")?,
+            )
+        })
+    }
 }

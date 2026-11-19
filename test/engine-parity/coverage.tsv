@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 733/733
+# covered: 734/734
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -39,7 +39,7 @@
 # minion_queue: 80/80
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_export: 5/5
+# cli_reads_export: 6/6
 # cli_reads_ops: 7/7
 # facts_doctor: 10/10
 # fact_relink_attempts: 3/3
@@ -556,6 +556,7 @@ listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	serves
 readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
 listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
+normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
 setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	4	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves

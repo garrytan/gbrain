@@ -75,3 +75,20 @@ export async function readExportPageRows(tx: Raw, ids: readonly string[]): Promi
   [ids]);
   return rows.map(row => ({ page: rowToPage(row), tags: row.export_tags as string[] }));
 }
+
+/** One normalized body pair: `i` is the 1-based position in the input; a body that is empty or null normalizes to null. */
+export interface NormalizedFenceLines { i: number; body: string | null; timeline: string | null }
+
+/**
+ * Each body and timeline lower-cased with every run of `[[:space:]]` made one space, line by line (overlayCanonicalBodies'
+ * rule), so a withdrawal overlay can match fact rows the way Postgres compares them.
+ */
+export async function normalizeFenceLines(tx: Raw, bodies: readonly string[], timelines: readonly string[]): Promise<NormalizedFenceLines[]> {
+  return tx.executeRaw<NormalizedFenceLines>(`SELECT t.i::int AS i,
+    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+      FROM unnest(string_to_array(t.body,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
+    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+      FROM unnest(string_to_array(t.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline
+    FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(body, timeline, i)`,
+  [bodies, timelines]);
+}

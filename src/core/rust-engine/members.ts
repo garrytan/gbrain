@@ -51,6 +51,7 @@ export const RUST_ENGINE_MEMBERS = {
   readExportWithdrawalLedgerBytes: 'facts',
   listExportWithdrawals: 'facts',
   readExportPageRows: 'pages',
+  normalizeFenceLines: 'pages',
   listExactIdentityCandidates: 'pages',
   listExtractionPendingPages: 'pages',
   slugsEndingIn: 'pages',

@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -42,3 +42,7 @@ export const readExportPageRows: StoreMember<[ids: readonly string[]], ExportPag
   const rows: ExportPageRow[] = await storeCall({ member: 'readExportPageRows' }, () => brain.readExportPageRows([...ids]));
   return rows.map(row => ({ page: toGetPage(row.page), tags: row.tags }));
 };
+
+/** Each body and timeline normalized line by line, as Postgres does it (`cli_reads::export::normalize_fence_lines`). */
+export const normalizeFenceLines: StoreMember<[bodies: readonly string[], timelines: readonly string[]], NormalizedFenceLines[]> = (brain, bodies, timelines) =>
+  storeCall({ member: 'normalizeFenceLines' }, () => brain.normalizeFenceLines([...bodies], [...timelines]));

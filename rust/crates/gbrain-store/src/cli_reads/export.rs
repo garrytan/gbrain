@@ -9,7 +9,7 @@
 //!
 //! Keys: none of its own. It reads the page, page-id, page-body, raw-data and withdrawal records.
 
-use super::pg_text::{jsonb_text, timestamptz_text};
+use super::pg_text::{is_pg_space, jsonb_text, pg_lower, timestamptz_text};
 use super::reads::pages_after;
 use crate::Store;
 use crate::env::iso;
@@ -77,6 +77,42 @@ fn bigint(op: &str, text: &str) -> Result<i64> {
             "{op}: invalid input syntax for type bigint: \"{text}\""
         ))
     })
+}
+
+/// One row of `normalizeFenceLines`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct NormalizedFenceLines {
+    pub i: i64,
+    pub body: Option<String>,
+    pub timeline: Option<String>,
+}
+
+/// `string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)` over
+/// `string_to_array(text, chr(10))`: `None` for an empty text (an empty array aggregates to NULL).
+fn normalize_lines(text: &str) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = text
+        .split('\n')
+        .map(|line| {
+            let mut out = String::with_capacity(line.len());
+            let mut in_space = false;
+            for c in pg_lower(line).chars() {
+                if is_pg_space(c) {
+                    if !in_space {
+                        out.push(' ');
+                    }
+                    in_space = true;
+                } else {
+                    out.push(c);
+                    in_space = false;
+                }
+            }
+            out
+        })
+        .collect();
+    Some(lines.join("\n"))
 }
 
 /// `left(text, n)`: the first `n` characters.
@@ -253,6 +289,27 @@ impl Store {
         }
         Ok(rows)
     }
+
+    /// `normalizeFenceLines`: `unnest($1, $2) WITH ORDINALITY`, each text normalized line by line.
+    /// The shorter list is padded with NULL, as `unnest` pads it.
+    pub fn normalize_fence_lines(
+        &self,
+        bodies: &[String],
+        timelines: &[String],
+    ) -> Result<Vec<NormalizedFenceLines>> {
+        const OP: &str = "normalizeFenceLines";
+        for text in bodies.iter().chain(timelines) {
+            no_nul(OP, &[("text", text)])?;
+        }
+        let n = bodies.len().max(timelines.len());
+        Ok((0..n)
+            .map(|k| NormalizedFenceLines {
+                i: i64::try_from(k + 1).unwrap_or(i64::MAX),
+                body: bodies.get(k).and_then(|t| normalize_lines(t)),
+                timeline: timelines.get(k).and_then(|t| normalize_lines(t)),
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +375,18 @@ mod tests {
     fn an_empty_ledger_is_two_bytes() {
         let s = store();
         assert_eq!(s.read_export_withdrawal_ledger_bytes("default").unwrap(), 2);
+    }
+
+    #[test]
+    fn fence_lines_fold_like_postgres() {
+        assert_eq!(normalize_lines(""), None);
+        assert_eq!(
+            normalize_lines("MiXeD\t  Claim\r\nB\n").as_deref(),
+            Some("mixed claim \nb\n")
+        );
+        assert_eq!(
+            normalize_lines("a\u{85}b\u{a0}c").as_deref(),
+            Some("a b\u{a0}c")
+        );
     }
 }

@@ -47,13 +47,7 @@ export async function readExportPages(tx: BrainEngine, keys: ReadonlyArray<{ id:
     return applicable.length ? [{ page, applicable }] : [];
   });
   if (!fenced.length) return snapshots;
-  const normalized = await tx.executeRaw<{ i: number; body: string | null; timeline: string | null }>(`SELECT t.i::int AS i,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
-      FROM unnest(string_to_array(t.body,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
-      FROM unnest(string_to_array(t.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline
-    FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(body, timeline, i)`,
-  [fenced.map(({ page }) => page.compiled_truth), fenced.map(({ page }) => page.timeline)]);
+  const normalized = await tx.normalizeFenceLines(fenced.map(({ page }) => page.compiled_truth), fenced.map(({ page }) => page.timeline));
   for (const row of normalized) {
     const { page, applicable } = fenced[Number(row.i) - 1]!;
     page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, row.body ?? '', applicable);

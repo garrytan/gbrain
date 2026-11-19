@@ -15,6 +15,7 @@ of `src/core/access/policy-transfer.ts`). PGLite and Postgres run the same SQL a
 | `brain.readExportWithdrawalLedgerBytes(sourceId)` | the source's withdrawal ledger in bytes: for each withdrawal, the jsonb text of `{ visibility, fact_hash, withdrawn_at, subject }` (keys in jsonb order, the time as `2026-01-03T00:00:00+00:00` in UTC) plus 1, then plus 2 | `readExportWithdrawalLedgerBytes` |
 | `brain.listExportWithdrawals(sourceId)` | the source's withdrawals by `visibility`, `fact_hash`, `subject` (byte order): `{ visibility, fact_hash, withdrawn_at, subject, purged }`, `withdrawn_at` an ISO string (the member makes it a `Date`), `purged` always `false` | `listExportWithdrawals` |
 | `brain.readExportPageRows(ids)` | the live pages among `ids` (decimal strings), in the order given, each `{ page, tags }`: `page` as `getPage` gives it, `tags` in byte order. An id that is not an integer refuses | `readExportPageRows` |
+| `brain.normalizeFenceLines(bodies, timelines)` | one `{ i, body, timeline }` per position (`i` from 1): each text split on `\n`, every line lower-cased (`lower`) with each run of `[[:space:]]` made one space, joined with `\n`; an empty text gives `null` | `normalizeFenceLines` |
 
 ## What the store does not keep
 

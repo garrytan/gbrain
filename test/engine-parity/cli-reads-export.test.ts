@@ -110,4 +110,15 @@ describe('engine parity: export reads', () => {
         compiled_truth: page.compiled_truth, timeline: page.timeline, frontmatter: page.frontmatter, tags }))
       .sort((a, b) => a.slug.localeCompare(b.slug));
   });
+
+  // The overlay compares fact rows in Postgres' normalized form, so every arm must lower-case and fold whitespace alike,
+  // including the classes JavaScript's \s disagrees on (U+0085 is space to Postgres, U+00A0 is not).
+  parityTest('normalizeFenceLines lower-cases and folds whitespace line by line', {
+    methods: ['normalizeFenceLines'],
+  }, async (engine) => {
+    const bodies = ['MiXeD\t  Claim\r\nSecond   LINE\n', '', 'Ünïcode\u0085x\u00a0y\u2003z', 'one'];
+    const timelines = ['', 'A\n\nB', 'x', ''];
+    const rows = await engine.normalizeFenceLines(bodies, timelines);
+    return [...rows].map(r => ({ ...r, i: Number(r.i) })).sort((a, b) => a.i - b.i);
+  });
 });
