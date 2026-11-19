@@ -60,7 +60,8 @@ On a personal brain (one owner, not shared) whose default source is a Git checko
   write, or one you edited, is never overwritten or deleted: that day stays in the database only. To change a
   conversation, change it in Messages; `put_page`, `edit_page` and `delete_page` on these pages are refused.
 - **Removals are careful.** A day file is removed only when the helper reports that day empty. A sync that would
-  remove more than 20 day files, or more than a tenth of them, removes none and says so.
+  remove more than 20 day files, or more than a tenth of them once more than two would go, removes none and says
+  so.
 - **Without the Mac.** If the helper is not reachable, `gbrain sync --source <id> --full` rebuilds the database
   pages from the folder.
 - **Status.** `gbrain sources status <id>` shows `pages_in`: the folder or the database (and why), the last
