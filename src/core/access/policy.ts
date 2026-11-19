@@ -30,7 +30,6 @@ import { identityFor } from './principals.ts';
 import { listMembers } from './members.ts';
 
 export type AccessStore = 'git' | 'database';
-type Exec = Pick<BrainEngine, 'executeRaw'>;
 
 export const RESTAMP_BATCH = 2000;
 
@@ -88,53 +87,48 @@ function toRevision(row: Record<string, unknown>): RevisionRow {
 }
 
 /** The persisted store of a source, or null when it has never had a rule. Refuses an unknown source. */
-export async function readAccessStore(engine: Exec, sourceId: string): Promise<AccessStore | null> {
-  const [row] = await engine.executeRaw<{ store: string | null }>(`SELECT config->>'access_store' AS store FROM sources WHERE id = $1`, [sourceId]);
+export async function readAccessStore(engine: BrainEngine, sourceId: string): Promise<AccessStore | null> {
+  const row = await engine.readAccessStoreConfig(sourceId);
   if (!row) throw opError('unknown_source', `No source "${sourceId}".`, 'List sources with gbrain sources list.');
   return row.store === 'git' || row.store === 'database' ? row.store : null;
 }
 
 /** Persists the store (set with the first rule, changed only by gbrain access rule migrate). */
-export async function writeAccessStore(engine: Exec, sourceId: string, store: AccessStore): Promise<void> {
-  await engine.executeRaw(`UPDATE sources SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{access_store}', to_jsonb($2::text)) WHERE id = $1`, [sourceId, store]);
+export async function writeAccessStore(engine: BrainEngine, sourceId: string, store: AccessStore): Promise<void> {
+  await engine.writeAccessStoreConfig(sourceId, store);
 }
 
 /** Creates the source's lock row in its own committed statement, so concurrent page writes start taking it before any rule exists. */
-export async function ensurePolicyState(engine: Exec, sourceId: string): Promise<void> {
-  await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
+export async function ensurePolicyState(engine: BrainEngine, sourceId: string): Promise<void> {
+  await engine.ensureAccessPolicyState(sourceId);
 }
 
 /**
  * The source row first, then its policy row: page writers hold `sources FOR SHARE` before their stamping trigger takes
  * the policy row, so the same order lets a write already in flight finish (and be stamped here) instead of deadlocking.
+ * On the Rust engine the store write transaction is the lock.
  */
-export async function lockSource(tx: Exec, sourceId: string): Promise<void> {
-  await tx.executeRaw('SELECT 1 FROM sources WHERE id = $1 FOR NO KEY UPDATE', [sourceId]);
-  await tx.executeRaw('SELECT 1 FROM access_policy_state WHERE source_id = $1 FOR UPDATE', [sourceId]);
+export async function lockSource(tx: BrainEngine, sourceId: string): Promise<void> {
+  await tx.lockAccessPolicy(sourceId);
 }
 
-export async function appliedRules(engine: Exec, sourceId: string): Promise<FolderRule[]> {
-  const rows = await engine.executeRaw<{ rule_id: string; prefix: string; readable_by: string[]; covers_derived: boolean }>(
-    'SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id', [sourceId]);
+export async function appliedRules(engine: BrainEngine, sourceId: string): Promise<FolderRule[]> {
+  const rows = await engine.listAccessRules(sourceId);
   return sortRules(rows.map(r => ({ id: r.rule_id, prefix: r.prefix, readable_by: [...(r.readable_by ?? [])], ...(r.covers_derived === false ? { covers_derived: false as const } : {}) })));
 }
 
-export async function listRevisions(engine: Exec, sourceId: string, limit = 50): Promise<RevisionRow[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT $2', [sourceId, limit]);
+export async function listRevisions(engine: BrainEngine, sourceId: string, limit = 50): Promise<RevisionRow[]> {
+  const rows = await engine.readAccessPolicyRevisions({ by: 'recent', sourceId, limit });
   return rows.map(toRevision);
 }
 
-export async function getRevision(engine: Exec, sourceId: string, revision?: number): Promise<RevisionRow | null> {
-  const rows = revision === undefined
-    ? await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT 1', [sourceId])
-    : await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_policy_revisions WHERE source_id = $1 AND revision = $2', [sourceId, revision]);
+export async function getRevision(engine: BrainEngine, sourceId: string, revision?: number): Promise<RevisionRow | null> {
+  const rows = await engine.readAccessPolicyRevisions(revision === undefined ? { by: 'latest', sourceId } : { by: 'revision', sourceId, revision });
   return rows[0] ? toRevision(rows[0]) : null;
 }
 
-export async function coverageRows(engine: Exec, sourceId: string): Promise<CoverageRow[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT prefix, reason, revision, detail FROM access_pending_coverage WHERE source_id = $1 ORDER BY reason, prefix', [sourceId]);
+export async function coverageRows(engine: BrainEngine, sourceId: string): Promise<CoverageRow[]> {
+  const rows = await engine.listAccessCoverage(sourceId);
   return rows.map(r => ({ prefix: String(r.prefix), reason: r.reason as CoverageRow['reason'], revision: r.revision === null ? null : Number(r.revision),
     detail: typeof r.detail === 'string' ? JSON.parse(r.detail) : r.detail ?? null }));
 }
@@ -147,38 +141,27 @@ const sameRule = (a: FolderRule, b: FolderRule) => a.prefix === b.prefix && a.re
  * pending coverage until the restamp finishes. Returns whether pages need restamping.
  */
 /** Refuses when row-level security keeps this database role from reading the folder access tables (they would read as empty). */
-async function requireReadableAccessState(engine: Exec): Promise<void> {
-  const [row] = await engine.executeRaw<{ unreadable: boolean }>('SELECT gbrain_access_state_unreadable() AS unreadable');
-  if (row?.unreadable) {
+async function requireReadableAccessState(engine: BrainEngine): Promise<void> {
+  if (await engine.readAccessStateUnreadable()) {
     throw opError('permission_denied', 'This database role cannot read the folder access tables (row-level security hides them), so no folder rule was changed, applied or cleared.',
       'Run it as the owner of the access tables, or give this role the policies in docs/ENGINES.md ("Folder access tables").', { docs: 'docs/ENGINES.md#folder-access-tables' });
   }
 }
 
-async function installRulebook(tx: Exec, sourceId: string, target: readonly FolderRule[], revision: number, actor: string): Promise<boolean> {
+async function installRulebook(tx: BrainEngine, sourceId: string, target: readonly FolderRule[], revision: number, actor: string): Promise<boolean> {
   await requireReadableAccessState(tx);
   const current = await appliedRules(tx, sourceId);
   const before = new Map(current.map(r => [r.id, r]));
   const after = new Map(target.map(r => [r.id, r]));
   const currentKeys = new Set(current.map(key));
   const targetKeys = new Set(target.map(key));
-  for (const r of current) {
-    const next = after.get(r.id);
-    if (!next || !sameRule(next, r)) {
-      await tx.executeRaw('DELETE FROM access_rules WHERE source_id = $1 AND rule_id = $2', [sourceId, r.id]);
-    }
-  }
-  for (const r of target) {
-    const prior = before.get(r.id);
-    if (prior && sameRule(prior, r)) continue;
-    await tx.executeRaw('INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision, created_by, covers_derived) VALUES ($1, $2, $3, $4::text[], $5, $6, $7)',
-      [sourceId, r.id, r.prefix, r.readable_by, revision, actor, coversDerived(r)]);
-  }
   const added = target.filter(r => !currentKeys.has(key(r)));
-  for (const r of added) {
-    await tx.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason, revision) VALUES ($1, $2, 'pending', $3)
-      ON CONFLICT (source_id, prefix, reason) DO UPDATE SET revision = EXCLUDED.revision`, [sourceId, r.prefix, revision]);
-  }
+  await tx.applyAccessRuleChanges(sourceId, {
+    remove: current.filter(r => { const next = after.get(r.id); return !next || !sameRule(next, r); }).map(r => r.id),
+    insert: target.filter(r => { const prior = before.get(r.id); return !(prior && sameRule(prior, r)); })
+      .map(r => ({ rule_id: r.id, prefix: r.prefix, readable_by: [...r.readable_by], covers_derived: coversDerived(r) })),
+    pending: added.map(r => r.prefix), revision, actor,
+  });
   return added.length > 0 || current.some(r => !targetKeys.has(key(r)));
 }
 
@@ -195,26 +178,16 @@ export async function restampSource(engine: BrainEngine, sourceId: string, opts:
   const progress: RestampProgress = { pages_scanned: 0, pages_restamped: 0 };
   let after = 0;
   for (;;) {
-    const [row] = await engine.executeRaw<{ last: number | null; scanned: number; changed: number }>(
-      `WITH w AS (SELECT id FROM pages WHERE source_id = $1 AND id > $2 ORDER BY id LIMIT $3),
-        u AS (UPDATE pages p SET folder_rule_ids = gbrain_access_folder_rules(p.source_id, p.slug) FROM w
-              WHERE p.id = w.id AND p.folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(p.source_id, p.slug) RETURNING p.id)
-      SELECT (SELECT max(id) FROM w) AS last, (SELECT count(*) FROM w)::int AS scanned, (SELECT count(*) FROM u)::int AS changed`,
-      [sourceId, after, batch]);
-    if (!row || row.last === null || row.last === undefined) break;
-    after = Number(row.last);
-    progress.pages_scanned += Number(row.scanned);
-    progress.pages_restamped += Number(row.changed);
+    const row = await engine.restampAccessWindow(sourceId, after, batch);
+    if (row.last === null) break;
+    after = row.last;
+    progress.pages_scanned += row.scanned;
+    progress.pages_restamped += row.changed;
     opts.onProgress?.({ ...progress });
   }
   await engine.transaction(async tx => {
     await lockSource(tx, sourceId);
-    const changed = await tx.executeRaw<{ id: number }>(
-      `UPDATE pages SET folder_rule_ids = gbrain_access_folder_rules(source_id, slug)
-        WHERE source_id = $1 AND folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(source_id, slug) RETURNING id`, [sourceId]);
-    progress.pages_restamped += changed.length;
-    await tx.executeRaw(`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'pending'`, [sourceId]);
-    await tx.executeRaw('UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL', [sourceId]);
+    progress.pages_restamped += await tx.finishAccessRestamp(sourceId);
   });
   return progress;
 }
@@ -243,10 +216,10 @@ export async function proposeRevision(engine: BrainEngine, sourceId: string, des
   const step = await engine.transaction(async tx => {
     await lockSource(tx, sourceId);
     if (meta.operationId) {
-      const [prior] = await tx.executeRaw<Record<string, unknown>>('SELECT * FROM access_policy_revisions WHERE operation_id = $1', [meta.operationId]);
+      const [prior] = await tx.readAccessPolicyRevisions({ by: 'operation', operationId: meta.operationId });
       if (prior) return { reconciled: toRevision(prior) };
     }
-    const latest = await getRevision(tx as BrainEngine, sourceId);
+    const latest = await getRevision(tx, sourceId);
     if (meta.expectDesired !== undefined && (latest?.revision ?? 0) !== meta.expectDesired) {
       throw opError('preview_changed', `Source ${sourceId}'s folder rules changed since the preview (previewed revision ${meta.expectDesired}, now ${latest?.revision ?? 0}); nothing was written.`,
         `Preview again (gbrain access rule list --source ${sourceId}) and rerun with the new --expect value.`);
@@ -260,12 +233,10 @@ export async function proposeRevision(engine: BrainEngine, sourceId: string, des
     }
     const revision = (latest?.revision ?? 0) + 1;
     const approved = cls.held.length === 0;
-    await tx.executeRaw(`INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, operation_id, proposed_by, approved_by, approved_at)
-      VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, CASE WHEN $10::boolean THEN now() END)`,
-      [sourceId, revision, JSON.stringify(rules), digest, cls.kind, meta.origin, meta.operationId ?? null, actor,
-        approved ? (meta.approved ? actor : 'auto:narrowing') : null, approved]);
+    await tx.insertAccessPolicyRevision({ source_id: sourceId, revision, rules, digest, change_kind: cls.kind, origin: meta.origin,
+      operation_id: meta.operationId ?? null, proposed_by: actor, approved_by: approved ? (meta.approved ? actor : 'auto:narrowing') : null, approved });
     const needs = await installRulebook(tx, sourceId, cls.target, revision, actor);
-    if (!needs) await tx.executeRaw('UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL', [sourceId]);
+    if (!needs) await tx.markAccessRevisionsApplied(sourceId);
     return { revision, cls, needs };
   });
   if ('reconciled' in step && step.reconciled) {
@@ -293,8 +264,7 @@ export async function resumePolicy(engine: BrainEngine, sourceId: string, onProg
   await readAccessStore(engine, sourceId);
   await requireReadableAccessState(engine);
   const pending = (await coverageRows(engine, sourceId)).filter(c => c.reason === 'pending').map(c => c.prefix);
-  const [state] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_policy_state WHERE source_id = $1', [sourceId]);
-  if (!state?.n) return { pages_scanned: 0, pages_restamped: 0, pending_before: [] };
+  if (!(await engine.hasAccessPolicyState(sourceId))) return { pages_scanned: 0, pages_restamped: 0, pending_before: [] };
   const progress = await restampSource(engine, sourceId, { onProgress });
   return { ...progress, pending_before: pending };
 }
@@ -345,15 +315,12 @@ export async function previewApply(engine: BrainEngine, sourceId: string, revisi
   for (const change of cls.held) {
     const old = current.find(r => r.id === change.rule);
     if (change.kind === 'derived_released') {
-      const covered = (await engine.executeRaw<{ slug: string }>(
-        'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug', [sourceId, change.prefix])).map(r => r.slug).filter(s => ruleCovers(s, change.prefix));
+      const covered = (await engine.listAccessPrefixSlugs(sourceId, change.prefix)).filter(s => ruleCovers(s, change.prefix));
       widening.push({ change, pages: covered.length, sample: covered.slice(0, 20), gains: 'every_source_reader', lineage: true });
       continue;
     }
     const prefixes = [...new Set([old?.prefix, change.prefix].filter((p): p is string => !!p))];
-    const slugs = (await engine.executeRaw<{ slug: string }>(
-      'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug',
-      [sourceId, prefixes])).map(r => r.slug);
+    const slugs = await engine.listAccessPrefixSlugs(sourceId, prefixes);
     const gaining = (identity: string[]) => slugs.filter(s => !folderRulesAllow(s, current, identity) && folderRulesAllow(s, desired.rules, identity));
     const unbound = gaining([]);
     const pages = new Set(unbound);
@@ -376,7 +343,7 @@ export async function applyApproved(engine: BrainEngine, sourceId: string, opts:
   const installed = await engine.transaction(async tx => {
     await lockSource(tx, sourceId);
     const current = await appliedRules(tx, sourceId);
-    const desired = await getRevision(tx as BrainEngine, sourceId, opts.revision);
+    const desired = await getRevision(tx, sourceId, opts.revision);
     const hash = desired ? planHash(sourceId, desired.revision, desired.digest, rulebookDigest(current)) : null;
     if (!desired || hash !== opts.expect) {
       throw opError('preview_changed', `Source ${sourceId}'s folder rules changed since the preview (approved plan ${opts.expect}, current plan ${hash ?? 'none'}); nothing was applied.`,
@@ -384,8 +351,8 @@ export async function applyApproved(engine: BrainEngine, sourceId: string, opts:
     }
     const cls = classifyRulebook(current, desired.rules);
     const needs = await installRulebook(tx, sourceId, desired.rules, desired.revision, actor);
-    await tx.executeRaw('UPDATE access_policy_revisions SET approved_by = $3, approved_at = now() WHERE source_id = $1 AND revision = $2', [sourceId, desired.revision, actor]);
-    if (!needs) await tx.executeRaw('UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL AND revision <= $2', [sourceId, desired.revision]);
+    await tx.approveAccessPolicyRevision(sourceId, desired.revision, actor);
+    if (!needs) await tx.markAccessRevisionsApplied(sourceId, desired.revision);
     return { desired, cls, needs, hash: hash! };
   });
   const restamp = installed.needs ? await restampSource(engine, sourceId, { onProgress: opts.onProgress }) : { pages_restamped: 0 };
@@ -417,19 +384,17 @@ export async function policyStatus(engine: BrainEngine, sourceId: string, operat
   const store = await readAccessStore(engine, sourceId);
   const rules = await appliedRules(engine, sourceId);
   const desired = await getRevision(engine, sourceId);
-  const [marks] = await engine.executeRaw<{ applied: number | null; approved: number | null }>(
-    'SELECT max(revision) FILTER (WHERE applied_at IS NOT NULL) AS applied, max(revision) FILTER (WHERE approved_at IS NOT NULL) AS approved FROM access_policy_revisions WHERE source_id = $1', [sourceId]);
+  const marks = await engine.readAccessPolicyMarks(sourceId, operationId);
   const coverage = await coverageRows(engine, sourceId);
   const held = desired ? classifyRulebook(rules, desired.rules).held : [];
   const status: PolicyStatus = {
     source_id: sourceId, store, rules, applied_digest: rulebookDigest(rules), desired,
-    applied_revision: marks?.applied === null || marks?.applied === undefined ? null : Number(marks.applied),
-    approved_revision: marks?.approved === null || marks?.approved === undefined ? null : Number(marks.approved),
+    applied_revision: marks.applied,
+    approved_revision: marks.approved,
     held, pending: coverage.filter(c => c.reason === 'pending'), invalid: coverage.filter(c => c.reason === 'invalid'),
   };
   if (operationId !== undefined) {
-    const [row] = await engine.executeRaw<{ revision: number; applied_at: unknown; approved_at: unknown }>(
-      'SELECT revision, applied_at, approved_at FROM access_policy_revisions WHERE source_id = $1 AND operation_id = $2', [sourceId, operationId]);
+    const row = marks.operation ?? null;
     status.operation = !row ? { operation_id: operationId, revision: null, state: 'not_found' }
       : { operation_id: operationId, revision: Number(row.revision),
         state: !row.applied_at ? 'pending' : held.length && desired?.revision === Number(row.revision) ? 'recorded' : 'applied' };
@@ -447,14 +412,11 @@ export async function markPolicyInvalid(engine: BrainEngine, sourceId: string, p
   await ensurePolicyState(engine, sourceId);
   await engine.transaction(async tx => {
     await lockSource(tx, sourceId);
-    await tx.executeRaw(`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`, [sourceId]);
-    for (const prefix of prefixes ?? ['']) {
-      await tx.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason, detail) VALUES ($1, $2, 'invalid', $3::text::jsonb)`, [sourceId, prefix, JSON.stringify(detail)]);
-    }
+    await tx.replaceAccessInvalidCoverage(sourceId, prefixes ?? [''], detail);
   });
 }
 
-export async function clearPolicyInvalid(engine: Exec, sourceId: string): Promise<void> {
+export async function clearPolicyInvalid(engine: BrainEngine, sourceId: string): Promise<void> {
   await requireReadableAccessState(engine);
-  await engine.executeRaw(`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`, [sourceId]);
+  await engine.replaceAccessInvalidCoverage(sourceId, [], null);
 }

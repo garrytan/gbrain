@@ -683,6 +683,7 @@ mod tests {
             readable_by: vec!["member:alice-example".into()],
             revision: 1,
             covers_derived,
+            created_by: None,
         }
     }
 
@@ -704,6 +705,7 @@ mod tests {
                 prefix: "queued/".into(),
                 reason: "pending".into(),
                 revision: None,
+                detail: None,
             })
             .unwrap();
         let read = store.read().unwrap();

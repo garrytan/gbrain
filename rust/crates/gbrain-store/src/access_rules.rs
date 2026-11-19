@@ -16,8 +16,8 @@
 //! with access state counts as stamped (`pages.folder_rule_ids`), judged against the rules as
 //! they are now, as after `restampSource`.
 //!
-//! The access commands (`src/core/access/policy.ts`) still write this state with raw SQL, which
-//! this engine refuses, so only the fixtures below write it. Every write runs through
+//! The access commands (`src/core/access/policy.ts`) write this state through the typed policy
+//! members in `access_policy.rs`; the fixtures below write it for tests. Every write runs through
 //! `Store::write`, whose handle sets the member-access flag on a rule or pending put, as the
 //! triggers `access_rules_mark_restricted` and `access_pending_coverage_mark_restricted` do.
 //!
@@ -27,6 +27,7 @@
 //! - `0x02 <source> 0 <rule_id>`: a rule.
 //! - `0x03 <source> 0 <prefix> 0 <reason>`: a pending or invalid prefix.
 //! - `0x04 <source> 0 <revision as 8 big-endian bytes>`: a policy revision.
+//! - `0x05 <source> 0 <page id as 8 big-endian bytes>`: the rule ids the last restamp gave a page.
 //!
 //! See rust/docs/store/access_rules.md.
 
@@ -37,15 +38,17 @@ use crate::{Store, get_json, put_json};
 use serde::{Deserialize, Serialize};
 
 /// Sub-tag: a source holds access state (`access_policy_state`).
-const STATE: u8 = 0x01;
+pub(crate) const STATE: u8 = 0x01;
 /// Sub-tag: a folder rule (`access_rules`).
 pub(crate) const RULE: u8 = 0x02;
 /// Sub-tag: a pending or invalid prefix (`access_pending_coverage`).
 pub(crate) const COVERAGE: u8 = 0x03;
 /// Sub-tag: a policy revision (`access_policy_revisions`).
-const REVISION: u8 = 0x04;
+pub(crate) const REVISION: u8 = 0x04;
+/// Sub-tag: a page's restamped rule ids (`pages.folder_rule_ids`), which only the restamp writes.
+pub(crate) const STAMP: u8 = 0x05;
 
-fn key(sub: u8, parts: &[&[u8]]) -> Vec<u8> {
+pub(crate) fn key(sub: u8, parts: &[&[u8]]) -> Vec<u8> {
     let mut key = vec![keys::ACCESS_RULES, sub];
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
@@ -57,7 +60,7 @@ fn key(sub: u8, parts: &[&[u8]]) -> Vec<u8> {
 }
 
 /// The prefix of every key of `sub` in `source_id`.
-fn source_prefix(sub: u8, source_id: &str) -> Vec<u8> {
+pub(crate) fn source_prefix(sub: u8, source_id: &str) -> Vec<u8> {
     let mut key = key(sub, &[source_id.as_bytes()]);
     key.push(0);
     key
@@ -81,6 +84,9 @@ pub struct AccessRuleRecord {
     /// `covers_derived`: the rule also covers what is derived from its pages.
     #[serde(default = "covers_derived_default")]
     pub covers_derived: bool,
+    /// `created_by`: who installed the rule.
+    #[serde(default)]
+    pub created_by: Option<String>,
 }
 
 fn covers_derived_default() -> bool {
@@ -96,15 +102,48 @@ pub struct PendingCoverageRecord {
     pub reason: String,
     #[serde(default)]
     pub revision: Option<i64>,
+    /// `detail`: why an invalid prefix is invalid.
+    #[serde(default)]
+    pub detail: Option<serde_json::Value>,
 }
 
-/// One policy revision as stored: only what the reads use.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// One policy revision as stored. A fixture revision (`putAccessPolicyRevision`) carries only the
+/// source, the number and `applied`; one policy.ts records carries every column, its times in
+/// microseconds.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyRevisionRecord {
     pub source_id: String,
     pub revision: i64,
+    #[serde(default)]
     pub applied: bool,
+    #[serde(default)]
+    pub rules: Option<serde_json::Value>,
+    #[serde(default)]
+    pub digest: String,
+    #[serde(default)]
+    pub change_kind: String,
+    #[serde(default)]
+    pub origin: String,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+    #[serde(default)]
+    pub proposed_by: Option<String>,
+    #[serde(default)]
+    pub approved_by: Option<String>,
+    #[serde(default)]
+    pub created_at_us: Option<i64>,
+    #[serde(default)]
+    pub applied_at_us: Option<i64>,
+    #[serde(default)]
+    pub approved_at_us: Option<i64>,
+}
+
+impl PolicyRevisionRecord {
+    /// Whether the revision counts as applied (`applied_at IS NOT NULL`).
+    pub fn is_applied(&self) -> bool {
+        self.applied || self.applied_at_us.is_some()
+    }
 }
 
 /// A rule whose readers name one of the caller's principals (`source_id, rule_id, readable_by`).
@@ -136,12 +175,12 @@ pub struct AppliedPolicyRevisionRow {
     pub rev: Option<i64>,
 }
 
-fn invalid(message: impl Into<String>) -> StoreError {
+pub(crate) fn invalid(message: impl Into<String>) -> StoreError {
     StoreError::new(INVALID_ARGUMENT, message.into())
 }
 
 /// The v283 checks on a rule id: `^[a-z0-9][a-z0-9._-]{0,63}$`.
-fn valid_rule_id(id: &str) -> bool {
+pub(crate) fn valid_rule_id(id: &str) -> bool {
     let b = id.as_bytes();
     !b.is_empty()
         && b.len() <= 64
@@ -150,21 +189,33 @@ fn valid_rule_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(c))
 }
 
-/// The v283 checks on a rule prefix: `^([a-z0-9][a-z0-9._-]*/)+$`, at most 512 bytes, no `..`.
-fn valid_prefix(prefix: &str) -> bool {
-    prefix.len() <= 512
-        && prefix.ends_with('/')
-        && !prefix.contains("..")
-        && prefix[..prefix.len() - 1].split('/').all(|seg| {
-            let b = seg.as_bytes();
-            !b.is_empty()
-                && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-                && b.iter()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(c))
-        })
+/// One path segment of a rule prefix: `[a-z0-9][a-z0-9._-]*`.
+fn valid_segment(seg: &str) -> bool {
+    let b = seg.as_bytes();
+    !b.is_empty()
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(c))
 }
 
-fn each<T: serde::de::DeserializeOwned>(
+/// The v303 checks on a rule prefix: a folder (`^([a-z0-9][a-z0-9._-]*/)+$`) or one page (the
+/// same segments without the trailing `/`), at most 512 bytes, no `..`.
+pub(crate) fn valid_prefix(prefix: &str) -> bool {
+    let body = prefix.strip_suffix('/').unwrap_or(prefix);
+    prefix.len() <= 512 && !prefix.contains("..") && body.split('/').all(valid_segment)
+}
+
+/// Whether a rule prefix covers `slug` (folder-rules.ts `ruleCovers`): a folder prefix covers the
+/// slugs under it, a page prefix only the slug it names.
+pub(crate) fn rule_covers(slug: &str, prefix: &str) -> bool {
+    if prefix.ends_with('/') {
+        slug.starts_with(prefix)
+    } else {
+        slug == prefix
+    }
+}
+
+pub(crate) fn each<T: serde::de::DeserializeOwned>(
     read: &dyn KvRead,
     prefix: &[u8],
     mut f: impl FnMut(T) -> bool,
@@ -189,12 +240,12 @@ fn each<T: serde::de::DeserializeOwned>(
 }
 
 /// Whether `source_id` holds access state (`access_policy_state`).
-fn has_state(read: &dyn KvRead, source_id: &str) -> Result<bool> {
+pub(crate) fn has_state(read: &dyn KvRead, source_id: &str) -> Result<bool> {
     Ok(read.get(&key(STATE, &[source_id.as_bytes()]))?.is_some())
 }
 
 /// The v283 foreign key: a rule, a pending prefix or a revision needs its source's access state.
-fn require_state(read: &dyn KvRead, op: &str, source_id: &str) -> Result<()> {
+pub(crate) fn require_state(read: &dyn KvRead, op: &str, source_id: &str) -> Result<()> {
     if has_state(read, source_id)? {
         Ok(())
     } else {
@@ -216,7 +267,7 @@ pub(crate) fn folder_rules(
         read,
         &source_prefix(RULE, source_id),
         |r: AccessRuleRecord| {
-            if slug.starts_with(&r.prefix) {
+            if rule_covers(slug, &r.prefix) {
                 out.push(r);
             }
             true
@@ -233,7 +284,7 @@ pub(crate) fn pending_covers(read: &dyn KvRead, source_id: &str, slug: &str) -> 
         read,
         &source_prefix(COVERAGE, source_id),
         |c: PendingCoverageRecord| {
-            found = slug.starts_with(&c.prefix);
+            found = c.prefix.is_empty() || rule_covers(slug, &c.prefix);
             !found
         },
     )?;
@@ -395,7 +446,7 @@ impl Store {
                 &source_prefix(REVISION, &source_id),
                 true,
                 &mut |_, value| match serde_json::from_slice::<PolicyRevisionRecord>(value) {
-                    Ok(r) if r.applied => {
+                    Ok(r) if r.is_applied() => {
                         rev = Some(r.revision);
                         false
                     }
@@ -449,6 +500,7 @@ mod tests {
             readable_by: readers.iter().map(|r| r.to_string()).collect(),
             revision: 1,
             covers_derived: true,
+            created_by: None,
         }
     }
 
@@ -458,6 +510,7 @@ mod tests {
             prefix: prefix.into(),
             reason: reason.into(),
             revision: None,
+            detail: None,
         }
     }
 
@@ -532,6 +585,7 @@ mod tests {
                 source_id: "work".into(),
                 revision: rev,
                 applied,
+                ..Default::default()
             })
             .unwrap();
         }
@@ -539,6 +593,7 @@ mod tests {
             source_id: "quiet".into(),
             revision: 1,
             applied: false,
+            ..Default::default()
         })
         .unwrap();
         assert!(
@@ -546,6 +601,7 @@ mod tests {
                 source_id: "nostate".into(),
                 revision: 1,
                 applied: true,
+                ..Default::default()
             })
             .is_err(),
             "a revision needs its source's access state"
@@ -597,7 +653,7 @@ mod tests {
                 .is_err()
         );
         assert!(
-            s.put_access_rule(rule("work", "r", "private", &[]))
+            s.put_access_rule(rule("work", "r", "Private/", &[]))
                 .is_err()
         );
         assert!(
@@ -612,7 +668,8 @@ mod tests {
             s.put_access_policy_revision(PolicyRevisionRecord {
                 source_id: "w".into(),
                 revision: 0,
-                applied: true
+                applied: true,
+                ..Default::default()
             })
             .is_err()
         );

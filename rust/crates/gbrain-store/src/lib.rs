@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+pub mod access_policy;
 pub mod access_rules;
 mod cascade;
 pub mod chunks;

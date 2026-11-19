@@ -240,7 +240,6 @@ src/core/access/owner-only.ts	execute_raw	2	#9634, pre-ratchet: reads sources.co
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
-src/core/access/policy.ts	execute_raw	31
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	1

@@ -8,6 +8,7 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia } from './engine-sql/access-control.ts';
+import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
@@ -3520,6 +3521,29 @@ export interface BrainEngine {
 
   /** Applied folder rules whose readers name any of `readers` (none when empty) and every pending prefix; throws on failure. */
   readFolderAccess(readers: readonly string[]): Promise<FolderAccessRows>;
+
+  /**
+   * The folder-rule policy members access/policy.ts runs (engine-sql/access-policy.ts says what each reads or writes).
+   * lockAccessPolicy, applyAccessRuleChanges, finishAccessRestamp and the revision writes belong inside one transaction.
+   */
+  readAccessStoreConfig(sourceId: string): Promise<{ store: string | null } | null>;
+  writeAccessStoreConfig(sourceId: string, store: string): Promise<void>;
+  ensureAccessPolicyState(sourceId: string): Promise<void>;
+  lockAccessPolicy(sourceId: string): Promise<void>;
+  listAccessRules(sourceId: string): Promise<AccessRuleRow[]>;
+  readAccessPolicyRevisions(query: AccessRevisionQuery): Promise<AccessRevisionRow[]>;
+  listAccessCoverage(sourceId: string): Promise<AccessCoverageRow[]>;
+  readAccessStateUnreadable(): Promise<boolean>;
+  applyAccessRuleChanges(sourceId: string, changes: AccessRuleChanges): Promise<void>;
+  restampAccessWindow(sourceId: string, after: number, batch: number): Promise<AccessRestampWindow>;
+  finishAccessRestamp(sourceId: string): Promise<number>;
+  insertAccessPolicyRevision(row: AccessRevisionInsert): Promise<void>;
+  markAccessRevisionsApplied(sourceId: string, upTo?: number): Promise<void>;
+  approveAccessPolicyRevision(sourceId: string, revision: number, actor: string): Promise<void>;
+  hasAccessPolicyState(sourceId: string): Promise<boolean>;
+  listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]): Promise<string[]>;
+  readAccessPolicyMarks(sourceId: string, operationId?: string): Promise<AccessPolicyMarks>;
+  replaceAccessInvalidCoverage(sourceId: string, prefixes: readonly string[], detail: unknown): Promise<void>;
 
   /** Access member rows with their groups: one by exact id (any status), or all by id, removed ones only when asked. */
   readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]>;

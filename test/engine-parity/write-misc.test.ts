@@ -14,7 +14,7 @@
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. Folder rules,
  *    pending prefixes and policy revisions come from the restrictFolder and seedAccessPolicy fixtures (the policy writes
- *    have no typed member). The Rust store keeps no skillpacks, chronicle state, access members, access tokens, writer
+ *    themselves are compared in access-policy.test.ts). The Rust store keeps no skillpacks, chronicle state, access members, access tokens, writer
  *    bindings or memory proposals, so those cases compare the empty answer every arm gives on a fresh brain
  *    (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md).
  */
