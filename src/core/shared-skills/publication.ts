@@ -25,7 +25,7 @@ import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
 import { assertSharedSkillRetentionCapacity, pruneSharedSkillRevisionsInTransaction, sharedSkillRetentionCapacity, sharedSkillRetentionStatus } from './retention.ts';
-import { isRustBrain, rustCheck, rustHeadKeys, rustHeads, rustPack, rustRetention, rustSource, rustWritePack } from './rust-publication.ts';
+import { discardRustStaging, isRustBrain, publishRustCanonicalFiles, rustCheck, rustHeadKeys, rustHeads, rustPack, rustRetention, rustSource, rustWritePack, stageRustCanonicalFiles } from './rust-publication.ts';
 import { capabilityMissing } from '../rust-engine/errors.ts';
 
 interface PackRow { pack_id: string; revision: string; manifest: Record<string, unknown>; manifest_hash: string; }
@@ -435,18 +435,25 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
 /**
  * A Rust brain publishes in the submitting process, with no resident owner: the admission, the pack and head CAS with
  * the retention prune, the revisions, heads and pack row, and the committed receipt run in one store transaction, each
- * store write through the store's FlaggingWriter. A refusal rolls the whole transaction back, admission included. The
- * canonical files are not written (rust/docs/store/shared-skill-members.md, "Publication").
+ * store write through the store's FlaggingWriter. The canonical files are checked against their prepared hashes and
+ * staged (temp + fsync) inside it, and renamed over their paths after it commits; a refusal rolls the whole transaction
+ * back, admission included, and removes the staging (rust/docs/store/shared-skill-members.md, "Publication").
  */
 async function publishOnRust(ctx: OperationContext, admission: WriteAdmission): Promise<WriteRequest> {
-  return ctx.engine.transaction(async tx => {
-    const row = await admitWriteInTransaction(tx, admission);
-    const prepared = await prepareSharedSkillMutation(tx, row, ctx.config);
-    await prepared.validate?.(tx);
-    const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx, null), requestAttribution(row));
-    decoratePublicationOutcome(row, prepared, outcome, null, 0, true);
-    return completeWrite(tx, row, 'committed', outcome);
-  });
+  let staged: ReturnType<typeof stageRustCanonicalFiles> = [];
+  try {
+    const receipt = await ctx.engine.transaction(async tx => {
+      const row = await admitWriteInTransaction(tx, admission);
+      const prepared = await prepareSharedSkillMutation(tx, row, ctx.config);
+      await prepared.validate?.(tx);
+      staged = stageRustCanonicalFiles(prepared.files ?? [], row);
+      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx, null), requestAttribution(row));
+      decoratePublicationOutcome(row, prepared, outcome, null, staged.length, true);
+      return completeWrite(tx, row, 'committed', outcome);
+    });
+    publishRustCanonicalFiles(staged);
+    return receipt;
+  } finally { discardRustStaging(staged); }
 }
 
 export async function prepareSharedSkillMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {

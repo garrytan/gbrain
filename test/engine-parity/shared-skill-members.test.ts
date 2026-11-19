@@ -13,8 +13,9 @@
  *    revision it names, a refused issue changes nothing (its prune included), and a malformed uuid fails with 22P02.
  *    writeSharedSkillRevision refuses on a brain without shared publication (42501 writer_not_quiesced) on every arm.
  *    Shared publication activates under the same quiescence rules (a queued request refuses writer_not_quiesced), and
- *    put_skill then gives the same receipt, get_skill and join_brain answers; the Rust arm writes no canonical file
- *    yet, so its receipt's persistence and write_through are left out of the comparison.
+ *    put_skill then gives the same receipt, get_skill and join_brain answers. Each arm writes the canonical
+ *    skills/<name>/SKILL.md and skillpack.json, so a second put_skill of the same skill publishes against them with
+ *    the same answer and leaves the same SKILL.md bytes.
  *  - Regression: these reads and writes ran through executeRaw, so on a Rust brain join_brain ended in
  *    engine_capability_missing at the brain-id lock, and sync_brain_skills and leave_brain could never reach a member.
  *    Each filter is an access cut: a case puts the row a dropped clause would let through (another principal's
@@ -27,7 +28,7 @@
  */
 import { describe, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
@@ -336,7 +337,9 @@ describe('engine parity: shared-skill membership', () => {
 
   parityTest('a batch older than 24 hours is outside the replay window and the next issue drops it', {
     methods: ['lockSharedSkillBrainId', 'enrollSharedSkillMember', 'issueSharedSkillDeliveryBatch', 'readSharedSkillDeliveryBatch', 'transaction'],
-    // Ageing a batch needs raw SQL; the gbrain-store unit test `delivery_batch_outside_the_replay_window_is_unread_and_pruned` proves the Rust arm.
+    // Stopped on Rust by design (its rust-tally.tsv stopped count): a test-setup limit, not a user-facing output. Ageing
+    // a batch needs raw SQL because the engines have no clock seam; the gbrain-store unit test
+    // `delivery_batch_outside_the_replay_window_is_unread_and_pruned` proves the Rust arm.
     requires: 'raw_sql',
   }, async (engine) => {
     await enroll(engine, A, 'writer-a');
@@ -505,14 +508,48 @@ describe('engine parity: shared-skill membership', () => {
     const replay = await submitSharedSkillMutation(ctx, 'put_skill', params);
     const skill = await getSharedSkill(local(engine), { name: 'notes' });
     const join = await answer(engine, 'join_brain', { adapter: 'generic', follow_policy: { approved: true } });
-    // The Rust arm writes no canonical file yet, so the receipt's persistence and write_through (at every depth) differ by design.
-    const result = { activated, receipt: generic(put, ['persistence', 'write_through']), replay: JSON.stringify(replay) === JSON.stringify(put),
+    const result = { activated, receipt: generic(put), replay: JSON.stringify(replay) === JSON.stringify(put),
       revision: (put as { revision: string }).revision === (skill as { revision?: string }).revision,
       skill: generic(skill), join: shape(join), followed: join.ok.skills.map((s: any) => `${s.source_id}/${s.pack_id}/${s.name}`) };
     expect(result.activated).toEqual({ activated: true, protocol_version: 2, filesystem_sources: 1 });
     expect(result.receipt).toMatchObject({ status: 'published', state: 'committed', delivery: 'canonical_committed', name: 'notes', pack_id: 'pack' });
     expect(result.replay).toBe(true);
     expect(result.followed).toEqual(['default/pack/notes']);
+    return result;
+  })));
+
+  parityTest('a second put_skill of the same skill publishes against the canonical files the first wrote, with the same answer and SKILL.md', {
+    methods: ['readSourceMembership', 'writeSharedSkillPolicy', 'readSharedSkillPolicyRow', 'readSharedSkillRevision', 'writeSharedSkillRevision',
+      'listSharedSkillCatalogHeads', 'transaction'],
+  }, (engine, backend) => inFreshHome(() => withCanonicalRoot(engine, backend, async (root) => {
+    await installSingletons(engine, backend);
+    await registerServeLocalWriters(engine);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await engine.setConfig('mcp.publish_skills', 'true');
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const policy = { version: 1 as const, enabled: true, classes: ['prose' as const], audiences: ['readers'], requirements: [], allow_follow: true };
+    await setSharedSkillPolicy(local(engine), 'default', policy, null);
+    const ctx = { ...local(engine), sourceId: 'default' } as OperationContext;
+    const put = (requestId: string, expected: string | null, body: string) => submitSharedSkillMutation(ctx, 'put_skill', { request_id: requestId,
+      expected_revision: expected, source_id: 'default', source_incarnation: incarnation, pack_id: 'pack', name: 'notes',
+      files: [{ path: 'skills/notes/SKILL.md', content: body, file_class: 'prose' }] });
+    // The canonical root is a temp directory, so these reads see runtime output, not repo source.
+    const tempDir = root;
+    const tempRead = (rel: string) => (existsSync(join(tempDir, rel)) ? readFileSync(join(tempDir, rel), 'utf8') : null);
+    const disk = () => {
+      const manifest = tempRead('skillpack.json');
+      return { skill: tempRead('skills/notes/SKILL.md'), manifest: manifest === null ? null : Object.keys(JSON.parse(manifest)).sort() };
+    };
+    const first = await put('f0000000-0000-4000-8000-0000000000d2', null, BODY);
+    const afterFirst = disk();
+    const second = await refusal(() => put('f0000000-0000-4000-8000-0000000000d3', (first as { revision: string }).revision, `${BODY}Again.\n`));
+    const skill = await getSharedSkill(local(engine), { name: 'notes' });
+    const result = { first: generic(first), afterFirst, second: generic(second), afterSecond: disk(),
+      head: (second as { ok?: { revision?: string } }).ok?.revision === (skill as { revision?: string }).revision };
+    expect(result.afterFirst.skill).toBe(BODY);
+    expect(result.second).toMatchObject({ ok: { status: 'published', state: 'committed', delivery: 'canonical_committed', name: 'notes' } });
+    expect(result.afterSecond.skill).toBe(`${BODY}Again.\n`);
+    expect(result.head).toBe(true);
     return result;
   })));
 

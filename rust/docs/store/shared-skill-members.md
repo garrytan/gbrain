@@ -83,9 +83,14 @@ lock, no blocking write request, no effect with a recovery record, no queued or 
 
 A publication runs in one bound store transaction (`engine.transaction`), and each statement goes through the
 `FlaggingWriter` wrap: the write admission, the check, the revisions and heads, the pack and the committed receipt. A
-refusal rolls the admission back too, so a Rust brain keeps no conflict receipt. The Rust brain writes no canonical file
-yet: the receipt says `persistence.mode: 'database'` and `write_through.written: false`, and a second `put_skill` of the
-same skill refuses `local_conflict` until the canonical `skills/<name>/SKILL.md` and `skillpack.json` are written.
+refusal rolls the admission back too, so a Rust brain keeps no conflict receipt. Inside the transaction each canonical
+file (`skills/<name>/SKILL.md`, its dependencies and `skillpack.json`) is checked against the hash it was prepared with
+and staged under the source root (a temporary sibling, written and fsynced); after the commit each staged file is
+renamed over its path and its directory is fsynced, and a deleted file is unlinked. A refusal removes the staging. The
+receipt says `persistence.mode: 'filesystem'` and `write_through.written: true`, as on the SQL engines, so a second
+`put_skill` of the same skill publishes against the files the first wrote. A file edited between the commit and the
+rename is left in place and the rename refuses `source_changed`; the next publication of that skill refuses
+`local_conflict` until the operator restores the published bytes.
 `adoptSharedSkillpack` refuses `engine_capability_missing`.
 
 ## Refusals
@@ -100,4 +105,6 @@ same skill refuses `local_conflict` until the canonical `skills/<name>/SKILL.md`
 
 Tests: `rust/crates/gbrain-store/tests/shared_skill_publication.rs`, `rust/crates/gbrain-store/tests/shared_skill_members.rs` (including
 `delivery_batch_outside_the_replay_window_is_unread_and_pruned`, the Rust proof of the parity case that needs raw SQL to
-age a batch) and `test/engine-parity/shared-skill-members.test.ts`.
+age a batch) and `test/engine-parity/shared-skill-members.test.ts`. That parity case is the one stopped case in the
+file's `rust-tally.tsv` row (10 equal, 1 stopped). It stops by design: the engines have no clock seam, so ageing a batch
+is a test-setup limit, not a user-facing output.
