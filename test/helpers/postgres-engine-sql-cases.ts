@@ -558,6 +558,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readWriterVersionCutoff': OOS.writerVersions, 'listWriterVersions': OOS.writerVersions, 'recentWriterVersions': OOS.writerVersions,
   'listGatedMirrorRequests': OOS.effectScans, 'listEffectRecoveries': OOS.effectScans, 'selectClaimableEffect': OOS.effectScans,
   'listOverdueHeldWrites': OOS.ownerScans, 'lockOverdueHold': OOS.ownerScans, 'listOwnerRecoveryHeads': OOS.ownerScans,
+  'listResumableRefreshes': OOS.ownerScans, 'listSourceLastCommits': OOS.ownerScans,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -1364,4 +1365,6 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('lockOverdueHold', [['refresh', (e) => e.transaction((tx: any) => tx.lockOverdueHold({ kind: 'refresh', refreshId: JOURNAL_REQUEST }))],
     ['import', (e) => e.transaction((tx: any) => tx.lockOverdueHold({ kind: 'import', id: JOURNAL_REQUEST, importFrom: 'abc', maxWaitMs: 60_000 }))]]),
   ...variants('listOwnerRecoveryHeads', [['default', (e) => e.listOwnerRecoveryHeads(JOURNAL_REQUEST, [])], ['excluded', (e) => e.listOwnerRecoveryHeads(JOURNAL_REQUEST, [JOURNAL_REQUEST])]]),
+  ...variants('listResumableRefreshes', [['default', (e) => e.listResumableRefreshes(JOURNAL_REQUEST, 60_000)]]),
+  ...variants('listSourceLastCommits', [['default', (e) => e.listSourceLastCommits(['default'])], ['none', (e) => e.listSourceLastCommits([])]]),
 ];

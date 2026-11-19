@@ -460,6 +460,17 @@ impl Brain {
         self.run(env, move |s| s.list_owner_recovery_heads(&host_id))
     }
 
+    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes; `[]` (no refresh row
+    /// here). The sync budget only marks rows stale, so it is not sent.
+    #[napi]
+    pub fn list_resumable_refreshes<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_resumable_refreshes(&host_id))
+    }
+
     #[napi]
     pub fn list_compactable_receipts<'env>(
         &self,

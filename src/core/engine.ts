@@ -3438,6 +3438,13 @@ export interface BrainEngine {
    * host id refuses.
    */
   listOwnerRecoveryHeads<R = Record<string, unknown>>(hostId: string, excluded: readonly string[], opts?: { signal?: AbortSignal; direct?: boolean }): Promise<R[]>;
+  /**
+   * The interrupted refreshes of worktrees `hostId` owns that the owner's topology scan converges, at most 16, a
+   * syncing row last; each carries `stale` (no move for `budgetMs`). A non-uuid host id refuses.
+   */
+  listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number): Promise<(R & { stale: boolean })[]>;
+  /** The last commit of each named source that exists (null before its first sync), in source id order (the refresh resume's lag check). */
+  listSourceLastCommits(sourceIds: readonly string[]): Promise<{ last_commit: string | null }[]>;
 
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null

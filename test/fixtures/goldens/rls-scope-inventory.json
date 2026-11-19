@@ -2708,6 +2708,39 @@
         ],
         "flagOnScopes": []
       },
+      "listResumableRefreshes#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceLastCommits#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceLastCommits#none": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLocalPaths#default": {
         "flagOffLanes": [
           "pool"
@@ -5043,12 +5076,14 @@
         "listRelinkCandidateRows": "none",
         "listReservationsAfter": "none",
         "listRestatedPrivateCopies": "none",
+        "listResumableRefreshes": "none",
         "listRetiredDeactivations": "none",
         "listSessionFactTwins": "none",
         "listSessionFactsForClassification": "none",
         "listSharedSkillPackRoots": "none",
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
+        "listSourceLastCommits": "none",
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",

@@ -559,6 +559,8 @@ export const RUST_ENGINE_MEMBERS = {
   listOverdueHeldWrites: 'persistence_journal',
   lockOverdueHold: 'persistence_journal',
   listOwnerRecoveryHeads: 'persistence_journal',
+  listResumableRefreshes: 'persistence_journal',
+  listSourceLastCommits: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
   readWriterVersionCutoff: 'persistence_journal',
   listWriterVersions: 'persistence_journal',

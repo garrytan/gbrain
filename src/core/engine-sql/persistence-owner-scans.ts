@@ -3,7 +3,9 @@
  *
  * The reads the write owner's housekeeping sent through `executeRaw` on each scan tick: the deferred-write expiry
  * (persistence/refresh-barrier.ts `expireDeferredWrites`), its overdue lists and the per-row hold checks it makes under
- * the protocol lock, and the consumer's recovery scan (persistence/consumer.ts `readOwnerRecoveryHeads`). The text is the one those callers always sent, byte for byte; the idle probe
+ * the protocol lock, the consumer's recovery scan (persistence/consumer.ts `readOwnerRecoveryHeads`), and the refresh
+ * resume's list and source-commit read (persistence/worktree-refresh.ts `resumeWorktreeRefreshes`). The text is the one
+ * those callers always sent, byte for byte; the idle probe
  * (`overdueDeferredWorkSql`) builds its EXISTS checks from the same fragments. Every scan joins the request to a
  * worktree the host owns, so an engine without managed worktrees answers none. Decisions stay with the callers.
  */
@@ -92,4 +94,27 @@ export const OWNER_RECOVERY_HEADS_SQL = `SELECT r.* FROM persistence_requests r
 export function listOwnerRecoveryHeads<R = Record<string, unknown>>(exec: LegacyUnscopedRead, hostId: string,
   excluded: readonly string[], opts?: QueryOpts): Promise<R[]> {
   return exec.executeRaw<R>(OWNER_RECOVERY_HEADS_SQL, [hostId, excluded], opts);
+}
+
+/** Interrupted refreshes of worktrees `$1` owns, a syncing row last (#9649: `stale` once it has not moved for a whole sync budget `$2`). */
+export const RESUMABLE_REFRESHES_SQL = `SELECT f.*,f.updated_at<now()-($2::double precision*interval '1 millisecond') AS stale FROM persistence_worktree_refreshes f
+    JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE w.owner_host_id=$1::uuid AND f.state IN ('draining','fenced','merged','syncing') AND (f.state<>'syncing'
+      OR f.updated_at<now()-($2::double precision*interval '1 millisecond') OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids) AND (s.last_commit IS NULL OR s.last_commit=f.old_head)))
+    ORDER BY f.state='syncing', f.created_at LIMIT 16`;
+
+/**
+ * The refreshes of worktrees `hostId` owns that an owner's topology scan should converge, at most 16: each draining,
+ * fenced or merged row, and a syncing row whose members all moved off the old head or that has not moved for
+ * `budgetMs`. Each row carries `stale` (no move for `budgetMs`). A host id that is not a uuid refuses.
+ */
+export function listResumableRefreshes<R = Record<string, unknown>>(exec: LegacyUnscopedRead, hostId: string, budgetMs: number,
+  opts?: QueryOpts): Promise<(R & { stale: boolean })[]> {
+  return exec.executeRaw<R & { stale: boolean }>(RESUMABLE_REFRESHES_SQL, [hostId, budgetMs], opts);
+}
+
+export const SOURCE_LAST_COMMITS_SQL = 'SELECT last_commit FROM sources WHERE id=ANY($1::text[]) ORDER BY id';
+
+/** The last commit of each named source that exists (null before its first sync), in source id order. */
+export function listSourceLastCommits(exec: LegacyUnscopedRead, sourceIds: readonly string[], opts?: QueryOpts): Promise<{ last_commit: string | null }[]> {
+  return exec.executeRaw<{ last_commit: string | null }>(SOURCE_LAST_COMMITS_SQL, [sourceIds], opts);
 }

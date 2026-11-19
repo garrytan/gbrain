@@ -1,8 +1,8 @@
 //! Owner scans: the statements of `src/core/engine-sql/persistence-owner-scans.ts` that the write
 //! owner's housekeeping sends on each scan tick (rust/docs/store/persistence.md, "Owner scans").
 //!
-//! Each scan joins a write request to a `persistence_worktrees` row the host owns. This engine
-//! keeps no worktree (a request here always has a null `worktree_id`, and an insert that names a
+//! Each scan joins a write request (or a refresh) to a `persistence_worktrees` row the host owns.
+//! This engine keeps no worktree (a request here always has a null `worktree_id`, and an insert that names a
 //! refresh hold refuses), so every list answers no row and no hold stands. The parameters are
 //! still checked as their Postgres casts check them, so an argument Postgres refuses is refused
 //! here too.
@@ -39,6 +39,14 @@ pub(crate) fn list_owner_recovery_heads(host_id: &str) -> Result<Vec<Value>> {
     Ok(Vec::new())
 }
 
+/// `listResumableRefreshes(hostId, budgetMs)`: no refresh row exists here (refreshes live only
+/// on managed worktrees), so none is interrupted; a non-uuid host id refuses. The sync budget
+/// only marks rows stale.
+pub(crate) fn list_resumable_refreshes(host_id: &str) -> Result<Vec<Value>> {
+    host_uuid(host_id)?;
+    Ok(Vec::new())
+}
+
 /// The two holds the SQL engines have a statement for; another kind is a caller bug.
 fn hold_kind(hold: &str) -> Result<()> {
     match hold {
@@ -63,6 +71,11 @@ impl Store {
     /// `listOwnerRecoveryHeads(hostId, excluded)`.
     pub fn list_owner_recovery_heads(&self, host_id: &str) -> Result<Vec<Value>> {
         list_owner_recovery_heads(host_id)
+    }
+
+    /// `listResumableRefreshes(hostId, budgetMs)`.
+    pub fn list_resumable_refreshes(&self, host_id: &str) -> Result<Vec<Value>> {
+        list_resumable_refreshes(host_id)
     }
 }
 
@@ -95,6 +108,13 @@ mod tests {
     fn owner_recovery_heads_are_empty_and_refuse_a_non_uuid_host() {
         assert!(list_owner_recovery_heads(HOST).unwrap().is_empty());
         let bad = list_owner_recovery_heads("nope").unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
+    }
+
+    #[test]
+    fn resumable_refreshes_are_empty_and_refuse_a_non_uuid_host() {
+        assert!(list_resumable_refreshes(HOST).unwrap().is_empty());
+        let bad = list_resumable_refreshes("nope").unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 }

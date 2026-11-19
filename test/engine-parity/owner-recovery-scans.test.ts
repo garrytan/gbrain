@@ -17,7 +17,9 @@
  *  - The deferred-write expiry's overdue lists and hold checks are typed members (listOverdueHeldWrites, lockOverdueHold):
  *    with no managed worktree each list is empty and no hold stands on every arm, and an id that is not a uuid refuses
  *    with the `::uuid` cast's message. The recovery scan is a typed member too (listOwnerRecoveryHeads): no head on any
- *    arm, before or after a write is queued, and the same uuid refusal.
+ *    arm, before or after a write is queued, and the same uuid refusal. The refresh resume's reads are typed members
+ *    (listResumableRefreshes, listSourceLastCommits): no interrupted refresh on any arm and the same uuid refusal; each
+ *    named source that exists answers its last commit (null for a fresh source) in id order, and a missing one none.
  *  - Seam: none. The real scans and typed members only (no executeRaw: D18). Generated ids are compared by equality
  *    with another member's answer.
  */
@@ -42,6 +44,7 @@ const IDLE_REQUEST = 'c0000000-0000-4000-8000-0000000000c2';
 const HELD_REQUEST = 'c0000000-0000-4000-8000-0000000000c3';
 const NO_REFRESH = 'c0000000-0000-4000-8000-0000000000f1';
 const RECOVERY_REQUEST = 'c0000000-0000-4000-8000-0000000000c4';
+const RESUME_REQUEST = 'c0000000-0000-4000-8000-0000000000c5';
 
 /** The owner's idle probe (`hasWork`, private): what an idle tick asks before it runs the full fan-out. */
 function idleProbe(engine: BrainEngine): () => Promise<boolean> {
@@ -138,5 +141,24 @@ describe('engine parity: owner recovery scans', () => {
     const bad = await outcome(() => engine.listOwnerRecoveryHeads('not-a-host', []), /invalid input syntax for type uuid: "[^"]*"/);
     expect({ empty, queued, excluded, bad }).toEqual({ empty: 0, queued: 0, excluded: 0, bad: 'invalid input syntax for type uuid: "not-a-host"' });
     return { empty, queued, excluded, bad };
+  });
+
+  parityTest('the refresh resume lists no interrupted refresh without a managed worktree and reads source commits in id order', {
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'insertWriteRequest', 'listResumableRefreshes', 'listSourceLastCommits', 'getConfig'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const host = hostIdFor(engine);
+    const empty = (await engine.listResumableRefreshes(host, 60_000)).length;
+    await admitPut(engine, 'notes/parity-refresh-resume', RESUME_REQUEST);
+    const queued = (await engine.listResumableRefreshes(host, 60_000)).length;
+    const moved = await resumeWorktreeRefreshes(engine, { hostId: host });
+    const bad = await outcome(() => engine.listResumableRefreshes('not-a-host', 60_000), /invalid input syntax for type uuid: "[^"]*"/);
+    const commits = await engine.listSourceLastCommits(['parity-missing-source', 'default']);
+    const none = await engine.listSourceLastCommits([]);
+    expect({ empty, queued, moved, bad, commits, none }).toEqual({
+      empty: 0, queued: 0, moved: 0, bad: 'invalid input syntax for type uuid: "not-a-host"', commits: [{ last_commit: null }], none: [],
+    });
+    return { empty, queued, moved, bad, commits, none };
   });
 });
