@@ -41,7 +41,7 @@
 //! `updateSlug` writes slug aliases and rename history. The private-provenance policy
 //! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
-use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::error::{INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
@@ -424,6 +424,9 @@ fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -
     Ok(())
 }
 
+/// The frontmatter key that marks a page whose chunks get no vectors.
+const EMBED_SKIP_KEY: &str = "embed_skip";
+
 fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
     get_json(read, &cr_key(page_id))
 }
@@ -703,9 +706,12 @@ impl Store {
 
     /// `updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)`: stamps the
     /// live page at `(sourceId, slug)` and sets its `updated_at`; anything else is left alone. The
-    /// knowledge revision does not move (neither column is in the revision trigger's list). The
-    /// `none` tier's reset of `embedding_signature` and chunk vectors is a no-op here: this store
-    /// keeps neither.
+    /// knowledge revision does not move (neither column is in the revision trigger's list). Moving a
+    /// page from the `title` or `per_chunk_synopsis` tier to `none` resets what the tier embedded, as
+    /// the SQL engines do: the page's `embedding_signature` goes, and every chunk with a vector loses
+    /// it, its embed time and its text and input hashes and is stamped pending now
+    /// (`embeddings::reset_page_vectors`, which raises the vector generation). An `embed_skip` page
+    /// keeps both, as does a page that had no tier.
     pub fn update_page_contextual_retrieval_state(
         &self,
         slug: &str,
@@ -723,12 +729,20 @@ impl Store {
             else {
                 return Ok(());
             };
+            let now = self.env.now_micros();
+            let old_mode = read_cr(&*tx, page.id)?.map(|cr| cr.mode);
+            if mode == "none"
+                && matches!(old_mode.as_deref(), Some("title" | "per_chunk_synopsis"))
+                && !page.frontmatter.contains_key(EMBED_SKIP_KEY)
+            {
+                crate::embeddings::reset_page_vectors(tx, page.id, now)?;
+            }
             let state = CrState {
                 mode: mode.to_string(),
                 corpus_generation: corpus_generation.map(str::to_string),
             };
             put_json(tx, &cr_key(page.id), &state)?;
-            page.updated_at_us = self.env.now_micros();
+            page.updated_at_us = now;
             write_page(tx, &page)
         })
     }
@@ -738,7 +752,9 @@ impl Store {
     /// there is none). The page is versioned as it stood first, then moved by
     /// `pages::rename_page`; a real move records `old -> new` in the rename history and the slug aliases, moves the records
     /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
-    /// slug is taken; either keeps nothing.
+    /// slug is taken; either keeps nothing. A segmented page (NULL body) is refused with `invalid_state` before anything
+    /// is written, as `create_version` refuses it: PGLite versions it as a reference to its live body generation, and
+    /// this store keeps no such reference, so the version would hold no body.
     pub fn update_slug(
         &self,
         old_slug: &str,
@@ -751,6 +767,12 @@ impl Store {
             let Some(page) = read_page(&*tx, source, old_slug)? else {
                 return Ok(0);
             };
+            if page.compiled_truth.is_null() {
+                return Err(StoreError::new(
+                    INVALID_STATE,
+                    format!("updateSlug refuses segmented page {old_slug} (source={source})"),
+                ));
+            }
             snapshot_in(tx, &*self.env, &page)?;
             let moved = rename_page(tx, &*self.env, &page, &new_slug)?;
             if moved.slug != page.slug {

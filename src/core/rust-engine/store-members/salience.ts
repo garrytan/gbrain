@@ -8,6 +8,8 @@
  * `pageReadFilter` adds (private-provenance.ts `storePagePolicy`, which refuses a caller whose policy is wider than the
  * store's). On getSalienceScores a trust floor or flag suppression refuses, as its SQL reads them; getRecentSalience's
  * SQL never reads them, so they change nothing there.
+ * getSalienceScores also accepts the rest of hybrid search's post-fusion option bag (`HYBRID_BAG_KEYS`), which its SQL
+ * never reads; refusing it would make the post-fusion stage skip the salience boost.
  */
 import { clampSearchLimit } from '../../engine.ts';
 import { resolveRecencyDecayMap, DEFAULT_FALLBACK, type RecencyDecayConfig, type RecencyDecayMap } from '../../search/recency-decay.ts';
@@ -15,19 +17,8 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow, PageReadPolicy, SalienceOpts, SalienceResult,
 } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
+import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
 
-/** `SearchOpts` keys hybrid search passes along with its read policy; readSalienceScores never reads them. */
-const SEARCH_KEYS = [
-  'limit', 'offset', 'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete',
-  'adaptiveReturn', 'autocut', 'type', 'types', 'where', 'exclude_slugs', 'exclude_slug_prefixes', 'source_boosts',
-  'include_slug_prefixes', 'detail', 'language', 'symbolKind', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill',
-  'keywordTimeoutCache', 'rankQuery', 'keywordPhrase', 'embeddingColumn', 'afterDate', 'afterDateInclusive',
-  'beforeDate', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since', 'until', 'tokenBudget',
-  'useCache', 'intentWeighting', 'reranker', 'crossModal', 'graph_signals', 'relationalRetrieval',
-  'relationalRetrievalDepth', 'relationalRerankPin', 'relationalPlanner', 'relationalOrientOneHop',
-  'relationalChainSlots',
-] as const;
 
 /** `pageReadFilter`'s source filter: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope. */
 function sourceScope(opts: Record<string, unknown>): unknown[] | null {
@@ -98,7 +89,9 @@ export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult
 export const getSalienceScores: StoreMember<[refs: Array<{ slug: string; source_id: string }>, opts?: PageReadPolicy], Map<string, number>> = async (brain, refs, opts) => {
   if (!refs.length) return new Map();
   const o = takeOptions('getSalienceScores', opts, ['sourceId', 'sourceIds', 'takesHoldersAllowList'],
-    ['requireSafeChunks', 'excludePrivate', ...SEARCH_KEYS]);
+    // Hybrid search's post-fusion stage hands its whole option bag (search options plus applyBacklinks, floorRatio,
+    // graphSignalsEnabled, query, titleBoost...) to this read; readSalienceScores reads only the page policy out of it.
+    ['requireSafeChunks', 'excludePrivate', ...HYBRID_BAG_KEYS]);
   const excludePrivate = storePagePolicy('getSalienceScores', opts?.excludePrivate);
   const rows = (await storeCall({ member: 'getSalienceScores' }, () => brain.getSalienceScores({
     refs: refs.map((r) => ({ slug: r.slug, source_id: r.source_id })),

@@ -127,6 +127,28 @@ describe('export-corpus', () => {
     expect(readdirSync(out).sort()).toEqual([...names].sort());
   }, 60_000);
 
+  test('an --overwrite export whose rename fails leaves no temporary file behind', async () => {
+    const dbPath = join(root, 'brain-rename-fails');
+    const config = { engine: 'pglite' as const, database_path: dbPath };
+    const engine = await createEngine(config);
+    await engine.connect(config);
+    try {
+      await engine.initSchema();
+      await engine.putPage('notes/inline', { type: 'note', title: 'Inline', compiled_truth: 'an inline body', timeline: '' });
+    } finally {
+      await engine.disconnect();
+    }
+    const out = join(root, 'corpus-rename-fails');
+    // A non-empty directory at the first output name: renaming the finished file over it fails.
+    mkdirSync(join(out, 'pages.jsonl'), { recursive: true });
+    writeFileSync(join(out, 'pages.jsonl', 'keep'), 'not yours');
+    const run = Bun.spawnSync(['bun', script, '--out', out, '--pglite-dir', dbPath, '--overwrite'], { stdout: 'pipe', stderr: 'pipe' });
+    expect(run.exitCode).not.toBe(0);
+    // The temporary files hold private page text; none may outlive the failed export.
+    expect(readdirSync(out).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(readFileSync(join(out, 'pages.jsonl', 'keep'), 'utf8')).toBe('not yours');
+  }, 60_000);
+
   describe('the in-repository guard', () => {
     const repo = join(root, 'repo');
     mkdirSync(repo, { recursive: true });

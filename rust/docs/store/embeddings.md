@@ -70,14 +70,18 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | `brain.countStaleTakes(opts)` / `brain.listStaleTakes(opts)` | active takes on live pages with no current vector, or one of another model or width; the list is by id, at most 100000 | `countStaleTakes`, `listStaleTakes` |
 
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
-stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
+stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`). `addTakesBatch` also deletes the
+vector when it changes a claim, as Postgres nulls the column; that raises the vector generation, so a warm
+vector index (vectors.rs) rebuilds and `searchTakesVector` stops ranking the old claim's vector.
 
 ## Known edges
 
 - The page-embedding budget (`budgetLimited`) is not kept: no page leaves the stale queue for it.
-- PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
-  (`visible_at`).
+- The stale reads (`countStaleChunks`, `sumStaleChunkChars`, `listStaleChunks`), `readEmbeddingStateCounts`,
+  `listEmbeddingStateRows` and the `includeUnsealed` reads take PGLite's `chunkGenerationFilter`: an inline chunk only
+  on a page that is not segmented, and a segmented chunk only at or below the page's generation with a live manifest
+  row. A chunk whose occurrence a deferred retire closed is not read. The served reads (`getEmbeddingsByChunkIds`,
+  `cosinesByChunkIds`, sealed `getChunksWithEmbeddings`) keep `chunkVisibleFilter`, the generation alone.
 - A segmented page counts as having no chunkless content.
 - Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
-- `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.

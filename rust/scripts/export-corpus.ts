@@ -214,7 +214,12 @@ try {
   const manifestFd = open('manifest.json');
   writeSync(manifestFd, JSON.stringify(manifest, null, 2) + '\n');
   closeSync(manifestFd);
-  for (const { temp, final } of pending.splice(0)) renameSync(temp, final);
+  // An entry leaves `pending` only once its rename succeeds, so a failed rename (a directory at the final name)
+  // still has the finally block remove that temporary file and every one after it.
+  while (pending.length > 0) {
+    renameSync(pending[0]!.temp, pending[0]!.final);
+    pending.shift();
+  }
   console.error(`exported ${pageIndex} pages, ${chunkRow} chunks (${dims} dims), ${queryReservoir.length} queries to ${out}`);
   if (skippedChunks || skippedPages || skippedSegmented) {
     console.error(`skipped ${skippedChunks} chunks without an embedding, ${skippedPages} unreadable pages and ${skippedSegmented} segmented pages`);

@@ -12,8 +12,9 @@
  *
  * The store models the source filter and the live test of the read policy (src/core/search/read-policy-sql.ts), and
  * for getBacklinkCounts, getAdjacencyBoosts and supersedingPageSlugs the page policy `excludePrivate` adds, over every
- * page the read judges (the target, the linking page and the page that authored the edge). Any other privacy, trust,
- * flag, safe-chunk or temporal policy refuses with `engine_capability_missing`, as does `excludePrivate` on the other
+ * page the read judges (the target, the linking page and the page that authored the edge). relationalFanout and
+ * relationalChainHop also model `requireSafeChunks` (the canonical chunk's safe fence and the chain's evidence text gate,
+ * `takesHoldersAllowList` included). Any other privacy, trust, flag, safe-chunk or temporal policy refuses with `engine_capability_missing`, as does `excludePrivate` on the other
  * members and a derived-link option that needs state the store does not keep (wanted pages, line-grammar ranges,
  * temporal evidence). See rust/docs/store/link_queries.md.
  */
@@ -30,10 +31,15 @@ import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
+import { ownerWidened } from '../../search/private-visibility.ts';
+import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 
 /** The read-policy keys the store models: the source filter. */
 const SCOPE_KEYS = ['sourceId', 'sourceIds'] as const;
-/** Keys `pageReadFilter` never reads: the SQL engines ignore them in these statements, so the store does too. */
+/**
+ * Keys `pageReadFilter` never reads. The ranking reads ignore them, as the SQL engines do; the relational walks read
+ * them for the canonical chunk's safe fence and relationalChainHop's evidence text gate (`chainTextGate`).
+ */
 const UNREAD_BY_FILTER = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
 /** For relationalFanout the unread keys still turn the live filter on, through `hasReadPolicy`. */
 const POLICY_KEYS = [...SCOPE_KEYS, ...UNREAD_BY_FILTER] as const;
@@ -55,6 +61,18 @@ function int32Ids(member: string, ids: readonly number[], label?: string): numbe
 }
 
 const scopeOf = (o: Record<string, unknown>) => ({ sourceId: o.sourceId, sourceIds: o.sourceIds });
+
+/**
+ * `textGate` of readChainHop (src/core/search/read-enrichment.ts), decided here because it reads the caller: with
+ * `requiresSafeChunks`, edge context needs a sealed evidence page with no facts / takes fence (`body`); the owner's own
+ * direct call reads the stored context (ownerWidened), unless its credential names a holders list, which still skips
+ * takes-bearing evidence (`takes`).
+ */
+function chainTextGate(opts: ChainHopOpts): 'body' | 'takes' | undefined {
+  if (!requiresSafeChunks(opts)) return undefined;
+  if (!ownerWidened()) return 'body';
+  return opts.takesHoldersAllowList === undefined ? undefined : 'takes';
+}
 
 /**
  * The scope of a ranking read hybridSearch hands its whole option bag: the source filter, the bag's own keys (ignored,
@@ -248,6 +266,7 @@ export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFa
       depth,
       includeMentions: !!opts?.includeMentions,
       limit,
+      requireSafeChunks: requiresSafeChunks(opts),
     };
     return storeCall({ member: 'relationalFanout' }, () => brain.relationalFanout(seeds, wire));
   };
@@ -264,6 +283,7 @@ export const relationalChainHop: StoreMember<[frontierPageIds: number[], opts: C
       ...scopeOf(options),
       linkTypes: opts.linkTypes, toward: opts.toward, subjectTypes: opts.subjectTypes, objectTypes: opts.objectTypes,
       degreeLinkTypes: opts.degreeLinkTypes, neighborCap: cap,
+      requireSafeChunks: requiresSafeChunks(opts), textGate: chainTextGate(opts),
     };
     return storeCall({ member: 'relationalChainHop' }, () => brain.relationalChainHop(ids, wire));
   };
