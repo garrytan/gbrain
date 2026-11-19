@@ -600,6 +600,13 @@ pub(crate) fn insert_write_request_in(
             "no worktree refresh exists on this engine, so deferred_refresh_id cannot be set",
         ));
     }
+    if input.principal_id.contains('\0') {
+        // Postgres text refuses a NUL byte, and the duplicate lookup below cannot find a key
+        // that holds one, so a repeat would add a second row instead of being refused.
+        return Err(StoreError::invalid(
+            "insertWriteRequest: principal_id contains a NUL byte",
+        ));
+    }
     let principal = Principal {
         kind: input.principal_kind.clone(),
         id: input.principal_id.clone(),

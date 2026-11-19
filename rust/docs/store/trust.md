@@ -137,7 +137,7 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `upsertPageWriteGateReceipt` | `upsert_page_write_gate_receipt`: the same on the live page `(source, slug)`; none when the page is missing or soft-deleted | `INSERT … SELECT 'pages', p.id::text … WHERE p.deleted_at IS NULL` |
 | `deleteStalePageWriteGateReceipts` | `delete_stale_page_write_gate_receipts`: removes the page's receipts (live or soft-deleted page) whose hash differs | `DELETE … USING pages p … content_hash IS DISTINCT FROM $3` |
 | `listWriteGateReceiptsFor` | `list_write_gate_receipts_for`: sorted by `last_seen_at` then id, both descending, cut to `limit` | `ORDER BY last_seen_at DESC, id DESC LIMIT $3` |
-| `deleteStaleWriteGateReceipts` | `delete_stale_write_gate_receipts`: removes receipts older than the cutoff, except those on a hold still `held` | `DELETE … make_interval(days => $1) AND NOT (… h.status = 'held')` |
+| `deleteStaleWriteGateReceipts` | `delete_stale_write_gate_receipts`: removes receipts older than the cutoff, except those on a hold still `held`; a retention whose cutoff is past the timestamp range is `invalid_argument` and deletes nothing | `DELETE … make_interval(days => $1) AND NOT (… h.status = 'held')` |
 | `upsertWriteGateHold` | `upsert_write_gate_hold`: a known key reopens the hold (status `held`, decision cleared, `seen_count` + 1), keeps its id and kind | `INSERT … ON CONFLICT (source_id, slug, fingerprint, detector_version) DO UPDATE` |
 | `listWriteGateHoldRows` | `list_write_gate_hold_rows`: filters on status, kind, source list or source and `beforeId`; sorted by id descending, cut to `limit` | `… ORDER BY id DESC LIMIT $n` |
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
