@@ -514,11 +514,11 @@ impl Store {
             let id = next_id(tx, NEXT_INGEST_LOG_ID)?;
             let record = IngestRecord {
                 id,
-                source_id,
-                source_type,
-                source_ref,
-                pages_updated,
-                summary,
+                source_id: source_id.clone(),
+                source_type: source_type.clone(),
+                source_ref: source_ref.clone(),
+                pages_updated: pages_updated.clone(),
+                summary: summary.clone(),
                 created_at_us,
             };
             put_json(tx, &ingest_key(created_at_us, id), &record)

@@ -730,14 +730,7 @@ pub(crate) fn assert_origin_unclaimed(
 }
 
 pub(crate) fn next_id(tx: &mut dyn KvWrite, name: &str) -> Result<u64> {
-    let key = keys::meta(name);
-    let current = match tx.get(&key)? {
-        Some(bytes) => keys::be8(&bytes)
-            .ok_or_else(|| StoreError::new(crate::error::STORE_CORRUPT, "bad id counter"))?,
-        None => 1,
-    };
-    tx.put(&key, &(current + 1).to_be_bytes())?;
-    Ok(current)
+    tx.allocate(&keys::meta(name), 1)
 }
 
 pub(crate) fn all_pages(read: &dyn KvRead) -> Result<Vec<PageRecord>> {
@@ -1324,8 +1317,10 @@ impl Store {
             .count() as u64)
     }
 
-    /// `lockPageKeys(keys)`: one process owns the brain and one write transaction runs at a time,
-    /// so every key is already held. The call checks that the keys are well formed.
+    /// `lockPageKeys(keys)`: one process owns the brain, and each store call is one transaction
+    /// that serializes with every other one it conflicts with (`occ_kv`), so every key a call
+    /// touches is already held for that call. The store has no transaction that spans calls, so
+    /// there is nothing more to hold. The call checks that the keys are well formed.
     pub fn lock_page_keys(&self, keys: &[PageKey]) -> Result<()> {
         for key in keys {
             validate_slug(&key.slug)?;

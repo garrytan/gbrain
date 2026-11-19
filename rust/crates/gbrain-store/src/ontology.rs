@@ -236,7 +236,7 @@ impl Store {
                         && r.valid_from_us >= cur.valid_from_us
                 });
                 if seen {
-                    return Ok(noop);
+                    return Ok(noop.clone());
                 }
                 free_key(tx, trust, obs, valid_from)?;
                 row.expired_at_us = Some(now);
@@ -245,12 +245,12 @@ impl Store {
                     true => {
                         json!({ "action": "corroborated", "factId": row.id, "supersededId": null })
                     }
-                    false => noop,
+                    false => noop.clone(),
                 });
             }
             free_key(tx, trust, obs, valid_from)?;
             if !insert(tx, trust, &mut row)? {
-                return Ok(noop);
+                return Ok(noop.clone());
             }
             let mut superseded = None;
             if let Some(cur) = &current

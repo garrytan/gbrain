@@ -1525,7 +1525,7 @@ impl Store {
             return Ok(());
         }
         self.write(|tx| {
-            for row_num in wanted {
+            for row_num in wanted.iter().copied() {
                 if let Some(take) = take_at(&*tx, page_id, row_num)? {
                     delete_take(tx, &take)?;
                 }

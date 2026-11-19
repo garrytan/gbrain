@@ -408,12 +408,12 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	101	no	yes	yes	serves
-getJob	minion_jobs	yes	35	no	yes	yes	serves
+admitJob	minion_jobs	yes	102	no	yes	yes	serves
+getJob	minion_jobs	yes	36	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	73	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	74	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	42	no	yes	yes	serves
+completeJob	minion_jobs	yes	43	no	yes	yes	serves
 failJob	minion_jobs	yes	34	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	3	no	yes	yes	serves

@@ -57,6 +57,9 @@ pub struct BrainOpenOptions {
     pub schema_version: Option<u32>,
     /// Recorded in `FORMAT` when the brain is created.
     pub created_by: Option<String>,
+    /// Opt-in: let many write transactions run at once. Off unless this is true or
+    /// `GBRAIN_RUST_CONCURRENT_WRITES=1` is set.
+    pub concurrent_writes: Option<bool>,
 }
 
 #[napi]
@@ -153,9 +156,14 @@ impl Brain {
             let mut opts = OpenOptions {
                 engine_abi: crate::ENGINE_ABI,
                 catalog_version: crate::CATALOG_VERSION,
+                concurrent_writes: std::env::var("GBRAIN_RUST_CONCURRENT_WRITES")
+                    .is_ok_and(|v| v == "1"),
                 ..OpenOptions::default()
             };
             if let Some(options) = options {
+                if let Some(on) = options.concurrent_writes {
+                    opts.concurrent_writes = on;
+                }
                 if let Some(v) = options.schema_version {
                     opts.schema_version = v;
                 }
