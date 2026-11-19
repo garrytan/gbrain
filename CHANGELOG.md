@@ -10,9 +10,37 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.743.0] - 2026-11-19
+
+**OpenClaw's skill resolver now suggests skills for the message the user just sent.**
+
+### Fixed
+- The `gbrain-skill-resolver` plugin read the user's text from fields a real OpenClaw gateway does not send. OpenClaw 2026.10.33 and 2026.11.5 pass it as `event.prompt` and keep only earlier turns in `event.messages`. So the first turn of every session got no suggestions (`skipped_empty`), and each later turn was ranked on the message before it, in live and in shadow mode. The plugin now reads `event.prompt` first.
+- The plugin now finds OpenClaw's `assertActive` check under `ctx.hookInvocation`, so a run that OpenClaw already ended no longer counts toward the session.
+- `gbrain setup openclaw` now parses `openclaw skills list --json` from stdout only. A warning OpenClaw printed on stderr used to make the list read as failed. Setup then skipped the hidden-skill filter and the `skill_resolver_host_load_cut` note.
+- An upgrade does not rewrite the plugin on its own. To install the fixed plugin, run `gbrain setup openclaw --skill-loading resolve` (or `shadow`) again, then restart the gateway.
+
+**Changing GBrain Helper's send settings at the Mac no longer holds up sends, and a Touch ID approval applies only to the settings it was shown for.**
+
+### Fixed
+- Turning sending on, adding a send key and raising a limit ask for Touch ID. The helper used to hold its settings lock for the whole dialog, which can take up to two minutes, so any send arriving then waited. It now asks with no lock held, and sends keep working while the dialog is open.
+- After the owner approves, the helper takes the lock, reads the settings again and applies the change only if they still match what the dialog was built from. If another change landed in the meantime it applies nothing and answers `overloaded`, and the owner runs the command again.
+- A send now reads its settings, checks the kill switch and its key, and takes the limits under the same lock admin uses to save. A send that arrives while a key is being replaced is checked against the new key.
+- `send-setup --off`, `send-key remove` and lowering a limit always write the keychain item in one step, so a failed write is reported as an error rather than taken as done, and a Touch ID approval still open from an earlier command is refused instead of undoing them. `send-setup --off` exits with an error when the helper answers but can't save.
+- `send-key add` and `send-limits set` wait for the helper's Touch ID wait plus a minute.
+
+**The secret store now backs itself up, encrypted, to your storage bucket, and `gbrain doctor` reports its health.**
+
+### Added
+- `gbrain secrets backup` uploads an encrypted export of the secret store to the storage backend you already configured for files (Supabase, S3 or local), and maintenance does it after new entries. The bucket gets no value, page name, path or rule in clear, and never the key; `gbrain secrets backup --restore <object>` adds back the entries a brain lacks, only where the key is. With no backend, the database backup carries the store and nothing is needed.
+- `gbrain doctor` has a `secret_store` check: entries, the last backup, keys entries need that this host lacks (`secret_store_key_forked`), a key whose escrow copy was never exported, originals waiting in the spool, held-back publish commits and local refs that still hold commits from before a redaction rebuild.
+
+### Known limits
+- Purging a page does not yet remove its sealed originals from the secret store. They stay encrypted, and `gbrain doctor`'s `secret_store` check still counts them. Removing them with the page follows in a later release.
+
 ## [0.60.742.0] - 2026-11-19
 
-**The PostgreSQL test lane runs on 28 shards, so new test files no longer push it past its time budget.**
+**The PostgreSQL unit tests run on 28 shards, so new test files no longer push them past their time budget.**
 
 ### Changed
 - `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 28. In `.github/workflows/persistence-validation.yml`, the `unit-postgres-arms` matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose 570 s budget is unchanged). `scripts/postgres-arm-weights.json` is re-mined from the arms jobs of the five newest complete full runs, so every listed file has a measured weight. The largest shard drops from 557.4 s on 24 shards to 478.4 s on 28. Check names become `Unit-lane PostgreSQL arms N/28 / Bun …`, and none of them is a required check.
