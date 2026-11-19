@@ -105,7 +105,8 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
   'getConfig', 'getAllConfig', 'listConfigKeys', 'readPageSnapshot', 'getPage',
-  'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword']);
+  'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
+  'readSegmentTexts']);
 
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {

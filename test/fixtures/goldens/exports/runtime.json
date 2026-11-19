@@ -817,6 +817,7 @@
         "endWakeWatches",
         "engineSql",
         "engineSqlOn",
+        "engineSqlRead",
         "ensureFactsKeywordIndex",
         "entityGraphCoverage",
         "executeRaw",

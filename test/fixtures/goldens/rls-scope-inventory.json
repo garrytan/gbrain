@@ -4765,6 +4765,7 @@
         "endWakeWatches": "none",
         "engineSql": "none",
         "engineSqlOn": "none",
+        "engineSqlRead": "none",
         "ensureFactsKeywordIndex": "none",
         "entityGraphCoverage": "none",
         "executeRaw": "none",

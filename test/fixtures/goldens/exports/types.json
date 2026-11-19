@@ -1987,6 +1987,7 @@
           "private disconnectInternal",
           "private engineSql",
           "private engineSqlOn",
+          "private engineSqlRead",
           "private getBulkRetryOpts",
           "private jitOffRead",
           "private keywordStatementTimeout",

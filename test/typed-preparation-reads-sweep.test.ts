@@ -38,6 +38,7 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['getPage', 'WITH chosen AS (', e => e.getPage('a', { sourceId: 'default' })],
   ['findDuplicatePage', 'SELECT id, slug FROM pages', e => e.findDuplicatePage!('default', { hash: 'h' })],
   ['findByTitleFuzzy', 'SELECT slug, similarity(title,', e => e.findByTitleFuzzy('A title', undefined, 0.55, 'default')],
+  ['readSegmentTexts', 'FROM page_segment_texts t', e => e.readSegmentTexts('default', [new Uint8Array(32)])],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

@@ -511,6 +511,11 @@ export class PostgresEngine implements BrainEngine {
     return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
+  /** A typed read master ran on `engineSql`: still so, or `preparationRead` under a read deadline. */
+  private engineSqlRead<T>(fn: (exec: SqlExecutor) => Promise<T>): Promise<T> {
+    return this._pageTransaction || readDeadline() === undefined ? fn(this.engineSql) : this.preparationRead(fn);
+  }
+
   /** A typed read master ran through this engine's executeRaw (a statement fault a test injects reaches it): still so, or `preparationRead` under a read deadline. */
   private ownRawRead<T>(fn: (exec: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T> {
     return this._pageTransaction || readDeadline() === undefined ? fn(this) : this.preparationRead(fn);
@@ -2275,8 +2280,7 @@ export class PostgresEngine implements BrainEngine {
     minSimilarity: number = 0.55,
     sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null> {
-    const read = (exec: SqlExecutor) => pagesImpl.findByTitleFuzzy(unscopedExecutor(exec, 'pages: unscoped on master (EO4 inventory)'), name, dirPrefix, minSimilarity, sourceId);
-    return this._pageTransaction || readDeadline() === undefined ? read(this.engineSql) : this.preparationRead(read);
+    return this.engineSqlRead(exec => pagesImpl.findByTitleFuzzy(unscopedExecutor(exec, 'pages: unscoped on master (EO4 inventory)'), name, dirPrefix, minSimilarity, sourceId));
   }
 
   async traverseGraph(
@@ -2871,7 +2875,7 @@ export class PostgresEngine implements BrainEngine {
   async allocateBodyOccurrenceIds(count: number): Promise<number[]> { return pageBodyImpl.allocateBodyOccurrenceIds(this.engineSql, count); }
   async stageSegmentTexts(sourceId: string, texts: readonly SegmentTextInput[], opts?: { stagingId?: string }): Promise<{ inserted: number }> { return pageBodyImpl.stageSegmentTexts(this.engineSql, sourceId, texts, opts); }
   async readSegmentTexts(sourceId: string, sha256s: readonly Uint8Array[]): Promise<Map<string, Uint8Array>> {
-    return pageBodyImpl.readSegmentTexts(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), sourceId, sha256s);
+    return this.engineSqlRead(exec => pageBodyImpl.readSegmentTexts(unscopedExecutor(exec, 'page-body: page-id keyed internal read'), sourceId, sha256s));
   }
   async stageManifestRows(rows: readonly ManifestRowInput[]): Promise<void> { return pageBodyImpl.stageManifestRows(this.engineSql, rows); }
   async readManifest(pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number }): Promise<ManifestRow[]> {
