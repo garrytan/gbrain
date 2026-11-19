@@ -4671,6 +4671,7 @@
         "completeJob": "none",
         "completeSubagentToolExecution": "none",
         "completeWriteRow": "none",
+        "configRead": "none",
         "connRetry": "none",
         "connect": "none",
         "connectedDatabaseUrl": "none",

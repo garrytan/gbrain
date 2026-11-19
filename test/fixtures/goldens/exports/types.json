@@ -1980,6 +1980,7 @@
           "private checkoutGauge",
           "private chunkRead",
           "private cliReads",
+          "private configRead",
           "private connRetry",
           "private directEngineSql",
           "private directRawSql",

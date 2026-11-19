@@ -723,6 +723,7 @@
         "completeJob",
         "completeSubagentToolExecution",
         "completeWriteRow",
+        "configRead",
         "connRetry",
         "connect",
         "connectedDatabaseUrl",

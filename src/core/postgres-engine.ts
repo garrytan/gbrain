@@ -3274,10 +3274,17 @@ export class PostgresEngine implements BrainEngine {
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
     // search mode/knobs and empty-stdout queries.
-    return this.connRetry(async () => {
-      const rows = await this.sql`SELECT value FROM config WHERE key = ${key}`;
+    return this.configRead(async sql => {
+      const rows = await sql`SELECT value FROM config WHERE key = ${key}`;
       return rows.length > 0 ? (rows[0].value as string) : null;
     });
+  }
+
+  /** A config read: retried on a pooler drop (#1603), or under a preparer's read deadline its bounded read-only transaction (`preparationRead`). */
+  private configRead<T>(run: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+    const deadlineAt = this._pageTransaction ? undefined : readDeadline();
+    if (deadlineAt === undefined) return this.connRetry(() => run(this.sql));
+    return runDeadlineRead(this.sql, deadlineAt, run, this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
   async setConfig(key: string, value: string): Promise<void> {
