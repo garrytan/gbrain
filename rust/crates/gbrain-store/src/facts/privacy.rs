@@ -201,9 +201,27 @@ pub(crate) fn hidden_by_private_provenance(
             return Ok(true);
         }
     }
+    // GBRA-574: a bare name key (no `/`) reads as the page later written at `<dir>/<key>`, so each
+    // such page's privacy covers it.
+    if let Some(key) = row.entity_slug.as_deref().filter(|e| !e.contains('/')) {
+        for dir in NAME_KEY_PAGE_DIRS {
+            let Some(page) = read_page(read, &row.source_id, &format!("{dir}/{key}"))? else {
+                continue;
+            };
+            if page_hidden(read, &page, policy, owner_only)? {
+                return Ok(true);
+            }
+        }
+    }
     // `sharedHeldRuledSql` hides a held fact only under a folder rule or pending coverage.
     Ok(false)
 }
+
+/// `NAME_KEY_PAGE_DIRS` (`src/core/entities/basename-dirs.ts`): the directories whose page at
+/// `<dir>/<key>` covers a bare name key's facts for privacy.
+const NAME_KEY_PAGE_DIRS: [&str; 8] = [
+    "people", "companies", "hosts", "projects", "concepts", "funds", "orgs", "organizations",
+];
 
 /// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
 /// for the empty identity (named readers, origin readers, the owner-only rule), then the privacy part
@@ -577,5 +595,40 @@ mod tests {
         assert!(!hidden(OwnerOnly::Lineage, &open) && !hidden(OwnerOnly::Lineage, &bare));
         // The closed form hides every fact while the brain holds an owner-only source.
         assert!(hidden(OwnerOnly::Closed, &open) && hidden(OwnerOnly::Closed, &bare));
+    }
+
+    /// `privateEntityFilterForCaller`'s keyed arm (GBRA-574): a bare name key is covered by the privacy
+    /// of the page at `<dir>/<key>` in each name-key directory, as a slugged entity is by its own page.
+    #[test]
+    fn a_bare_entity_key_is_hidden_by_its_private_directory_page() {
+        let store = crate::test_support::store();
+        let put = |slug: &str, frontmatter: Value| {
+            let input: crate::pages::PageInput = serde_json::from_value(json!({
+                "type": "person", "title": slug, "compiled_truth": "body", "timeline": "", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store.put_page(slug, &input, &Default::default()).unwrap();
+        };
+        put("people/alice-example", json!({ "visibility": "private" }));
+        put("companies/acme-example", json!({}));
+        put("notes/alice-example", json!({ "visibility": "private" }));
+        let fact = |entity: &str| FactRecord {
+            source_id: "default".into(),
+            entity_slug: Some(entity.into()),
+            visibility: "world".into(),
+            ..Default::default()
+        };
+        let hidden = |row: &FactRecord| {
+            let read = store.read().unwrap();
+            let sources = OwnerOnlySources::read(&*read).unwrap();
+            let policy = PrivacyPolicy { honor_aliases: true, entity_privacy: true, owner_only: OwnerOnly::Lineage };
+            hidden_by_private_provenance(&*read, row, &policy, &sources).unwrap()
+        };
+        assert!(hidden(&fact("alice-example")));
+        assert!(hidden(&fact("people/alice-example")));
+        assert!(!hidden(&fact("acme-example")));
+        // Only the name-key directories cover a bare key; a slugged key is judged by its own page only.
+        assert!(!hidden(&fact("bob-example")));
+        assert!(!hidden(&fact("notes/bob-example")));
     }
 }

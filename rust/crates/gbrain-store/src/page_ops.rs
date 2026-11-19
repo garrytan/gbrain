@@ -16,7 +16,7 @@
 //! strings with microseconds.
 //!
 //! What the store does not hold answers as empty: no page has a `last_retrieved_at` (no retrieval
-//! records) and no chunk has an embedding (so `representative_chunk_id` is always null).
+//! records). A sampled page's `representative_chunk_id` is its lowest-index embedded chunk.
 //!
 //! Segmented pages (a NULL body, `pages::PageText`): `readPageSnapshotsBatch` sends the NULL body
 //! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
@@ -646,8 +646,18 @@ fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "compiled_truth": page.compiled_truth,
         "connection_count": connections,
         "last_retrieved_at": Value::Null,
-        "representative_chunk_id": Value::Null,
+        "representative_chunk_id": representative_chunk(read, page.id)?,
     }))
+}
+
+/// The samplers' `representative_chunk_id`: the id of the page's lowest-index chunk that has an
+/// embedding (`cc.embedding IS NOT NULL ORDER BY cc.chunk_index LIMIT 1`), or null.
+fn representative_chunk(read: &dyn KvRead, page_id: u64) -> Result<Value> {
+    Ok(crate::chunks::read_chunks(read, page_id)?
+        .into_iter()
+        .filter(|c| c.embed.dims > 0)
+        .min_by_key(|c| c.chunk_index)
+        .map_or(Value::Null, |c| json!(c.id)))
 }
 
 /// The page index hook (`page_index::reindex_page`): keeps this family's index of page fields in
@@ -977,8 +987,10 @@ impl Store {
                     .or_default()
                     .push(page.slug.clone());
             }
+            let now = self.env.now_micros();
             for (source, slugs) in &by_source {
                 scrub_purged_slugs(tx, source, slugs)?;
+                crate::facts::expire_gone_page_facts(tx, source, slugs, now)?;
             }
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
             Ok(json!({ "slugs": slugs, "count": slugs.len() }))
@@ -1421,6 +1433,66 @@ mod tests {
             .unwrap();
         let slugs: Vec<&str> = sample.iter().map(|r| r["slug"].as_str().unwrap()).collect();
         assert_eq!(slugs, ["notes/a/2"]);
+    }
+
+    #[test]
+    fn the_samplers_name_the_first_embedded_chunk() {
+        let store = store();
+        store.set_config("embedding_dimensions", "3").unwrap();
+        put(&store, "notes/a/1", None);
+        put(&store, "notes/b/1", None);
+        let chunk = |index: u32, vector: Option<[f32; 3]>| {
+            let mut rest = serde_json::Map::new();
+            if let Some(v) = vector {
+                rest.insert("embedding".into(), json!(v));
+                rest.insert("model".into(), json!("embed-m1"));
+            }
+            crate::chunks::ChunkInput {
+                chunk_index: index,
+                chunk_text: format!("text {index}"),
+                rest,
+                ..crate::chunks::ChunkInput::default()
+            }
+        };
+        store
+            .upsert_chunks(
+                "notes/a/1",
+                &[chunk(0, None), chunk(1, Some([1.0, 0.0, 0.0])), chunk(2, Some([0.0, 1.0, 0.0]))],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        store
+            .upsert_chunks("notes/b/1", &[chunk(0, None)], &crate::chunks::UpsertChunksOptions::default())
+            .unwrap();
+        let a = page(&store, DEFAULT_SOURCE, "notes/a/1");
+        let read = store.read().unwrap();
+        let first_embedded = crate::chunks::read_chunks(&*read, a.id)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.chunk_index == 1)
+            .unwrap()
+            .id;
+        drop(read);
+        let representatives = |rows: Vec<Value>| -> Vec<(String, Value)> {
+            let mut out: Vec<(String, Value)> = rows
+                .iter()
+                .map(|r| (r["slug"].as_str().unwrap().to_string(), r["representative_chunk_id"].clone()))
+                .collect();
+            out.sort_by(|x, y| x.0.cmp(&y.0));
+            out
+        };
+        let want = vec![("notes/a/1".to_string(), json!(first_embedded)), ("notes/b/1".to_string(), Value::Null)];
+        let picked = store
+            .list_prefix_sampled_pages(&PrefixSampleOptions {
+                prefixes: vec!["notes/a".into(), "notes/b".into()],
+                ..PrefixSampleOptions::default()
+            })
+            .unwrap();
+        assert_eq!(representatives(picked), want);
+        let sample = store
+            .list_corpus_sample(&CorpusSampleOptions { n: 10.0, seed: Some(0.5), ..CorpusSampleOptions::default() })
+            .unwrap();
+        assert_eq!(representatives(sample), want);
     }
 
     fn refused(result: Result<()>) -> StoreError {

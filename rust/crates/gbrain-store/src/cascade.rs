@@ -71,7 +71,7 @@ pub(crate) fn rename_slug_rows(
     old_slug: &str,
     new_slug: &str,
 ) -> Result<()> {
-    crate::facts::rename_slug_rows(tx, source_id, old_slug, new_slug)?;
+    crate::facts::move_slug_rows(tx, source_id, old_slug, new_slug)?;
     Ok(())
 }
 
