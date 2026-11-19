@@ -78,8 +78,9 @@ Where this engine differs from PGLite:
   roll back.
 - A rename calls core's `cascade::rename_slug_rows` for the records other families key by slug
   (PGLite `moveSlugBindings` steps 1-6: fact withdrawals, `facts.entity_slug`,
-  `facts.source_markdown_slug`). The facts entry is a stub until the facts family fills it, so fact
-  bindings do not move yet.
+  `facts.source_markdown_slug`). The facts entry is `facts::rename_slug_rows`: it moves the fact
+  withdrawals first (through `trust::withdrawals::move_subject_in`), then `facts.entity_slug` and
+  `facts.source_markdown_slug`.
 - `putPage` with `contextualRetrieval` writes the state through `aliases::stamp_contextual_retrieval`;
   a `none` mode writes nothing.
 - The version a rename writes has no change reason (`pages::snapshot_in` writes none).

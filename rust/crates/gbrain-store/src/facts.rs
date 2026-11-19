@@ -624,7 +624,9 @@ pub(crate) fn write_fact(
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<()> {
-    let new = &stamp_fact(trust, old, new)?;
+    let mut stamped = stamp_fact(trust, old, new)?;
+    preserve_withdrawal(tx, old, &mut stamped)?;
+    let new = &stamped;
     purge_ledger::refuse_purged(tx, old, new)?;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
@@ -645,6 +647,34 @@ pub(crate) fn write_fact(
         tx.put(key, if unique.is_some() { &id } else { &[] })?;
     }
     put_json(tx, &fact_key(new.id), new)
+}
+
+/// `gbrain_preserve_fact_withdrawal`, the `BEFORE INSERT OR UPDATE OF fact, source_id, visibility,
+/// entity_slug, expired_at` trigger: a row that is not expired and matches a withdrawal of its
+/// claim is saved expired at the earliest such withdrawal, and its `valid_until` is no later than
+/// it ([`purge::earliest_withdrawal`]). An update that changes none of those columns does not fire it.
+fn preserve_withdrawal(
+    read: &dyn KvRead,
+    old: Option<&FactRecord>,
+    new: &mut FactRecord,
+) -> Result<()> {
+    if new.expired_at_us.is_some() {
+        return Ok(());
+    }
+    if old.is_some_and(|o| {
+        o.fact == new.fact
+            && o.source_id == new.source_id
+            && o.visibility == new.visibility
+            && o.entity_slug == new.entity_slug
+            && o.expired_at_us == new.expired_at_us
+    }) {
+        return Ok(());
+    }
+    if let Some(withdrawn) = purge::earliest_withdrawal(read, new)? {
+        new.expired_at_us = Some(withdrawn);
+        new.valid_until_us = Some(new.valid_until_us.map_or(withdrawn, |v| v.min(withdrawn)));
+    }
+    Ok(())
 }
 
 /// Deletes a row and its index entries, then clears `superseded_by` on the rows that named it
@@ -2121,9 +2151,8 @@ fn drop_rekey_duplicates(
 /// row_num a row at `old` holds (they belong to a purged page), drop the ontology rows the fence
 /// move would duplicate, then move `source_markdown_slug` (statements 1 to 6 of "Rename slug
 /// rows" in docs/designs/RUST_ENGINE_INTERFACES.md). Statement 1 moves the `fact_withdrawals`
-/// rows by `subject`; only `executeRaw` writes that ledger (src/core/facts/withdrawal.ts), and the
-/// Rust engine refuses `executeRaw`, so the store holds no withdrawal records and statement 1
-/// moves nothing. Called by `cascade::rename_slug_rows`.
+/// rows by `subject` (`trust::withdrawals::move_subject_in`), so a withdrawn claim stays withdrawn
+/// under the new slug. Called by `cascade::rename_slug_rows`.
 pub(crate) fn rename_slug_rows(
     tx: &mut dyn KvWrite,
     trust: &WriteTrust,
@@ -2134,6 +2163,7 @@ pub(crate) fn rename_slug_rows(
     if old == new {
         return Ok(());
     }
+    crate::trust::withdrawals::move_subject_in(tx, source_id, old, new)?;
     let about = entity_rows(tx, source_id, old)?;
     let moving = about
         .iter()

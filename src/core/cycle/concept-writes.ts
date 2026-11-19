@@ -40,8 +40,8 @@ export interface ConceptWrite {
   revision: string | null;
   /** Unmanaged: the narrative the page held when synthesis started; a different narrative under the page lock defers the concept (D-N3). */
   baseline: string;
-  /** #9653: a held concept's rebuild: unmanaged, the tombstone its transaction purges; managed, 'purged' (its purge committed). */
-  rebuild?: ConceptRebuild | 'purged';
+  /** #9653: a held concept's rebuild: unmanaged, the tombstone its transaction purges; managed, once its purge committed, the members the publication re-checks. */
+  rebuild?: ConceptRebuild | { purgedMembers: ConceptRebuild['members'] };
   /** #9653: set once the rebuilt page was written. */
   rebuilt?: boolean;
 }
@@ -82,7 +82,7 @@ export function conceptWriter(deps: ConceptWriterDeps) {
   const publishClassic = async (write: ConceptWrite, pageVisibility: Visibility): Promise<boolean> => {
     try {
       // #9653: a rebuild imports inside its locked transaction, so its chunks wait for the embedding backlog instead.
-      const rebuild = write.rebuild && write.rebuild !== 'purged' ? write.rebuild : undefined;
+      const rebuild = write.rebuild && 'page_id' in write.rebuild ? write.rebuild : undefined;
       write.baseline = await publishClassicConcept(engine, write.conceptSlug, src, write.synthesized(pageVisibility), write.narrative,
         write.baseline, { writeThrough: deps.writeThrough, members: write.atomSlugs, rebuild, importPage: (markdown, tx) => importFromContent(tx ?? engine, write.conceptSlug, markdown, {
           noEmbed: !!rebuild || !isAvailable('embedding'), sourceId: deps.importSourceId, preserveGateMarkers: true,
@@ -134,7 +134,8 @@ export function conceptWriter(deps: ConceptWriterDeps) {
   /** One managed batch; each concept settles on its own, and the ones that published carry their new revision. */
   const publishManaged = async (writes: ConceptWrite[], pageVisibility: (write: ConceptWrite) => Visibility): Promise<ConceptWrite[]> => {
     const outcomes = writes.length ? await publishManagedConcepts(engine, maintenance!, writes.map(write => ({ slug: write.conceptSlug,
-      synthesized: write.synthesized(pageVisibility(write)), narrative: write.narrative, expectedRevision: write.revision, members: write.atomSlugs })), deps.brainDir) : [];
+      synthesized: write.synthesized(pageVisibility(write)), narrative: write.narrative, expectedRevision: write.revision, members: write.atomSlugs,
+      ...(write.rebuild && 'purgedMembers' in write.rebuild ? { rebuildMembers: write.rebuild.purgedMembers } : {}) })), deps.brainDir) : [];
     return writes.filter((write, i) => {
       const outcome = outcomes[i]!;
       if ('error' in outcome) return recorded(write, outcome.error);

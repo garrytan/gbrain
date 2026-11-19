@@ -476,7 +476,9 @@ the sibling pattern: row-level security on and no policy, so a role with only ta
 (Supabase's `anon` and `authenticated`) neither reads nor adds a mark. No migration grants
 anything. On a brain that has held owner-only data, every non-owner login that reads `sources`
 needs `SELECT` (to read owner-only lineage exactly) and, if it makes permanent deletes,
-`INSERT` on `owner_only_marks`, each with a permissive policy. Without them the login reads
+`INSERT` on `owner_only_marks`, each with a permissive policy in the shape below (`USING (true)`,
+and `WITH CHECK (true)` to add) and no restrictive policy that applies to it; any other policy
+counts as none. Without them the login reads
 owner-only lineage closed, never open and never an error, and its permanent deletes are
 refused with `owner_only_marks_unwritable`, which names the grant. Nobody but the owner
 removes a mark, and only the owner of `owner_only_marks` sets the flag, so the first
@@ -495,12 +497,33 @@ CREATE POLICY owner_only_marks_read_<reader-role> ON owner_only_marks FOR SELECT
 ```
 <!-- gbrain:owner-only-marks-recipe:end -->
 
-A login that cannot read `derivation_inputs`, `facts`, `links`, `takes` and `timeline_entries`
-(the reader role above reads none of them) cannot walk owner-only lineage, so on a brain that has
-held owner-only data it reads every row closed: it sees no page or fact as open, with no error,
-also after the last owner-only source is removed. Do not grant it `SELECT` on those tables
-without a policy that shows it every row: under row-level security it would miss derivation rows
-and read rows open that are owner-only.
+Owner-only lineage is read exactly only by a login whose reads of the lineage tables (`sources`,
+`facts`, `derivation_inputs`, `links`, `pages`, `takes`, `timeline_entries`) are complete: the
+table owner without `FORCE`, a `BYPASSRLS` login, or a login with a permissive `USING (true)`
+policy and no restrictive one on each. On a brain that has held owner-only data any other login
+reads it closed, never open and never an error: every row with a recorded derivation input,
+every synthesized concept or question, every row in an owner-only source and every page or
+fact whose source row the login cannot read counts as owner-only for it. So the scoped writer above, whose `pages` and `sources` policies read
+`app.scopes`, sees every derived row as owner-only. A login that cannot read `derivation_inputs`
+in full (the reader role above has no grant on it) sees every row as owner-only, also after the
+last owner-only source is removed.
+
+**Who must act.** Nobody has to: such a login reads closed, so owner-only data stays hidden
+from it and nothing errors. An operator who runs a scoped login (the writer or reader role
+above) on a brain that has held owner-only data, and wants that login to read derived rows
+exactly again, so that a row derived only from open rows reads as open, gives it complete reads
+of each lineage table `gbrain doctor` names for it (`owner_only_marks_triggers`, details
+`closed_logins` and `lineage_sql`). As the table owner, for each named table:
+
+```sql
+GRANT SELECT ON public.<table> TO <login>;
+DROP POLICY IF EXISTS gbrain_lineage_read_<login> ON public.<table>;
+CREATE POLICY gbrain_lineage_read_<login> ON public.<table> FOR SELECT TO <login> USING (true);
+```
+
+Then drop any restrictive policy on those tables that applies to the login. This gives the
+login every row of those tables, so it undoes the source scoping its own policies give it. That
+trade is the operator's to make: no migration grants anything or adds a policy.
 
 <a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
@@ -1676,7 +1699,7 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
   capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags`, `schema`, `keyword_search`, `vector_search`, `embeddings`, `links`, `graph`,
-  `takes`, `salience` and `ingest_log`.
+  `takes`, `salience`, `ingest_log`, `code_edges`, `contradictions`, `dream_verdicts`, `files`, `raw_data`, `facts`, `ontology` and `eval_capture`.
   Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
@@ -1704,6 +1727,14 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 store cannot read refuses `rust_store_unreadable` with its reason (`gbrain errors <code>`). A served member on an engine
 that is not connected refuses `engine_closed`. These members run on the store (`src/core/rust-engine/store-members/`):
 
+- Contradictions, dream, raw files and code edges: `writeContradictionsRun`, `loadContradictionsTrend`,
+  `getContradictionCacheEntry`, `putContradictionCacheEntry`, `sweepContradictionCache`, `getDreamVerdict`,
+  `putDreamVerdict`, `sweepDreamVerdicts`, `putRawData`, `getRawData`, `upsertFile`, `getFile`, `listFilesForPage`,
+  `addCodeEdges`, `deleteCodeEdgesForChunks`, `getCallersOf`, `getCalleesOf` and `getEdgesByChunk`. They make the
+  `contradictions`, `dream_verdicts`, `raw_data`, `files` and `code_edges` capabilities complete. `getRawData` and the
+  code-edge reads refuse `excludePrivate: true` with `engine_capability_missing` instead of ignoring it. Each store
+  write is one transaction, so a refusal leaves nothing written. Per-member contracts are in
+  `rust/docs/store/` (`contradictions.md`, `dream.md`, `raw_files.md`, `code_edges.md`).
 - Config, sources and tags: `getConfig`, `setConfig`, `unsetConfig`, `listConfigKeys`, `getAllConfig`,
   `getConfigValues`, `listAllSources`, `updateSourceConfig`, `getSource`, `listSourceLocalPaths`,
   `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
@@ -1728,6 +1759,13 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `setPageEmbeddingSignature`, `updateTakeEmbeddings`, ...) and `upsertChunks` and `sealChunks` with the vector a chunk
   carries (`rust/docs/store/vectors.md`, `rust/docs/store/embeddings.md`). The `vector_search` and `embeddings`
   capabilities are reported. The store has one vector column, PGLite's `embedding`.
+- Facts, ontology and eval capture: `insertFact`, `insertFacts`, `deleteFactsForPage`, `expireFact`, `listFactsByEntity`,
+  `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, `listSupersessions`, `countUnconsolidatedFacts`,
+  `findCandidateDuplicates`, `consolidateFact`, `findTrajectory`, `getFactsHealth`, `pageCollapseFacts` and
+  `migrateFactsToCanonical` (the `facts` capability); `mergeOntologyFact`, `getOntology`, `discoverOntologyDimensions`
+  and `findOntologyConflicts` (`ontology`); `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`,
+  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`). A caller policy these members cannot honour
+  refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
   `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
   `salience` and `ingest_log` capabilities are reported.

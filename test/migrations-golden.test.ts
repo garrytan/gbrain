@@ -33,8 +33,7 @@ describe('migrations full-record golden', () => {
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 328 is master's v328-owner-only-reads-complete (#9704) and 329 is master's v329-serves-since-subsecond (#9824); this branch carries neither yet. Drop each from this list when master is merged.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 328, 329]);
+    expect(golden.gaps).toEqual([17, 18, 19, 100]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);
