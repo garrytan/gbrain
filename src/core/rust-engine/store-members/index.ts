@@ -79,6 +79,7 @@ import * as fieldUsage from './field-usage.ts';
 import * as decideStore from './decide-store.ts';
 import * as writeContext from './write-context.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+import * as segmentedWrites from './segmented-writes.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -132,6 +133,8 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
+  // The statements a segmented write and a segmented re-chunk ran through executeRaw (rust/docs/store/page_body.md).
+  ...segmentedWrites,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

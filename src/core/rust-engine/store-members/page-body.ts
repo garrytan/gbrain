@@ -24,6 +24,8 @@ import { readFix } from '../../ops/op-fix.ts';
 import { prepareChunks, textColumnModel } from '../chunk-input.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { storeErrorCode } from '../store-errors.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
@@ -168,9 +170,16 @@ export const createSegmentedPageShell: StoreMember<[slug: string, meta: Segmente
       () => brain.createSegmentedPageShell(slug, metaInput(meta), o));
   };
 
-export const flipBodyGeneration: StoreMember<[input: BodyFlipInput], BodyFlipResult> = async (brain, input) => {
+/**
+ * A flip inside a transaction that set gbrain.materializing_revision (a re-chunk, segmented-writes.ts) sends it as
+ * `keepRevision`: the store keeps the page's revision and seal when it names the page's revision and the flip changed no
+ * tracked column, as Postgres's revision trigger does.
+ */
+export const flipBodyGeneration = async function flipBodyGeneration(this: RustEngine, brain: StoreBrain, input: BodyFlipInput): Promise<BodyFlipResult> {
   if (input.newGeneration !== input.expectedGeneration + 1) throw new TypeError('newGeneration must be expectedGeneration + 1');
-  const sent = { ...input, closeOccurrences: [...input.closeOccurrences], retireChunkOccurrences: [...input.retireChunkOccurrences], meta: metaInput(input.meta) };
+  const keepRevision = this._txScope?.settings.get('gbrain.materializing_revision') || undefined;
+  const sent = { ...input, closeOccurrences: [...input.closeOccurrences], retireChunkOccurrences: [...input.retireChunkOccurrences], meta: metaInput(input.meta),
+    ...(keepRevision ? { keepRevision } : {}) };
   return bodyCall('flipBodyGeneration', () => brain.flipBodyGeneration(sent));
 };
 
