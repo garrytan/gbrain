@@ -75,6 +75,52 @@ export async function notifierCoverageRecorded(exec: LegacyUnscopedRead): Promis
   return covered === true || covered === 't' || covered === 1;
 }
 
+/**
+ * The completed keys of one resumable op's checkpoint (op-checkpoint.ts loadOpCheckpoint): the append-only child rows
+ * (`op_checkpoint_paths`) and the legacy `completed_keys` array, deduplicated in first-seen order. A non-array legacy
+ * value is skipped, so the child rows still load, and reported as `corruptParent`.
+ */
+export async function readOpCheckpointKeys(exec: LegacyUnscopedRead, op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }> {
+  // UNION ALL, not UNION: the Set below dedupes, so no server-side sort runs over a large checkpoint. The legacy arm is
+  // gated on jsonb_typeof = 'array' because jsonb_array_elements_text throws on a scalar and would kill the whole union.
+  const rows = await exec.executeRaw<{ ckey: unknown; corrupt: number }>(
+    `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
+       WHERE op = $1 AND fingerprint = $2
+     UNION ALL
+     SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
+     UNION ALL
+     SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
+    [op, fingerprint],
+  );
+  const keys = new Set<string>();
+  let corruptParent = false;
+  for (const r of rows) {
+    if (Number(r.corrupt) === 1) corruptParent = true;
+    else if (typeof r.ckey === 'string') keys.add(r.ckey);
+  }
+  return { keys: [...keys], corruptParent };
+}
+
+/**
+ * The page clock of the get_health memo (health-memo.ts): the brain id and `page_generation_clock_seq`, which every
+ * page insert, update or delete advances, as `<brain id>:<clock>`.
+ */
+export async function readHealthMemoClock(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ brain: string | null; clock: string | null }>(
+    `SELECT (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS brain,
+            COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS clock`);
+  return `${row?.brain ?? ''}:${row?.clock ?? ''}`;
+}
+
+/** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
+export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
+  return rows.map(r => r.id);
+}
+
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
 export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: string): Promise<SharedSkillPackRoot[]> {
   return exec.executeRaw<SharedSkillPackRoot>(`SELECT p.source_id,p.source_incarnation,s.local_path AS source_root,

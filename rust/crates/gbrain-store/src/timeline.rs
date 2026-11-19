@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 
 mod receipt;
 mod tier;
-pub(crate) use receipt::TimelineReceipt;
+pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
 pub(crate) use tier::TimelineTrust;
 
 const NEXT_TIMELINE_ID: &str = "next_timeline_id";

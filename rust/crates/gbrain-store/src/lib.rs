@@ -78,8 +78,10 @@ pub mod trust;
 pub mod vectors;
 mod version_prune;
 pub mod wanted_links;
+pub mod write_attribution;
 pub mod write_guards;
 pub mod write_misc;
+mod write_receipt;
 pub mod write_trust;
 
 use serde::Serialize;

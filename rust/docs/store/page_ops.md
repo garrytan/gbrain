@@ -100,7 +100,8 @@ applies the two that read only the page row and `config`, and the other two neve
   never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
   (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
   called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
-  family that serves `op_checkpoints` must add both holds.
+  store serves the resumable-op checkpoints (persistence.md, "Op checkpoints"), not these rows; the
+  family that serves these writers must add both holds.
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.

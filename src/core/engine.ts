@@ -72,6 +72,10 @@ import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, Source
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
+import type {
+  ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
+  WriteAttributionNameIds, WriteAttributionNames,
+} from './engine-sql/write-attribution.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type {
@@ -1477,6 +1481,30 @@ export interface BrainEngine {
    * answers false.
    */
   notifierCoverageRecorded(): Promise<boolean>;
+  /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
+  readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
+  /** A resumable op's checkpoint parent with `keys` (sorted by the caller) as its completed keys, stamped now (op-checkpoint.ts recordCompleted). */
+  writeOpCheckpointKeys(op: string, fingerprint: string, keys: string[]): Promise<void>;
+  /** The checkpoint parent created or stamped now, then each path not yet banked added (op-checkpoint.ts appendCompleted). */
+  appendOpCheckpointPaths(op: string, fingerprint: string, paths: string[]): Promise<void>;
+  /** The checkpoint parent deleted, its paths with it; a missing row is a no-op (op-checkpoint.ts clearOpCheckpoint). */
+  deleteOpCheckpoint(op: string, fingerprint: string): Promise<void>;
+  /** The checkpoint's paths deleted, its parent kept (op-checkpoint.ts clearOpCheckpoint's second sweep). */
+  deleteOpCheckpointPaths(op: string, fingerprint: string): Promise<void>;
+  /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
+  readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
+  /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */
+  readPageRevisionAttribution(pageId: number): Promise<PageRevisionAttributionRow | null>;
+  /** Each listed version's writer, archiving writer and trust tier. */
+  readVersionAttributions(versions: VersionRef[]): Promise<VersionAttributionRow[]>;
+  /** The writer of a page's oldest version snapshot; null when it has none. */
+  readOldestVersionAttribution(pageId: number): Promise<ActorAttributionRow | null>;
+  /** The fact, take or timeline entry `target` names with its write receipts, filtered before the pick; null when none is visible. */
+  readRowAttribution(target: RowAttributionTarget): Promise<RowAttributionRow | null>;
+  /** The get_health memo's page clock: a string that changes whenever a page is written (health-memo.ts). */
+  readHealthMemoClock(): Promise<string>;
+  /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
+  listSynopsisSourceIds(): Promise<string[]>;
   expireMemoryProposals(reason: string): Promise<number>;
   listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
   /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */

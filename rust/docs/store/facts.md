@@ -118,6 +118,13 @@ migration v282: trimmed of edge spaces and ASCII lower-cased, a bare id read as 
 as `!nobody`), and a page of a granted source that is not a pinned question pass the privacy part
 (`orPrivateReadableSource`). The fact policy sends them as described above.
 
+The owner-only rule rides on both policies as `ownerOnly`. The member reads it from the rendered text
+(`ownerOnlyFormIn`): `fn` when the text holds the `gbrain_owner_only_lineage` call (a recorded schema version of
+at least `OWNER_ONLY_LINEAGE_SINCE` = 320, which the CLI's connect gate records on a Rust brain too), `closed` when it
+holds the closed `ANY_OWNER_ONLY_SQL` test, and `off` when it holds neither. A policy with no `ownerOnly` field
+takes `closed`, the form that hides the most. The store's `fn` form follows the source and the concept inputs only:
+`gbrain_owner_only_lineage` also walks `derivation_inputs`, which only raw SQL writes, so a Rust brain has none to walk.
+
 Aliases and renames: each origin slug of the origin rule (atom `source_slug`, concept input
 `source_slug` under the input's source, chronicle `event.depth`, each `derived_from` slug) also
 names the slug its `slug_aliases` row resolves to and every slug its `slug_rename_history` rows

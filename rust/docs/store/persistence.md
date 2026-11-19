@@ -17,7 +17,8 @@ PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/
 | `j <journal id>` | the request key of that row (journal.rs) |
 | `W <writer id>` | one `persistence_local_writers` row (journal.rs) |
 | `d 0x01 <counter key>` | one `persistence_counters` row, JSON |
-| `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row, JSON |
+| `d 0x02 <op> 0x00 <fingerprint>` | one `op_checkpoints` row `{ completed_keys, updated_at_us }`, JSON: a housekeeping turn or a resumable op's checkpoint parent (op_checkpoint.rs) |
+| `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row, empty (op_checkpoint.rs). Not `d 0x05` or `d 0x06`, which hold the `persistence_effects` rows and their claim-order index |
 | `d 0x03 <principal id> 0x00 <request id>` | one `persistence_topology_changes` row (a lifecycle receipt), JSON (topology.rs) |
 | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row `{ revision, reason, updated_at_us }`, JSON (projection_queue.rs) |
 | `d 0x05 <journal id> 0x00 <kind>` | one `persistence_effects` row, every column, JSON (persistence/effects.rs) |
@@ -134,6 +135,31 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
 
+## Op checkpoints
+
+A resumable op's checkpoint (`src/core/op-checkpoint.ts`): the keys an op already finished, so a run
+that stopped midway resumes with only the pending keys. The parent shares the housekeeping key space
+(`d 0x02`); a housekeeping op and a resumable op never use the same op name. The child paths sit under
+their parent's op and fingerprint, so deleting a parent deletes its paths in the same write, as the
+`ON DELETE CASCADE` foreign key does. An op, fingerprint or path with a NUL byte refuses with
+`invalid_input`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readOpCheckpointKeys(op, fingerprint)` | `{ keys, corruptParent }`: the child paths in path (byte) order, then the parent's keys, each key once. A null element is skipped and any other non-text element is its JSON text. `corruptParent` is true when the parent's keys are not an array | `readOpCheckpointKeys` |
+| `brain.writeOpCheckpointKeys(op, fingerprint, keys)` | the parent's keys replaced with `keys`, stamped now; the paths stay | `writeOpCheckpointKeys` (`recordCompleted`) |
+| `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | the parent created with no keys or stamped now, then each path not yet stored added | `appendOpCheckpointPaths` (`appendCompleted`, `appendCompletedOnce`) |
+| `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
+| `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
+
+Differences from the SQL engines:
+
+- The SQL read names no order; the store lists the paths in path order. `resumeFilter` and every caller
+  use the keys as a set.
+- `purgeStaleCheckpoints` (the cycle's 7-day purge) is still raw SQL, which this engine refuses, so a
+  checkpoint that no run clears stays until an op clears it.
+- The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
+  persistence receipts) are still raw SQL. Their rows are not in this store.
 ## Writer versions
 
 Which binaries admitted and published the retained requests (`writer-versions.ts`), from the

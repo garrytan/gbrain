@@ -28,8 +28,15 @@ export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOpt
   return snapshot === null ? null : { ...snapshot, page: toGetPage(snapshot.page) };
 };
 
+/**
+ * `readPolicyOpts` (get_write_attribution) also passes `requireSafeChunks` and `takesHoldersAllowList`. The SQL page
+ * read (page-state/snapshot.ts) reads neither: they fence chunk and take reads, not the page row. The store ignores
+ * them too.
+ */
+const GET_PAGE_UNREAD = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
+
 export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | null> = async (brain, slug, opts) => {
-  const scope = pageScope('getPage', opts, READ_SCOPE);
+  const scope = pageScope('getPage', opts, READ_SCOPE, GET_PAGE_UNREAD);
   const snapshot: PageSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
   return snapshot === null ? null : toGetPage(snapshot.page);
 };

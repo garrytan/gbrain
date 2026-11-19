@@ -1085,6 +1085,15 @@ export function replacedBecauseSql(pv: string, excludePrivate: boolean): string 
 const VERSION_VALID_TIME_COLUMNS = `${validDateSql("pv.frontmatter->>'valid_from'")} AS valid_from, ${validDateSql("pv.frontmatter->>'valid_until'")} AS valid_until`;
 
 /**
+ * The `excludePrivate` predicate of get_versions in the current caller context, over the live page `p` and the
+ * snapshot `pv`: the caller's page policy on `p`, the snapshot's readers, its privacy (widened by the caller's
+ * private-readable grant on `p`), and, while private pages are hidden, no `pinned_question` marker.
+ */
+export function versionPrivacySql(): string {
+  return `${privatePagesFilterForCaller('p')} AND ${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}${currentCallerAccess().hidePrivate ? " AND NOT COALESCE(pv.frontmatter ? 'pinned_question', false)" : ''}`;
+}
+
+/**
  * Newest first (`pv.id` breaks snapshot_at ties). Scope, privacy and
  * re-derivation (a page a purge hid) predicates sit in WHERE, so `limit`
  * bounds only rows the caller may read; `includeBody: false` never selects
@@ -1095,8 +1104,7 @@ export async function getVersions<B extends boolean = true>(
   slug: string,
   opts?: GetVersionsOpts<B>,
 ): Promise<PageVersionRows<B>> {
-    const privacy = opts?.excludePrivate
-      ? trustedSql(`AND ${privatePagesFilterForCaller('p')} AND ${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}${currentCallerAccess().hidePrivate ? " AND NOT COALESCE(pv.frontmatter ? 'pinned_question', false)" : ''}`) : sqlFragment``;
+    const privacy = opts?.excludePrivate ? trustedSql(`AND ${versionPrivacySql()}`) : sqlFragment``;
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
       : opts?.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;

@@ -19,6 +19,7 @@ use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keyword::{TRGM_SIMILARITY_THRESHOLD, sql_ilike, trgm_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
+use crate::write_receipt::{ActorColumns, RevisionReceipt, VersionReceipt};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value, json};
@@ -187,6 +188,10 @@ pub(crate) struct PageRecord {
     /// (`version_prune`) or `createVersion` with `historyGap`. `None` is NULL. Not part of `to_page`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_history_gap_at_us: Option<i64>,
+    /// The actor that wrote the live revision (`pages.revision_*`). Absent in a record stored
+    /// before it, and omitted while every column is null. [`write_page`] stamps it.
+    #[serde(default, skip_serializing_if = "ActorColumns::is_empty")]
+    pub revision_receipt: RevisionReceipt,
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -391,9 +396,9 @@ pub struct VersionsOptions {
     pub limit: Option<usize>,
     /// `false` leaves `compiled_truth` and `timeline` out. Default true.
     pub include_body: Option<bool>,
-    /// The page policy `excludePrivate` names: a page it hides has no versions, and a version
-    /// whose own readers or fields the caller may not read is left out before `limit`.
-    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
+    /// `excludePrivate`: the caller's page policy. A live page it hides lists no snapshot, and a
+    /// snapshot it hides (`facts::caller_version_hidden`) is left out before `limit`.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// A page key given to `lock_page_keys`.
@@ -452,6 +457,10 @@ pub(crate) struct VersionRecord {
     /// reader is never shown this version's reason (`version_prune::mark_pruned_history`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub successor_pruned: bool,
+    /// Who wrote the snapshotted revision and who archived it (`page_versions.write_*`,
+    /// `archived_*`). Absent in a record stored before it. [`snapshot_in`] stamps it.
+    #[serde(default, skip_serializing_if = "VersionReceipt::is_empty")]
+    pub receipt: VersionReceipt,
 }
 
 impl VersionRecord {
@@ -617,7 +626,15 @@ pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecor
 
 fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    let stamped = stamp_page_trust(before.as_ref(), record)?;
+    let mut stamped = stamp_page_trust(before.as_ref(), record)?;
+    // `gbrain_stamp_revision_attribution`: the actor of the write that set the live revision.
+    stamped.revision_receipt = crate::write_receipt::stamp_revision(
+        before
+            .as_ref()
+            .map(|b| (&b.revision_receipt, b.knowledge_revision.as_str())),
+        &record.revision_receipt,
+        &record.knowledge_revision,
+    )?;
     store_page(tx, before.as_ref(), &stamped, sets_vector)
 }
 
@@ -1223,6 +1240,7 @@ pub(crate) fn put_page_in(
             trust_tier: None,
             write_origin: None,
             version_history_gap_at_us: None,
+            revision_receipt: RevisionReceipt::default(),
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -1653,7 +1671,7 @@ impl Store {
         })
     }
 
-    /// `getTags(slug, opts)`, sorted.
+    /// `getTags(slug, opts)`, sorted. A page the `exclude_private` page policy hides has no tags.
     pub fn get_tags(&self, slug: &str, scope: &ReadScope) -> Result<Vec<String>> {
         let read = self.read()?;
         let page = find_in_scope(
@@ -1663,6 +1681,10 @@ impl Store {
             &scope.source_ids,
             true,
         )?;
+        let page = match (page, &scope.exclude_private) {
+            (Some(page), Some(policy)) if page_hidden(&*read, &page, policy)? => None,
+            (page, _) => page,
+        };
         let mut tags = page.map(|p| p.tags).unwrap_or_default();
         tags.sort();
         Ok(tags)
@@ -1868,7 +1890,7 @@ impl Store {
             if let Some(page) = read_page(&*read, &id, &slug)? {
                 let policy = options.exclude_private.as_ref();
                 if let Some(policy) = policy
-                    && crate::facts::page_hidden(&*read, &page, policy)?
+                    && page_hidden(&*read, &page, policy)?
                 {
                     continue;
                 }
@@ -1878,8 +1900,8 @@ impl Store {
                     false,
                     &mut |_, v| {
                         if let Ok(row) = serde_json::from_slice::<VersionRecord>(v)
-                            && policy.is_none_or(|policy| {
-                                !crate::facts::caller_version_hidden(
+                            && !policy.is_some_and(|policy| {
+                                crate::facts::caller_version_hidden(
                                     &page,
                                     &row.page_type,
                                     &row.frontmatter,
@@ -2106,6 +2128,8 @@ pub(crate) fn snapshot_in(
         write_origin,
         change_reason: None,
         successor_pruned: false,
+        // `gbrain_stamp_version_attribution`: `page` is the snapshotted revision as stored.
+        receipt: VersionReceipt::stamp(&page.revision_receipt)?,
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     // PGLite's `createPageVersion` prunes the page's history after it inserts, in the same write.

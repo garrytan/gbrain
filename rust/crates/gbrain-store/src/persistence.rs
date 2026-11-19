@@ -16,6 +16,13 @@
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
 //! | `d 0x05 <request id> 0x00 <kind>` | one `persistence_effects` row (`effects.rs`), JSON |
 //! | `d 0x06 <id, 8 bytes big-endian>` | the effect claim-order index (`effects.rs`), JSON |
+//! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//!
+//! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
+//! family here uses them.
+//!
+//! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
+//! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -52,6 +59,7 @@ mod effects;
 mod housekeeping;
 mod idle_probe;
 mod noop_settle;
+mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod receipt_list;
@@ -77,6 +85,9 @@ pub(crate) const HOUSEKEEPING: u8 = 0x02;
 const TOPOLOGY: u8 = 0x03;
 /// The byte after `keys::PERSISTENCE` of a page projection job (persistence/projection_queue.rs).
 const QUEUE: u8 = 0x04;
+/// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
+/// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
+const CHECKPOINT_PATH: u8 = 0x07;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -230,7 +241,7 @@ fn extra_bool(record: &RequestRecord, column: &str) -> bool {
 }
 
 /// A `::uuid` parameter: lower-cased; anything else is refused, as Postgres refuses the cast.
-fn uuid_param(text: &str, what: &str) -> Result<String> {
+pub(crate) fn uuid_param(text: &str, what: &str) -> Result<String> {
     if is_uuid(text) {
         Ok(text.to_lowercase())
     } else {

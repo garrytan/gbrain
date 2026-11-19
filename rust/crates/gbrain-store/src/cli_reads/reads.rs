@@ -177,6 +177,8 @@ impl EntityTypeFilter {
 #[serde(default, rename_all = "camelCase")]
 pub struct RemoteCaller {
     pub exclude_private: bool,
+    /// The caller's page policy (`privatePagesFilterForCaller('p')`) when the member serves
+    /// `excludePrivate`. `exclude_private` with no policy refuses.
     pub policy: Option<PrivacyPolicy>,
 }
 
@@ -670,6 +672,7 @@ impl Store {
             {
                 continue;
             }
+            // The privacy filter is a WHERE clause: it runs before LIMIT.
             if let Some(policy) = policy
                 && page_hidden(&*read, &page, policy)?
             {

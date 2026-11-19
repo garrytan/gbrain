@@ -21,6 +21,7 @@ import { describe, expect } from 'bun:test';
 import type { FileRow } from '../../src/core/engine.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -193,6 +194,56 @@ describe('engine parity: versions', () => {
     },
   );
 
+  /** A page whose snapshots differ in privacy: private, named readers, world, pinned question, then a world live page. */
+  async function privateHistory(engine: Parameters<Parameters<typeof parityTest>[2]>[0]): Promise<void> {
+    const edits: Array<[string, Record<string, unknown>]> = [
+      ['Private draft', { visibility: 'private' }],
+      ['Team draft', { readable_by: ['alice-example', 'group:team-a'] }],
+      ['World draft', {}],
+      ['Pinned draft', { pinned_question: true }],
+      ['Aliased draft', { access: 'restricted' }],
+    ];
+    for (const [title, frontmatter] of edits) {
+      await engine.putPage('notes/hist', { type: 'note', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+      await engine.createVersion('notes/hist');
+    }
+    await engine.putPage('notes/hist', { type: 'note', title: 'Live', compiled_truth: 'Live.', timeline: '' });
+    await engine.putPage('notes/private-live', { type: 'note', title: 'Shown once', compiled_truth: 'One.', timeline: '' });
+    await engine.createVersion('notes/private-live');
+    await engine.putPage('notes/private-live', { type: 'note', title: 'Now private', compiled_truth: 'Two.', timeline: '', frontmatter: { visibility: 'private' } });
+    await engine.putPage('notes/team-live', { type: 'note', title: 'Team v1', compiled_truth: 'One.', timeline: '' });
+    await engine.createVersion('notes/team-live');
+    await engine.putPage('notes/team-live', { type: 'note', title: 'Team now', compiled_truth: 'Two.', timeline: '', frontmatter: { readable_by: 'alice-example' } });
+  }
+
+  parityTest(
+    'getVersions under excludePrivate hides a hidden live page and every private, pinned or reader-named snapshot',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      await privateHistory(engine);
+      const titles = async (slug: string, opts: { excludePrivate?: boolean; limit?: number; includeBody?: boolean } = {}) =>
+        (await engine.getVersions(slug, opts)).map((v) => v.title);
+      const open = await titles('notes/hist');
+      const hidden = await titles('notes/hist', { excludePrivate: true });
+      const limited = await titles('notes/hist', { excludePrivate: true, limit: 1 });
+      const meta = await titles('notes/hist', { excludePrivate: true, includeBody: false });
+      const privateLive = await titles('notes/private-live', { excludePrivate: true });
+      const teamLive = await titles('notes/team-live', { excludePrivate: true });
+      expect(open).toEqual(expect.arrayContaining(['Private draft', 'Team draft', 'World draft', 'Pinned draft', 'Aliased draft']));
+      expect(hidden).toContain('World draft');
+      expect(hidden).not.toContain('Private draft');
+      expect(hidden).not.toContain('Team draft');
+      expect(hidden).not.toContain('Pinned draft');
+      expect(hidden).not.toContain('Aliased draft');
+      expect(limited).toEqual([hidden[0]]);
+      expect(meta).toEqual(hidden);
+      expect(privateLive).toEqual([]);
+      expect(teamLive).toEqual([]);
+      const reasons = (await engine.getVersions('notes/hist', { excludePrivate: true })).map((v) => v.replaced_because ?? null);
+      return { open, hidden, limited, meta, privateLive, teamLive, reasons };
+    },
+  );
+
   parityTest(
     'pruneHoldingPageVersions keeps the newest five versions, deletes the older ones and records the history gap',
     { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneHoldingPageVersions', 'pickValidTimeEdition'] },
@@ -218,6 +269,29 @@ describe('engine parity: versions', () => {
         gapBefore: false, pruned: 3, afterFirst: ['v8', 'v7', 'v6', 'v5', 'v4'], again: 0, unknown: 0, few: 0, gapAfter: true, fewVersions: 1,
       });
       return result;
+    },
+  );
+
+  parityTest(
+    'getVersions under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      await privateHistory(engine);
+      const read = (access: Parameters<typeof withCallerAccess>[0], slug = 'notes/hist') => withCallerAccess(access, async () =>
+        (await engine.getVersions(slug, { excludePrivate: true })).map((v) => v.title));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      const memberTeam = await read({ identity: ['member:alice-example'], hidePrivate: true }, 'notes/team-live');
+      const strangerTeam = await read({ identity: ['member:bob-example'], hidePrivate: true }, 'notes/team-live');
+      expect(member).toContain('Team draft');
+      expect(member).not.toContain('Private draft');
+      expect(granted).toContain('Private draft');
+      expect(granted).not.toContain('Pinned draft');
+      expect(stranger).not.toContain('Team draft');
+      expect(memberTeam).toContain('Team v1');
+      expect(strangerTeam).toEqual([]);
+      return { member, granted, stranger, memberTeam, strangerTeam };
     },
   );
 });

@@ -84,6 +84,19 @@ export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false
 export const notifierCoverageRecorded: StoreMember<[], boolean> = async () => false;
 
 /**
+ * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
+ * among them, so a memoized health answer is reused only while nothing was written since it was read.
+ */
+export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
+  storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
+
+/**
+ * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),
+ * so no source selects the synopsis tier.
+ */
+export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
+
+/**
  * The store keeps no access state: no folder rules, no pending coverage and no row-level security (every write of that
  * state is raw SQL, which this engine refuses). A slug is restricted under none of them, so the answer is false, as
  * PGLite answers for a brain with no folder rules and no pending covers (engine-sql/access-control.ts).
