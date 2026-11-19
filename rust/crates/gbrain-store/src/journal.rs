@@ -57,7 +57,7 @@ const STATES: &[&str] = &[
     "failed",
     "cancelled",
 ];
-const TERMINAL: &[&str] = &["committed", "conflict", "failed", "cancelled"];
+pub(crate) const TERMINAL: &[&str] = &["committed", "conflict", "failed", "cancelled"];
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -170,7 +170,7 @@ pub(crate) struct RequestRecord {
     #[serde(default)]
     pub(crate) completed_at_us: Option<i64>,
     /// The `persistence_requests` columns the native journal does not keep, stored by the
-    /// TypeScript journal members. Empty for a natively admitted request.
+    /// TypeScript journal members (`persistence.rs`). Empty for a natively admitted request.
     #[serde(default, flatten)]
     pub(crate) extra: Map<String, Value>,
 }
@@ -181,8 +181,8 @@ impl RequestRecord {
     }
 
     /// `WriteRequest` of `src/core/persistence/model.ts` (the fields this engine keeps).
-    fn to_row(&self) -> Value {
-        json!({
+    pub(crate) fn to_row(&self) -> Value {
+        let mut row = json!({
             "id": self.id,
             "principal_kind": self.principal_kind,
             "principal_id": self.principal_id,
@@ -202,11 +202,15 @@ impl RequestRecord {
             "error_code": self.error_code,
             "error_message": self.error_message,
             "blocked_reason": self.blocked_reason,
-            "compacted": false,
             "created_at": iso(self.created_at_us),
             "updated_at": iso(self.updated_at_us),
             "completed_at": self.completed_at_us.map(iso),
-        })
+        });
+        let Value::Object(fields) = &mut row else {
+            unreachable!("json! builds an object")
+        };
+        crate::persistence::fill_request_columns(fields, &self.extra);
+        row
     }
 
     /// `receiptFor`: the outcome's fields, `outcome`, `request_id`, `client_request_id`, `state`
@@ -296,7 +300,7 @@ fn digest_of(operation: &str, source_id: &str, slug: &str, intent: &Value) -> St
     out
 }
 
-fn next_sequence(tx: &mut dyn KvWrite) -> Result<u64> {
+pub(crate) fn next_sequence(tx: &mut dyn KvWrite) -> Result<u64> {
     let key = keys::meta(NEXT_SEQUENCE);
     let current = match tx.get(&key)? {
         Some(bytes) => keys::be8(&bytes)
@@ -307,7 +311,18 @@ fn next_sequence(tx: &mut dyn KvWrite) -> Result<u64> {
     Ok(current)
 }
 
-fn read_request(
+/// The last sequence handed out, 0 before the first. Requests are never deleted on this engine,
+/// so this is `max(sequence)` over every request row.
+pub(crate) fn max_sequence(read: &dyn KvRead) -> Result<u64> {
+    match read.get(&keys::meta(NEXT_SEQUENCE))? {
+        Some(bytes) => keys::be8(&bytes)
+            .map(|next| next.saturating_sub(1))
+            .ok_or_else(|| StoreError::new(STORE_CORRUPT, "bad sequence counter")),
+        None => Ok(0),
+    }
+}
+
+pub(crate) fn read_request(
     read: &dyn KvRead,
     principal: &Principal,
     request_id: &str,
@@ -328,7 +343,7 @@ fn read_request(
     get_json(read, &keys::request(&id))
 }
 
-fn write_request(tx: &mut dyn KvWrite, record: &RequestRecord) -> Result<()> {
+pub(crate) fn write_request(tx: &mut dyn KvWrite, record: &RequestRecord) -> Result<()> {
     put_json(tx, &keys::request(&record.id), record)
 }
 
@@ -786,6 +801,51 @@ impl Store {
             };
             put_json(tx, &keys::writer(&id), &record)?;
             Ok(record.to_row())
+        })
+    }
+
+    /// `insertLocalWriterRow`: the `INSERT .. ON CONFLICT DO NOTHING` of PGLite's
+    /// `persistence_local_writers`. True when this call stored the row; false, with nothing
+    /// written, when a row already holds the id or the credential hash (the table's two unique
+    /// keys), whatever that row's lane, revocation or grant. The lane and id checks are the
+    /// table's own constraints, so a bad lane or a non-UUID id is an error, not a false.
+    pub fn insert_local_writer_row(&self, registration: &WriterRegistration) -> Result<bool> {
+        if !is_uuid(&registration.id) {
+            return Err(StoreError::invalid("a local writer id is a UUID"));
+        }
+        if registration.lane != "cli" && registration.lane != "stdio" {
+            return Err(StoreError::invalid("a local writer lane is cli or stdio"));
+        }
+        let id = registration.id.to_lowercase();
+        self.write(|tx| {
+            if get_json::<WriterRecord>(&*tx, &keys::writer(&id))?.is_some() {
+                return Ok(false);
+            }
+            let mut taken = false;
+            scan_prefix(&*tx, &[keys::WRITER], false, &mut |_, v| {
+                if let Ok(other) = serde_json::from_slice::<WriterRecord>(v)
+                    && other.credential_hash == registration.credential_hash
+                {
+                    taken = true;
+                }
+                !taken
+            })?;
+            if taken {
+                return Ok(false);
+            }
+            let record = WriterRecord {
+                id: id.clone(),
+                lane: registration.lane.clone(),
+                credential_hash: registration.credential_hash.clone(),
+                grant_ceiling: registration
+                    .grant_ceiling
+                    .clone()
+                    .unwrap_or_else(|| json!({})),
+                created_at_us: self.env.now_micros(),
+                revoked_at_us: None,
+            };
+            put_json(tx, &keys::writer(&id), &record)?;
+            Ok(true)
         })
     }
 

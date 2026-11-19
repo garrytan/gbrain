@@ -53,9 +53,10 @@ open holds that the admissions sum, kept by every write of a hold.
 Differences from PGLite and PostgreSQL:
 
 - Atomicity: a member is one store write. An error (a job that does not exist, an amount that overflows) leaves nothing.
-  A refusal is an outcome, not an error. When `reserveClientSpend` or `reserveGroupSpend` refuses, the overdue holds its
-  sweep marked expired stay expired on a Rust brain, while the TypeScript meter on PGLite and PostgreSQL rolls the sweep
-  back with the refusal. Nothing is lost, because those holds had already expired. The trunk rolls the sweep back too.
+  A refusal is an outcome, not an error, so a member called alone keeps the sweep it ran, as the PGLite and PostgreSQL
+  members do. `budget-meter.ts` calls `reserveClientSpend` and `reserveGroupSpend` inside `engine.transaction` and throws
+  on a refusal, so through the meter the sweep rolls back on PGLite and PostgreSQL. A Rust brain in this release does not
+  serve `engine.transaction` (it refuses with `engine_capability_missing`), so the meter reaches neither member there.
 - No advisory lock: the store has one writer at a time, so two admissions cannot both see the same headroom.
 - The open-hold index (`0x27`) is kept from the build that adds it. A hold written by an older build is not in it and is
   not counted by an admission until it settles; there is no backfill.
