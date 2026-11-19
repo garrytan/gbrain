@@ -136,6 +136,7 @@ test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/doctor-derived.test.ts
+test/engine-parity/doctor-persistence.test.ts
 test/engine-parity/doctor-reads.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts

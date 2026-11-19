@@ -198,6 +198,7 @@ src/core/engine-sql/doctor-derived.ts	CREDENTIAL_PENDING_SQL	sql	STREAM	literal 
 src/core/engine-sql/doctor-derived.ts	DERIVED_VISIBILITY_SQL	sql	NONE	moved from doctor/checks/derived-visibility.ts derivedVisibilityCheck unchanged: not the page body, p.* in a CTE, only metadata columns read
 src/core/engine-sql/doctor-derived.ts	PAGE_COMPILED_TRUTHS_SQL	sql	INLINE	moved from repair/atom-fence-rows.ts findAtomFenceRows unchanged: reads only the origin pages the batch marked readable (inline)
 src/core/engine-sql/doctor-derived.ts	TIMELINE_BATCH_SQL	sql	STREAM	moved from repair/timeline.ts scanTimelineHistory unchanged: inline pages only (body_storage = inline)
+src/core/engine-sql/doctor-persistence.ts	OVERWRITE_CANDIDATES_SQL	sql	STREAM	moved from persistence/overwritten-edits.ts scanOverwrittenEdits with CONTENT_COLUMNS inlined: selects body_storage beside the inline body columns; a segmented version has NULL bodies and its overwrite is reported unknown (reason segmented)
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
