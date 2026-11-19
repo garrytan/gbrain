@@ -2,7 +2,8 @@
  * Read-command statements that ran through `engine.executeRaw` from the ops
  * layer (docs/research/rust-cli-executeraw-map.md, "Read-command queries"):
  * search-exact (with its held-snippet chunk reads), wanted, whois,
- * rank-entities (with its remote coverage) and extraction-pending.
+ * rank-entities (with its remote coverage), extraction-pending and the held
+ * fence cells of a world-only fact read (eligibility/stamp.ts heldFenceLines).
  *
  * Every function takes the engine's own `executeRaw`, so each statement runs
  * on exactly the path it ran on before it moved here: on Postgres a
@@ -18,6 +19,7 @@ import { unverifiedExtractionFragment } from '../extraction-review.ts';
 import { buildVisibilityClause } from '../search/sql-ranking.ts';
 import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 import { deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
+import { heldRowSql } from '../eligibility/fence-overlay.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** The engine's `executeRaw` (bound), with the two bounds these reads use. */
@@ -96,6 +98,24 @@ export async function listExactRescanChunks(raw: EngineRawRead, pageIds: readonl
       ORDER BY cc.page_id, cc.chunk_index`);
   const rows = await raw<{ page_id: number | string; chunk_index: number | string; chunk_source: string; chunk_text: string }>(text, params);
   return rows.map(r => ({ page_id: Number(r.page_id), chunk_index: Number(r.chunk_index), chunk_source: r.chunk_source, chunk_text: r.chunk_text }));
+}
+
+/** One facts-fence cell of a page's text: its row number (-1 for a fragment), its claim, and whether a chunk boundary cut it. */
+export interface HeldFenceCellKey { sourceId: string; slug: string; rowNum: number; claim: string; partial: boolean }
+/** A fence cell held from the current caller (fence-overlay.ts `heldRowSql`). */
+export interface HeldFenceCellRow { source_id: string; slug: string; row_num: number; claim: string }
+
+/**
+ * GST-2891: the fence cells among `keys` held from the current caller, whose fact reads are world-only
+ * (fence-overlay.ts `heldRowSql`, rendered for the caller in context: its member page and its private-facts grant). One
+ * row per distinct held (source, slug, row number, claim); the order is not defined.
+ */
+export async function listHeldFenceCells(raw: EngineRawRead, keys: readonly HeldFenceCellKey[]): Promise<HeldFenceCellRow[]> {
+  if (!keys.length) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT k.source_id, k.slug, k.row_num, k.claim FROM unnest(${keys.map(k => k.sourceId)}::text[], ${keys.map(k => k.slug)}::text[], ${keys.map(k => k.rowNum)}::int[], ${keys.map(k => k.claim)}::text[], ${keys.map(k => (k.partial ? 't' : 'f'))}::text[]) AS k(source_id, slug, row_num, claim, partial)
+        WHERE ${trustedSql(heldRowSql('k.source_id', 'k.slug', 'k.row_num', 'k.claim', "k.partial = 't'"))}`);
+  const rows = await raw<{ source_id: string; slug: string; row_num: number | string; claim: string }>(text, params);
+  return rows.map(r => ({ source_id: r.source_id, slug: r.slug, row_num: Number(r.row_num), claim: r.claim }));
 }
 
 export interface ExtractionPendingRow {
