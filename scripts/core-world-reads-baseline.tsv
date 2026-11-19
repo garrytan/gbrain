@@ -980,6 +980,8 @@ src/core/secret-scan-allowlist.ts	fs_import	1	W7: filesystem boundary moves to t
 src/core/secret-scan-allowlist.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/secret-scan.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/secret-store/backup.ts	fs_import	1	W7: filesystem boundary moves to the local app (the backup status file lives on the machine beside the keyring)
+src/core/secret-store/backup.ts	load_config	1	W6: settings plane out of the core (reads the configured storage backend for the secret store backup)
 src/core/secret-store/keyring.ts	fs_import	1	W7: filesystem boundary moves to the local app (the secret store key file lives on the machine)
 src/core/secret-store/keyring.ts	process_env	1	W6: settings plane out of the core (GBRAIN_SECRET_STORE_KEY override)
 src/core/secret-store/spool.ts	fs_import	1	W7: filesystem boundary moves to the local app (the encrypted spool lives on the machine)
