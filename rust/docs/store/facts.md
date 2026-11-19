@@ -706,6 +706,69 @@ each of them with `engine_capability_missing` naming the member until the store 
 
 `facts/fence-fact-append.ts`
 - `countSegmentedVersionsOfPage(sourceId, slug)` (`heldRowsInVersions`): how many of the page's versions are `segmented`.
+## Purge, held-move and purge receipt statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
+
+The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and
+`facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each with
+the typed `raw_sql` refusal until the store holds what it reads. None has a Rust implementation yet; the
+parity file `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for every case, and the
+Postgres text of each statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
+
+| Member | What it does |
+|---|---|
+| `expireFactsOfGonePages` | Expires the facts a retention purge takes with its deleted pages (filed on them, their conversation slots, extracted from them, about them and held by no page): four updates in order over the paired source ids and slugs. Writes facts; run it in the purge transaction. |
+| `readPurgeSourceLocalPath` | The source's checkout path, null for none or no such source. Reads sources. |
+| `insertReasonPurgeTombstones` | Tombstones each (commit, path) pair, none twice; the number added. Writes reason_purge_tombstones. |
+| `listGitEffectsCarryingReason` | The source's Git effects whose data carries the claim in one of its three forms, in id order, locked for the redaction. Reads persistence_effects. |
+| `listPageGitEffectsForStrip` | The slug's Git effects that carry a commit line or trailers, in id order, locked for the strip. Reads persistence_effects. |
+| `setPurgeEffectData` | Replaces one effect's data (`effectId` is the bigint id as text). Writes persistence_effects. |
+| `listPageChangeReasons` | The change reasons the page's versions and its requests (intent and outcome) recorded, each once, null included. Reads page_versions and persistence_requests. |
+| `listRequestsRecordingReasons` | The slug's requests whose intent or outcome records a reason, oldest first (10000 at most). Reads persistence_requests. |
+| `heldEntityPageDeleted` | Whether a soft-deleted page holds the slug. Reads pages. |
+| `readHeldAccessState` | Whether the access state is readable, an exact page rule covers the entity and a folder rule restricts it. Reads access_rules, access_pending_coverage and the access functions; the caller decides what a failed read means. |
+| `heldTargetPageLive` | Whether a live page holds the slug. Reads pages. |
+| `listHeldMoveRows` | Every live held row on every holding page of the source, by holding page, entity and id. Reads facts and pages. |
+| `listStruckHeldRows` | The struck held rows, one per holding page and row number, none an active fact reuses. Reads facts and pages. |
+| `readHeldRowVisibility` | Whether every reader of the source can read the live page; null for no live page. Reads pages and the access rules. |
+| `heldMoveDue` | Whether a rule now narrows a held row's entity below its holding page's readers. Reads facts, pages and the access functions. |
+| `readHeldConfigValue` | One config row's value, null when unset. Reads config. |
+| `readHeldPageLocation` | A live page's file path and URI, null for none; `timeoutMs` ends the read on the server. Reads pages. |
+| `readHeldVersionsEdited` | The segmented saved versions a held-fact request recorded as not edited; 0 for none. Reads persistence_requests. |
+| `listSegmentedPageBodies` | The source's live pages stored in segments, in id order, `limit` of them. Reads pages. |
+| `listSegmentedVersionBodies` | The source's retained versions stored in segments, in id order, `limit` of them. Reads page_versions and pages. |
+| `setPurgeProbeTimeout` | Bounds the statements of the transaction it runs in to `ms` milliseconds (set_config, local). |
+| `probePurgeDerivations` | One batch of stored derivation results after the cursor (page, pipeline, occurrence): the rows scanned, the claim candidates, those a sweep covers and holds the claim, and those it does not, and the last key. Reads page_segment_derivations and pages. |
+| `listBeliefEventsForPurgeProbe` | The next 1000 belief events of the source after id `after` with a recorded value, in id order. Reads belief_events. |
+| `listFactContextsForPurgeProbe` | The next 1000 live facts of the source after id `after` that have a context, in id order. Reads facts. |
+| `listPageSourcePathsForPurge` | The distinct relative file paths (64 at most) of the pages and their versions, none absolute or climbing out. Reads pages and page_versions. |
+| `listNearestFactsForPurge` | The five same-model facts of the source nearest to the embedding, each with whether it contains the claim. Reads facts. |
+| `countLegacyDerivedPages` | The source's live atom and dream pages that no derivation edge explains. Reads pages and derivation_inputs. |
+| `vacuumPurgedTables` | Compacts the tables a purge touches (query_cache too when asked); rejects when the VACUUM fails. PGLite only: Postgres leaves it to the operator. |
+| `listPageProseHits` | The first 20 slugs, in order, of the source's live pages whose text in the store states one of the lowered needles. Reads the store and pages. |
+| `readPurgeReceiptSourcePath` | The source's checkout path as the page purge receipt reads it, null for none. Reads sources. |
+| `countPagePurgeTombstones` | How many tombstones the page purge left for the slug. Reads page_purges. |
+| `readDeletePageRequest` | The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. |
+| `listPurgeEffects` | The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. |
+| `countPurgeFingerprintResidue` | The facts and takes that still carry the purged claim's fingerprint under the subject (`*` for any), outcome markers apart. Reads facts and takes. |
+
+What the store would need to hold to answer them, by family:
+
+- Gone pages (`expireFactsOfGonePages`): the facts store alone, plus the conversation slot columns and the
+  extracted-from-page predicate (`extractedFromPageSql`), run in the purge transaction.
+- Purge reasons (`readPurgeSourceLocalPath` to `listRequestsRecordingReasons`): `sources.local_path`, `page_purges` tombstones, the write
+  journal's `persistence_effects` (kind, state, request id, `data`) and `persistence_requests` (intent reason),
+  and `page_versions.change_reason`.
+- Held move (`heldEntityPageDeleted` to `readHeldVersionsEdited`): live and soft-deleted pages, the access policy
+  state, rules and pending coverage, the holding-page slug rule, the `config` table and the page file location
+  (`source_path`, `source_uri`). These reads end at the sync preparation deadline when called on the planning view.
+- Purge receipt (`listSegmentedPageBodies` to `countPurgeFingerprintResidue`): segmented page and version bodies,
+  `page_segment_derivations`, `belief_events`, fact contexts and embeddings, `takes`, chunk text, timeline entries,
+  the `query_cache` table, and `gbrain_fact_fingerprint` for the residue probe. `vacuumPurgedTables` has no data
+  to read: a store with nothing to vacuum answers it as a no-op.
+
+The parity cases seed facts, pages, versions, chunks, timeline entries, write requests and effects through the
+typed writers. `belief_events`, `page_segment_derivations` and `takes` have no typed fixture, so their members
+are compared on empty data only.
 
 ## Not modeled
 

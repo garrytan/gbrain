@@ -1620,6 +1620,40 @@ export class PGLiteEngine implements BrainEngine {
   listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.listWithdrawalSlugs(this.rawRead, sourceId, visibility, factHash, subject); }
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string) { return factsPurgeImpl.expireFactsByWithdrawal(this.rawRead, sourceId, visibility, fact, subject); }
   insertFactPurge(row: factsPurgeImpl.FactPurgeInsert) { return factsPurgeImpl.insertFactPurge(this.rawRead, row); }
+  expireFactsOfGonePages(sourceIds: string[], slugs: string[]) { return factsPurgeImpl.expireFactsOfGonePages(this.rawRead, sourceIds, slugs); }
+  readPurgeSourceLocalPath(sourceId: string) { return factsPurgeImpl.readPurgeSourceLocalPath(this.rawRead, sourceId); }
+  insertReasonPurgeTombstones(sourceId: string, commits: string[], paths: string[]) { return factsPurgeImpl.insertReasonPurgeTombstones(this.rawRead, sourceId, commits, paths); }
+  listGitEffectsCarryingReason(sourceId: string, needle: string, escaped: string, foldedJson: string) { return factsPurgeImpl.listGitEffectsCarryingReason(this.rawRead, sourceId, needle, escaped, foldedJson); }
+  listPageGitEffectsForStrip(sourceId: string, slug: string) { return factsPurgeImpl.listPageGitEffectsForStrip(this.rawRead, sourceId, slug); }
+  setPurgeEffectData(effectId: string, data: Record<string, unknown>) { return factsPurgeImpl.setPurgeEffectData(this.rawRead, effectId, data); }
+  listPageChangeReasons(sourceId: string, slug: string, pageId: number) { return factsPurgeImpl.listPageChangeReasons(this.rawRead, sourceId, slug, pageId); }
+  listRequestsRecordingReasons(sourceId: string, slug: string) { return factsPurgeImpl.listRequestsRecordingReasons(this.rawRead, sourceId, slug); }
+  heldEntityPageDeleted(sourceId: string, slug: string) { return factsPurgeImpl.heldEntityPageDeleted(this.rawRead, sourceId, slug); }
+  readHeldAccessState(sourceId: string, entity: string) { return factsPurgeImpl.readHeldAccessState(this.rawRead, sourceId, entity); }
+  heldTargetPageLive(sourceId: string, slug: string) { return factsPurgeImpl.heldTargetPageLive(this.rawRead, sourceId, slug); }
+  listHeldMoveRows(sourceId: string) { return factsPurgeImpl.listHeldMoveRows(this.rawRead, sourceId); }
+  listStruckHeldRows(sourceId: string) { return factsPurgeImpl.listStruckHeldRows(this.rawRead, sourceId); }
+  readHeldRowVisibility(sourceId: string, slug: string) { return factsPurgeImpl.readHeldRowVisibility(this.rawRead, sourceId, slug); }
+  heldMoveDue(sourceId: string) { return factsPurgeImpl.heldMoveDue(this.rawRead, sourceId); }
+  readHeldConfigValue(name: string) { return factsPurgeImpl.readHeldConfigValue(this.rawRead, name); }
+  readHeldPageLocation(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return factsPurgeImpl.readHeldPageLocation(this.rawRead, sourceId, slug, opts); }
+  readHeldVersionsEdited(requestId: string) { return factsPurgeImpl.readHeldVersionsEdited(this.rawRead, requestId); }
+  listSegmentedPageBodies(sourceId: string, limit: number) { return factsPurgeImpl.listSegmentedPageBodies(this.rawRead, sourceId, limit); }
+  listSegmentedVersionBodies(sourceId: string, limit: number) { return factsPurgeImpl.listSegmentedVersionBodies(this.rawRead, sourceId, limit); }
+  setPurgeProbeTimeout(ms: number) { return factsPurgeImpl.setPurgeProbeTimeout(this.rawRead, ms); }
+  probePurgeDerivations(sourceId: string, needles: string[], pageIds: number[], patterns: string[], cursor: factsPurgeImpl.DerivationKey | null, rows: number) { return factsPurgeImpl.probePurgeDerivations(this.rawRead, sourceId, needles, pageIds, patterns, cursor, rows); }
+  listBeliefEventsForPurgeProbe(sourceId: string, after: number) { return factsPurgeImpl.listBeliefEventsForPurgeProbe(this.rawRead, sourceId, after); }
+  listFactContextsForPurgeProbe(sourceId: string, after: number) { return factsPurgeImpl.listFactContextsForPurgeProbe(this.rawRead, sourceId, after); }
+  listPageSourcePathsForPurge(pageIds: number[]) { return factsPurgeImpl.listPageSourcePathsForPurge(this.rawRead, pageIds); }
+  listNearestFactsForPurge(embedding: string, sourceId: string, model: string, fact: string) { return factsPurgeImpl.listNearestFactsForPurge(this.rawRead, embedding, sourceId, model, fact); }
+  countLegacyDerivedPages(sourceId: string) { return factsPurgeImpl.countLegacyDerivedPages(this.rawRead, sourceId); }
+  vacuumPurgedTables(withQueryCache: boolean) { return factsPurgeImpl.vacuumPurgedTables(this.rawRead, withQueryCache); }
+  listPageProseHits(store: factsPurgeImpl.PageProseStore, sourceId: string, loweredNeedles: string[]) { return factsPurgeImpl.listPageProseHits(this.rawRead, store, sourceId, loweredNeedles); }
+  readPurgeReceiptSourcePath(sourceId: string) { return factsPurgeImpl.readPurgeReceiptSourcePath(this.rawRead, sourceId); }
+  countPagePurgeTombstones(sourceId: string, slug: string) { return factsPurgeImpl.countPagePurgeTombstones(this.rawRead, sourceId, slug); }
+  readDeletePageRequest(sourceId: string, requestId: string) { return factsPurgeImpl.readDeletePageRequest(this.rawRead, sourceId, requestId); }
+  listPurgeEffects(requestId: string) { return factsPurgeImpl.listPurgeEffects(this.rawRead, requestId); }
+  countPurgeFingerprintResidue(sourceId: string, factHash: string, subject: string) { return factsPurgeImpl.countPurgeFingerprintResidue(this.rawRead, sourceId, factHash, subject); }
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts), through executeRaw as before.
   loopFactDrift(sourceIds: string[], loopId: number | null) { return factsRepairImpl.loopFactDrift(this.rawRead, sourceIds, loopId); }

@@ -192,7 +192,14 @@ export const FAMILIES: Record<string, readonly string[]> = {
 
   facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'settleFactsReconcile', 'lockReconcileRevision', 'selectFactsReconcileDrain', 'listRelinkCandidateRows',
     'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
-    'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge'],
+    'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge',
+    'expireFactsOfGonePages', 'readPurgeSourceLocalPath', 'insertReasonPurgeTombstones', 'listGitEffectsCarryingReason', 'listPageGitEffectsForStrip',
+    'setPurgeEffectData', 'listPageChangeReasons', 'listRequestsRecordingReasons', 'heldEntityPageDeleted', 'readHeldAccessState',
+    'heldTargetPageLive', 'listHeldMoveRows', 'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue',
+    'readHeldConfigValue', 'readHeldPageLocation', 'readHeldVersionsEdited', 'listSegmentedPageBodies', 'listSegmentedVersionBodies',
+    'setPurgeProbeTimeout', 'probePurgeDerivations', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe', 'listPageSourcePathsForPurge',
+    'listNearestFactsForPurge', 'countLegacyDerivedPages', 'vacuumPurgedTables', 'listPageProseHits', 'readPurgeReceiptSourcePath',
+    'countPagePurgeTombstones', 'readDeletePageRequest', 'listPurgeEffects', 'countPurgeFingerprintResidue'],
 
   // facts_repair: repair classifiers and loop retirement
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
