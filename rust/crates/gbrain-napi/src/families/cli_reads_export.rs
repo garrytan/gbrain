@@ -85,4 +85,16 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_segmented_page_head(page_id))
     }
+
+    /// `readBodyManifestRows(pageId, generation)`: a generation's published manifest rows in seq
+    /// order; `generation` null reads the page's live one. `sha256` crosses as hex.
+    #[napi]
+    pub fn read_body_manifest_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_body_manifest_rows(page_id, generation))
+    }
 }

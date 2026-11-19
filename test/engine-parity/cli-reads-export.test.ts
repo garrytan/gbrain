@@ -177,4 +177,28 @@ describe('engine parity: export reads', () => {
       missing: await engine.readSegmentedPageHead(pageId + small + gone + 1000) ?? null,
     };
   });
+
+  // The manifest rows a segmented read tiles the body from: the live generation's when none is named, a named
+  // generation's otherwise, none for a generation or page that has none. Occurrence ids map to ordinals.
+  parityTest('readBodyManifestRows reads a generation\'s published rows in seq order', {
+    methods: ['readBodyManifestRows', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts',
+      'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction'],
+  }, async (engine) => {
+    const { pageId, occurrences } = await publishSegmented(engine, 'notes/big');
+    const view = (rows: Awaited<ReturnType<typeof engine.readBodyManifestRows>>) => rows.map(r => {
+      expect(r.sha256).toBeInstanceOf(Uint8Array);
+      return {
+        seq: num(r.seq), occurrence: occurrences.indexOf(Number(r.occurrence_id)), region: r.region, sha256: Buffer.from(r.sha256).toString('hex'),
+        byte_start: num(r.byte_start), byte_len: num(r.byte_len), line_start: num(r.line_start), line_count: num(r.line_count),
+        static_proj_bytes: num(r.static_proj_bytes), static_proj_lines: num(r.static_proj_lines), outline_count: num(r.outline_count),
+        has_facts: r.has_facts, has_date: r.has_date, generation: num(r.generation),
+      };
+    });
+    return {
+      live: view(await engine.readBodyManifestRows(pageId, null)),
+      gen1: view(await engine.readBodyManifestRows(pageId, 1)),
+      gen0: view(await engine.readBodyManifestRows(pageId, 0)),
+      missing: view(await engine.readBodyManifestRows(pageId + 1000, null)),
+    };
+  });
 });

@@ -114,3 +114,31 @@ export async function readSegmentedPageHead(tx: Raw, pageId: number): Promise<Se
       body_flags, segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1`, [pageId]);
   return page;
 }
+
+/** One published manifest row of a segmented body, with the generation it was read at. Bigint columns: numbers on PGLite, strings on Postgres. */
+export interface BodyManifestRow {
+  seq: number;
+  occurrence_id: number | string;
+  region: string;
+  sha256: Uint8Array;
+  byte_start: number | string;
+  byte_len: number | string;
+  line_start: number | string;
+  line_count: number | string;
+  static_proj_bytes: number | string;
+  static_proj_lines: number | string;
+  outline_count: number;
+  has_facts: boolean;
+  has_date: boolean;
+  generation: number | string;
+}
+
+/** Generation `generation`'s published manifest rows of page `pageId` in seq order (`generation` null: the page's live one at the statement). */
+export async function readBodyManifestRows(tx: Raw, pageId: number, generation: number | null): Promise<BodyManifestRow[]> {
+  return tx.executeRaw<BodyManifestRow>(`SELECT m.seq, m.occurrence_id, m.region, m.sha256, m.byte_start, m.byte_len,
+      m.line_start, m.line_count, m.static_proj_bytes, m.static_proj_lines, jsonb_array_length(m.outline) AS outline_count,
+      jsonb_array_length(m.facts_slots) > 0 AS has_facts, m.date_min IS NOT NULL AS has_date, g.generation
+    FROM (SELECT COALESCE($2::bigint, (SELECT body_generation FROM pages WHERE id=$1)) AS generation) g
+    JOIN page_body_manifest m ON m.page_id=$1 AND m.staging_id IS NULL AND m.gen_from<=g.generation AND (m.gen_to IS NULL OR m.gen_to>g.generation)
+    ORDER BY m.seq`, [pageId, generation]);
+}

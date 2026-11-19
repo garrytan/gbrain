@@ -15,7 +15,9 @@ use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::links::no_nul;
-use crate::page_body::{page_u64, read_body_state, segmented_reference};
+use crate::page_body::{
+    in_generation, manifest_rows, page_u64, read_body_state, segmented_reference,
+};
 use crate::pages::read_page_by_id;
 use crate::raw_files::page_raw_rows;
 use crate::trust::withdrawals::source_withdrawals;
@@ -102,6 +104,33 @@ pub struct SegmentedPageHead {
     pub body_flags: Option<Value>,
     pub segmenter_version: Option<i64>,
     pub revision: Option<String>,
+}
+
+/// One row of `readBodyManifestRows`: a published manifest row and the generation it was read at.
+/// `sha256` is hex.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BodyManifestRow {
+    pub seq: i64,
+    pub occurrence_id: i64,
+    pub region: String,
+    pub sha256: String,
+    pub byte_start: i64,
+    pub byte_len: i64,
+    pub line_start: i64,
+    pub line_count: i64,
+    pub static_proj_bytes: i64,
+    pub static_proj_lines: i64,
+    pub outline_count: i64,
+    pub has_facts: bool,
+    pub has_date: bool,
+    pub generation: i64,
+}
+
+/// `jsonb_array_length`: the stored columns are arrays (`NOT NULL DEFAULT '[]'`).
+fn array_len(value: &Value) -> i64 {
+    value
+        .as_array()
+        .map_or(0, |a| i64::try_from(a.len()).unwrap_or(i64::MAX))
 }
 
 /// `string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)` over
@@ -355,6 +384,50 @@ impl Store {
             revision: Some(page.knowledge_revision.clone()),
         }))
     }
+
+    /// `readBodyManifestRows(pageId, generation)`: the rows of generation
+    /// `COALESCE($2, pages.body_generation)` with no staging id, in seq order. A missing page with
+    /// no generation named reads none (the generation is NULL).
+    pub fn read_body_manifest_rows(
+        &self,
+        page_id: i64,
+        generation: Option<i64>,
+    ) -> Result<Vec<BodyManifestRow>> {
+        let Some(page) = page_u64(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let generation = match generation {
+            Some(g) => g,
+            None => match read_page_by_id(&*read, page)? {
+                Some(_) => read_body_state(&*read, page)?.map_or(0, |s| s.body_generation),
+                None => return Ok(Vec::new()),
+            },
+        };
+        let mut rows: Vec<BodyManifestRow> = manifest_rows(&*read, page)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .filter(|row| in_generation(row, generation))
+            .map(|row| BodyManifestRow {
+                seq: row.seq,
+                occurrence_id: row.occurrence_id,
+                region: row.region,
+                sha256: row.sha256,
+                byte_start: row.byte_start,
+                byte_len: row.byte_len,
+                line_start: row.line_start,
+                line_count: row.line_count,
+                static_proj_bytes: row.static_proj_bytes,
+                static_proj_lines: row.static_proj_lines,
+                outline_count: array_len(&row.outline),
+                has_facts: array_len(&row.facts_slots) > 0,
+                has_date: row.date_min.is_some(),
+                generation,
+            })
+            .collect();
+        rows.sort_by_key(|row| row.seq);
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]
@@ -463,5 +536,24 @@ mod tests {
         assert!(head.revision.is_some());
         assert_eq!(s.read_segmented_page_head(id + 1000).unwrap(), None);
         assert_eq!(s.read_segmented_page_head(-1).unwrap(), None);
+    }
+
+    #[test]
+    fn an_inline_page_has_no_manifest_rows() {
+        let s = store();
+        page(&s, "notes/a", "abc");
+        let id: i64 = s.list_export_page_keys(&query("0")).unwrap()[0]
+            .id
+            .parse()
+            .unwrap();
+        assert!(s.read_body_manifest_rows(id, None).unwrap().is_empty());
+        assert!(s.read_body_manifest_rows(id, Some(1)).unwrap().is_empty());
+        assert!(
+            s.read_body_manifest_rows(id + 1000, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(array_len(&json!([1, 2])), 2);
+        assert_eq!(array_len(&Value::Null), 0);
     }
 }

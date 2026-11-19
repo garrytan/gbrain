@@ -31,6 +31,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import type { BodyManifestRow } from '../engine-sql/export-reads.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { credentialSafeProjection } from '../credential-projection.ts';
@@ -173,13 +174,8 @@ async function checkPin(pin: BodyPin, page: { slug?: unknown; body_generation?: 
 }
 
 /** A generation's manifest rows, each carrying the generation read (`generation` null: the page's live one at the statement). */
-function manifestRows(engine: BrainEngine, pageId: number, generation: number | null): Promise<Record<string, unknown>[]> {
-  return engine.executeRaw<Record<string, unknown>>(`SELECT m.seq, m.occurrence_id, m.region, m.sha256, m.byte_start, m.byte_len,
-      m.line_start, m.line_count, m.static_proj_bytes, m.static_proj_lines, jsonb_array_length(m.outline) AS outline_count,
-      jsonb_array_length(m.facts_slots) > 0 AS has_facts, m.date_min IS NOT NULL AS has_date, g.generation
-    FROM (SELECT COALESCE($2::bigint, (SELECT body_generation FROM pages WHERE id=$1)) AS generation) g
-    JOIN page_body_manifest m ON m.page_id=$1 AND m.staging_id IS NULL AND m.gen_from<=g.generation AND (m.gen_to IS NULL OR m.gen_to>g.generation)
-    ORDER BY m.seq`, [pageId, generation]);
+function manifestRows(engine: BrainEngine, pageId: number, generation: number | null): Promise<BodyManifestRow[]> {
+  return engine.readBodyManifestRows(pageId, generation);
 }
 
 /**

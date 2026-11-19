@@ -53,6 +53,7 @@ export const RUST_ENGINE_MEMBERS = {
   readExportPageRows: 'pages',
   normalizeFenceLines: 'pages',
   readSegmentedPageHead: 'pages',
+  readBodyManifestRows: 'pages',
   listExactIdentityCandidates: 'pages',
   listExtractionPendingPages: 'pages',
   slugsEndingIn: 'pages',

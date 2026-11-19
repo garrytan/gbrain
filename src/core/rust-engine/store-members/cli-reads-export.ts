@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -50,3 +50,13 @@ export const normalizeFenceLines: StoreMember<[bodies: readonly string[], timeli
 /** A segmented body read: the page's body columns and revision, deleted or not (`cli_reads::export::read_segmented_page_head`). */
 export const readSegmentedPageHead: StoreMember<[pageId: number], SegmentedPageHead | undefined> = async (brain, pageId) =>
   (await storeCall({ member: 'readSegmentedPageHead' }, () => brain.readSegmentedPageHead(pageId))) ?? undefined;
+
+/**
+ * A segmented body read: a generation's published manifest rows in seq order (`cli_reads::export::read_body_manifest_rows`).
+ * The store sends `sha256` as hex; it comes back bytes, as on PGLite.
+ */
+export const readBodyManifestRows: StoreMember<[pageId: number, generation: number | null], BodyManifestRow[]> = async (brain, pageId, generation) => {
+  const rows: Array<Omit<BodyManifestRow, 'sha256'> & { sha256: string }> =
+    await storeCall({ member: 'readBodyManifestRows' }, () => brain.readBodyManifestRows(pageId, generation));
+  return rows.map(row => ({ ...row, sha256: new Uint8Array(Buffer.from(row.sha256, 'hex')) }));
+};
