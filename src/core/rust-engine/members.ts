@@ -387,6 +387,7 @@ export const RUST_ENGINE_MEMBERS = {
   listHeldFenceFactRows: 'facts',
   listWithdrawalSlugs: 'facts',
   expireFactsByWithdrawal: 'facts',
+  insertFactPurge: 'facts',
 
   // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
   loopFactDrift: 'facts',
@@ -493,6 +494,8 @@ export const RUST_ENGINE_MEMBERS = {
   // trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   hasCoveringFactWithdrawal: 'facts',
   insertFactWithdrawal: 'facts',
+  isFactWithdrawn: 'facts',
+  isFactPurged: 'facts',
   listFactWithdrawalDates: 'facts',
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',

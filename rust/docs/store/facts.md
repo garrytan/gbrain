@@ -161,6 +161,7 @@ counter is `M next_facts_id`.
 | `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
+| `F 0x0C source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
 
 ### Relink attempts (`facts/relink.rs`)
 
@@ -186,8 +187,9 @@ or an unknown action is `invalid_argument`. `linkConversationFact` sets the enti
 context only while the row is still as planned: on the given page with the given text, live
 (not expired, `valid_until` unset or later), with no entity or on the unbacked name key `from`,
 user or unattributed, written by a conversation extractor, and the target page is live. Both
-return false and write nothing when the row does not match. Not modeled: the withdrawal and
-purge triggers of the Postgres `UPDATE`, because their ledgers have no Rust writer.
+return false and write nothing when the row does not match. The purge guard of the Postgres
+`UPDATE` runs, as on every fact write ("The fact purge ledger"); the withdrawal trigger is not
+modeled.
 
 `listConversationRelinkPages` is the page pick of `gbrain facts relink --conversation`. It reads
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
@@ -493,9 +495,33 @@ whether it is activation-suppressed (`trust::activation_suppressed`); both are n
 `held` is a `kind = 'fact'` hold of the page with status `held` and the row's fingerprint. `narrower`, with
 `hideHeld` only, is the held-cell rule above for an uncut claim over the page's live facts; the TypeScript
 member refuses a member caller or a private-facts grant (`engine_capability_missing`), as for `listHeldFenceCells`.
-`purged` is always false: fact purges (`fact_purges`) are written through `executeRaw` only, which the Rust
-engine refuses, so the store keeps none. A NUL character or a row number outside `integer` refuses with
+`purged` is whether a fact purge tombstone at the incoming row's visibility names the claim's fingerprint under
+subject `*` or the page ("The fact purge ledger"). A NUL character or a row number outside `integer` refuses with
 `invalid_argument`. No incoming rows answer `[]` without a read.
+
+## The fact purge ledger
+
+`facts/purge_ledger.rs` keeps `fact_purges` (key `F 0x0C`). `insertFactPurge({ sourceId, visibility, subject,
+factHash, requestId, actor, reason })` stores a tombstone and answers true, or false when the key exists
+(`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A visibility other than `private` or `world`, a
+`requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing source refuses as the
+foreign key does. `purge_fact` (facts/purge.ts) writes its main tombstone through this member; the holding-slug
+tombstones, the take and page purges, the purge epoch and the rest of the purge still run through `executeRaw`, which
+this engine refuses, so a full `purge_fact` does not run on Rust yet.
+
+Readers: the fence overlay's `purged`; `isFactPurged` (`is_fact_purged`: point reads for subject `*` and the entity)
+and the purge half of `isFactWithdrawn` ([trust.md](trust.md)), which every fact writer runs before it saves;
+`completeWriteRow`'s `purge_has_facts` (any tombstone of the source; `purge_has_pages` stays false, as the store keeps
+no page purges); and `readLedgerSource`'s `purgesPossible` (`brain.hasFactPurges`). The purge epoch stays 0.
+
+The guard: every fact write (`write_fact`) refuses with `purged_content` (`purged_content: this claim was purged
+from this source and cannot be saved again`, the triggers' message) when a tombstone of the row's source and
+visibility names its fingerprint under subject `*`, the row's entity, or any subject when the entity is an unbacked
+name key. On insert it skips an extraction outcome marker (`gbrain_guard_inserted_facts`); on update it runs when
+`fact`, `source_id`, `visibility` or `entity_slug` changed (`gbrain_refuse_purged_fact`). Postgres fires the update
+trigger when the statement sets one of those columns, even to the same value; the store fires it only on a change,
+which refuses nothing a no-op update would not already have kept. The refusal rolls back the whole write, as the
+trigger's exception does. Deleting a source removes its tombstones.
 
 ## Not modeled
 

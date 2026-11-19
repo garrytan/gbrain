@@ -798,7 +798,9 @@ pub(crate) fn complete_write_row_in(
     write_request(tx, &record)?;
     let mut row = record.to_row();
     if c.probe_purges {
-        row["purge_has_facts"] = json!(false);
+        let has_facts = crate::facts::purge_ledger::has_fact_purges(&*tx, &record.source_id)?;
+        row["purge_has_facts"] = json!(has_facts);
+        // Page purges are not modeled: the store keeps no `page_purges` rows.
         row["purge_has_pages"] = json!(false);
     }
     Ok(Some(row))

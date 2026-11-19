@@ -14,6 +14,7 @@ test/engine-parity/cycle-locks.test.ts	10	0
 test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/entity-reads.test.ts	9	0
 test/engine-parity/extraction.test.ts	6	0
+test/engine-parity/fact-purge-ledger.test.ts	3	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0
 test/engine-parity/facts-cycle.test.ts	14	0
