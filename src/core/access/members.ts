@@ -21,7 +21,7 @@
  * sets it (`gbrain access member kind`, `member add --kind`); a remote caller is refused.
  */
 import type { BrainEngine } from '../engine.ts';
-import { ACCESS_MEMBER_SELECT, type AccessMemberRow } from '../engine-sql/access-control.ts';
+import type { AccessMemberRow } from '../engine-sql/access-control.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { forgetWakePrincipal } from '../wakeshift/forget.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
@@ -117,8 +117,6 @@ function toRecord(row: AccessMemberRow): MemberRecord {
   };
 }
 
-const MEMBER_SELECT = ACCESS_MEMBER_SELECT;
-
 export async function getMember(engine: BrainEngine, id: string): Promise<MemberRecord | null> {
   const [row] = await engine.readAccessMembers({ id });
   return row ? toRecord(row) : null;
@@ -140,7 +138,7 @@ export async function existingMember(engine: BrainEngine, raw: unknown, action: 
 }
 
 async function assertEmailFree(engine: BrainEngine, email: string, memberId: string): Promise<void> {
-  const [row] = await engine.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE email = $1', [email]);
+  const [row] = await engine.readAccessMembers({ email });
   if (!row || row.id === memberId) return;
   throw memberInvalid(`Member "${row.id}" already declares that email.`, 'email_taken',
     `Check the address, or clear it there first: gbrain access member set ${row.id} --email none.`,
@@ -157,7 +155,7 @@ async function refuseEmailRace(engine: BrainEngine, error: unknown, email: strin
 /** GST-1158: the one member whose declared email is `raw`; not_found when none, refused when several. Never creates one. */
 export async function memberByEmail(engine: BrainEngine, raw: unknown): Promise<MemberRecord> {
   const email = assertMemberEmail(raw);
-  const rows = await engine.executeRaw<AccessMemberRow>(`${MEMBER_SELECT} WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`, [email]);
+  const rows = await engine.readAccessMembers({ email });
   if (rows.length === 1) return toRecord(rows[0]!);
   if (!rows.length) {
     throw opError('not_found', 'No member declares that email.',

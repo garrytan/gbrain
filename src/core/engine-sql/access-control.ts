@@ -104,26 +104,32 @@ export interface AccessMemberRow {
   groups: string[];
 }
 
-/** Which members to read: the one member with this id (any status), or every member (removed ones only when asked). */
-export type AccessMemberLookup = { id: string } | { includeRemoved: boolean };
+/**
+ * Which members to read: the one member with this id (any status), the members declaring this email (any status), or
+ * every member (removed ones only when asked).
+ */
+export type AccessMemberLookup = { id: string } | { email: string } | { includeRemoved: boolean };
 
-/** The member columns and groups access/members.ts reads (MEMBER_SELECT there is this text). */
-export const ACCESS_MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+/** The member columns and groups access/members.ts reads. */
+const ACCESS_MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
   COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
 
-/** The statements access/members.ts getMember and listMembers ran through executeRaw. */
+/** The statements access/members.ts getMember, memberByEmail and listMembers ran through executeRaw. */
 export const ACCESS_MEMBER_SQL = {
   by_id: `${ACCESS_MEMBER_SELECT} WHERE m.id = $1 GROUP BY m.id`,
+  by_email: `${ACCESS_MEMBER_SELECT} WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`,
   live: `${ACCESS_MEMBER_SELECT} WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`,
   all: `${ACCESS_MEMBER_SELECT} GROUP BY m.id ORDER BY m.id`,
 } as const;
 
 /**
- * The member rows `by` names, by id: one member by exact id (none when absent), or every member, where a removed
+ * The member rows `by` names, by id: one member by exact id (none when absent), the members whose declared email is
+ * exactly `email` (the caller case-folds it), or every member, where a removed
  * (tombstoned) member is filtered out in the statement unless `includeRemoved`. A failure is thrown unchanged.
  */
 export async function readAccessMembers(exec: MemberLookupRead, by: AccessMemberLookup): Promise<AccessMemberRow[]> {
   if ('id' in by) return exec.executeRaw<AccessMemberRow>(ACCESS_MEMBER_SQL.by_id, [by.id]);
+  if ('email' in by) return exec.executeRaw<AccessMemberRow>(ACCESS_MEMBER_SQL.by_email, [by.email]);
   return exec.executeRaw<AccessMemberRow>(by.includeRemoved ? ACCESS_MEMBER_SQL.all : ACCESS_MEMBER_SQL.live);
 }

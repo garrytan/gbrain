@@ -259,10 +259,11 @@ describe('engine parity: write misc', () => {
   parityTest('readAccessMembers finds no member by id and lists none on a brain with none', { methods: ['readAccessMembers'] }, async (engine) => {
     const answers = {
       byId: await engine.readAccessMembers({ id: 'alice-example' }),
+      byEmail: await engine.readAccessMembers({ email: 'alice@example.com' }),
       live: await engine.readAccessMembers({ includeRemoved: false }),
       all: await engine.readAccessMembers({ includeRemoved: true }),
     };
-    expect(answers).toEqual({ byId: [], live: [], all: [] });
+    expect(answers).toEqual({ byId: [], byEmail: [], live: [], all: [] });
     return answers;
   });
 
@@ -301,7 +302,14 @@ describe('engine parity: write misc', () => {
       unknown: await engine.readAccessMembers({ id: 'nobody-example' }),
     };
     expect(byId).toEqual({ removed: [['carol-example', true, ['team-c']]], group: [], otherCase: [], injected: [], unknown: [] });
-    return { live, all, byId };
+    // An email matches only the member that declares exactly it; never the whole list, another case or another member.
+    const byEmail = {
+      declared: (await engine.readAccessMembers({ email: 'alice@example.com' })).map(r => [r.id, r.groups]),
+      otherCase: await engine.readAccessMembers({ email: 'Alice@example.com' }),
+      undeclared: await engine.readAccessMembers({ email: 'bob@example.com' }),
+    };
+    expect(byEmail).toEqual({ declared: [['alice-example', ['team-a', 'team-b']]], otherCase: [], undeclared: [] });
+    return { live, all, byId, byEmail };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
