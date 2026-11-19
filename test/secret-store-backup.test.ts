@@ -86,6 +86,10 @@ for (const { name, make } of engines) {
         expect(await backupDue(a.engine)).toBe(true);
         await a.engine.executeRaw('DELETE FROM secret_store WHERE id = $1', [during.id]);
         expect(await backupDue(a.engine)).toBe(false);
+        await recordOccurrence(a.engine, { entryId: sealed.id, sourceId: 'default', slug: 'notes/second-page', field: 'compiled_truth', origin: 'repair', path: 'notes/second-page.md' });
+        expect(await backupDue(a.engine)).toBe(true);
+        await a.engine.executeRaw('DELETE FROM secret_store_occurrence WHERE entry_id = $1 AND slug = $2', [sealed.id, 'notes/second-page']);
+        expect(await backupDue(a.engine)).toBe(false);
         const raw = (await storage.download(out.object)).toString('utf8');
         for (const clear of [TOKEN, 'notes/deploy-plan', 'github_token', sealed.id, currentKey({ create: false })!.key.toString('base64')]) expect(raw).not.toContain(clear);
 

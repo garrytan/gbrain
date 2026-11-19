@@ -1,0 +1,128 @@
+{
+  "_note": "Hook events a real OpenClaw gateway passed to gbrain-skill-resolver on `openclaw agent` turns, captured on OpenClaw 2026.11.5 (e13cf15) and 2026.10.33 (5196fbb) with the same shape (2026.10.33 omits ctx.contextTokenBudget). The message text, ids, paths and the turn-rule text are synthetic stand-ins; the field names and nesting are exactly what the gateway sent. ctx.hookInvocation.assertActive is a function there, and ctx.sessionKey (agent:<agent>:<key>) is left out here because the test sets it per session.",
+  "first_turn": {
+    "event": {
+      "prompt": "Please deploy the web service to production",
+      "messages": []
+    },
+    "ctx": {
+      "runId": "00000000-0000-4000-8000-000000000001",
+      "trace": {
+        "traceId": "0123456789abcdef0123456789abcdef",
+        "spanId": "0123456789abcdef",
+        "parentSpanId": "fedcba9876543210",
+        "traceFlags": "01"
+      },
+      "agentId": "main",
+      "sessionId": "00000000-0000-4000-8000-0000000000a1",
+      "sandboxed": false,
+      "workspaceDir": "/home/alice-example/.openclaw/workspace",
+      "trigger": "user",
+      "activeProjectKeys": [],
+      "modelProviderId": "fixture",
+      "modelId": "fixture",
+      "contextTokenBudget": 32768,
+      "hookInvocation": {}
+    }
+  },
+  "second_turn": {
+    "event": {
+      "prompt": "Now create and send a customer invoice PDF",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Please deploy the web service to production",
+          "timestamp": 1795059965684,
+          "idempotencyKey": "00000000-0000-4000-8000-000000000001:user",
+          "__openclaw": {
+            "senderIsOwner": true,
+            "modelPromptProjection": {
+              "version": 1,
+              "text": "Turn rule text.\n\nPlease deploy the web service to production"
+            }
+          }
+        },
+        {
+          "role": "custom",
+          "customType": "openclaw.runtime-context",
+          "content": "## Active Subagents\nnone",
+          "display": false,
+          "details": {
+            "source": "openclaw-runtime-context",
+            "runtimeContextCarrier": true,
+            "fragments": [
+              {
+                "kind": "conversation-data",
+                "text": "## Active Subagents\nnone"
+              }
+            ]
+          },
+          "timestamp": 1795059967551
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "fixture reply"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "fixture",
+          "model": "fixture",
+          "stopReason": "stop",
+          "timestamp": 1795059967600,
+          "responseId": "r",
+          "__openclaw": {
+            "runId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ]
+    },
+    "ctx": {
+      "runId": "00000000-0000-4000-8000-000000000002",
+      "trace": {
+        "traceId": "0123456789abcdef0123456789abcdee",
+        "spanId": "0123456789abcdee",
+        "parentSpanId": "fedcba9876543211",
+        "traceFlags": "01"
+      },
+      "agentId": "main",
+      "sessionId": "00000000-0000-4000-8000-0000000000a1",
+      "sandboxed": false,
+      "workspaceDir": "/home/alice-example/.openclaw/workspace",
+      "trigger": "user",
+      "activeProjectKeys": [],
+      "modelProviderId": "fixture",
+      "modelId": "fixture",
+      "contextTokenBudget": 32768,
+      "hookInvocation": {}
+    }
+  },
+  "after_tool_call": {
+    "event": {
+      "toolName": "skills_read",
+      "params": {
+        "name": "deploy-example"
+      },
+      "runId": "00000000-0000-4000-8000-000000000003",
+      "toolCallId": "tool_call:call_1:skills_read:1",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Skill location: /home/alice-example/.openclaw/workspace/skills/deploy-example/SKILL.md"
+          }
+        ]
+      },
+      "durationMs": 12
+    },
+    "ctx": {
+      "toolName": "skills_read",
+      "agentId": "main",
+      "sessionId": "00000000-0000-4000-8000-0000000000a1",
+      "runId": "00000000-0000-4000-8000-000000000003",
+      "toolCallId": "tool_call:call_1:skills_read:1"
+    }
+  }
+}

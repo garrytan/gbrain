@@ -35,6 +35,7 @@ A remote caller needs both:
 
 Otherwise the call fails with `secret_reveal_forbidden`. Every reveal, CLI or MCP, is appended to the `secrets` audit
 log (`~/.gbrain/audit/secrets-<year>-W<week>.jsonl`) with the entry, the caller and the pages, never the value.
+That file and the `secret-spans` audit log are mode 0600, and a looser existing file is tightened on its next write.
 
 ## A false positive
 
@@ -99,10 +100,12 @@ publish. The details, and what is held back instead, are in
 - `gbrain git redact-unpushed --source <id>` shows what a publish would redact, writing nothing; `--apply --expect
   <hash>` does it without pushing.
 
-<a id="secret_store_spooled"></a>A publish runs without the database, so it first writes each original to an encrypted
-spool on this machine, `~/.gbrain/secret-store/spool/` (directory 0700, one 0600 file per entry, the same key). The
-owner moves spooled entries into the store right after its push, and maintenance (the `bookkeeping_gc` phase) moves
-any that are left. `gbrain secrets reveal <id>` reads a spooled entry meanwhile, and `gbrain secrets list` (field `spooled` with
+<a id="secret_store_spooled"></a>A publish runs without the database, so it always first writes each original to an encrypted
+spool on this machine, `~/.gbrain/secret-store/spool/` (directory 0700, one 0600 file per entry, the same key), and
+says so with the info notice `secret_store_spooled`. The first publish that redacts creates the key. The
+owner moves spooled entries into the store right after its push (a page write's Git effect), and maintenance (the
+`bookkeeping_gc` phase) moves any that are left. `gbrain git commit-push` does not move them, so on a host where no
+owner push and no maintenance run they stay in the spool; doctor's `secret_store` check counts them. `gbrain secrets reveal <id>` reads a spooled entry meanwhile, and `gbrain secrets list` (field `spooled` with
 `--json`) shows how many wait. `gbrain secrets list` also counts entries and occurrences by rule (`by_rule`), and what
 the publish redactions on this machine replaced by rule (`publish_redactions`): spans, values, and how many sat in a
 presigned link's `X-Amz-Credential=` parameter as opposed to bare. An entry leaves the spool only once its store row reads back to the same original, so a
@@ -128,7 +131,8 @@ one `gbrain files` uses), gbrain also uploads an encrypted export of the store t
   a host whose keyring holds the key the backup names (import the escrow copy first), and it skips, and lists, any row
   that does not authenticate under it. An entry already here is left as it is, even when the backup's copy differs;
   the places the backup recorded for it that this brain lacks are added, so a later purge of one page never removes an
-  original another page still holds.
+  original another page still holds. A restore only adds rows and never deletes one, and each restored place is tied
+  to the page that holds its slug in this brain now.
   An original whose every recorded place was on a page this brain does not hold is skipped and counted as
   `skipped_no_page` ("skipped because their page is not in this brain"): the page was purged, or is not synced yet,
   and a restore cannot tell which, so it never brings back what a page purge removed. Sync the pages, then run the
