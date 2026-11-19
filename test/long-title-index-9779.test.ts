@@ -6,17 +6,18 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
+import { withColdPglite } from './helpers/with-snapshot.ts';
 import { renderSessionParts, TRANSCRIPT_TITLE_MAX_CHARS } from '../src/core/transcripts/render.ts';
 import type { RedactedSession } from '../src/core/transcripts/render.ts';
 import { expectReplacementPastV240, expectUpgradeFromBeforeV240, incompressibleTitle } from './helpers/long-title-index.ts';
 
-// Each scenario rewinds the schema version, so each gets its own brain.
+// Each scenario rewinds the schema version, so each gets its own brain, connected
+// cold: a snapshot-restored brain does not replay migrations after a rewind.
 describe('long page titles before v240 (#9779, PGLite)', () => {
   let engine: PGLiteEngine;
   beforeAll(async () => {
     engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
+    await withColdPglite(async () => { await engine.connect({}); await engine.initSchema(); });
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); }, 60_000);
 
@@ -29,8 +30,7 @@ describe('long page titles past v240 (#9779, PGLite)', () => {
   let engine: PGLiteEngine;
   beforeAll(async () => {
     engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
+    await withColdPglite(async () => { await engine.connect({}); await engine.initSchema(); });
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); }, 60_000);
 
