@@ -308,6 +308,33 @@ describe('engine parity: search', () => {
   );
 
   parityTest(
+    'searchVector on the default embedding column returns the same ordered top-k, rows and scores',
+    { methods: ['searchVector'] },
+    async (engine) => {
+      await seedCorpus(engine);
+      // 0.8 on the article axis, 0.5 on the concept axis, the rest on one chat page's axis: three distinct scores,
+      // then the pages the query does not touch, which tie at 0 and keep the engines' tie order.
+      const query = new Float32Array(1536);
+      query[7] = 0.8;
+      query[14] = 0.5;
+      query[8] = Math.sqrt(1 - 0.64 - 0.25);
+      const rows = async (opts: Parameters<BrainEngine['searchVector']>[1]) =>
+        (await engine.searchVector(query, opts)).map((r) => ({ ...hit(r), chunk_text: r.chunk_text, score: round(r.score) }));
+      const byDefault = await rows({ limit: 4 });
+      expect(byDefault.slice(0, 3).map((r) => r.slug)).toEqual([
+        'originals/talks/article-outline-fat-code', 'concepts/fat-code-thin-harness', 'openclaw/chat/2026-04-15',
+      ]);
+      // The cosines 0.8, 0.5 and sqrt(0.11) times the default source boosts (originals 1.5, concepts 1.3, chat 0.5).
+      expect(byDefault.slice(0, 3).map((r) => r.score)).toEqual([1.2, 0.65, round(Math.sqrt(0.11) * 0.5)]);
+      const named = await rows({ limit: 4, embeddingColumn: 'embedding' });
+      expect(named).toEqual(byDefault);
+      const all = await rows({ limit: 10 });
+      expect(all.slice(0, 4)).toEqual(byDefault);
+      return { byDefault, named, all };
+    },
+  );
+
+  parityTest(
     'searchVector: a dense page cannot starve the page-grain result',
     { methods: ['searchVector'] },
     async (engine) => {

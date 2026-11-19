@@ -52,6 +52,8 @@ pub const INVALID_STATE: &str = "invalid_state";
 /// it committed. `Store::write` runs the transaction again; callers do not see this code unless
 /// a write keeps losing until its retry budget is spent.
 pub const WRITE_CONFLICT: &str = "write_conflict";
+/// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
+pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {

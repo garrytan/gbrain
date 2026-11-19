@@ -32,9 +32,11 @@ mod write_trust;
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;
 mod aliases;
+mod calibration_profiles;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
+mod decide_store;
 mod dream;
 mod embeddings;
 mod eval_capture;
@@ -51,6 +53,7 @@ mod jobs;
 mod keyword;
 mod link_queries;
 mod link_temporal;
+mod memory_mutation_reads;
 mod ontology;
 mod page_body;
 mod page_ops;
@@ -65,3 +68,5 @@ mod transactions;
 mod trust_tier_reads;
 mod vectors;
 mod wanted_links;
+// Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
+mod decide_proposals;

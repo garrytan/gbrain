@@ -249,6 +249,30 @@ impl Brain {
         })
     }
 
+    /// `insertPublicationEffects(spec)`: the kinds inserted, in queue order.
+    #[napi]
+    pub fn insert_publication_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_publication_effects(&required(spec, "insertPublicationEffects spec")?)
+        })
+    }
+
+    /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
+    #[napi]
+    pub fn release_unpublished_claim<'env>(
+        &self,
+        env: &'env Env,
+        release: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.release_unpublished_claim(&required(release, "releaseUnpublishedClaim release")?)
+        })
+    }
+
     #[napi]
     pub fn expire_stale_write_claims<'env>(
         &self,
@@ -414,8 +438,22 @@ impl Brain {
         })
     }
 
-    /// `selectClaimableEffect(hostId)`: the next effect to claim; `null` (no effect is recorded
-    /// here).
+    /// `readRequestEffects(requestId, kind)`: the request's effect states in kind order, or only
+    /// its `kind` effect.
+    #[napi]
+    pub fn read_request_effects<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        kind: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_request_effect_states(&request_id, kind.as_deref())
+        })
+    }
+
+    /// `selectClaimableEffect(hostId)`: the next effect to claim; `null` (this engine claims no
+    /// effect yet, so a stored effect waits).
     #[napi]
     pub fn select_claimable_effect<'env>(
         &self,
@@ -423,6 +461,52 @@ impl Brain {
         host_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.select_claimable_effect(&host_id))
+    }
+
+    /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes past their hold; `[]`
+    /// (no worktree here). The wait limit only narrows the rows, so it is not sent.
+    #[napi]
+    pub fn list_overdue_held_writes<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+        hold: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_overdue_held_writes(&host_id, &hold))
+    }
+
+    /// `lockOverdueHold(hold)`: whether the hold still stands; `false` (no refresh row or
+    /// worktree import hold here).
+    #[napi]
+    pub fn lock_overdue_hold<'env>(
+        &self,
+        env: &'env Env,
+        hold: String,
+        id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_overdue_hold(&hold, id.as_deref()))
+    }
+
+    /// `listOwnerRecoveryHeads(hostId, excluded)`: the recovering write heads; `[]` (no worktree
+    /// here). The excluded worktree ids only narrow the rows, so they are not sent.
+    #[napi]
+    pub fn list_owner_recovery_heads<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_owner_recovery_heads(&host_id))
+    }
+
+    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes; `[]` (no refresh row
+    /// here). The sync budget only marks rows stale, so it is not sent.
+    #[napi]
+    pub fn list_resumable_refreshes<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_resumable_refreshes(&host_id))
     }
 
     #[napi]

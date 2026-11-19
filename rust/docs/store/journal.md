@@ -48,6 +48,9 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)` | `[]` | The store holds no files from a sync, so nothing is held. |
 | `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
+| `readOAuthClientWriteGrant(clientId, opts?)` | `null` | The store keeps no OAuth clients (its writers are `local_cli` and `local_stdio`), so a write owned by one finds no live grant and `authorizeWrite` refuses `permission_denied`, as a Postgres or PGLite brain without that client does. |
+| `readAccessTokenWriteGrant(tokenId, opts?)` | `null` | The store keeps no legacy access tokens; same answer and refusal as above. |
+| `shareLockWriteCredential(kind, id)` | no-op | No credential row exists to hold; a missing row locks nothing on Postgres either. |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
 (SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
@@ -71,7 +74,7 @@ connect during a graduation.
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
-(`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`, the FIFO head read `selectClaimableWrite`) and the admission reads
+(`renewWriteClaim`, `releaseUnpublishedClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`, the FIFO head read `selectClaimableWrite`) and the admission reads
 (`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
 rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`. The consumer row
 members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`,

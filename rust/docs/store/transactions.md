@@ -78,10 +78,19 @@ becomes visible to the brain in one commit, or not at all.
 An `AbortSignal` in `opts` is honoured before the transaction starts and while it waits at the
 gate (`cancelled`); once `fn` runs the signal is ignored, as on PGLite.
 
-## Deliberate divergence: `readOnly`
+## Read-only transactions
 
-PGLite ignores `opts.readOnly`. The Rust engine refuses a write inside a `readOnly` transaction with
-`invalid_state` ("a read-only transaction refuses writes"). Reads inside it see a stable snapshot.
+A write inside a read-only transaction rejects `read_only_transaction` ("cannot execute a write in a
+read-only transaction"), and the statement leaves nothing. The TypeScript engine maps it to
+Postgres's refusal: code `25006` (`read_only_sql_transaction`), message `cannot execute <member> in a
+read-only transaction`. A transaction becomes read-only two ways:
+
+- `opts.readOnly` at `transaction(fn, opts)`, Postgres's `BEGIN READ ONLY`. PGLite ignores
+  `opts.readOnly`; this one is a deliberate divergence from it. Reads inside see a stable snapshot,
+  and the commit writes nothing.
+- `beginSnapshotRead({ readOnly: true })` inside the transaction, Postgres's `SET TRANSACTION READ
+  ONLY`. Writes made before it stay and commit; every write after it refuses. Postgres and PGLite
+  refuse the same writes (`test/engine-parity/transaction-settings.test.ts`).
 
 ## How it works
 
@@ -90,6 +99,7 @@ PGLite ignores `opts.readOnly`. The Rust engine refuses a write inside a `readOn
 | `txBrain.beginTransaction(brain, readOnly?)` | `null`; binds `txBrain` to a new transaction on `brain`'s store. `store_closed` when `brain` is closed; `invalid_state` when `txBrain` is already open | `BEGIN` |
 | `txBrain.savepoint()` | the new savepoint depth (1, 2, ...) | `SAVEPOINT` |
 | `txBrain.releaseSavepoint(depth)` / `rollbackSavepoint(depth)` | `null`; only the innermost savepoint can end, any other depth is `invalid_state` | `RELEASE` / `ROLLBACK TO` |
+| `txBrain.setTransactionReadOnly()` | `null`; every later write rejects `read_only_transaction`. `store_closed` once the transaction ended | `SET TRANSACTION READ ONLY` |
 | `txBrain.commitTransaction()` | the new commit version; releases the remaining savepoints | `COMMIT` |
 | `txBrain.rollbackTransaction()` | `null`; a no-op once the transaction ended | `ROLLBACK` |
 | `txBrain.holdPageKeys(keys, hinted)` | every held `[sourceId, slug]`, sorted | `pg_advisory_xact_lock` per key |

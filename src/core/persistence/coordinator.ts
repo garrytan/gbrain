@@ -1,6 +1,7 @@
 import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -385,6 +386,12 @@ export async function releaseChargedInterruption(engine: BrainEngine, row: Write
 
 export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown,
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
+  // An engine that cannot yet record a publication step refused before anything published: the write goes back to
+  // queued under its own name, so no claim stays running and a later engine that has the step publishes it.
+  if (isEngineCapabilityRefusal(error)) {
+    await releaseUnpublishedClaim(engine, row, 'engine_capability_missing');
+    return (await getWriteRequestById(engine, row.id))!;
+  }
   const charged = await releaseChargedInterruption(engine, row, error, stage);
   if (charged) return charged;
   // GST-1601: with persistence.adopt_local_edits on for the source, a one-sided local edit is adopted and the write prepared again.

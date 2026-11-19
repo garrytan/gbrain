@@ -165,6 +165,33 @@ describe('engine parity: versions', () => {
       };
     },
   );
+
+  parityTest(
+    'a change reason stamps the versions after a mark; getVersions reads it as replaced_because',
+    { methods: ['putPage', 'getPage', 'createVersion', 'readLatestVersionId', 'stampVersionChangeReason', 'getVersions'] },
+    async (engine) => {
+      const write = (body: string) => engine.putPage('notes/why', { type: 'note', title: 'Why', compiled_truth: body, timeline: '' });
+      await write('Body one.');
+      const pageId = Number((await engine.getPage('notes/why'))!.id);
+      const none = await engine.readLatestVersionId(pageId);
+      const v1 = await engine.createVersion('notes/why');
+      const latestIsV1 = (await engine.readLatestVersionId(pageId)) === Number(v1.id);
+      const first = await engine.stampVersionChangeReason({ pageId, afterVersionId: 0, reason: 'first edit' });
+      await write('Body two.');
+      const v2 = await engine.createVersion('notes/why');
+      const second = await engine.stampVersionChangeReason({ pageId, afterVersionId: Number(v1.id), reason: 'second edit' });
+      await write('Body three.');
+      const v3 = await engine.createVersion('notes/why', { reason: 'imported reason' });
+      const nothing = await engine.stampVersionChangeReason({ pageId, afterVersionId: Number(v3.id), reason: 'too late' });
+      const missing = { latest: await engine.readLatestVersionId(987_654), stamped: await engine.stampVersionChangeReason({ pageId: 987_654, afterVersionId: 0, reason: 'none' }) };
+      const latestIsV3 = (await engine.readLatestVersionId(pageId)) === Number(v3.id);
+      const history = (await engine.getVersions('notes/why')).map(v => [v.compiled_truth, v.replaced_because ?? null]);
+      expect({ none, latestIsV1, first, second, nothing, latestIsV3 }).toEqual({ none: null, latestIsV1: true, first: 1, second: 1, nothing: 0, latestIsV3: true });
+      expect(history).toEqual([['Body three.', 'imported reason'], ['Body two.', 'second edit'], ['Body one.', 'first edit']]);
+      expect(missing).toEqual({ latest: null, stamped: 0 });
+      return { none, latestIsV1, first, second, nothing, latestIsV3, missing, history, created: [v2, v3].map(v => (v as { change_reason?: string | null }).change_reason ?? null) };
+    },
+  );
 });
 
 describe('engine parity: raw data + files', () => {

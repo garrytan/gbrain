@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getCode } from '../retry-matcher.ts';
-import { requireTransactions } from '../rust-engine/errors.ts';
+import { requireManagedPersistence, requireTransactions } from '../rust-engine/errors.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -143,6 +143,7 @@ async function outstandingRefusal(tx: Pick<BrainEngine, 'countOutstandingBySourc
  * about to settle, keep their slots (#8759). Read only when the plain check would refuse.
  */
 async function heldBehindImport(tx: SqlEngine, principal: Principal | null, sourceId: string): Promise<{ count: number; bytes: number }> {
+  requireManagedPersistence(tx, 'heldBehindImport', 'it counts the writes held behind a managed import or refresh');
   const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(r.intent_bytes),0) AS bytes
     FROM persistence_requests r WHERE r.state='deferred' AND NOT ${RELEASED_DEFERRED('r')} AND ((r.deferred_import_from IS NOT NULL AND r.source_id=$1)
       OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NULL AND $1=ANY(f.source_ids)))${principal ? ' AND r.principal_kind=$2 AND r.principal_id=$3' : ''}`,
@@ -294,6 +295,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
   const stamp = writerStamp({ engine });
   const origin = resolveAdmissionOrigin(input.origin);
+  if (input.worktreeId) requireManagedPersistence(engine, 'admitWrite', 'a write to a managed worktree checks its refresh fence, owner and binding');
+  if (input.targetKind === 'skill_bundle') requireManagedPersistence(engine, 'admitWrite', 'a skill bundle write publishes to the protocol-2 canonical owner of a managed checkout');
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
   const barrier = !!input.worktreeId && deferrable(input) && await readRefreshBarrier(engine);
@@ -367,6 +370,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
 export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: WriteAdmission[], overrides?: Partial<JournalLimits>): Promise<WriteRequest[]> {
   const first = inputs[0];
   if (!first) return [];
+  requireManagedPersistence(tx, 'admitWriteGroupInTransaction', 'a grouped admission checks one worktree, source and counter set for the whole group');
   if (inputs.some(input => input.sourceId !== first.sourceId || input.sourceIncarnation !== first.sourceIncarnation || input.worktreeId !== first.worktreeId
     || String(input.topologyGeneration) !== String(first.topologyGeneration) || input.principal.kind !== first.principal.kind || input.principal.id !== first.principal.id
     || input.operation !== first.operation || (input.targetKind ?? 'page') !== 'page' || (input.protocolVersion ?? 1) !== 1 || digest(input.authority) !== digest(first.authority))) {
@@ -626,6 +630,7 @@ function deferrable(input: WriteAdmission): boolean {
 }
 /** PR B: whether the refresh barrier is on (docs/designs/REFRESH_WRITE_BARRIER.md). */
 async function readRefreshBarrier(engine: BrainEngine): Promise<boolean> {
+  requireManagedPersistence(engine, 'readRefreshBarrier', 'a write may wait behind a managed refresh');
   return writeSwitchOn(engine, 'refresh_barrier').catch(() => false);
 }
 /**
@@ -873,13 +878,9 @@ export async function renewWriteClaim(engine: Pick<BrainEngine, 'renewWriteClaim
   return engine.renewWriteClaim({ id, token, leaseMs, phaseJson: phase }, { signal });
 }
 /** `charge` (#6278): a `preparation_deadline` release counts one preparation attempt; `claim_lost`, `consumer_stopping` and the rest never do. */
-export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
+export async function releaseUnpublishedClaim(engine: Pick<BrainEngine, 'releaseUnpublishedClaim'>, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
   // An uncharged release ends a finished preparation: its claim phase would read as a preparation still waiting.
-  await engine.executeRaw(`UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
-    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
-    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
-    WHERE id=$1::uuid AND execution_token=$2::uuid
-    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, opts.charge === true]);
+  await engine.releaseUnpublishedClaim({ id: row.id, token: row.execution_token, reason, charge: opts.charge === true });
 }
 
 /** A recovery larger than a budget: names both budgets and the bytes needed, since a configured budget is the user's. */
@@ -988,7 +989,7 @@ export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leas
 }
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */
-export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
+export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence' | 'requireSynchronousCommit'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
   outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
   /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
   locked?: WriteRequest): Promise<WriteRequest> {
@@ -996,7 +997,7 @@ export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersi
   // and pre-publication failures that do not enter the file coordinator.
   let current = locked;
   if (!current) {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    await tx.requireSynchronousCommit();
     await declarePersistenceProtocol(tx);
     await lockCounters(tx, ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
     current = await tx.lockWriteRequest(row.id) ?? undefined;

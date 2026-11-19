@@ -20,10 +20,15 @@
  * true-up and the capacity reads, the compacted-byte sizing, and the projection queue's probes are pinned below.
  *
  * The effect claim's candidate read in src/core/engine-sql/persistence-effect-scans.ts does too: its dead-owner test and
- * refresh fence are pinned below against the effect-journal and worktree-refresh fragments.
+ * refresh fence are pinned below against the effect-journal and worktree-refresh fragments. So does the publication's
+ * effects insert in persistence-journal.ts: its text and its auto-link gate key are pinned against effect-journal.ts.
+ * The completion's synchronous-commit statement in persistence-declaration.ts is pinned against journal.ts `completeWrite`.
  */
 import { describe, expect, test } from 'bun:test';
-import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL } from '../src/core/engine-sql/persistence-journal.ts';
+import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, PUBLICATION_EFFECTS_SQL, publicationEffectsParams,
+  REMOTE_AUTO_LINKS_CONFIG_KEY } from '../src/core/engine-sql/persistence-journal.ts';
+import { REMOTE_AUTO_LINKS_KEY } from '../src/core/persistence/effect-model.ts';
+import { asciiLowerSql, edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
 import { EFFECT_BYTES_SQL, TRUE_UP_CLAMP_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { PURGE_PRESENCE_COLUMNS } from '../src/core/persistence/purged-intent.ts';
@@ -37,11 +42,12 @@ import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phas
 import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, COMPACTABLE_RECEIPTS_SQL, PROJECTION_RETRY_READY_TEXT, SEGMENTED_JOB_PROBES_SQL,
   SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, projectionWindowFragment } from '../src/core/engine-sql/persistence-housekeeping.ts';
 import { residentWindowCtes, type ProjectionScanCursor } from '../src/core/page-state/projection-window.ts';
-import { INSERT_TOPOLOGY_CHANGE_SQL, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { INSERT_TOPOLOGY_CHANGE_SQL, RELEASE_CLAIM_SQL, releaseUnpublishedClaim as releaseClaimStatement, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../src/core/persistence/journal.ts';
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
+import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
 import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
 import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
@@ -188,5 +194,56 @@ describe('the FIFO head read copies the journal claim formula', () => {
     expect(claimHeadStatement({ ...spec, leaseHolder: null }).params).toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}']);
     expect(claimHeadStatement({ ...spec, leaseHolder: { lockPrefix: 'p:', pid: 7, host: 'host' } }).params)
       .toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}', 'p:', 7, 'host']);
+  });
+});
+
+describe('the publication effects insert copies the effect journal statement', () => {
+  // The statement effect-journal.ts queuePublicationEffects sent through executeRaw before it called insertPublicationEffects.
+  const journalText = `INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND ${asciiLowerSql(edgeTrimSql('value'))} IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`;
+
+  test('insertPublicationEffects sends the journal text and gates on the remote auto-link key', () => {
+    expect(PUBLICATION_EFFECTS_SQL).toBe(journalText);
+    expect(REMOTE_AUTO_LINKS_CONFIG_KEY).toBe(REMOTE_AUTO_LINKS_KEY);
+  });
+
+  test('the effects bind as one text parameter, so postgres.js does not double-encode them', () => {
+    const effects = [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }, { kind: 'links', data: { slug: 'notes/a' }, gated: true }];
+    expect(publicationEffectsParams({ requestId: 'r', revision: null, sourceId: 'default', sourceIncarnation: 'i', worktreeId: null, effects }))
+      .toEqual(['r', null, 'default', 'i', null, JSON.stringify(effects), 'mcp.remote_auto_links']);
+  });
+});
+
+describe('the completion synchronous-commit statement copies the journal statement', () => {
+  // The statement journal.ts completeWrite sent through executeRaw before it called requireSynchronousCommit.
+  const journalText = "SELECT set_config('synchronous_commit','on',true)";
+
+  test('requireSynchronousCommit sends the journal text alone, with no parameters', async () => {
+    expect(SYNCHRONOUS_COMMIT_SQL).toBe(journalText);
+    const sent: unknown[][] = [];
+    const engine = { executeRaw: async (...args: unknown[]) => { sent.push(args); return []; } };
+    await requireSynchronousCommit(engine as never);
+    expect(sent).toEqual([[journalText]]);
+  });
+});
+
+describe('the unpublished-claim release copies the journal statement', () => {
+  // The statement journal.ts releaseUnpublishedClaim sent through executeRaw before it called the engine member.
+  const journalText = `UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
+    WHERE id=$1::uuid AND execution_token=$2::uuid
+    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`;
+
+  test('releaseUnpublishedClaim sends the journal text with id, token, reason and charge', async () => {
+    expect(RELEASE_CLAIM_SQL).toBe(journalText);
+    const sent: unknown[][] = [];
+    const engine = { executeRaw: async (...args: unknown[]) => { sent.push(args); return []; } };
+    await releaseClaimStatement(engine, { id: 'a', token: 'b', reason: 'database_contention', charge: true });
+    await releaseClaimStatement(engine, { id: 'a', token: null, reason: 'claim_lost', charge: false });
+    expect(sent).toEqual([[journalText, ['a', 'b', 'database_contention', true]], [journalText, ['a', null, 'claim_lost', false]]]);
   });
 });

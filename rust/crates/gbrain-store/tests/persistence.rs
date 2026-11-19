@@ -8,7 +8,7 @@ use gbrain_store::error::*;
 use gbrain_store::journal::Principal;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::{
-    ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
+    ClaimRelease, ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
     ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCompletion,
     WriteRequestInsert,
 };
@@ -1143,4 +1143,55 @@ fn admission_rate_samples_the_latest_requests_of_one_principal_or_the_brain() {
     assert_eq!(other["first_request_id"], first["id"]);
     assert_eq!(other["admissions"], json!(0));
     assert!(other["gross"].is_null() && other["age_seconds"].is_null());
+}
+
+#[test]
+fn release_requeues_only_under_the_claim_token() {
+    let dir = TempDir::new("persist-release");
+    let store = open(&dir);
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap();
+    let release = |token: &str, reason: &str, charge: bool| ClaimRelease {
+        id: id.into(),
+        token: Some(token.into()),
+        reason: reason.into(),
+        charge,
+    };
+    assert!(
+        !store
+            .release_unpublished_claim(&release(TOKEN, "claim_lost", false))
+            .unwrap()
+    );
+    store
+        .stamp_write_claim(&stamp(id, 1000.0, Some(json!({"phase": "preparing"}))))
+        .unwrap();
+    let other = "c0000000-0000-4000-8000-0000000000c2";
+    assert!(
+        !store
+            .release_unpublished_claim(&release(other, "claim_lost", false))
+            .unwrap()
+    );
+    assert!(
+        store
+            .release_unpublished_claim(&release(TOKEN, "database_contention", false))
+            .unwrap()
+    );
+    let after = store.read_write_request_by_id(id).unwrap().unwrap();
+    assert_eq!(after["state"], "queued");
+    assert_eq!(after["execution_token"], Value::Null);
+    assert_eq!(after["claim_phase"], Value::Null);
+    assert_eq!(after["blocked_reason"], "database_contention");
+    store
+        .stamp_write_claim(&stamp(id, 1000.0, Some(json!({"phase": "preparing"}))))
+        .unwrap();
+    assert!(
+        store
+            .release_unpublished_claim(&release(TOKEN, "preparation_deadline", true))
+            .unwrap()
+    );
+    let charged = store.read_write_request_by_id(id).unwrap().unwrap();
+    assert_eq!(charged["preparation_attempts"], 1);
+    assert_eq!(charged["claim_phase"], json!({"phase": "preparing"}));
 }
