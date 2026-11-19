@@ -99,7 +99,7 @@ export class RealOpenclaw {
 
   skill(name: string, description: string): void {
     mkdirSync(join(this.workspace, 'skills', name), { recursive: true });
-    writeFileSync(join(this.workspace, 'skills', name, 'SKILL.md'), '---\nname: ' + name + '\ndescription: ' + description + '\n---\n# ' + name + '\n' + description + '.\n');
+    writeFileSync(join(this.workspace, 'skills', name, 'SKILL.md'), '---\nname: ' + name + '\ndescription: ' + JSON.stringify(description) + '\n---\n# ' + name + '\n' + description + '.\n');
   }
 
   /** Start the fake model and write openclaw.json (loopback provider, no update check, no catalog download). */
@@ -127,7 +127,10 @@ export class RealOpenclaw {
     });
     await new Promise<void>((r) => this.server!.listen(0, '127.0.0.1', r));
     const port = (this.server.address() as { port: number }).port;
-    this.gatewayPort = 20_000 + Math.floor(Math.random() * 20_000);
+    const probe = createServer();
+    await new Promise<void>((r) => probe.listen(0, '127.0.0.1', r));
+    this.gatewayPort = (probe.address() as { port: number }).port;
+    await new Promise<void>((r) => probe.close(() => r()));
     writeFileSync(this.env.OPENCLAW_CONFIG_PATH!, JSON.stringify({
       agents: { defaults: { workspace: this.workspace, model: { primary: 'fixture/fixture' }, skipBootstrap: true } },
       gateway: { mode: 'local', port: this.gatewayPort, bind: 'loopback', auth: { mode: 'none' } },

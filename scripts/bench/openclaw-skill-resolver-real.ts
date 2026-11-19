@@ -73,9 +73,13 @@ const run = limit > 0 ? turns.slice(0, limit) : turns;
 const p = (xs: number[], q: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]!; };
 const rate = (n: number, d: number) => (d ? Math.round((n / d) * 1000) / 1000 : null);
 
-const burners = Array.from({ length: load }, () => Bun.spawn([process.execPath, '-e', 'for (;;) {}'], { stdout: 'ignore', stderr: 'ignore' }));
-const oc = new RealOpenclaw(bin, 'bench');
+const burners: Array<ReturnType<typeof Bun.spawn>> = [];
+let oc: RealOpenclaw | undefined;
+const stop = async () => { for (const b of burners) b.kill(); await oc?.close(); };
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => { void stop().finally(() => process.exit(130)); });
 try {
+  for (let i = 0; i < load; i++) burners.push(Bun.spawn([process.execPath, '-e', 'for (;;) {}'], { stdout: 'ignore', stderr: 'ignore' }));
+  oc = new RealOpenclaw(bin, 'bench');
   const seen = new Set<string>();
   for (const s of catalog) {
     const name = slug(s.id);
@@ -92,6 +96,7 @@ try {
   const setup = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
   if (setup.code !== 0) throw new Error('gbrain setup openclaw failed:\n' + setup.stderr.slice(-3000));
   const listed = JSON.parse(setup.stdout).skill_resolver.agents?.[0]?.skills;
+  if (listed !== catalog.length) console.error('[bench] warning: setup listed ' + listed + ' of ' + catalog.length + ' catalog skills');
   await oc.startGateway();
 
   const rows: Array<{ id: string; intent: string; label: 'skill' | 'none' | 'out_of_catalog'; suggested: string[]; hit: boolean; best_hit: boolean | null; shown: boolean; outcome: string; plugin_ms: number | null; wall_ms: number }> = [];
@@ -129,7 +134,7 @@ try {
   const gitHead = Bun.spawnSync(['git', '-C', REPO, 'rev-parse', 'HEAD']).stdout.toString().trim();
   const summary = {
     openclaw: version, gbrain_commit: gitHead, cpus: cpus().length, load_processes: load,
-    catalog: { source: 'garrytan/gbrain-evals@' + EVALS_COMMIT + ' ' + EVALS_DIR + '/catalog.jsonl.gz', skills: catalog.length, listed_by_setup: listed },
+    catalog: { source: 'garrytan/gbrain-evals@' + EVALS_COMMIT + ' ' + EVALS_DIR + '/catalog.jsonl.gz', skills: catalog.length, listed_by_setup: listed, all_listed: listed === catalog.length },
     requests: { source: 'test.jsonl + stress-test.jsonl (frozen labelled split)', turns: run.length },
     all: summarize(rows),
     by_intent: Object.fromEntries([...new Set(rows.map((r) => r.intent))].map((k) => [k, summarize(rows.filter((r) => r.intent === k))])),
@@ -141,6 +146,5 @@ try {
   }
   console.log(text);
 } finally {
-  for (const b of burners) b.kill();
-  await oc.close();
+  await stop();
 }
