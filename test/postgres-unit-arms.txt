@@ -131,6 +131,7 @@ test/engine-parity/access-policy.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
+test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-capabilities.test.ts
@@ -188,6 +189,8 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/mention-coverage.test.ts
+test/engine-parity/notifier-freshness.test.ts
+test/engine-parity/notifier.test.ts
 test/engine-parity/oauth-clients.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-reads.test.ts
@@ -238,6 +241,7 @@ test/engine-parity/unrestricted-member-page-reads.test.ts
 test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/wanted-markers.test.ts
 test/engine-parity/write-attribution.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts

@@ -8,6 +8,7 @@
  * no addon.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -323,26 +324,45 @@ describe('Rust engine on the store', () => {
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
   });
 
-  withAddon('search on a Rust brain carries no freshness notice, as a brain without the notifier tables does', async () => {
+  withAddon('search on a Rust brain carries the freshness notice once the brain opts in, and none before', async () => {
     const { engine } = await open();
-    await engine.setConfig('sync.on_commit', 'true');
     const errors: string[] = [];
     const original = console.error;
     console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    const unwatched = { source_id: 'default', state: 'not_monitored' as const, observed_head: null, observed_at: null, mode: null, held_count: 0 };
     try {
       expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([]);
-      expect(await readSourceFreshness(engine, {})).toEqual([]);
+      await engine.setConfig('sync.on_commit', 'true');
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([unwatched]);
+      expect(await readSourceFreshness(engine, {})).toEqual([unwatched]);
     } finally { console.error = original; }
     expect(errors.filter(line => line.includes('[notifier]'))).toEqual([]);
   });
 
-  withAddon('a resident on a Rust brain starts no commit notifier and says so', async () => {
+  withAddon('a resident on a Rust brain starts the commit notifier, owns the host lease and lists its sources', async () => {
     const { engine } = await open();
-    const lines: string[] = [];
-    const notifier = startResidentNotifier(engine, { resident: 'serve', log: line => lines.push(line), env: {} });
-    if (notifier) await notifier.stop();
-    expect(notifier).toBeNull();
-    expect(lines).toEqual(['[notifier:serve] off (Rust brain: the store has no notifier tables); commits on this host are not synced by this process']);
+    const repo = mkdtempSync(join(tmpdir(), 'rust-notifier-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      await engine.openStore('test').brain.upsertSource({ id: 'watched', name: 'watched', config: {}, local_path: repo });
+      const host = '00000000-0000-4000-8000-00000000b001';
+      const lines: string[] = [];
+      const notifier = startResidentNotifier(engine, {
+        resident: 'serve', log: line => lines.push(line), hostId: host, env: { GBRAIN_NOTIFIER_CLASSIC_SOURCES: 'watched' },
+        // The test drives the pass itself; no background tick, poll or watcher.
+        setTimeout: () => 'timer', clearTimeout: () => {}, setInterval: () => 'interval', clearInterval: () => {}, watch: () => null,
+      });
+      expect(notifier).not.toBeNull();
+      try {
+        await notifier!.tick();
+        expect(notifier!.owner).toBe(true);
+        expect(notifier!.snapshot().sources.map(s => s.source_id)).toEqual(['watched']);
+        // A second resident on the host sees this one's live lease.
+        const other = await engine.claimNotifierLease({ hostId: host, ownerId: 'another-resident', kind: 'jobs-worker', pid: 2, leaseMs: 60_000 });
+        expect(other).toMatchObject({ owner: false, holder: { fence: 1, resident_kind: 'serve', pid: process.pid, live: true } });
+      } finally { await notifier!.stop(); }
+      expect(lines.filter(line => line.includes(' off ('))).toEqual([]);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 
   withAddon('a withdrawal on a Rust brain moves the hot-memory withdrawal watermark of its source only', async () => {

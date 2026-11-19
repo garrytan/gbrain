@@ -61,6 +61,7 @@ import * as factsProvenance from './facts-provenance.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
+import * as notifier from './notifier.ts';
 import * as effectScans from './effect-scans.ts';
 import * as ownerScans from './owner-scans.ts';
 import * as effectWorker from './effect-worker.ts';
@@ -123,6 +124,8 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
+  // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
+  ...notifier,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
   ...pageEmbeddingBudget,
   ...embeddingInstall,

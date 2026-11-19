@@ -75,6 +75,10 @@ import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLag
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
+  Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
+  PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
+} from './engine-sql/notifier.ts';
+import type {
   AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type {
@@ -1383,6 +1387,79 @@ export interface BrainEngine {
 
   /** How many sources that are not archived have a non-empty local path (the readiness sync probe). */
   countRepoBoundSources(): Promise<number>;
+
+  /**
+   * Claims or renews this host's commit notifier lease (SQL and contract in engine-sql/notifier.ts): the fencing token
+   * when the caller owns it (a takeover bumps it), else the current holder. notifier/store.ts claimLease.
+   */
+  claimNotifierLease(l: NotifierLeaseClaimInput): Promise<NotifierLeaseClaim>;
+
+  /** This host's commit notifier lease row (owner, fence, kind, pid, expiry, live), or null when it has none. notifier/store.ts readLease. */
+  readNotifierLease(hostId: string): Promise<NotifierLeaseHolder | null>;
+
+  /** The commit notifier's fencing check: the host's lease is still `ownerId`'s, with `fence`, and unexpired. notifier/store.ts holdsLease. */
+  holdsNotifierLease(hostId: string, ownerId: string, fence: number): Promise<boolean>;
+
+  /** Expires the host's commit notifier lease now, only while `ownerId` holds it (a clean stop). notifier/store.ts releaseLease. */
+  releaseNotifierLease(hostId: string, ownerId: string): Promise<void>;
+
+  /** Every source that is not archived, in id order, as the commit notifier's host source list reads it (notifier/resident.ts). */
+  listNotifierHostSourceRows(): Promise<NotifierHostSourceRow[]>;
+
+  /** The commit notifier's per-source rows of `sourceIds` (every row when null), in source id order. notifier/store.ts readNotifierSources. */
+  readNotifierSources(sourceIds: string[] | null): Promise<NotifierSourceRow[]>;
+
+  /** One commit notifier state transition of a source; nothing when the source does not exist. notifier/store.ts writeState. */
+  writeNotifierState(sourceId: string, patch: NotifierStatePatch): Promise<void>;
+
+  /** A source's commit notifier coverage record (observed HEAD, detection mode, owner). notifier/store.ts writeCoverage. */
+  writeNotifierCoverage(sourceId: string, coverage: NotifierCoverage): Promise<void>;
+
+  /** Records the host that advanced a classic source; writes nothing when it did not change. notifier/store.ts recordSyncerHost. */
+  recordNotifierSyncerHost(sourceId: string, hostId: string): Promise<void>;
+
+  /**
+   * Each source of `sourceIds` (every source when null) that is not archived, in id order, at most 200, with its notifier
+   * row, whether the owner host's lease is live and how many wanted markers are still due (notifier/status.ts).
+   */
+  readNotifierStatusRows(sourceIds: string[] | null): Promise<NotifierStatusRow[]>;
+
+  /** Whether a resident has recorded commit notifier coverage for any source (notifier/status.ts, the freshness notice). */
+  hasNotifierCoverage(): Promise<boolean>;
+
+  /**
+   * Records (or re-records) a wanted marker: what a source should reach, for one intent class. A re-record bumps
+   * generation and keeps first_due_at unless the source was re-created. Null when the source does not exist.
+   * notifier/store.ts upsertMarker.
+   */
+  upsertWantedMarker(marker: WantedMarkerInput): Promise<WantedMarker | null>;
+
+  /** Names the queued job that drains a wanted marker, only while the marker is still at `generation`. notifier/store.ts attachMarkerJob. */
+  attachWantedMarkerJob(sourceId: string, intent: MarkerIntent, generation: number, jobId: number): Promise<void>;
+
+  /** The wanted markers of `sourceIds` (every marker when null), oldest first_due_at first, at most 1000. notifier/store.ts readMarkers. */
+  readWantedMarkers(sourceIds: string[] | null): Promise<WantedMarker[]>;
+
+  /**
+   * The wanted markers that still ask for work: pull and full markers, and freshness markers whose wanted_head is null or
+   * differs from the source's last_commit. Oldest first_due_at first, at most 1000. notifier/store.ts readDueMarkers.
+   */
+  readDueWantedMarkers(sourceIds: string[] | null): Promise<WantedMarker[]>;
+
+  /** Deletes the freshness and pull markers of `sourceIds` that name the head the source already reached. notifier/store.ts pruneSatisfiedMarkers. */
+  pruneSatisfiedWantedMarkers(sourceIds: string[]): Promise<void>;
+
+  /** Deletes a wanted marker only at `generation`; true when a row went. notifier/store.ts clearMarker. */
+  clearWantedMarker(sourceId: string, intent: MarkerIntent, generation: number): Promise<boolean>;
+
+  /**
+   * Deletes the source's freshness marker at `generation` when a run satisfied it (no head named, the head last_commit
+   * holds, or `checkoutHead` equal to last_commit). notifier/store.ts settleMarkers.
+   */
+  settleFreshnessMarker(sourceId: string, generation: number, checkoutHead: string | null): Promise<void>;
+
+  /** The source's wanted markers as the sync status notifier block lists them, oldest first. notifier/status.ts readNotifierBlock. */
+  listSourceWantedMarkers(sourceId: string): Promise<PendingWantedMarker[]>;
 
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
