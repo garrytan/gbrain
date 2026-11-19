@@ -5061,6 +5061,7 @@
         "inboundLinkCoverage": "none",
         "initSchema": "none",
         "insertCalibrationProfile": "none",
+        "insertCanonicalTimelineRows": "none",
         "insertDecideCalibration": "none",
         "insertDecideProposal": "none",
         "insertDecideReceipts": "none",

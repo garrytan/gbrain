@@ -76,7 +76,7 @@ test/engine-parity/sync-aliases.test.ts	9	0
 test/engine-parity/takes.test.ts	25	1
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	29	0
+test/engine-parity/timeline.test.ts	30	0
 test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
 test/engine-parity/transaction-settings.test.ts	9	1
