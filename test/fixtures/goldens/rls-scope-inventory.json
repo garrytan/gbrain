@@ -4334,6 +4334,17 @@
         ],
         "flagOnScopes": []
       },
+      "recordDerivationInputs#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "recordGenerationActivation#default": {
         "flagOffLanes": [
           "tx"
@@ -6312,6 +6323,7 @@
         "recentWriterVersions": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
+        "recordDerivationInputs": "none",
         "recordGenerationActivation": "none",
         "recordHeldGenerationRow": "none",
         "recordPageEmbeddingHold": "none",

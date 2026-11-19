@@ -162,7 +162,7 @@ impl Store {
                 ..PrivacyPolicy::default()
             };
             if hidden_by_provenance_page(&*read, &row, &policy, floor.restricted)?
-                || fact_owner_only(&*read, &row.source_id, floor.owner_only)?
+                || fact_owner_only(&*read, row.id, &row.source_id, floor.owner_only)?
             {
                 return Ok(None);
             }

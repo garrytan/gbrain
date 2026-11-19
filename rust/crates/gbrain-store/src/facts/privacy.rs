@@ -98,10 +98,10 @@ impl PrivacyPolicy {
     }
 
     /// `ownerOnlyFactSql(alias, form)` under this policy's form.
-    fn fact_owner_only(&self, read: &dyn KvRead, source_id: &str) -> Result<bool> {
+    fn fact_owner_only(&self, read: &dyn KvRead, id: u64, source_id: &str) -> Result<bool> {
         match self.owner_only {
             OwnerOnlyForm::Closed => self.any_owner_only(read),
-            form => fact_owner_only(read, source_id, form),
+            form => fact_owner_only(read, id, source_id, form),
         }
     }
 
@@ -138,7 +138,7 @@ pub(crate) fn hidden_by_private_provenance(
     row: &FactRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    if policy.fact_owner_only(read, &row.source_id)? {
+    if policy.fact_owner_only(read, row.id, &row.source_id)? {
         return Ok(true);
     }
     if let Some(slug) = &row.source_markdown_slug

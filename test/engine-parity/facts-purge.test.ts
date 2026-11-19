@@ -730,7 +730,7 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
   // refuses, so only the SQL arms can record one; the Rust store keeps no derivation_inputs and every hop answers no
   // rows. A page with no recorded derivation, an empty frontier and the walk itself answer the same on every arm.
   parityTest('listDerivedRows answers one hop of the derivation walk; the Rust store records none and answers no rows', {
-    methods: ['putPage', 'listDerivedRows'],
+    methods: ['putPage', 'listDerivedRows', 'recordDerivationInputs'],
   }, async (engine, backend) => {
     const id = async (slug: string) => String((await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body` })).id);
     const [input, mid, leaf, alone] = [await id('derive/input'), await id('derive/mid'), await id('derive/leaf'), await id('derive/alone')];

@@ -28,6 +28,14 @@ const PINS: Pin[] = [
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
           ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`],
   },
+  {
+    // Copied from the caller at 6a3b40f112 (the Rust engine keeps these edges from store format 6).
+    from: 'src/core/facts/derivation-inputs.ts:39 recordDerivationInputs',
+    case: { method: 'recordDerivationInputs', variant: 'default', run: e => e.recordDerivationInputs({ table: 'pages', id: '9' }, 'src-a', [{ table: 'pages', id: '1' }]) },
+    texts: [`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
+    ON CONFLICT DO NOTHING`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

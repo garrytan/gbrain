@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashSet};
 
-const ACTIVATION: u8 = 0x08;
-const ACTIVATION_BY_GENERATION: u8 = 0x09;
+pub(super) const ACTIVATION: u8 = 0x08;
+pub(super) const ACTIVATION_BY_GENERATION: u8 = 0x09;
 
 /// One row of `derived_generation_activations`; the key holds `id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

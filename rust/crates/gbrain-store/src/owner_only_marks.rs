@@ -8,8 +8,9 @@
 //! trigger's guard (a brain that never held owner-only data stores nothing) is kept: `mark_before_delete` returns before it
 //! reads a link when no source is owner-only and no mark exists, and a read that finds neither takes the unmarked path.
 //!
-//! What SQL marks that this store has no table for stays unmarked: `derivation_inputs` descendants, takes and timeline rows
-//! of the page, facts, and the row-security and unguarded marks. Nothing here marks on a link delete or a source config
+//! What SQL marks that this store does not mark stays unmarked: `derivation_inputs` descendants (a read still finds them
+//! owner-only while their walk reaches the marked page, generations/derivation_inputs.rs), takes and timeline rows of the
+//! page, facts, and the row-security and unguarded marks. Nothing here marks on a link delete or a source config
 //! change, because SQL has no trigger on `links` and its sources trigger marks only a source that is deleted. The Rust engine
 //! serves no source delete (`cascade.rs`): core removes each page of the source through `pages::remove_page` first, and the
 //! source is still owner-only then, so each page goes through `mark_before_delete`.

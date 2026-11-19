@@ -15,14 +15,15 @@
 //!   question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only
 //!   source, or when `owner_only_marks` names it (`gbrain_owner_only_lineage_strict`, v322: the
 //!   mark a hard delete of its owner-only input leaves, owner_only_marks.rs). A fact is
-//!   owner-only when its source is. The SQL function also follows
-//!   `derivation_inputs` up to 8 hops; the store keeps no derivation inputs (that table is written
-//!   only through raw SQL, which a Rust brain refuses), so that walk finds nothing here.
+//!   owner-only when its source is. Either row is also owner-only when its recorded
+//!   `derivation_inputs` (`h 0x0A`, generations/derivation_inputs.rs) reach, at any depth, a row
+//!   of an owner-only source or a marked page (`gbrain_owner_only_lineage_strict`).
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::Result;
+use crate::generations::lineage_owner_only;
 use crate::kv::KvRead;
 use crate::links::out_links;
 use crate::owner_only_marks::is_marked;
@@ -78,7 +79,10 @@ pub(crate) fn page_owner_only(
         OwnerOnlyForm::Off => Ok(false),
         OwnerOnlyForm::Closed => any_owner_only(read),
         OwnerOnlyForm::Fn => {
-            if is_marked(read, page.id)? || source_owner_only(read, &page.source_id)? {
+            if is_marked(read, page.id)?
+                || source_owner_only(read, &page.source_id)?
+                || lineage_owner_only(read, "pages", page.id)?
+            {
                 return Ok(true);
             }
             if !matches!(page.page_type.as_str(), "concept" | "question") {
@@ -98,15 +102,18 @@ pub(crate) fn page_owner_only(
     }
 }
 
-/// `ownerOnlyFactSql(alias, form)`: whether a fact of `source_id` counts as owner-only.
+/// `ownerOnlyFactSql(alias, form)`: whether the fact `id` of `source_id` counts as owner-only.
 pub(crate) fn fact_owner_only(
     read: &dyn KvRead,
+    id: u64,
     source_id: &str,
     form: OwnerOnlyForm,
 ) -> Result<bool> {
     match form {
         OwnerOnlyForm::Off => Ok(false),
         OwnerOnlyForm::Closed => any_owner_only(read),
-        OwnerOnlyForm::Fn => source_owner_only(read, source_id),
+        OwnerOnlyForm::Fn => {
+            Ok(source_owner_only(read, source_id)? || lineage_owner_only(read, "facts", id)?)
+        }
     }
 }

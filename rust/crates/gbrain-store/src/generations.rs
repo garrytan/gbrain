@@ -28,6 +28,12 @@
 //!   their generation index (`generations/activations.rs`, members recordGenerationActivation,
 //!   markGenerationActivated, readGenerationActivationState, settleGenerationMember,
 //!   listPendingGenerationMembers and listGenerationOrphanCandidates).
+//! - `h 0x0A` and `h 0x0B`: the `derivation_inputs` rows and their input index
+//!   (`generations/derivation_inputs.rs`, member recordDerivationInputs; the walk hop of
+//!   listDerivedRows and the owner-only lineage walk read them). Store format 6 claims them.
+//!
+//! Every sub-byte is listed once in [`H_SUB_BYTES`]; a test fails when two share a byte or a key
+//! builder under `h` uses a byte the list does not name.
 //! - The reads of `gbrain repair generations` add no keys (`generations/repair.rs`, members
 //!   readGenerationItemsByIds, listUnmatchedGenerationRows, listRestorableGenerationRows,
 //!   listHeldGenerationRows and readHeldGenerationProposal).
@@ -44,7 +50,8 @@
 //! values, are refused where Postgres `jsonb` refuses them, and are stored in Postgres `jsonb` key
 //! order (`dream::jsonb`).
 //!
-//! A source delete removes the source's rows of all five tables (`remove_source_rows`); a deleted
+//! A source delete removes the source's rows of all six tables (`remove_source_rows`; a
+//! `derivation_inputs` row with no source stays); a deleted
 //! generation row sets its activations' `generation_id` to null.
 //!
 //! Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`. This
@@ -63,10 +70,13 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 mod activations;
+mod derivation_inputs;
 mod fence_evidence;
 mod fence_restore;
 mod repair;
 pub use activations::ActivationRecordInput;
+pub use derivation_inputs::DerivationInputsArgs;
+pub(crate) use derivation_inputs::{derived_from, hop_limit, lineage_owner_only};
 pub use repair::RepairFilter;
 
 const RECORD: u8 = 0x01;
@@ -76,6 +86,32 @@ const ATTEMPT: u8 = 0x04;
 const VALVE: u8 = 0x05;
 const LIVE_OPERATION: u8 = 0x06;
 const ATTEMPT_BY_KEY: u8 = 0x07;
+
+/// Every sub-byte under `keys::DERIVED_GENERATION` (`h`), with the rows it keys. A new one is added
+/// here; `h_sub_bytes_are_unique_and_listed` fails on a repeat or on a key builder this list misses.
+#[cfg(test)]
+const H_SUB_BYTES: &[(u8, &str)] = &[
+    (RECORD, "derived_generations"),
+    (POINTER, "the live and held pointer of a generation key"),
+    (ITEM, "derived_generation_items"),
+    (ATTEMPT, "derived_generation_attempts"),
+    (VALVE, "derived_generation_valve"),
+    (LIVE_OPERATION, "the live row of an operation"),
+    (ATTEMPT_BY_KEY, "derived_generation_attempts_key"),
+    (activations::ACTIVATION, "derived_generation_activations"),
+    (
+        activations::ACTIVATION_BY_GENERATION,
+        "the activations of a generation",
+    ),
+    (
+        derivation_inputs::BY_DERIVED,
+        "derivation_inputs by derived row",
+    ),
+    (
+        derivation_inputs::BY_INPUT,
+        "derivation_inputs by input row",
+    ),
+];
 
 /// The id counter (`pages::next_id`).
 const ID_COUNTER: &str = "next_derived_generation_id";
@@ -1368,6 +1404,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
         delete_row(tx, record)?;
     }
     activations::remove_source_activations(tx, source_id)?;
+    derivation_inputs::remove_source_edges(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;
@@ -1381,6 +1418,135 @@ mod tests {
     //! the same write closure as a generation write still sets the member-access flag.
 
     use super::*;
+
+    /// Every `.rs` file under `src/`, with its path relative to `src/`.
+    fn crate_sources() -> Vec<(String, String)> {
+        fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, root, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let rel = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.push((rel, std::fs::read_to_string(&path).unwrap()));
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut out = Vec::new();
+        walk(&root, &root, &mut out);
+        out
+    }
+
+    /// The value of `const NAME: u8 = 0xNN;` in `text`, if it declares one.
+    fn declared_byte(text: &str, name: &str) -> Option<u8> {
+        text.lines().find_map(|line| {
+            let line = line
+                .trim()
+                .trim_start_matches("pub(super) ")
+                .trim_start_matches("pub(crate) ");
+            let rest = line.strip_prefix(&format!("const {name}: u8 = 0x"))?;
+            u8::from_str_radix(rest.trim_end_matches(';'), 16).ok()
+        })
+    }
+
+    /// Store format 6 claims `h 0x0A` and `h 0x0B` for `derivation_inputs` (rust/docs/store/format.md).
+    /// Every sub-byte a key builder puts after `keys::DERIVED_GENERATION` anywhere in the crate is a
+    /// named constant listed in `H_SUB_BYTES`, no two entries share a byte, and only
+    /// `generations/derivation_inputs.rs` declares 0x0A or 0x0B.
+    #[test]
+    fn h_sub_bytes_are_unique_and_listed() {
+        let mut bytes: Vec<u8> = H_SUB_BYTES.iter().map(|(b, _)| *b).collect();
+        bytes.sort_unstable();
+        let before = bytes.len();
+        bytes.dedup();
+        assert_eq!(
+            bytes.len(),
+            before,
+            "two h sub-bytes share a byte: {H_SUB_BYTES:?}"
+        );
+        let name = |b: u8| H_SUB_BYTES.iter().find(|(x, _)| *x == b).map(|(_, n)| *n);
+        assert_eq!(name(0x0A), Some("derivation_inputs by derived row"));
+        assert_eq!(name(0x0B), Some("derivation_inputs by input row"));
+        let mut used = 0;
+        let mut owners: std::collections::BTreeMap<u8, (String, String)> = Default::default();
+        for (file, text) in crate_sources() {
+            let mut rest = text.as_str();
+            let needle = concat!("keys::DERIVED_", "GENERATION,");
+            while let Some(at) = rest.find(needle) {
+                rest = &rest[at + needle.len()..];
+                let ident: String = rest
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+                    .collect();
+                let local = ident.rsplit("::").next().unwrap_or("");
+                assert!(
+                    !local.is_empty() && !local.starts_with(|c: char| c.is_ascii_digit()),
+                    "{file}: an h key uses a literal sub-byte; name it and list it in H_SUB_BYTES"
+                );
+                let owner = match ident.split("::").next() {
+                    Some(module) if ident.contains("::") => format!("generations/{module}.rs"),
+                    _ => file.clone(),
+                };
+                let owner_text = crate_sources()
+                    .into_iter()
+                    .find(|(f, _)| *f == owner)
+                    .map(|(_, t)| t)
+                    .unwrap_or_default();
+                let value = declared_byte(&owner_text, local)
+                    .or_else(|| {
+                        declared_byte(
+                            &std::fs::read_to_string(
+                                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                                    .join("src/generations.rs"),
+                            )
+                            .unwrap(),
+                            local,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("{file}: h sub-byte {ident} is not a `const {local}: u8 = 0x..;`")
+                    });
+                assert!(
+                    name(value).is_some(),
+                    "{file}: h sub-byte {ident} = {value:#04x} is not listed in H_SUB_BYTES"
+                );
+                let declared_in = if declared_byte(&owner_text, local).is_some() {
+                    owner.clone()
+                } else {
+                    "generations.rs".to_string()
+                };
+                let at = (declared_in, local.to_string());
+                let previous = owners.entry(value).or_insert_with(|| at.clone());
+                assert_eq!(
+                    *previous, at,
+                    "h sub-byte {value:#04x} is declared twice: {previous:?} and {at:?}"
+                );
+                used += 1;
+            }
+        }
+        assert!(
+            used >= H_SUB_BYTES.len(),
+            "the scan found {used} h key builders"
+        );
+        for claimed in [0x0Au8, 0x0B] {
+            assert_eq!(
+                owners.get(&claimed).map(|(file, _)| file.as_str()),
+                Some("generations/derivation_inputs.rs"),
+                "format 6 claims h {claimed:#04x} for derivation_inputs; another key builder uses it"
+            );
+        }
+        assert_eq!(
+            owners.len(),
+            H_SUB_BYTES.len(),
+            "an H_SUB_BYTES entry has no key builder, or one is missing: {owners:?}"
+        );
+    }
     use crate::access_flag::RESTRICTIONS_PRESENT_KEY as FLAG;
     use crate::test_support::store;
 

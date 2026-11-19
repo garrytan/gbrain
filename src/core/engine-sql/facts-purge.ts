@@ -264,6 +264,15 @@ export async function listDerivedRows(raw: EngineRawRead, frontier: ReadonlyArra
       ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
 }
 
+/** recordDerivationInputs (facts/derivation-inputs.ts): stores each `derived <- input` edge of one derived row once (a
+ * repeated edge keeps its first source); `inputs` are already validated table names and text ids. */
+export async function recordDerivationInputs(raw: EngineRawRead, derived: { table: string; id: string }, sourceId: string | null,
+  inputs: ReadonlyArray<{ table: string; id: string }>): Promise<void> {
+  await raw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
+    ON CONFLICT DO NOTHING`, [derived.table, derived.id, sourceId, JSON.stringify(inputs.map(e => ({ input_table: e.table, input_id: e.id })))]);
+}
+
 /** recordFactWithdrawal: expires every live fact of the claim under `subject` now, closing its valid time at now; the ids it expired. */
 export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>> {
   const { text, params } = renderFragment(sqlFragment`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now()) FROM ${subjectOf(subject)}

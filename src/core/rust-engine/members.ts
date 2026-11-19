@@ -420,6 +420,7 @@ export const RUST_ENGINE_MEMBERS = {
   listWithdrawalSlugs: 'facts',
   expireFactsByWithdrawal: 'facts',
   listDerivedRows: 'facts',
+  recordDerivationInputs: 'facts',
 
   // facts: repair classifiers and loop retirement (engine-sql/facts-repair.ts)
   loopFactDrift: 'facts',
