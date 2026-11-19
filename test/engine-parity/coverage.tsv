@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 651/651
+# covered: 652/652
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -59,7 +59,7 @@
 # write_misc: 15/15
 # telemetry: 10/10
 # field_usage: 1/1
-# alias_fanout_reads: 4/4
+# alias_fanout_reads: 5/5
 # write_guards: 7/7
 # page_visibility: 3/3
 # large_page: 1/1
@@ -81,7 +81,7 @@ getPage	pages	yes	71	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	302	yes	yes	yes	serves
+putPage	pages	yes	303	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -337,8 +337,8 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	10	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	16	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	17	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	12	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -678,6 +678,7 @@ findPagesByTitles	alias_fanout_reads	yes	4	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
+readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	1	no	yes	yes	serves
 listOriginClaims	write_guards	yes	1	no	yes	yes	serves

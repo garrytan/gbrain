@@ -3,7 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member sends Postgres exactly the statement text its caller ran through `executeRaw` before the
- *    move. Each expected text below is copied verbatim from the caller at 7470c703ed.
+ *    move. Each expected text below is copied verbatim from the caller at 7470c703ed, except where a pin's comment
+ *    names an equivalent statement.
  *  - Regression: an edited statement changes what Postgres and PGLite answer while the parity cases may still pass on
  *    a small fixture.
  *  - Why existing coverage misses it: the sql-text goldens cover the W1 domains only (test/engine-sql-sql-text.test.ts),
@@ -102,6 +103,19 @@ const PINS: Pin[] = [
     from: 'src/commands/sync/plain-directory.ts:36 plainDirectorySyncRoot',
     case: { method: 'readPlainSyncSource', variant: 'default', run: e => e.readPlainSyncSource('default') },
     texts: ['SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived'],
+  },
+  {
+    from: 'src/core/verbs/entity-card-identity.ts:141 readSiblingIdentity',
+    case: { method: 'readEntityAliasRows', variant: 'siblings', run: e => e.readEntityAliasRows('default', ['people/alice-example', 'people/alice-twin']) },
+    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
+  },
+  {
+    // readAka ran `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 ORDER BY alias_norm`. It now
+    // sends the sibling statement with a one-slug array: the same rows in the same order (one slug, so no tie), the
+    // one statement in this file that is not byte for byte.
+    from: 'src/core/verbs/entity-card.ts:783 readAka (one slug)',
+    case: { method: 'readEntityAliasRows', variant: 'aka', run: e => e.readEntityAliasRows('default', ['people/alice-example']) },
+    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
   },
   {
     from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',

@@ -780,10 +780,7 @@ async function assembleCard(
 /** The card's `aka`: the page's normalized aliases (page_aliases reverse lookup); empty on a pre-migration brain. */
 export async function readAka(engine: BrainEngine, sourceId: string, slug: string): Promise<string[]> {
   return engine
-    .executeRaw<{ alias_norm: string }>(
-      `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 ORDER BY alias_norm`,
-      [sourceId, slug],
-    )
+    .readEntityAliasRows(sourceId, [slug])
     .then(rs => rs.map(r => r.alias_norm))
     .catch(failOpen([] as string[]));
 }

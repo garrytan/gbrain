@@ -3184,6 +3184,17 @@
           "*"
         ]
       },
+      "readEntityAliasRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readEntityCardRows#name": {
         "flagOffLanes": [
           "pool"
@@ -5225,6 +5236,7 @@
         "readDatabaseClock": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingStateCounts": "direct",
+        "readEntityAliasRows": "none",
         "readEntityCardRows": "none",
         "readExtractionLagCounts": "none",
         "readFactForOwnerAction": "none",

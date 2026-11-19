@@ -250,6 +250,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'resolveCaseSensitiveAliases': OOS.aliasFanoutReads,
   'readPageTitle': OOS.aliasFanoutReads,
   'readPageAliasRows': OOS.aliasFanoutReads,
+  'readEntityAliasRows': OOS.callerRawSql,
   'wordLexemes': OOS.linkReads,
   'readLinkRelationshipEvidence': OOS.linkTemporal,
   'writeLinkRelationshipState': OOS.linkTemporal,
@@ -1341,6 +1342,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['slugs', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] })],
     ['slugs+private', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] }, { excludePrivate: true })],
   ]),
+  ...variants('readEntityAliasRows', [['default', (e) => e.readEntityAliasRows(SRC, [SLUG, 'people/bob-example'])]]),
   ...variants('readExtractionLagCounts', [['default', (e) => e.readExtractionLagCounts({ sourceId: SRC, versionTs: '2000-01-01T00:00:00Z', attendance: true, held: true })]]),
   ...variants('readIgnoredPrivacyLabelPages', [
     ['slugs', (e) => e.readIgnoredPrivacyLabelPages(SRC, { slugs: [SLUG] })],

@@ -101,6 +101,7 @@ export const RUST_ENGINE_MEMBERS = {
   resolveCaseSensitiveAliases: 'pages',
   readPageTitle: 'pages',
   readPageAliasRows: 'pages',
+  readEntityAliasRows: 'pages',
   readPageTrustRows: 'pages',
   listLinkPageMetadata: 'pages',
   filterPagesAtRevision: 'pages',
