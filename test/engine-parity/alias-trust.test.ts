@@ -196,6 +196,24 @@ describe('engine parity: resolveAliases under the trust floor, the flagged-page 
   );
 
   parityTest(
+    'resolveAliases takes the alias hop\'s options and reads only the page policy; the hop applies the slug excludes itself',
+    { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'resolveAliases'] },
+    async (engine) => {
+      await write(engine, PRIVACY);
+      // What lookupAliasHop passes (search/alias-hop.ts, hybrid/request.ts aliasHopOpts): the identity-tier
+      // excludes and the hop switches. isExcludedIdentity applies the excludes after the read.
+      const hop = {
+        sourceIds: ['default'], excludePrivate: true, requireSafeChunks: true,
+        excludeSlugs: ['companies/acme-example'], excludeSlugPrefixes: ['companies/open'], tokenHop: true, qualified: true,
+      } as never;
+      const out = flat(await engine.resolveAliases(names(PRIVACY), hop));
+      expect(out).toEqual(flat(await engine.resolveAliases(names(PRIVACY), { sourceIds: ['default'], excludePrivate: true })));
+      expect(out['acme example']).toEqual(['default:companies/acme-example']);
+      return out;
+    },
+  );
+
+  parityTest(
     'resolveAliases under excludePrivate applies a caller\'s reader identity and private-readable grant',
     { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'resolveAliases'] },
     async (engine) => {

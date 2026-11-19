@@ -24,6 +24,7 @@ import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import { SEARCH_OPTION_KEYS } from './search-options.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -236,6 +237,9 @@ export const listCorpusSample: StoreMember<[opts: CorpusSampleOpts], DomainBankR
   return rows.map(toDomainBankRow);
 };
 
+/** What hybrid search hands the stamp reads as their policy (search-options.ts): its search options and the takes-holder list, which `pageReadFilter` never reads. */
+const HYBRID_UNREAD = [...SEARCH_OPTION_KEYS, 'takesHoldersAllowList'];
+
 /** Page ids as the store reads them: integers only, as Postgres's `int[]` cast requires. */
 function pageIds(member: string, ids: number[]): number[] {
   for (const id of ids) if (!Number.isSafeInteger(id)) throw new TypeError(`${member}: page id ${String(id)} is not an integer`);
@@ -248,7 +252,7 @@ export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: Pa
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getContentFlagsByPageIds', opts);
+  const scope = readScope('getContentFlagsByPageIds', opts, HYBRID_UNREAD);
   const rows: Array<{ id: number; reason: string; detail: string }> = await storeCall({ member: 'getContentFlagsByPageIds' }, () =>
     brain.getContentFlagsByPageIds(pageIds('getContentFlagsByPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { reason: r.reason, detail: r.detail }]));
@@ -260,7 +264,7 @@ export const getUnverifiedExtractionPageIds: StoreMember<[pageIds: number[], opt
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getUnverifiedExtractionPageIds', opts);
+  const scope = readScope('getUnverifiedExtractionPageIds', opts, HYBRID_UNREAD);
   const rows: Array<{ id: number; status: string; unverified: boolean }> = await storeCall({ member: 'getUnverifiedExtractionPageIds' }, () =>
     brain.getUnverifiedExtractionPageIds(pageIds('getUnverifiedExtractionPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { unverified: r.unverified === true, status: r.status }]));
