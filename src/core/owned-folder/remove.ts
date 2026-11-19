@@ -9,6 +9,7 @@
 import { existsSync, lstatSync, readdirSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { OperationError } from '../ops/contract.ts';
 import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
 import { connectorIdentity } from '../persistence/connector-identity.ts';
 import type { ConnectorKind } from '../persistence/connector-kinds.ts';
@@ -46,6 +47,20 @@ const dayFiles = (owned: OwnedFolderState) => Object.keys(owned.files).filter(p 
 export async function previewOwnedRemoval(engine: Exec, sourceId: string): Promise<number> {
   const record = await ownedRecord(engine, sourceId);
   return record ? dayFiles(record.owned) : 0;
+}
+
+/**
+ * A page write through the page door (put_page, edit_page, append_page, delete_page, restore_page, tags, timeline,
+ * takes, links) into a source whose pages are files in its owned folder is refused: the next sync would put the
+ * Messages version back, so the change would not last. A repo-less or database-only source of the same kind is
+ * unchanged. The sync itself writes through import, not this door.
+ */
+export async function assertOwnedPagesUnchanged(engine: Exec, sourceId: string, operation: string): Promise<void> {
+  if (!(await previewOwnedRemoval(engine, sourceId))) return;
+  throw new OperationError('owned_folder_conflict',
+    `Source ${sourceId} keeps its pages as files in ${ownedFolderRel(sourceId)}/, written from Messages on this Mac, so ${operation} would not last and nothing was written.`,
+    `Change the conversation in Messages and run gbrain sync --source ${sourceId}, or stop the source with gbrain sources remove ${sourceId}.`,
+    'docs/guides/apple-setup.md#where-the-pages-live');
 }
 
 export async function removeOwnedFolder(engine: Exec, sourceId: string, opts: { keep?: boolean } = {}): Promise<OwnedRemoval | null> {

@@ -25,6 +25,7 @@ import { readPagesIn, pagesInLine } from '../src/core/owned-folder/status.ts';
 import { rebindOwnedSource } from '../src/commands/sources-rebind.ts';
 import { removeSource } from '../src/core/sources-ops.ts';
 import { purgeExpiredSources } from '../src/core/destructive-guard.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 
 const DAY = 86_400_000;
@@ -269,6 +270,22 @@ for (const kind of testBackends()) describe(`owned folder (${kind})`, () => {
     expect(result.purged).toContain(id);
     expect(commits(repo)).toBe(c1 + 1);
     expect(existsSync(folder)).toBe(false);
+  });
+
+  test('a page write into a source whose pages are files in its folder is refused and names the folder', async () => {
+    const { repo, id, cfg } = await setup();
+    await run(id, cfg, mac());
+    const c1 = commits(repo);
+    const slug = slugifyPath(dayFile(ALICE, 2));
+    for (const [tool, args] of [['put_page', { slug, source_id: id, content: '# changed\n' }], ['delete_page', { slug, source_id: id, force: true }],
+      ['add_timeline_entry', { slug, date: dayOf(2), summary: 'planted' }]] as const) {
+      const out = await dispatchToolCall(engine, tool, args, { remote: false, sourceId: id });
+      const text = out.content.map(c => c.text).join('\n');
+      expect({ tool, refused: out.isError, code: text.match(/"code": "([a-z_]+)"/)?.[1] }).toEqual({ tool, refused: true, code: 'owned_folder_conflict' });
+      expect(text).toContain(`.gbrain-owned/${id}/`);
+    }
+    expect(commits(repo)).toBe(c1);
+    expect(await pageCount(id)).toBe(3);
   });
 
   test('a mass removal removes nothing and keeps the days', async () => {
