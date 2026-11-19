@@ -225,7 +225,8 @@ skill OpenClaw now hides or no longer lists; its fix,
 `gbrain setup openclaw --skills-index-only`, re-reads that list and rewrites
 only the plugin state. A
 `--skill-loading` re-run that changes nothing runs no install command for
-either plugin.
+either plugin when OpenClaw's config already loads, enables and allows it and
+its plugin policy (`plugins.enabled`, `allow`, `deny`) lets it load.
 
 The plugin never adds to or edits OpenClaw's own skill list. On each real user
 turn (`before_prompt_build`; inter-session and other internal turns are
