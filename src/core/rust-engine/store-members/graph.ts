@@ -13,9 +13,13 @@ import { storePagePolicy } from './private-provenance.ts';
 type PathOpts = { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' };
 const PATH_OPTIONS = ['depth', 'linkType', 'direction', 'sourceId', 'sourceIds', 'excludePrivate', 'temporal'] as const;
 
-/** The wire options of a walk: the temporal dates checked as `temporalWalkFilter` renders them, and the store page policy. */
+/**
+ * The wire options of a walk: the temporal dates checked as `temporalWalkFilter` renders them, and the store page
+ * policy. `requireSafeChunks` and `takesHoldersAllowList` gate chunk and take reads only;
+ * engine-sql's walks never read them, so the store ignores them too.
+ */
 function walkOptions(member: string, opts: object | undefined, supported: readonly string[]): Record<string, unknown> {
-  const o = takeOptions(member, opts, supported);
+  const o = takeOptions(member, opts, supported, ['requireSafeChunks', 'takesHoldersAllowList']);
   checkTemporalDates(o.temporal as EdgeTemporalOpts | undefined);
   return { ...o, excludePrivate: storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null };
 }

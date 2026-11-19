@@ -270,6 +270,27 @@ describe('engine parity: excludePrivate on link reads and walks', () => {
   );
 
   parityTest(
+    'a remote read passes requireSafeChunks and takesHoldersAllowList too: link reads and walks ignore both, as the MCP link ops need',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'getLinks', 'getBacklinks', 'traverseGraph', 'traversePathsDetailed'] },
+    async (engine) => {
+      await fixture(engine);
+      const remote = { excludePrivate: true, requireSafeChunks: true, takesHoldersAllowList: [] as string[] };
+      const result = {
+        links: byEdge(views(await engine.getLinks('notes/open', remote))),
+        back: byEdge(views(await engine.getBacklinks('people/hub', { ...remote, temporal: {} }))),
+        graph: await engine.traverseGraph('people/hub', 3, remote),
+        paths: byPath(await engine.traversePathsDetailed('people/hub', { ...remote, depth: 3, direction: 'both', temporal: {} })),
+      };
+      const plain = await reads(engine, true);
+      expect(result.links).toEqual(plain.links);
+      expect(result.back).toEqual(plain.backTemporal);
+      expect(result.graph).toEqual(plain.graph);
+      expect(JSON.stringify(result).includes('notes/private')).toBe(false);
+      return result;
+    },
+  );
+
+  parityTest(
     'a member caller under excludePrivate reads the readers-only page and still never the private one',
     { methods: ['putPage', 'addLink', 'addLinksBatch', 'getLinks', 'getBacklinks', 'traverseGraph', 'traversePathsDetailed'] },
     async (engine) => {

@@ -64,11 +64,13 @@ export function checkTemporalDates(policy: EdgeTemporalOpts | undefined): void {
 
 /**
  * `getLinks` / `getBacklinks`: the store applies the page policy, the keyset page and the temporal match, and returns
- * the raw temporal columns, which are annotated here as engine-sql's `finishTemporal` does.
+ * the raw temporal columns, which are annotated here as engine-sql's `finishTemporal` does. `requireSafeChunks` and
+ * `takesHoldersAllowList` (the rest of readPolicyOpts) gate chunk and take reads only; engine-sql's link reads never
+ * read them, so the store ignores them too.
  */
 async function readLinks(brain: StoreBrain, member: 'getLinks' | 'getBacklinks', slug: string,
   opts: LinkReadScope | undefined): Promise<Link[]> {
-  const o = takeOptions(member, opts, ['sourceId', 'sourceIds', 'temporal', 'page', 'excludePrivate']);
+  const o = takeOptions(member, opts, ['sourceId', 'sourceIds', 'temporal', 'page', 'excludePrivate'], ['requireSafeChunks', 'takesHoldersAllowList']);
   checkTemporalDates((o.page as LinkReadPage | undefined)?.relationship?.policy);
   const scope = { ...o, excludePrivate: storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null };
   const rows: Link[] = await storeCall({ member, slug }, () => member === 'getLinks' ? brain.getLinks(slug, scope) : brain.getBacklinks(slug, scope));
