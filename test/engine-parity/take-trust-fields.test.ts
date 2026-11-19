@@ -120,10 +120,9 @@ describe('engine parity: take trust fields', () => {
         await declaredWrite(engine, 'user_confirmed', { channel: 'owner' }, fn);
         return 'written';
       } catch (e) {
-        // PGLite and Postgres raise it from the tier trigger (SQLSTATE P0001, read by trustRaiseRefusal); the Rust store
-        // raises the typed code itself.
-        const typed = (e as { code?: unknown }).code === 'trust_raise_refused';
-        return trustRaiseRefusal(e) || typed ? 'trust_raise_refused' : `other: ${(e as Error).message}`;
+        // PGLite and Postgres raise it from the tier trigger (SQLSTATE P0001); the Rust store raises its typed code with
+        // no SQLSTATE. trustRaiseRefusal must read both as the registered error.
+        return trustRaiseRefusal(e)?.code ?? `other: ${(e as Error).message}`;
       }
     };
     const outcome = {

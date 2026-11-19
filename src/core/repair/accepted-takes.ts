@@ -163,8 +163,7 @@ async function restoreTake(engine: BrainEngine, ctx: Parameters<RepairHandler['a
   const content = live.content.slice(0, beginIdx) + renderTakesFence(rows, live.reserved.filter(n => n !== take.row_num)) + live.content.slice(endIdx + TAKES_FENCE_END.length);
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: take.slug, source_id: take.source_id, content, expected_revision: live.revision,
     request_id: await repairRequestId(ctx, 'accepted-takes', entry, live.revision) } });
-  const [restored] = await engine.executeRaw<{ id: number; trust_tier: string }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id = $1 AND row_num = $2',
-    [take.page_id, take.row_num]);
+  const restored = await engine.readTakeRowTrust(take.page_id, take.row_num);
   if (restored && compareTrust(storedTrustTier(restored.trust_tier), take.writer_tier) > 0) {
     await setRowTier(engine, { table: 'takes', id: Number(restored.id), sourceId: take.source_id, tier: take.writer_tier, note: { repair: 'accepted-takes', proposal: take.proposal_id } });
   }

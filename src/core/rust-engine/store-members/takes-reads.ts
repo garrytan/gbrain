@@ -8,7 +8,7 @@
  * serves), and refuses with `engine_capability_missing` for a caller whose folder rules, audience or lineage widen
  * the policy.
  */
-import type { McpResolvedSpec, PurgeTakesSpec } from '../../engine-sql/takes-reads.ts';
+import type { McpResolvedSpec, PurgeTakesSpec, TakeTrustRef } from '../../engine-sql/takes-reads.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -25,6 +25,12 @@ export const planFactPurgeTakes: StoreMember<[spec: PurgeTakesSpec], Array<{ id:
 
 export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num: number; claim: string }>> = (brain, pageId) =>
   storeCall({ member: 'listTakeRowsForPage' }, () => brain.listTakeRowsForPage(pageId));
+
+export const readTakeRowTrust: StoreMember<[pageId: number, rowNum: number], { id: number; claim: string; trust_tier: string } | null> =
+  (brain, pageId, rowNum) => storeCall({ member: 'readTakeRowTrust' }, () => brain.readTakeRowTrust(pageId, rowNum));
+
+export const readTakeTrustRef: StoreMember<[id: number], TakeTrustRef | null> = (brain, id) =>
+  storeCall({ member: 'readTakeTrustRef' }, () => brain.readTakeTrustRef(id));
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
   const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });

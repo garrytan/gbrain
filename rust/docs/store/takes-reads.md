@@ -2,8 +2,8 @@
 
 Part of the takes family ([takes.md](takes.md)); the rules in [rust/README.md](../../README.md) ("The brain store") apply.
 
-Eight single-purpose reads that used to be raw SQL in doctor, onboarding, the fact purge, the fence import, the MCP
-scorecard and the take repair. Each is now one engine member, with the SQL in `src/core/engine-sql/takes-reads.ts`
+Ten single-purpose reads that used to be raw SQL in doctor, onboarding, the fact purge, the fence import, the MCP
+scorecard, the take repair, the take write gate, the accepted-takes and lost-fence-rows repairs and the trust explainers. Each is now one engine member, with the SQL in `src/core/engine-sql/takes-reads.ts`
 (PGLite and Postgres) and a native read in the store. A take is scoped by the page it hangs on, read now.
 
 | Member | Returns | Used by |
@@ -12,6 +12,8 @@ scorecard and the take repair. Each is now one engine member, with the SQL in `s
 | `brain.countTakes()` | the number of takes | onboarding `checkTakesCount` |
 | `brain.planFactPurgeTakes({ sourceId, factIds, factHash, subject })` | `[{ id, page_id }]` by id: takes of the source that the purged facts were consolidated into, or whose claim has the purged fingerprint on the subject's page (`*` is every page) | `planFactPurge` |
 | `brain.listTakeRowsForPage(pageId)` | `[{ row_num, claim }]` by row number (the SQL gained an `ORDER BY row_num`; it was unordered) | fence import `storedFenceRows` |
+| `brain.readTakeRowTrust(pageId, rowNum)` | `{ id, claim, trust_tier }` of the take at that row number, or null; the tier as stored (`unknown` when unset) | take write gate (`takes_remove`, `takes_supersede`, the contested new row), accepted-takes and lost-fence-rows repairs |
+| `brain.readTakeTrustRef(id)` | `{ id, source_id, claim, trust_tier, write_origin, active, quarantined }` or null: the page's source, `write_origin` in jsonb key order, and whether the page's frontmatter holds the `quarantine` key | `gbrain trust explain` (trust review and eligibility explain) |
 | `brain.countMcpResolvedTakes({ sourceIds, holders, excludePrivate })` | resolved takes whose `resolved_by` starts with `mcp:`, on a page in the source scope, held by a listed holder | `countMcpResolved` |
 | `brain.listTakeSupersessionCandidates(sourceIds)` | `[{ id, source_id, slug }]` by page id: live pages with an inactive take or a source cell saying `superseded by #` (any case) | take supersession repair |
 | `brain.countZeroWeightWithTakes()` | `{ zero_weight_with_takes, nonzero_weight }`: pages with an active take and weight 0 (never weighed reads 0), and pages with weight above 0; soft-deleted pages count | doctor `salience_health` |

@@ -5087,6 +5087,8 @@
         "readSourceMembership": "none",
         "readSourceRow": "none",
         "readSourceState": "none",
+        "readTakeRowTrust": "none",
+        "readTakeTrustRef": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",

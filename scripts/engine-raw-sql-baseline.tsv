@@ -830,7 +830,7 @@ src/core/persistence/sync-tail-record.ts	execute_raw	3
 src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/takes-prepare.ts	execute_raw	9
+src/core/persistence/takes-prepare.ts	execute_raw	6
 src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	20
@@ -863,7 +863,7 @@ src/core/readiness.ts	execute_raw	2
 src/core/reason-trailers.ts	execute_raw	2
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
-src/core/repair/accepted-takes.ts	execute_raw	4
+src/core/repair/accepted-takes.ts	execute_raw	3
 src/core/repair/access.ts	execute_raw	2
 src/core/repair/agent-session-facts.ts	execute_raw	9
 src/core/repair/aliases.ts	execute_raw	3
@@ -890,7 +890,7 @@ src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
 src/core/repair/legacy-twins.ts	execute_raw	8
 src/core/repair/loop-facts.ts	execute_raw	2
-src/core/repair/lost-fence-rows.ts	execute_raw	10
+src/core/repair/lost-fence-rows.ts	execute_raw	9
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	4
 src/core/repair/ontology-facts.ts	execute_raw	4

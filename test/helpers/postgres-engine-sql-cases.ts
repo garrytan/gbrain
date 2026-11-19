@@ -484,6 +484,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'countTakes': OOS.takesReads,
   'planFactPurgeTakes': OOS.takesReads,
   'listTakeRowsForPage': OOS.takesReads,
+  'readTakeRowTrust': OOS.takesReads,
+  'readTakeTrustRef': OOS.takesReads,
   'countMcpResolvedTakes': OOS.takesReads,
   'listTakeSupersessionCandidates': OOS.takesReads,
   'countZeroWeightWithTakes': OOS.takesReads,

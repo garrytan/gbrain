@@ -203,11 +203,14 @@ const restoreTier = (row: LostRow): TrustTier => row.kind === 'fact' && isTrustT
  * nothing and returns false unless every row is already live: the rerun of an apply whose page write was left pending.
  */
 async function lowerRestoredTiers(engine: BrainEngine, page: LostRowsPage, onlyIfAll: boolean): Promise<boolean> {
-  const live = await Promise.all(page.rows.map(async row => (row.kind === 'fact'
-    ? await engine.executeRaw<{ id: number; trust_tier: string | null }>(`SELECT id::int AS id, trust_tier FROM facts
-        WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3 AND fact=$4 AND expired_at IS NULL`, [page.source_id, page.slug, row.row_num, row.claim])
-    : await engine.executeRaw<{ id: number; trust_tier: string | null }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id=$1 AND row_num=$2 AND claim=$3',
-      [page.page_id, row.row_num, row.claim]))[0]));
+  const live = await Promise.all(page.rows.map(async (row): Promise<{ id: number; trust_tier: string | null } | undefined> => {
+    if (row.kind === 'fact') {
+      return (await engine.executeRaw<{ id: number; trust_tier: string | null }>(`SELECT id::int AS id, trust_tier FROM facts
+        WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3 AND fact=$4 AND expired_at IS NULL`, [page.source_id, page.slug, row.row_num, row.claim]))[0];
+    }
+    const take = await engine.readTakeRowTrust(page.page_id, row.row_num);
+    return take && take.claim === row.claim ? take : undefined;
+  }));
   if (onlyIfAll && live.some(row => !row)) return false;
   for (const [index, row] of page.rows.entries()) {
     const restored = live[index];
