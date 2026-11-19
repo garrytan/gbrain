@@ -305,8 +305,21 @@ tracking (D1), preimage capture and basename forward keys (D1, D2), the full-res
 
 ## Implementation plan
 
-Files are under `rust/crates/gbrain-store/` unless named otherwise. One PR (D7b), after
-`FlaggingWriter` (`4507a47b62`) lands on `rust-engine/main`.
+Files are under `rust/crates/gbrain-store/` unless named otherwise. One PR (D7b) on
+`rust-engine/keyword-index`, pushed as four stacked, reviewable commits:
+(1) `FlaggingWriter` (carried from `4507a47b62`, rebased onto the `FnMut` retry loop) and
+`IndexingWriter`; (2) chunk and page postings; (3) trigram postings with the f32-safe fuzzy
+bound; (4) format 3, the resumable build, `verify` and `rebuild`. If `FlaggingWriter` lands on
+`rust-engine/main` first, commit (1) carries only `IndexingWriter`.
+
+Accepted at the gate (gate_rev 4, every item `rec`), and where each one lives in this plan:
+- `r4-uc1` one PR and one final all-member gate: D7b and the commit order above.
+- `r4-d1` the f32-safe fuzzy candidate bound: D5a and step 7, with the exhaustive test in step 10.
+- `r4-d2` sparse vectors from the union of match, rank and phrase lexemes: D3a and step 3.
+- `r4-d3` postings for every vectorable modality, text-only filtering per member: D4a and step 5.
+- `r4-d4` rarity keeps cap+1, its own predicates and the scan's truncation order: D4a and step 5.
+- `r4-d5` index state read on every open, fresh stores seeded complete, resumable build: D6a
+  and step 8.
 
 1. Phase 0, measure (no product code): run `examples/keyword_scale.rs` from the harness branch
    on `4fe3c2e075` at 10k and 200k chunks, and record where the time goes (`perf`) between page
@@ -433,3 +446,9 @@ Risks:
   access.
 - Not done: no code was built, no test or bench of the index ran. The baseline numbers above
   are the only measurements.
+- Approval, 2026-11-19 UTC: the Rust engine lead (Ember) answered the gate with "rec" for all 10
+  items (D1a D2a D3a D4a D5a D6a D7b). This is Ember's ruling, not Garry's, under Garry's
+  standing approval for this lane. The gate records it as `--by agent:ember`. The build is one PR
+  (D7b), pushed as stacked commits: the writers first, then chunk and page postings, then
+  trigram postings with the f32-safe fuzzy bound, then format 3 with the resumable build, verify
+  and rebuild.
