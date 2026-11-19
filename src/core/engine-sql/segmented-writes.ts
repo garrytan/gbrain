@@ -7,6 +7,7 @@
  * the engine it is given, so a call on a transaction engine reads and writes inside that transaction.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { SegmentDerivationInput } from '../page-body/derivations.ts';
 import type { JsonObject } from '../page-body/types.ts';
 import type { ResolvedColumn } from '../types.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
@@ -230,6 +231,27 @@ export async function readPageTrustStamp(tx: Raw, page: PageTrustRef): Promise<P
 export async function restorePageTrustStamp(tx: Raw, pageId: number, trustTier: string, writeOrigin: unknown): Promise<void> {
   const origin = writeOrigin === null || writeOrigin === undefined ? null : typeof writeOrigin === 'string' ? writeOrigin : JSON.stringify(writeOrigin);
   await tx.executeRaw('UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE id=$1', [pageId, trustTier, origin]);
+}
+
+/**
+ * Store a derivation driver's rows on page `pageId` (page-body/segment-derive.ts storeRuns), inserting or replacing
+ * each as upsertSegmentDerivations does, only while the page is segmented at `generation`. One statement reads the
+ * page row FOR SHARE, so a purge, fence rewrite or demotion holding it FOR UPDATE is waited for, and once it has moved
+ * the generation nothing is written. True when the statement wrote a row. The rows' own pageId is ignored.
+ */
+export async function storeSegmentDerivationRuns(tx: Raw, pageId: number, generation: number, rows: readonly SegmentDerivationInput[]): Promise<boolean> {
+  const hex = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
+  const json = JSON.stringify(rows.map(row => ({ pipeline: row.kind, occurrence_id: row.occurrenceId, pipeline_version: row.version,
+    segment_sha256: hex(row.segmentSha256), context_hash: hex(row.contextHash), state: row.state, output: row.output ?? null, receipt: row.receipt ?? null })));
+  const written = await tx.executeRaw(`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)
+      INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, output, receipt)
+      SELECT live.id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'), d.state, d.output, d.receipt
+      FROM live, jsonb_to_recordset($3::text::jsonb) AS d(pipeline text, occurrence_id bigint, pipeline_version int, segment_sha256 text, context_hash text,
+        state text, output jsonb, receipt jsonb)
+      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version, segment_sha256 = EXCLUDED.segment_sha256,
+        context_hash = EXCLUDED.context_hash, state = EXCLUDED.state, output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()
+      RETURNING 1`, [pageId, generation, json]);
+  return written.length > 0;
 }
 
 /** The page a live fence rewrite reads (page-body/segment-rewrite.ts), deleted or not, with its tags in order. */

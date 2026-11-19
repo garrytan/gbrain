@@ -123,6 +123,20 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
     expect(await sends(tx => sw.restorePageTrustStamp(tx, 7, 'unknown', null))).toEqual([{ sql: restore, params: [7, 'unknown', null] }]);
   });
 
+  test('segment-derive.ts: a derivation run is stored only while the page is segmented at its generation', async () => {
+    const row = { pageId: 99, kind: 'links' as const, occurrenceId: 3, version: 2, segmentSha256: new Uint8Array([0xab, 0x01]),
+      contextHash: new Uint8Array([0xcd]), state: 'done' as const, output: { a: 1 }, receipt: null };
+    const [sent] = await sends(tx => sw.storeSegmentDerivationRuns(tx, 7, 4, [row]));
+    expect(sent!.sql).toStartWith(`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)`);
+    expect(sent!.sql).toContain('SELECT live.id, d.pipeline, d.occurrence_id');
+    expect(sent!.sql).toContain('FROM live, jsonb_to_recordset($3::text::jsonb)');
+    expect(sent!.sql).toEndWith('RETURNING 1');
+    expect(sent!.params).toEqual([7, 4, JSON.stringify([{ pipeline: 'links', occurrence_id: 3, pipeline_version: 2, segment_sha256: 'ab01',
+      context_hash: 'cd', state: 'done', output: { a: 1 }, receipt: null }])]);
+    expect(await sw.storeSegmentDerivationRuns(recorder().tx as never, 7, 4, [row])).toBe(false);
+    expect(await sw.storeSegmentDerivationRuns(recorder([{ '?column?': 1 }]).tx as never, 7, 4, [row])).toBe(true);
+  });
+
   test('segment-rewrite.ts and segment-derive.ts: the fence rewrite statements', async () => {
     const MANIFEST_COLUMNS = `page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,
   protected_regions,facts_slots,static_proj_bytes,static_proj_lines,outline,date_min,date_max,hash_state`;

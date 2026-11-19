@@ -3272,6 +3272,8 @@ export interface BrainEngine {
   readPageTrustStamp(page: PageTrustRef): Promise<PageTrustStamp | null>;
   /** A fence append: set page `pageId`'s trust tier and write origin back to a stamp read before its write; the tier trigger rules apply (engine-sql/segmented-writes.ts). */
   restorePageTrustStamp(pageId: number, trustTier: string, writeOrigin: unknown): Promise<void>;
+  /** A derivation run: store `rows` on page `pageId` only while it is segmented at `generation`; true when a row was written (engine-sql/segmented-writes.ts). */
+  storeSegmentDerivationRuns(pageId: number, generation: number, rows: readonly SegmentDerivationInput[]): Promise<boolean>;
   /** A fence rewrite: page `pageId` with its body columns, contextual stamp and tags, deleted or not, or null (engine-sql/segmented-writes.ts). */
   readSegmentedRewritePage(pageId: number): Promise<SegmentedRewritePageRow | null>;
   /** A fence rewrite: set page `pageId`'s deleted_at back to `deletedAt` (engine-sql/segmented-writes.ts). */

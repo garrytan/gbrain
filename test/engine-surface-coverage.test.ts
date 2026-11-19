@@ -251,7 +251,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
   // The segmented import's and re-chunk's statements (engine-sql/segmented-writes.ts; pinned by test/engine-sql-segmented-writes.test.ts)
   'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'readSegmentedLivePage', 'readSegmentedSealed', 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks',
-  'readSegmentedProjectionPage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustStamp', 'restorePageTrustStamp',
+  'readSegmentedProjectionPage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustStamp', 'restorePageTrustStamp', 'storeSegmentDerivationRuns',
   'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines',
   'readSegmentedPageHead', 'readBodyManifestRows', 'readBodyManifestMeta', 'readBodyManifestOutline', 'listAccessPolicySourceIds',
   'setLocalStatementTimeout',

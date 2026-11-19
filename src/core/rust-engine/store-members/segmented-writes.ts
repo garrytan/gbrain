@@ -18,6 +18,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { LiveEmbedSegmentRow, OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope,
   SegmentChunkRowRow, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage,
   SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall } from '../../engine-sql/segmented-writes.ts';
+import type { SegmentDerivationInput } from '../../page-body/derivations.ts';
 import type { ResolvedColumn } from '../../types.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
@@ -88,6 +89,14 @@ export const readPageTrustStamp: StoreMember<[page: PageTrustRef], PageTrustStam
 export const restorePageTrustStamp: StoreMember<[pageId: number, trustTier: string, writeOrigin: unknown], void> = async (brain, pageId, trustTier, writeOrigin) => {
   await storeCall({ member: 'restorePageTrustStamp' }, () => brain.restorePageTrustStamp(pageId, trustTier, writeOrigin ?? null));
 };
+
+export const storeSegmentDerivationRuns: StoreMember<[pageId: number, generation: number, rows: readonly SegmentDerivationInput[]], boolean> =
+  (brain, pageId, generation, rows) => {
+    const hex = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
+    const sent = rows.map(row => ({ ...row, pageId, segmentSha256: hex(row.segmentSha256), contextHash: hex(row.contextHash),
+      output: row.output ?? null, receipt: row.receipt ?? null }));
+    return storeCall({ member: 'storeSegmentDerivationRuns' }, () => brain.storeSegmentDerivationRuns(pageId, generation, sent));
+  };
 
 export const readSegmentedRewritePage: StoreMember<[pageId: number], SegmentedRewritePageRow | null> = (brain, pageId) =>
   storeCall({ member: 'readSegmentedRewritePage' }, () => brain.readSegmentedRewritePage(pageId));

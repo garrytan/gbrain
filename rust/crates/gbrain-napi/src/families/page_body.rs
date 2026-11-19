@@ -469,6 +469,23 @@ impl Brain {
         })
     }
 
+    /// `storeSegmentDerivationRuns(pageId, generation, rows)`: true when the page is segmented at
+    /// `generation` and the rows were stored.
+    #[napi]
+    pub fn store_segment_derivation_runs<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<gbrain_store::page_body::SegmentDerivationInput> =
+                required(rows, "storeSegmentDerivationRuns rows")?;
+            s.store_segment_derivation_runs(page_id, generation, &rows)
+        })
+    }
+
     /// `readSegmentedRewritePage(pageId)`: the page a live fence rewrite reads, or null.
     #[napi]
     pub fn read_segmented_rewrite_page<'env>(

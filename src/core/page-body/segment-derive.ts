@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { canonicalJson } from '../belief/keys.ts';
 import { planSegmentDerivations, segmentDerivationContextHash, type LiveSegment, type SegmentDerivationKind,
-  type SegmentDerivationRow } from './derivations.ts';
+  type SegmentDerivationInput, type SegmentDerivationRow } from './derivations.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { derivationClaimCandidateSql, derivationHoldsClaimSql, derivationScopeLockSql, derivationSweepScopeSql, foldSql } from './schema.ts';
 import { bodyBlocks, type BodyBlock } from './segment-blocks.ts';
@@ -205,26 +205,20 @@ const STORE_BATCH_ROWS = 64;
  */
 async function storeRuns(engine: BrainEngine, kind: UnpaidDerivationKind, scope: DerivationScope, outputs: ReadonlyMap<number, unknown>,
   inputsOf: (run: DeriveRun) => Record<string, unknown>): Promise<boolean> {
-  const rows: Array<Record<string, unknown>> = [];
+  const rows: SegmentDerivationInput[] = [];
   let occurrences = 0;
   for (const [index, output] of outputs) {
     const run = scope.runs[index]!;
     const hashes = runContextHashes(kind, scope, run, inputsOf(run));
     occurrences += run.occurrences.length;
-    run.occurrences.forEach((occurrenceId, i) => rows.push({ pipeline: kind, occurrence_id: occurrenceId, pipeline_version: SEGMENT_PIPELINE_VERSIONS[kind],
-      segment_sha256: hex(run.shas[i]!), context_hash: hex(hashes[i]!), output: i === 0 ? output : { run: run.occurrences[0] } }));
+    run.occurrences.forEach((occurrenceId, i) => rows.push({ pageId: scope.pageId, kind, occurrenceId, version: SEGMENT_PIPELINE_VERSIONS[kind],
+      segmentSha256: run.shas[i]!, contextHash: hashes[i]!, state: 'done', output: i === 0 ? output : { run: run.occurrences[0] }, receipt: null }));
   }
   if (!rows.length) return true;
   await beforeWrite?.(scope);
   for (let at = 0; at < rows.length; at += STORE_BATCH_ROWS) {
-    const written = await engine.executeRaw(`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)
-      INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, output, receipt)
-      SELECT live.id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'), 'done', d.output, NULL
-      FROM live, jsonb_to_recordset($3::text::jsonb) AS d(pipeline text, occurrence_id bigint, pipeline_version int, segment_sha256 text, context_hash text, output jsonb)
-      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version, segment_sha256 = EXCLUDED.segment_sha256,
-        context_hash = EXCLUDED.context_hash, state = EXCLUDED.state, output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()
-      RETURNING 1`, [scope.pageId, scope.generation, JSON.stringify(rows.slice(at, at + STORE_BATCH_ROWS))]);
-    if (!written.length) {
+    const written = await engine.storeSegmentDerivationRuns(scope.pageId, scope.generation, rows.slice(at, at + STORE_BATCH_ROWS));
+    if (!written) {
       segmentDeriveWork[kind].skipped++;
       return false;
     }

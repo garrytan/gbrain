@@ -3,8 +3,8 @@
 //! answer to one statement of `src/core/engine-sql/segmented-writes.ts`: the staging state a create
 //! checks, the chunk rows a replace's dead preparation left, the live page and its seal, the chunk
 //! probes and the stale-row retirement of the projection, the re-chunk's candidates, page row and
-//! stored chunks, the page's `updated_at` restore, and its trust stamp with the restore a fence
-//! append makes of it. Each write is one
+//! stored chunks, the page's `updated_at` restore, its trust stamp with the restore a fence
+//! append makes of it, and the derivation driver's guarded store. Each write is one
 //! `Store::write`.
 //!
 //! Stale rows. Postgres's `STALE_CHUNKS_SQL` names the chunk rows generation `g` (live occurrences
@@ -14,8 +14,8 @@
 //! (no segment) is always stale, as its NULL `body_generation` is in SQL.
 
 use super::{
-    BodyState, StagingRecord, in_generation, manifest_rows, page_u64, read_body_state,
-    staging_id_arg, staging_key,
+    BodyState, SegmentDerivationInput, StagingRecord, in_generation, manifest_rows, page_u64,
+    prepare_derivations, put_derivations, read_body_state, staging_id_arg, staging_key,
 };
 use crate::chunks::{ChunkRecord, delete_chunks_matching, read_chunks};
 use crate::env::iso;
@@ -489,6 +489,41 @@ impl Store {
         })
     }
 
+    /// `storeSegmentDerivationRuns(pageId, generation, rows)`: the derivation driver's guarded
+    /// store (`storeRuns` in `segment-derive.ts`). Inserts or replaces every row on `page_id` as
+    /// `upsertSegmentDerivations` does, only while the page is segmented at `generation`; otherwise
+    /// writes nothing and returns false. Postgres reads the page row `FOR SHARE` in the insert, so
+    /// a purge, rewrite or demotion that moves the generation first leaves nothing written; one
+    /// `Store::write` gives the same order. A missing page returns false.
+    pub fn store_segment_derivation_runs(
+        &self,
+        page_id: i64,
+        generation: i64,
+        rows: &[SegmentDerivationInput],
+    ) -> Result<bool> {
+        let rows: Vec<SegmentDerivationInput> = rows
+            .iter()
+            .map(|row| SegmentDerivationInput {
+                page_id,
+                ..row.clone()
+            })
+            .collect();
+        let prepared = prepare_derivations(&rows)?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let Some(page) = page_by_id(&*tx, page_id)? else {
+                return Ok(false);
+            };
+            let live = read_body_state(&*tx, page.id)?
+                .is_some_and(|s| s.body_storage == "segmented" && s.body_generation == generation);
+            if !live || prepared.is_empty() {
+                return Ok(live);
+            }
+            put_derivations(tx, &prepared, now)?;
+            Ok(true)
+        })
+    }
+
     /// `readPageTrustStamp(ref)`: the page's `trust_tier` (`unknown` when none is stored) and
     /// `write_origin`. `{ sourceId, slug }` names a live page, `{ id }` any page.
     pub fn read_page_trust_stamp(&self, page: &PageTrustRef) -> Result<Option<PageTrustStamp>> {
@@ -872,5 +907,76 @@ mod tests {
         store
             .restore_page_trust_stamp(999_999, "agent_written", None)
             .unwrap();
+    }
+
+    #[test]
+    fn a_guarded_derivation_store_writes_only_at_the_live_generation() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        let row = |occ: i64, output: Value| -> SegmentDerivationInput {
+            serde_json::from_value(json!({
+                "pageId": 0, "kind": "links", "occurrenceId": occ, "version": 1,
+                "segmentSha256": "ab".repeat(32), "contextHash": "cd".repeat(32), "state": "done",
+                "output": output, "receipt": null,
+            }))
+            .unwrap()
+        };
+        let stored = |store: &Store| -> Vec<(i64, Value)> {
+            store
+                .read_segment_derivations(id, &Default::default())
+                .unwrap()
+                .into_iter()
+                .map(|r| (r["occurrenceId"].as_i64().unwrap(), r["output"].clone()))
+                .collect()
+        };
+        assert!(
+            store
+                .store_segment_derivation_runs(
+                    id,
+                    1,
+                    &[row(1, json!({ "a": 1 })), row(2, json!({ "run": 1 }))]
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            stored(&store),
+            vec![(1, json!({ "a": 1 })), (2, json!({ "run": 1 }))]
+        );
+        assert!(
+            store
+                .store_segment_derivation_runs(id, 1, &[row(1, json!({ "a": 2 }))])
+                .unwrap()
+        );
+        assert_eq!(stored(&store)[0], (1, json!({ "a": 2 })));
+        assert!(
+            !store
+                .store_segment_derivation_runs(id, 2, &[row(3, json!({}))])
+                .unwrap()
+        );
+        assert!(
+            !store
+                .store_segment_derivation_runs(9_999, 1, &[row(3, json!({}))])
+                .unwrap()
+        );
+        assert_eq!(stored(&store).len(), 2);
+        second_generation(&store, id);
+        store
+            .flip_body_generation(&flip(id, 1, STAGING_2, 9, json!({"closeOccurrences": [2]})))
+            .unwrap();
+        assert!(
+            !store
+                .store_segment_derivation_runs(id, 1, &[row(3, json!({}))])
+                .unwrap()
+        );
+        assert_eq!(stored(&store).len(), 2);
+        let mut bad = row(4, json!({}));
+        bad.kind = "nope".into();
+        assert_eq!(
+            store
+                .store_segment_derivation_runs(id, 2, &[bad])
+                .unwrap_err()
+                .code,
+            crate::error::CONSTRAINT_VIOLATION
+        );
     }
 }

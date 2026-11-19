@@ -4,12 +4,14 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a segmented create (sealed at commit), a replace that keeps some occurrences and retires others, a create
- *    over SEGMENTED_CREATE_SEAL_MAX_BYTES (unsealed at commit, so the projection builds its chunks), and an applied
- *    re-chunk that flips a generation all give the same page, chunks and receipts on every arm (PGLite always; Postgres
+ *    over SEGMENTED_CREATE_SEAL_MAX_BYTES (unsealed at commit, so the projection builds its chunks), an applied
+ *    re-chunk that flips a generation, and an incremental link derivation that stores its runs and then reuses them
+ *    all give the same page, chunks, links, derivation rows and receipts on every arm (PGLite always; Postgres
  *    with DATABASE_URL; Rust with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that refuses one statement of the staging path, the generation flip, the projection or the
  *    re-chunk flip (the Rust engine has no SQL dialect, so each statement must be a typed member) stops a segmented
- *    import or re-chunk on that engine; a member that answers differently leaves different chunks or receipts.
+ *    import or re-chunk on that engine; a member that answers differently leaves different chunks or receipts. The
+ *    derivation driver's guarded store (storeSegmentDerivationRuns) ran as raw SQL, so the Rust arm refused it.
  *  - Why existing coverage misses it: test/engine-parity/segmented-body.test.ts compares the staging members one by
  *    one; test/large-pages/ runs these callers on PGLite only and test/e2e/ on Postgres only, never compared.
  *  - Seam: none in the callers. The "sealed at an older chunker" fixture is built with typed members
@@ -25,6 +27,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { readPageBodyPolicy, SEGMENTED_CREATE_SEAL_MAX_BYTES } from '../../src/core/page-body/limits.ts';
 import { importStreamedMarkdownFile } from '../../src/core/page-body/streamed-import.ts';
 import { runSegmentedRechunk } from '../../src/core/page-body/rechunk.ts';
+import { openSegmentedLinkSession } from '../../src/core/page-body/segment-links.ts';
+import { segmentDeriveWork } from '../../src/core/page-body/segment-derive.ts';
+import { makeResolver } from '../../src/core/link-extraction.ts';
 import { SEGMENTED_CHUNKER_VERSION } from '../../src/core/page-body/segment-chunks.ts';
 import { chunkProjectedText } from '../../src/core/chunkers/recursive.ts';
 import { resolveMaxChunkTokens } from '../../src/core/embedding-input-limit.ts';
@@ -133,5 +138,36 @@ describe('engine parity: segmented callers', () => {
       const again = receiptView(await runSegmentedRechunk(engine, { slug: 'chats/rechunk' }));
       expect(again.pages).toEqual([]);
       return { sealed, preview, applied, after, again, version: SEGMENTED_CHUNKER_VERSION };
+    });
+
+  parityTest('an incremental link derivation stores a row per live occurrence, then reuses every run on a second pass',
+    { methods: ['setConfig', 'getPage', 'readSegmentedPageHead', 'readManifest', 'readSegmentDerivations', 'storeSegmentDerivationRuns',
+      'readPageSnapshot'], timeout: 600_000 }, async (engine, backend) => {
+      await engine.setConfig('pages.segmented_storage', 'on');
+      const days = conversationBody(256 * 1024, { seed: 8 }).split('\n\n');
+      const body = days.map((day, i) => i % 40 === 0 ? `${day}\n\nMet [[people/alice-example]] and [[companies/acme-example]] about item ${i}.` : day).join('\n\n');
+      expect((await streamed(engine, backend, 'notes/derived', body)).status).toBe('imported');
+      const page = (await engine.getPage('notes/derived'))!;
+      const target = { id: page.id, slug: 'notes/derived', source_id: 'default', type: page.type, frontmatter: page.frontmatter ?? {}, title: page.title };
+      const opts = { globalBasename: false, lineGrammar: { enabled: true, allowUndeclaredTypes: false } };
+      const pass = async () => {
+        for (const work of Object.values(segmentDeriveWork)) Object.assign(work, { derived: 0, occurrences: 0, reused: 0, skipped: 0, reread: 0 });
+        const session = await openSegmentedLinkSession(engine, target as never, makeResolver(engine, { mode: 'live', sourceId: 'default' }), opts);
+        expect(session).not.toBeNull();
+        await session!.targets(opts);
+        const result = await session!.finish({ ...opts, temporal: true, targetType: () => undefined } as never);
+        const { derived, occurrences, skipped } = segmentDeriveWork.links;
+        return { targets: result.candidates.map(c => `${c.targetSlug}:${c.linkType}`).sort(), derived, occurrences, skipped };
+      };
+      const first = await pass();
+      expect(first.derived).toBeGreaterThan(0);
+      expect(first.skipped).toBe(0);
+      const rows = await engine.readSegmentDerivations(page.id, { kind: 'links' });
+      const live = (await engine.readManifest(page.id)).map(row => Number(row.occurrenceId)).sort((a, b) => a - b);
+      expect(rows.map(row => row.occurrenceId).sort((a, b) => a - b)).toEqual(live);
+      const second = await pass();
+      expect([second.derived, second.skipped]).toEqual([0, 0]);
+      expect(second.targets).toEqual(first.targets);
+      return { first, second, rows: rows.map(row => ({ state: row.state, version: row.version, sha: Buffer.from(row.segmentSha256).toString('hex') })).sort((a, b) => a.sha.localeCompare(b.sha)) };
     });
 });

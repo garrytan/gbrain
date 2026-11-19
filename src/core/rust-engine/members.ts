@@ -203,6 +203,7 @@ export const RUST_ENGINE_MEMBERS = {
   restorePageUpdatedAt: 'page_body',
   readPageTrustStamp: 'page_body',
   restorePageTrustStamp: 'page_body',
+  storeSegmentDerivationRuns: 'page_body',
   readSegmentedRewritePage: 'page_body',
   restorePageDeletedAt: 'page_body',
   lockSegmentedGenerationPage: 'page_body',

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 779/779
+# covered: 780/780
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
-# segmented_body: 47/47
+# segmented_body: 48/48
 # versions: 5/5
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -81,8 +81,8 @@ transaction	lifecycle	yes	82	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	92	yes	yes	yes	serves
-readPageSnapshot	pages	yes	19	no	yes	yes	serves
+getPage	pages	yes	93	yes	yes	yes	serves
+readPageSnapshot	pages	yes	20	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
 putPage	pages	yes	337	yes	yes	yes	serves
@@ -318,7 +318,7 @@ allocateBodyOccurrenceIds	segmented_body	yes	10	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	11	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	8	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
-readManifest	segmented_body	yes	12	no	yes	yes	serves
+readManifest	segmented_body	yes	13	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	11	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	19	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	20	no	yes	yes	serves
@@ -326,7 +326,7 @@ sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	14	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	13	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
-readSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
+readSegmentDerivations	segmented_body	yes	4	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 lockBodyStagingState	segmented_body	yes	1	no	yes	yes	serves
@@ -346,6 +346,7 @@ setMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
 restorePageUpdatedAt	segmented_body	yes	1	no	yes	yes	serves
 readPageTrustStamp	segmented_body	yes	2	no	yes	yes	serves
 restorePageTrustStamp	segmented_body	yes	1	no	yes	yes	serves
+storeSegmentDerivationRuns	segmented_body	yes	1	no	yes	yes	serves
 readSegmentedRewritePage	segmented_body	yes	2	no	yes	yes	serves
 restorePageDeletedAt	segmented_body	yes	1	no	yes	yes	serves
 lockSegmentedGenerationPage	segmented_body	yes	1	no	yes	yes	serves
@@ -382,7 +383,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	29	no	yes	yes	serves
+setConfig	config	yes	30	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -594,7 +595,7 @@ readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
 listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
-readSegmentedPageHead	cli_reads_export	yes	7	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	8	no	yes	yes	serves
 readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
 readBodyManifestOutline	cli_reads_export	yes	1	no	yes	yes	serves
