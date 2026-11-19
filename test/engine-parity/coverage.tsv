@@ -696,7 +696,7 @@ countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
 loadPurgeTarget	facts_purge	yes	12	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	7	no	yes	yes	serves
-settleFactsReconcile	facts_purge	yes	4	no	yes	yes	serves
+settleFactsReconcile	facts_purge	yes	5	no	yes	yes	serves
 lockReconcileRevision	facts_purge	yes	2	no	yes	yes	serves
 selectFactsReconcileDrain	facts_purge	yes	1	no	yes	yes	serves
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
