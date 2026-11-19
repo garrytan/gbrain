@@ -1202,15 +1202,11 @@ export async function resolveSourceForDir(
     // lands and doctor's cycle_freshness stays red on a healthy install) and
     // order deterministically so a duplicate registration of the same path
     // can't shadow the active source on whichever row the engine scans first.
-    // Ordering matches listAllSources/sources-ops for operator-output parity.
-    const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources
-        WHERE local_path = $1 AND archived = false
-        ORDER BY (id = 'default') DESC, id
-        LIMIT 1`,
-      [brainDir],
-    );
-    if (rows[0]) return rows[0].id;
+    // listAllSources hides archived rows and lists `default` first, then ids in byte order on every engine (a
+    // Postgres with a linguistic locale included), so two live sources on one path resolve the same everywhere.
+    const live = (await engine.listAllSources()).filter((row) => row.local_path !== null);
+    const exact = live.find((row) => row.local_path === brainDir);
+    if (exact) return exact.id;
 
     // #2540: the exact match above compares two path SPELLINGS. `--dir` is
     // resolved via `resolve()` and `sources.local_path` stores the spelling
@@ -1224,8 +1220,7 @@ export async function resolveSourceForDir(
     //
     // Retry canonicalized on BOTH sides, so the match is symmetric regardless
     // of which side holds the link. Kept strictly as a miss-path fallback: the
-    // exact match stays a single indexed lookup, and the scan only pays for
-    // itself when it would otherwise return nothing. Registered paths are
+    // realpath calls only run when the exact match found nothing. Registered paths are
     // canonicalized here rather than at registration because storing a
     // canonical column would be a schema + backfill change; that is the
     // durable fix and is left as a follow-up.
@@ -1239,15 +1234,10 @@ export async function resolveSourceForDir(
     // already refuses to stamp them (writing last_full_cycle_at to an
     // archived source masks staleness when it is later restored), so an
     // archived alias must not win a path match either.
-    const candidates = await engine.executeRaw<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM sources
-        WHERE local_path IS NOT NULL AND archived = false
-        ORDER BY (id = 'default') DESC, id`,
-    );
     const matched: string[] = [];
-    for (const row of candidates) {
+    for (const row of live) {
       try {
-        if (isAbsolute(row.local_path) && realpathSync(row.local_path) === realDir) matched.push(row.id);
+        if (isAbsolute(row.local_path!) && realpathSync(row.local_path!) === realDir) matched.push(row.id);
       } catch {
         // Stale/unreadable registered path — not a match, keep scanning.
       }

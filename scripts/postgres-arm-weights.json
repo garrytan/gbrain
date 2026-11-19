@@ -116,6 +116,7 @@
   "test/engine-parity/persistence.test.ts": 6304,
   "test/engine-parity/private-page-reads.test.ts": 7062,
   "test/engine-parity/search-reads.test.ts": 7918,
+  "test/engine-parity/source-order-callers.test.ts": 2400,
   "test/engine-parity/source-resolver-reads.test.ts": 6712,
   "test/engine-parity/stats-vectors.test.ts": 6588,
   "test/engine-parity/stats.test.ts": 7168,

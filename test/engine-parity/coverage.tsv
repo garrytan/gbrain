@@ -97,7 +97,7 @@ countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	2	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
-listAllSources	pages	yes	4	no	yes	yes	serves
+listAllSources	pages	yes	6	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
 getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -617,7 +617,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
