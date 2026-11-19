@@ -637,6 +637,14 @@ pub struct ReferrerRow {
     pub d: String,
 }
 
+/// One distinct `(canonical_type, type)` pair of `readReferrerTypes`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReferrerTypeRow {
+    pub canonical_type: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+}
+
 /// `readReferrerRecordCandidates`: the newest referrers of the record types per target index.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -2281,6 +2289,15 @@ impl Store {
 
     /// The referrer page's scope and its type-filtered referrers, newest first.
     fn referrer_page_rows(&self, input: &ReferrerRowInput) -> Result<Vec<DatedReferrer>> {
+        let mut rows = self.referrer_scope_rows(input)?;
+        if let Some(t) = &input.page_type {
+            rows.retain(|(_, page, canonical)| canonical == t || page.page_type == *t);
+        }
+        Ok(rows)
+    }
+
+    /// Every referrer in the referrer page's scope, with no type filter, newest first.
+    fn referrer_scope_rows(&self, input: &ReferrerRowInput) -> Result<Vec<DatedReferrer>> {
         let read = self.read()?;
         let read = &*read;
         let scope = ReferrerScope {
@@ -2291,11 +2308,25 @@ impl Store {
             trust: TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?,
             include_quarantined: input.include_quarantined,
         };
-        let mut rows = scope.dated_referrers(read, &input.target_sources, &input.target_slugs)?;
-        if let Some(t) = &input.page_type {
-            rows.retain(|(_, page, canonical)| canonical == t || page.page_type == *t);
-        }
-        Ok(rows)
+        scope.dated_referrers(read, &input.target_sources, &input.target_slugs)
+    }
+
+    /// `readReferrerTypes`: the distinct `(canonical_type, type)` pairs among the referrers of
+    /// `countReferrerRows` with no type filter (`type`, `cursor` and `limit` are ignored), by
+    /// canonical type then stored type bytewise. An untyped referrer's stored type is `""`.
+    pub fn read_referrer_types(&self, input: &ReferrerRowInput) -> Result<Vec<ReferrerTypeRow>> {
+        let pairs: BTreeSet<(String, String)> = self
+            .referrer_scope_rows(input)?
+            .into_iter()
+            .map(|(_, page, canonical)| (canonical, page.page_type.clone()))
+            .collect();
+        Ok(pairs
+            .into_iter()
+            .map(|(canonical_type, page_type)| ReferrerTypeRow {
+                canonical_type,
+                page_type,
+            })
+            .collect())
     }
 
     /// `countReferrerRows`: how many referrers `readReferrerRows` pages through, of `type` when set.
