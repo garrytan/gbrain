@@ -615,8 +615,8 @@ async function deletedPage(engine: BrainEngine, sourceId: string, target: HeldTa
   const live = await readDeletedDriftTarget(engine, sourceId, { path: hold.path, sourcePath: hold.source_path, pageId: hold.page_id });
   if ('changed' in live) return { skip: `resolved_${live.changed}`, detail: DELETED_CHANGES[live.changed] };
   if (live.state !== state) return { skip: 'state_changed', detail: `it is ${live.state} now; preview it with ${shellQuote(heldDriftPreviewArgv(sourceId, 'deleted', live.state, prefer, hold.path))}` };
-  const slug = live.tombstone?.slug ?? hold.slug ?? resolveSlugForPath(hold.source_path);
-  const pin: DeletedDriftPin = { state, path: hold.path, source_path: hold.source_path, raw_file_hash: live.raw_file_hash, page_id: live.tombstone?.page_id ?? null,
+  const slug = live.tombstone?.slug ?? hold.slug ?? resolveSlugForPath(live.source_path);
+  const pin: DeletedDriftPin = { state, path: hold.path, source_path: live.source_path, raw_file_hash: live.raw_file_hash, page_id: live.tombstone?.page_id ?? null,
     revision: live.tombstone?.revision ?? null, marker_digest: live.marker_digest, observed_at: hold.observed_at };
   if (mirror && prefer === 'database' && state === 'tombstone_edited') return { page: { slug, prefer, exceptions: [], keep_deleted: pin },
     detail: `${KEEP_DELETED_VERB}: ${hold.path}` };
@@ -628,7 +628,7 @@ async function deletedPage(engine: BrainEngine, sourceId: string, target: HeldTa
   }
   const content = live.raw.toString('utf8');
   if (!Buffer.from(content).equals(live.raw)) throw opError('invalid_params', 'The held file must contain valid UTF-8.', `Nothing changed. Re-save ${hold.path} in '${sourceId}' as UTF-8, then preview it again.`);
-  const publication = await prepareRepairPublication(engine, { sourceId, slug, sourcePath: hold.source_path, path: hold.path, root: live.root, content, snapshot, base: snapshot,
+  const publication = await prepareRepairPublication(engine, { sourceId, slug, sourcePath: live.source_path, path: hold.path, root: live.root, content, snapshot, base: snapshot,
     ...await repairScreenConfig(engine, sourceId) });
   if (publication.status !== 'ready') throw opError('invalid_params', `${hold.path} does not import as written (${publication.status === 'refused' ? publication.refusal.code : 'it would store a canonical overlay'}).`,
     `Nothing changed. Fix the file, commit it and sync, or preview --prefer database to keep the deletion: ${shellQuote(heldDriftPreviewArgv(sourceId, 'deleted', state, 'database', hold.path))}`);

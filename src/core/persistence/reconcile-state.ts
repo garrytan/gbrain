@@ -29,6 +29,8 @@ import type { AutoDecision } from './reconcile-additive.ts';
 import { publishesDatabaseOnly, readCanonicalAsImported } from './page-prepare.ts';
 import { isMirrorOnlyPage, staleMirrorPage } from './mirror-read-only.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
+import { legacySyncOrigin } from './sync-origin.ts';
+import { sourceOriginScope } from './origin-guard.ts';
 
 export interface ReconcilePins {
   brain_id: string; source_id: string; source_incarnation: string; slug: string; page_id: number;
@@ -42,6 +44,8 @@ export interface ReconcileArtifact {
   decisions: ReconcileDecision[]; conflicts: ReconcileConflict[]; result: ParsedPage; result_digest: string;
   status: 'needs_resolution' | 'ready';
   auto_decisions?: AutoDecision[];
+  /** Explicit, content-preserving Git-root to source-root metadata rebase. */
+  origin_rebase?: { from: string; to: string };
 }
 export interface ReconcileState {
   binding: WorktreeBinding; root: string; path: string; raw: Buffer; snapshot: PageSnapshot;
@@ -153,22 +157,33 @@ export async function readDeletedDriftTarget(engine: BrainEngine, sourceId: stri
     throw error;
   }
   const raw = readFileSync(path);
-  const pin = { root, path, relative_path: input.path, source_path: input.sourcePath, raw, raw_file_hash: sha256(raw) };
-  const claims = await engine.executeRaw<{ id: number; slug: string; deleted: boolean }>(
-    `SELECT id, slug, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND source_path=$2 ORDER BY deleted_at DESC NULLS FIRST, id DESC`, [sourceId, input.sourcePath]);
+  const mode = await scannerSlugRootMode(engine, sourceId, root);
+  const canonicalSourcePath = scannerSourcePath(root, path, mode);
+  const pin = { root, path, relative_path: input.path, source_path: canonicalSourcePath, raw, raw_file_hash: sha256(raw) };
+  const sourcePaths = [...new Set([input.sourcePath, canonicalSourcePath, scannerSourcePath(root, path, 'source-root'), scannerSourcePath(root, path, 'git-root')])];
+  const claims = await engine.executeRaw<{ id: number; slug: string; deleted: boolean; source_path: string }>(
+    `SELECT id, slug, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND source_path=ANY($2::text[]) ORDER BY deleted_at DESC NULLS FIRST, id DESC`, [sourceId, sourcePaths]);
   if (claims.some(row => !row.deleted)) return { changed: 'live_page' };
-  const tombstone = claims.find(row => Number(row.id) === input.pageId) ?? claims[0];
+  if (claims.length > 1) throw opError('source_changed', 'Several deleted pages claim the held file through different path spellings.',
+    `Nothing changed. The held file ${input.path} in '${sourceId}' maps to more than one recorded page origin; resolve those page identities before retrying.`);
+  const tombstone = claims[0];
+  if (tombstone && input.pageId != null && Number(tombstone.id) !== Number(input.pageId)) return { changed: 'no_deletion' };
   if (tombstone) {
     const snapshot = await engine.readPageSnapshot(tombstone.slug, { sourceId, includeDeleted: true });
     if (!snapshot || Number(snapshot.page.id) !== Number(tombstone.id) || !snapshot.page.deleted_at) staleReconcile('the deleted page changed during the preview');
-    return { state: 'tombstone_edited', ...pin, tombstone: { page_id: Number(tombstone.id), slug: tombstone.slug, revision: snapshot.revision }, marker_digest: null };
+    return { state: 'tombstone_edited', ...pin, source_path: tombstone.source_path, tombstone: { page_id: Number(tombstone.id), slug: tombstone.slug, revision: snapshot.revision }, marker_digest: null };
   }
-  const [marker] = await engine.executeRaw<{ value: { kind?: string; blob_oids?: unknown } | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_ORIGIN_DELETED_OP, `${sourceId}:${binding.source_incarnation}:${input.sourcePath}`]);
-  if (!marker?.value || marker.value.kind === 'legacy') return { changed: 'no_deletion' };
-  const held = Array.isArray(marker.value.blob_oids) ? marker.value.blob_oids : [];
+  const fingerprints = sourcePaths.map(sourcePath => `${sourceId}:${binding.source_incarnation}:${sourcePath}`);
+  const markers = await engine.executeRaw<{ fingerprint: string; value: { kind?: string; blob_oids?: unknown } | null }>(
+    'SELECT fingerprint, completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])', [SYNC_ORIGIN_DELETED_OP, fingerprints]);
+  if (markers.length > 1) throw opError('source_changed', 'Several deletion markers claim the held file through different path spellings.',
+    `Nothing changed. The held file ${input.path} in '${sourceId}' has multiple recorded deletion origins; resolve those markers before retrying.`);
+  const marker = markers[0]?.value;
+  if (!marker || marker.kind === 'legacy') return { changed: 'no_deletion' };
+  const markerSourcePath = sourcePaths[fingerprints.indexOf(markers[0].fingerprint)] ?? canonicalSourcePath;
+  const held = Array.isArray(marker.blob_oids) ? marker.blob_oids : [];
   if (held.includes(gitBlobOid(raw, 'sha1')) || held.includes(gitBlobOid(raw, 'sha256'))) return { changed: 'deleted_same' };
-  return { state: 'purged_differs', ...pin, tombstone: null, marker_digest: digest(marker.value) };
+  return { state: 'purged_differs', ...pin, source_path: markerSourcePath, tombstone: null, marker_digest: digest(marker) };
 }
 /** Whether `root` or an ancestor holds a `.git` entry (a checkout Git should answer for). */
 function insideGitCheckout(root: string): boolean {
@@ -313,6 +328,24 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   const pins = await reconcilePins(engine, { brain_id: brain.brain_id, sourceId, binding, snapshot, slug, assessmentAt, root, path, canonicalPath, rawFileHash: sha256(raw) });
   return { binding, root, path, importPath, raw, snapshot, storedPage, file: reconcileCanonical(parsed, parsed.tags), pins, origin, originSourcePath: derived?.sourcePath ?? null };
 }
+
+/** Validate the exact legacy Git-root spelling before a user-requested source-root origin rebase. */
+export async function reconcileOriginRebase(engine: BrainEngine, sourceId: string, state: ReconcileState): Promise<{ from: string; to: string }> {
+  const [source] = await engine.executeRaw<{ local_path: string | null; config: unknown }>('SELECT local_path,config FROM sources WHERE id=$1', [sourceId]);
+  let config = source?.config;
+  if (typeof config === 'string') { try { config = JSON.parse(config); } catch { config = null; } }
+  const mode = config && typeof config === 'object' && !Array.isArray(config) ? (config as Record<string, unknown>).slug_root_mode : null;
+  const scope = sourceOriginScope(sourceId, source?.local_path ?? null, mode);
+  const from = state.snapshot.page.source_path;
+  const to = state.importPath;
+  const contentMatches = digest(state.file) === digest(reconcileCanonical(state.snapshot.page, state.snapshot.tags));
+  if (mode !== 'source-root' || !scope?.scope || state.origin !== 'recorded' || !from || !to || from === to ||
+      state.pins.relative_path !== to || legacySyncOrigin(scope, to) !== from || !contentMatches) {
+    throw opError('source_changed', 'This page is not eligible for an exact source-root origin rebase.',
+      `Nothing changed. A rebase requires an unchanged page and file, source-root mode, and the exact legacy Git-root path for the same confined file in source '${sourceId}'. Review the source path and page before trying another repair.`);
+  }
+  return { from, to };
+}
 async function reconcilePins(engine: BrainEngine, input: { brain_id: string; sourceId: string; binding: WorktreeBinding; snapshot: PageSnapshot; slug: string; assessmentAt: string;
   root: string; path: string; canonicalPath: string; rawFileHash: string }): Promise<ReconcilePins> {
   const { binding, snapshot, root, path } = input;
@@ -350,7 +383,7 @@ export function assertReconcilePins(expected: ReconcilePins, actual: ReconcilePi
 export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   validateReconcileJson(value);
   const v2 = (value as Record<string, unknown> | null)?.format_version === 2;
-  strictReconcileKeys(value, ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status',
+  strictReconcileKeys(value, ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status', 'origin_rebase',
     ...(v2 ? ['auto_decisions'] : [])], ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status',
     ...(v2 ? ['auto_decisions'] : [])]);
   if (v2) {
@@ -379,6 +412,14 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
     'ingested_at', 'contextual_retrieval_mode', 'corpus_generation', 'withheld_source_path', 'body_storage', 'body_bytes'], ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter']);
   strictReconcileKeys(value.preimages.stored_page, ['id', 'source_id', 'slug', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'source_kind', 'source_uri', 'ingested_via', 'ingested_at', 'knowledge_revision', 'deleted_at']);
+  if (value.origin_rebase !== undefined) {
+    strictReconcileKeys(value.origin_rebase, ['from', 'to'], ['from', 'to']);
+    if (typeof value.origin_rebase.from !== 'string' || typeof value.origin_rebase.to !== 'string' ||
+        value.origin_rebase.from !== value.preimages.stored_page.source_path || value.origin_rebase.to !== value.preconditions.relative_path) {
+      throw opError('invalid_params', 'The origin rebase does not match the pinned page and file paths.',
+        'Pass the preview file exactly as reconcile wrote it; if it was edited, make a fresh preview.');
+    }
+  }
   strictReconcileKeys(value.result, ['type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'tags']);
   const result = value.result;
   if (value.format_version !== 1 && !v2 || typeof value.preview_id !== 'string' || !['ready', 'needs_resolution'].includes(String(value.status)) ||

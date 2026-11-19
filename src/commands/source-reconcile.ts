@@ -21,7 +21,7 @@ import { readLocalWriter, withVerifiedLocalRegistration } from '../core/persiste
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 
 export const RECONCILE_HELP = `Usage:
-  gbrain sources reconcile <source> <slug> --brain <id> [--preview] [--adopt-slug-path] [--out <new-file>] [--json]
+  gbrain sources reconcile <source> <slug> --brain <id> [--preview] [--adopt-slug-path] [--rebase-origin] [--out <new-file>] [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --preview --from <preview-file>
     --decisions <decisions-file> --out <new-file> [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --preview --auto-additive [--accept-suggested]
@@ -42,6 +42,9 @@ path only with --adopt-slug-path; the preview pins that file, apply records it
 as the page's origin, and the flag is refused for pages that are database-only
 by design. --out creates a new
 private file outside canonical worktrees; it never replaces an existing file.
+--rebase-origin previews an exact Git-root to source-root path correction only
+when the pinned source-root page and file agree; apply uses the managed writer,
+preserves file bytes, and changes no page content or sync checkpoint.
 Resolve conflicts with JSON-Pointer decisions and inspect the resolved preview
 before applying. Apply preserves both originals and uses the current canonical
 owner without changing ownership, activation, roots, or sync checkpoints.
@@ -88,7 +91,7 @@ export interface ReconcileCliArgs {
 export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   const flags = new Map<string, string | true>();
   const positional: string[] = [];
-  const boolean = new Set(['--preview', '--audit', '--backups', '--json', '--auto-additive', '--accept-suggested', '--classify', '--adopt-slug-path', '--conflicts']);
+  const boolean = new Set(['--preview', '--audit', '--backups', '--json', '--auto-additive', '--accept-suggested', '--classify', '--adopt-slug-path', '--rebase-origin', '--conflicts']);
   const values = new Set(['--brain', '--out', '--from', '--decisions', '--apply', '--request-id', '--limit', '--after', '--remove-backup', '--window']);
   for (let i = 0; i < args.length; i++) {
     const token = args[i];
@@ -102,7 +105,7 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
       continue;
     }
     if (!values.has(flag)) throw opError('invalid_params', `Unknown reconciliation option: ${flag}.`,
-      'Reconciliation accepts --brain, --preview, --adopt-slug-path, --out, --from, --decisions, --apply, --request-id, --audit, --conflicts, --window, --classify, --backups, --remove-backup, --limit, --after and --json; the help in fix shows which forms combine.',
+      'Reconciliation accepts --brain, --preview, --adopt-slug-path, --rebase-origin, --out, --from, --decisions, --apply, --request-id, --audit, --conflicts, --window, --classify, --backups, --remove-backup, --limit, --after and --json; the help in fix shows which forms combine.',
       { fix: readFix('Lists every reconciliation form and its options.', { argv: ['gbrain', 'sources', 'reconcile', '--help'] }) });
     const value = equal >= 0 ? token.slice(equal + 1) : args[++i];
     if (!value || value.startsWith('-') || value.includes('\0')) throw opError('invalid_params', `${flag} requires a value.`,
@@ -130,6 +133,10 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   if (applying && ['--preview', '--from', '--decisions', '--out', '--audit', '--backups', '--remove-backup'].some(flag => flags.has(flag))) {
     throw opError('invalid_params', 'Apply cannot be combined with preview, decisions, output, or audit options.',
       'Run apply on its own: the resolved preview file after --apply, --request-id and --brain only. Make or resolve previews in a separate command first.');
+  }
+  if (flags.has('--rebase-origin') && (applying || backups || audit || flags.has('--from') || flags.has('--decisions') || flags.has('--auto-additive') || flags.has('--accept-suggested'))) {
+    throw opError('invalid_params', '--rebase-origin is only valid on a fresh content-preserving preview.',
+      'Run a new preview with --rebase-origin on its own; apply that exact preview file with --apply and a new request ID.');
   }
   if (!applying && flags.has('--request-id')) throw opError('invalid_params', '--request-id is only valid with --apply.',
     'Drop --request-id: previews, audits and backup listings change nothing and take no request ID.');
@@ -175,6 +182,7 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   if (applying) params.request_id = flags.get('--request-id');
   if (flags.has('--auto-additive')) params.auto_additive = true;
   if (flags.has('--adopt-slug-path')) params.adopt_slug_path = true;
+  if (flags.has('--rebase-origin')) params.rebase_origin = true;
   if (flags.has('--accept-suggested')) params.accept_suggested = true;
   if (flags.has('--classify')) params.classify = true;
   if (flags.has('--conflicts')) params.conflicts = true;

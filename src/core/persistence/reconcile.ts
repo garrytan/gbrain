@@ -13,7 +13,7 @@ import { assertPersistenceAccepting, waitForWrite, writeResponse } from './servi
 import { digest, requireUuid, sha256, stableJson } from './digest.ts';
 import { mergeReconcile, reconcileCanonical, reconcileDecisions, strictReconcileKeys } from './reconcile-merge.ts';
 import { additiveDecisions, assertAutoDecisions, classifyDrift, type AutoDecision, type DriftClassification } from './reconcile-additive.ts';
-import { assertReconcilePins, assertReconcileRevision, readReconcileState, reconcilePreviewAdopts, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
+import { assertReconcilePins, assertReconcileRevision, readReconcileState, reconcileOriginRebase, reconcilePreviewAdopts, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { prepareReconcileResult } from './reconcile-prepare.ts';
 import { assertReconcileOutputPath, assertReconcileSize, manageReconcileBackups, retainReconcileBackup } from './reconcile-backup.ts';
 import type { LocalGrant } from './identity.ts';
@@ -103,8 +103,12 @@ async function config(engine: BrainEngine): Promise<GBrainConfig> {
   return await loadConfigWithEngine(engine, loadConfig()) ?? { engine: engine.kind } as GBrainConfig;
 }
 export async function runReconcilePreview(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown> & { preview: ReconcileArtifact }> {
-  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path', 'auto_additive', 'accept_suggested', 'adopt_slug_path'], ['source_id', 'slug']);
+  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path', 'auto_additive', 'accept_suggested', 'adopt_slug_path', 'rebase_origin'], ['source_id', 'slug']);
   const auto = params.auto_additive === true;
+  if (params.rebase_origin !== undefined && typeof params.rebase_origin !== 'boolean' || params.rebase_origin === true && (auto || params.decisions !== undefined)) {
+    throw opError('invalid_params', 'Origin rebase is a content-preserving preview option.',
+      'Use --rebase-origin on its own; do not combine it with content decisions or automatic content reconciliation.');
+  }
   if (params.auto_additive !== undefined && typeof params.auto_additive !== 'boolean'
     || params.accept_suggested !== undefined && (typeof params.accept_suggested !== 'boolean' || !auto)) {
     throw opError('invalid_params', 'accept_suggested requires auto_additive; both are booleans.',
@@ -140,13 +144,16 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
   await refuseUnimportedDiscard(engine, state, decisions, autoDecisions);
   const prepared = await prepareReconcileResult(engine, state, decisions);
   const reviewRequired = classification?.verdict === 'review_required';
+  const originRebase = params.rebase_origin === true ? await reconcileOriginRebase(engine, sourceId, state) : undefined;
   const preview: ReconcileArtifact = { format_version: autoDecisions.length ? 2 : 1, preview_id: from?.preview_id ?? randomUUID(), preconditions: state.pins,
     preimages: JSON.parse(stableJson({ file_base64: state.raw.toString('base64'), database: state.snapshot, stored_page: state.storedPage })),
     decisions, conflicts: prepared.conflicts, result: prepared.result, result_digest: digest(prepared.result),
-    status: prepared.conflicts.length || reviewRequired ? 'needs_resolution' : 'ready', ...(autoDecisions.length ? { auto_decisions: autoDecisions } : {}) };
+    status: prepared.conflicts.length || reviewRequired ? 'needs_resolution' : 'ready', ...(autoDecisions.length ? { auto_decisions: autoDecisions } : {}),
+    ...(originRebase ? { origin_rebase: originRebase } : {}) };
   await assertReconcileSize(engine, preview);
   const git = { dirty: classification?.verdict === 'no_drift' ? canonicalFileGitDirty(state.root, state.path) : null, root: state.root, path: relative(state.root, state.path) };
   return { source_id: sourceId, slug, preview_id: preview.preview_id, status: preview.status,
+    ...(originRebase ? { origin_rebase: originRebase } : {}),
     ...(classification ? { classification: classification.verdict, drift_paths: classification.paths,
       auto_decided_paths: autoDecisions.map(d => d.path), next_action: additiveNextAction(classification, preview.status, git),
       ...(git.dirty === null ? {} : { git_dirty: git.dirty }) } : {}),
@@ -184,7 +191,7 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
   const artifact = validateReconcileArtifact(params.preview);
   artifact.decisions = reconcileDecisions(artifact.decisions);
   const requestId = requireUuid(params.request_id as string);
-  return admitReconcileArtifact(engine, { sourceId, slug, authority, artifact, requestId, keepFileBytes: params.keep_file_bytes === true,
+  return admitReconcileArtifact(engine, { sourceId, slug, authority, artifact, requestId, keepFileBytes: params.keep_file_bytes === true || artifact.origin_rebase !== undefined,
     guard: state => refuseUnimportedDiscard(engine, state, artifact.decisions, artifact.auto_decisions ?? [], opts.discardFileHash) }, async (row, replayed) => {
     const settled = replayed && isTerminal(row) ? row : await waitForWrite(engine, row, await config(engine));
     const cleared = settled.state === 'committed' ? await clearAgreedStallHold(engine, sourceId, slug) : null;

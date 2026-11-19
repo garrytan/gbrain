@@ -24,7 +24,7 @@ import { digest, sha256 } from './digest.ts';
 import { mergeReconcile, reconcileCanonical, type ReconcileDecision } from './reconcile-merge.ts';
 import { stabilizeSafetyAssessments } from './reconcile-safety.ts';
 import { fileWinsContent } from './file-wins-content.ts';
-import { ABSENT_FILE_HASH, assertReconcilePins, readCanonicalFileText, readReconcileState, reconcileFileReading, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
+import { ABSENT_FILE_HASH, assertReconcilePins, readCanonicalFileText, readReconcileState, reconcileFileReading, reconcileOriginRebase, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
 import { admissionAllows, readSyncAdmission } from './sync-admission.ts';
@@ -157,6 +157,10 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   const adopt = reconcileReadOptions(artifact);
   const state = await readReconcileState(engine, row.source_id, row.slug, artifact.preconditions.assessment_at, adopt);
   assertReconcilePins(artifact.preconditions, state.pins);
+  const originRebase = artifact.origin_rebase ? await reconcileOriginRebase(engine, row.source_id, state) : undefined;
+  if (artifact.origin_rebase && (originRebase?.from !== artifact.origin_rebase.from || originRebase?.to !== artifact.origin_rebase.to)) {
+    staleReconcile('the requested origin rebase changed');
+  }
   assertAutoDecisions(artifact.auto_decisions ?? [], state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags), artifact.decisions);
   const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
   if (!prepared.ready || digest(prepared.result) !== artifact.result_digest) staleReconcile('canonical policy result changed');
@@ -174,17 +178,24 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
     observedRevision: state.snapshot.revision, trust: await ownerImportTrust(engine, row, prepared.result.frontmatter, state.path),
     ...(mirror ? { databaseOnlyReason: 'mirror_read_only' as const } : { file: { path: state.path, root: state.root, content, expectedBeforeHash: absent ? null : state.pins.raw_file_hash } }),
     // A database-only page matched by its slug path always records that file as its origin.
-    noop: ready.noop && sha256(content) === state.pins.raw_file_hash && state.origin === 'recorded',
+    noop: !originRebase && ready.noop && sha256(content) === state.pins.raw_file_hash && state.origin === 'recorded',
     ...(ready.afterCommit ? { afterCommit: (target: BrainEngine) => ready.afterCommit!(target) } : {}),
     validate: async tx => {
       await authorizeStoredRequest(tx, row, true);
       await assertKeepDbAdmission(tx, row);
-      assertReconcilePins(artifact.preconditions, (await readReconcileState(tx, row.source_id, row.slug, artifact.preconditions.assessment_at, adopt)).pins);
+      const live = await readReconcileState(tx, row.source_id, row.slug, artifact.preconditions.assessment_at, adopt);
+      assertReconcilePins(artifact.preconditions, live.pins);
+      if (artifact.origin_rebase) {
+        const rebase = await reconcileOriginRebase(tx, row.source_id, live);
+        if (rebase.from !== artifact.origin_rebase.from || rebase.to !== artifact.origin_rebase.to) staleReconcile('the requested origin rebase changed');
+      }
       verifyReconcileBackup(reference, artifact);
       await ready.validate(tx);
     },
     apply: async tx => {
       const installed = await ready.apply(tx);
+      if (originRebase) await bindOrigin(tx, { sourceId: row.source_id, pageId: artifact.preconditions.page_id, slug: row.slug,
+        sourcePath: originRebase.to, liveOnly: true });
       if (state.originSourcePath) {
         await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: state.originSourcePath, onlyIfUnset: true, liveOnly: true });
       }
@@ -204,7 +215,8 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
           { fix: receiptFix(row) });
       }
       return { status: 'reconciled', source_id: row.source_id, slug: row.slug, backup_reference: reference,
-        result_digest: artifact.result_digest, database_changed: !ready.noop, file_changed: sha256(content) !== state.pins.raw_file_hash,
+        result_digest: artifact.result_digest, database_changed: !ready.noop || !!originRebase, file_changed: sha256(content) !== state.pins.raw_file_hash,
+        ...(originRebase ? { origin_rebased: originRebase } : {}),
         scan_state_transferred: scanStateTransferred };
     },
   };

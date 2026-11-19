@@ -60,10 +60,12 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
   });
 
   interface Fixture { root: string; sourceId: string; ctx: OperationContext; incarnation: string }
-  async function fixture(run: (f: Fixture) => Promise<void>): Promise<void> {
+  async function fixture(run: (f: Fixture) => Promise<void>, nestedSource = false): Promise<void> {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-6712-held-'));
-    const root = join(dir, 'brain'); mkdirSync(root);
-    execFileSync('git', ['init', '-q'], { cwd: root });
+    const repoRoot = join(dir, 'brain'); mkdirSync(repoRoot);
+    const root = nestedSource ? join(repoRoot, 'vault') : repoRoot;
+    mkdirSync(root, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repoRoot });
     const sourceId = `held6712-${randomUUID().slice(0, 8)}`;
     try {
       await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
@@ -235,6 +237,22 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
       FROM persistence_requests r WHERE r.source_id=$1 AND r.intent->>'kind'='managed_maintenance_file_drift_remove'`, [f.sourceId]);
     expect(receipts).toEqual([{ state: 'committed', effects: 1 }]);
   }), 240_000);
+
+  test('tombstone_edited: a source-relative hold matches the same page stored at its Git-root-relative origin', () => fixture(async f => {
+    const { path, pageId } = await tombstoneEdited(f, 'notes/tomb');
+    await engine.executeRaw("UPDATE sources SET config=jsonb_set(COALESCE(config, '{}'::jsonb), '{slug_root_mode}', '\"git-root\"'::jsonb) WHERE id=$1", [f.sourceId]);
+    await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE source_id=$2 AND id=$3', [`vault/${path}`, f.sourceId, pageId]);
+    const preview = await run(f.sourceId, { side: 'deleted', state: 'tombstone_edited', prefer: 'file', only: [path] });
+    expect(preview).toMatchObject({ mode: 'dry_run', affected: 1 });
+    expect(preview.details!.pages).toEqual([expect.objectContaining({ slug: 'notes/tomb', action: 'import_file', path })]);
+    const applied = await run(f.sourceId, { side: 'deleted', state: 'tombstone_edited', prefer: 'file', only: [path], expect: preview.preview_hash! });
+    expect(applied.outcomes).toEqual({ repaired: 1 });
+    const after = (await snapshot(f.sourceId, 'notes/tomb'))!;
+    expect(after.page.deleted_at).toBeFalsy();
+    expect(after.page.source_path).toBe(`vault/${path}`);
+    expect(after.page.compiled_truth).toContain('Edited after the delete.');
+    expect(await readGitHold(engine, f.sourceId, f.incarnation, path)).toBeNull();
+  }, true), 240_000);
 
   test('tombstone_edited: --prefer file restores the page and imports the file\'s bytes', () => fixture(async f => {
     const { path } = await tombstoneEdited(f, 'notes/tomb');
