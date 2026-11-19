@@ -422,7 +422,7 @@ export async function listConsumerOwners(raw: EngineRawRead, hostIds: string[]):
 
 // ---- overwritten-edits.ts / failed-writes.ts / local-edit-adoptions.ts / derivation-purge-sweeps.ts -------------------------------
 
-const OVERWRITE_CANDIDATES_SQL = `SELECT v.id AS version_id, v.page_id, p.slug, v.knowledge_revision::text AS lost_revision,
+const OVERWRITE_CANDIDATES_SQL = `SELECT v.id AS version_id, v.page_id, p.source_id, p.slug, v.knowledge_revision::text AS lost_revision,
       w.id::text AS db_request_id, w.operation AS db_operation, s.id::text AS import_request_id, s.completed_at AS imported_at,
       COALESCE(w.outcome->'persistence'->>'mode' = 'database', false) AS db_outcome_known, v.body_storage, v.title, v.type, v.compiled_truth, v.timeline, v.frontmatter, v.tags
     FROM pages p

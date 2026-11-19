@@ -309,6 +309,7 @@ export function readPageCompiledTruths(raw: EngineRawRead, ids: number[], timeou
 
 export interface EmbeddingBacklogAgeRow { age_s: number | null; unaged: number; backfilled: boolean | null }
 
+// chunk-visibility-ok: doctor embeddings backlog age moved verbatim from doctor/checks/schema-health.ts; it reads every live chunk row with no vector, as before
 const BACKLOG_AGE_SQL = `SELECT EXTRACT(EPOCH FROM now() - min(cc.embedding_pending_since))::float8 AS age_s,
               count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
               min(cc.embedding_pending_since) <= (SELECT value::timestamptz FROM config
@@ -325,6 +326,7 @@ export async function readEmbeddingBacklogAge(raw: EngineRawRead, column: string
 
 export interface BudgetLimitedRow { source_id: string; state: 'held' | 'capped'; reason: string; pages: number; chunks: number; chars: number }
 
+// chunk-visibility-ok: the chunkGenerationFilter('p', 'cc') predicate is inlined as literal text (check:engine-sql-dynamic forbids composed SQL), moved from held-embedding.ts
 const BUDGET_LIMITED_SQL = `SELECT p.source_id, b.state, COALESCE(b.reason, 'awaiting_approval') AS reason, count(*)::int AS pages,
             sum(w.chunks)::bigint AS chunks, sum(w.chars)::bigint AS chars
        FROM page_embedding_budget b JOIN pages p ON p.id = b.page_id
@@ -336,6 +338,7 @@ const BUDGET_LIMITED_SQL = `SELECT p.source_id, b.state, COALESCE(b.reason, 'awa
       OR ($1::text IS NOT NULL AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1::text))) w
       WHERE b.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR b.reason IN ('archive_backfill', 'archive_open_day', 'call_import')) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND w.chunks > 0
       GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`;
+// chunk-visibility-ok: the chunkGenerationFilter('p', 'cc') predicate is inlined as literal text (check:engine-sql-dynamic forbids composed SQL), moved from held-embedding.ts
 const BUDGET_LIMITED_SOURCE_SQL = `SELECT p.source_id, b.state, COALESCE(b.reason, 'awaiting_approval') AS reason, count(*)::int AS pages,
             sum(w.chunks)::bigint AS chunks, sum(w.chars)::bigint AS chars
        FROM page_embedding_budget b JOIN pages p ON p.id = b.page_id

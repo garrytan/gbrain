@@ -32,7 +32,7 @@ import { DOCTOR_READ_MEMBERS } from './engine-sql/doctor-reads.ts';
 import { DOCTOR_DERIVED_MEMBERS } from './engine-sql/doctor-derived.ts';
 import { DOCTOR_PERSISTENCE_MEMBERS } from './engine-sql/doctor-persistence.ts';
 import { DOCTOR_PAGES_MEMBERS } from './engine-sql/doctor-pages.ts';
-import { DOCTOR_ACC_MEMBERS } from './engine-sql/doctor-acc.ts';
+import { DOCTOR_ACC_MEMBERS } from './engine-sql/doctor-acc-members.ts';
 import { DOCTOR_CHECKPOINT_MEMBERS } from './engine-sql/doctor-checkpoints.ts';
 import { DOCTOR_SRC_MEMBERS } from './engine-sql/doctor-sources.ts';
 

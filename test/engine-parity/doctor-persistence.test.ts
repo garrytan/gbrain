@@ -196,7 +196,10 @@ describe('doctor persistence reads', () => {
         otherMessage: await engine.listRecentDriftReceiptSlugs('default', String(base), 'another message'),
         breaker: (await engine.listRefusalBreakerRows('default', 24, 1, 20)).map(r => ({ slug: r.slug, refusals: Number(r.refusals) })),
         adoptions: await engine.listLocalEditAdoptions(),
-        versions: (await engine.listRecentWriterVersions(7)).map(v => ({ role: v.role, version: v.version, requests: Number(v.requests) })),
+        // Sorted by role: the read orders by last_seen DESC, and the admitter and consumer rows of one request can share
+        // a timestamp, so their order is a tie the engines may break either way.
+        versions: (await engine.listRecentWriterVersions(7)).map(v => ({ role: v.role, version: v.version, requests: Number(v.requests) }))
+          .sort((a, b) => a.role.localeCompare(b.role)),
       };
       expect(answers.recent).toEqual([{ slug: 'notes/b', total: 1 }]);
       return answers;
