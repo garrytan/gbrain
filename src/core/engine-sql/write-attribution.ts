@@ -7,6 +7,7 @@
  */
 import { privateFactFilterForReader } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** The ids `readWriteAttributionNames` resolves, one list per joined table; an empty list runs no statement. */
 export interface WriteAttributionNameIds {
@@ -104,18 +105,21 @@ const ROW_COLS = `write_request_id::text AS w_req, write_principal_kind AS w_kin
 
 /** The statement and parameters of `target`: every filter runs in the statement, before the row is picked. */
 export function rowAttributionStatement(target: RowAttributionTarget): { sql: string; params: unknown[] } {
-  const cols = ROW_COLS;
+  const cols = trustedSql(ROW_COLS);
+  let fragment;
   if (target.kind === 'fact') {
-    return { sql: `SELECT id, ${cols} FROM facts WHERE id = $1 AND source_id = $2 AND (entity_slug = $3 OR source_markdown_slug = $3)
-        ${target.worldOnly ? "AND visibility = 'world'" : ''} ${target.excludePrivate ? `AND ${privateFactFilterForReader('facts')}` : ''}`,
-      params: [target.id, target.sourceId, target.slug] };
+    const worldOnly = trustedSql(target.worldOnly ? "AND visibility = 'world'" : '');
+    const excludePrivate = trustedSql(target.excludePrivate ? `AND ${privateFactFilterForReader('facts')}` : '');
+    fragment = sqlFragment`SELECT id, ${cols} FROM facts WHERE id = ${target.id} AND source_id = ${target.sourceId}
+        AND (entity_slug = ${target.slug} OR source_markdown_slug = ${target.slug}) ${worldOnly} ${excludePrivate}`;
+  } else if (target.kind === 'take') {
+    const holders = target.holders ? sqlFragment`AND holder = ANY(${target.holders}::text[])` : sqlFragment``;
+    fragment = sqlFragment`SELECT id, ${cols} FROM takes WHERE page_id = ${target.pageId} AND row_num = ${target.rowNum} ${holders}`;
+  } else {
+    fragment = sqlFragment`SELECT id, ${cols} FROM timeline_entries WHERE id = ${target.id} AND page_id = ${target.pageId}`;
   }
-  if (target.kind === 'take') {
-    const holders = target.holders;
-    return { sql: `SELECT id, ${cols} FROM takes WHERE page_id = $1 AND row_num = $2 ${holders ? 'AND holder = ANY($3::text[])' : ''}`,
-      params: holders ? [target.pageId, target.rowNum, holders] : [target.pageId, target.rowNum] };
-  }
-  return { sql: `SELECT id, ${cols} FROM timeline_entries WHERE id = $1 AND page_id = $2`, params: [target.id, target.pageId] };
+  const { text, params } = renderFragment(fragment);
+  return { sql: text, params };
 }
 
 /** The attributed row `target` names, or null when none is visible. */
