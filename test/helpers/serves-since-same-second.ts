@@ -45,6 +45,14 @@ async function sinceSecond(engine: BrainEngine): Promise<number> {
   return Math.floor(Date.parse((await engine.getConfig('access.serves_since'))!) / 1000);
 }
 
+async function pinSecond(engine: BrainEngine, before: string[], after: string[]): Promise<void> {
+  const s = await sinceSecond(engine);
+  await engine.setConfig('access.serves_since', new Date(s * 1000 + 500).toISOString().replace('.500Z', '.500000Z'));
+  for (const [ids, ms] of [[before, 250], [after, 750]] as const) {
+    for (const id of ids) await engine.executeRaw('UPDATE access_tokens SET created_at = $2::timestamptz WHERE id::text = $1', [id, new Date(s * 1000 + ms).toISOString()]);
+  }
+}
+
 export function sameSecondTests(open: Open): void {
   test('against the whole-second answer for the same instant, the only caller whose answer changes is an unbound token minted before the switch in that second, and it moves from refused to its grace', async () => {
     const { engine, close } = await open();
@@ -60,6 +68,7 @@ export function sameSecondTests(open: Open): void {
       await addMember(engine, 'bob-example');
       const after = await mintUnbound(engine, 'tok-after');
       await bindCredential(engine, { kind: 'token', id: member }, { member: 'bob-example' });
+      await pinSecond(engine, [before], [after]);
       expect(await createdSecond(engine, before)).toBe(await sinceSecond(engine));
       expect(await createdSecond(engine, after)).toBe(await sinceSecond(engine));
       const callers: Array<[string, string, string?]> = [[owner, 'tok-owner', 'alice-example'], [member, 'tok-member', 'bob-example'], [optedOut, 'tok-reads-unscoped'], [before, 'tok-before'], [after, 'tok-after']];
@@ -104,8 +113,9 @@ export function sameSecondTests(open: Open): void {
       await startOfSecond();
       const id = await mintUnbound(engine, 'tok-before');
       await addMember(engine, 'bob-example');
-      expect(await createdSecond(engine, id)).toBe(await sinceSecond(engine));
       expect(await engine.getConfig('access.serves_since')).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
+      await pinSecond(engine, [id], []);
+      expect(await createdSecond(engine, id)).toBe(await sinceSecond(engine));
       expect(await gate(engine, id, 'tok-before')).toBe('grace');
     } finally { await close(); }
   }, 60_000);
@@ -117,6 +127,7 @@ export function sameSecondTests(open: Open): void {
       await startOfSecond();
       await addMember(engine, 'bob-example');
       const id = await mintUnbound(engine, 'tok-after');
+      await pinSecond(engine, [], [id]);
       expect(await createdSecond(engine, id)).toBe(await sinceSecond(engine));
       expect(await gate(engine, id, 'tok-after')).toBe('requester_scope_required:created_after');
     } finally { await close(); }
@@ -129,6 +140,7 @@ export function sameSecondTests(open: Open): void {
       await startOfSecond();
       const id = await mintUnbound(engine, 'tok-legacy');
       await addMember(engine, 'bob-example');
+      await pinSecond(engine, [id], []);
       const whole = new Date(await sinceSecond(engine) * 1000).toISOString().replace('.000Z', 'Z');
       await engine.setConfig('access.serves_since', whole);
       await engine.executeRaw(v329.sql);
