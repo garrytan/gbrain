@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -57,6 +57,15 @@ export const readRetirementHop: StoreMember<[sourceId: string, slug: string, pri
   (brain, sourceId, slug, privacy) => {
     const policy = retirementHopPolicy(privacy);
     return storeCall({ member: 'readRetirementHop', slug, sourceId }, () => brain.readRetirementHop(sourceId, slug, policy ?? null));
+  };
+
+/** The store reads the page policy as readIdentitySiblingCandidates does; a widening caller refuses typed. */
+export const readEntityCardRows: StoreMember<[sourceId: string, match: EntityCardMatch, opts?: { excludePrivate?: boolean }], EntityCardRow[]> =
+  (brain, sourceId, match, opts) => {
+    const taken = takeOptions('readEntityCardRows', opts, ['excludePrivate']);
+    const policy = storePagePolicy('readEntityCardRows', taken.excludePrivate, { callerReaders: true });
+    const wire = 'titleLc' in match ? { titleLc: match.titleLc, slugs: [...match.slugs], slugLike: match.slugLike } : { slugs: [...match.slugs] };
+    return storeCall({ member: 'readEntityCardRows', sourceId }, () => brain.readEntityCardRows(sourceId, wire, policy ?? null)) as Promise<EntityCardRow[]>;
   };
 
 /** The store returns every live labelled page with no visibility key; the label rule itself is the TypeScript twin of the SQL. */

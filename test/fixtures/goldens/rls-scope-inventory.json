@@ -3184,6 +3184,50 @@
           "*"
         ]
       },
+      "readEntityCardRows#name": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readEntityCardRows#name+private": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readEntityCardRows#slugs": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readEntityCardRows#slugs+private": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readExtractionLagCounts#default": {
         "flagOffLanes": [
           "reserved"
@@ -3488,6 +3532,17 @@
         ]
       },
       "readPersistenceBrainId#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPlainSyncSource#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5170,6 +5225,7 @@
         "readDatabaseClock": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingStateCounts": "direct",
+        "readEntityCardRows": "none",
         "readExtractionLagCounts": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
@@ -5215,6 +5271,7 @@
         "readPageTitle": "none",
         "readPageTrustRows": "none",
         "readPersistenceBrainId": "none",
+        "readPlainSyncSource": "none",
         "readPrivateQueueState": "none",
         "readProjectionReadiness": "none",
         "readProjectionReadinessGeneration": "none",
