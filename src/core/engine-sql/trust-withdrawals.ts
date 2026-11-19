@@ -5,7 +5,9 @@
  *
  * `readFactCacheWatermark` is the hot-memory cache's watermark (facts/meta-hook.ts): the ledger's row count and newest
  * withdrawal, plus a digest of the folder access rules and pending coverage, so a forget or a rulebook install in any
- * process changes it.
+ * process changes it. `readTrustGeneration` is the other half of that cache identity: the trust policy generation
+ * (`trust_policy_state`, eligibility/generation-schema.ts), which moves whenever cached proactive content could turn
+ * wrong.
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -80,4 +82,15 @@ export async function readFactCacheWatermark(exec: LegacyUnscopedRead, sourceId:
          || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id, prefix, reason), '')) FROM access_pending_coverage) AS access_rules
      FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
   return { withdrawals: Number(row?.withdrawals ?? 0), latest_withdrawn_at: row?.latest_withdrawn_at ?? null, access_rules: row?.access_rules ?? '' };
+}
+
+/**
+ * The trust policy generation as decimal text (`trust_policy_state`, one row, id 1). Throws when the row is missing:
+ * the caller then delivers nothing rather than cached content (eligibility/generation.ts).
+ */
+export async function readTrustGeneration(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ generation: string | number | bigint | null }>(
+    'SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1');
+  if (row?.generation === undefined || row.generation === null) throw new Error('trust generation unreadable: trust_policy_state has no row');
+  return String(row.generation);
 }
