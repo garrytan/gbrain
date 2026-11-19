@@ -33,6 +33,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `e2e.yml` | No `pull_request` trigger | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `e2e-full-suite`), every push to master, the merge queue and the nightly E2E schedule |
 | `test.yml`, `e2e.yml` | A push to master skips its full lanes when it reuses a passed full-suite run of its exact tree | Named exception ([below](#master-push-reuse)) | The reused run (same tree, full profile); schedules never reuse |
 | `persistence-validation.yml` | `convergence` selected on pull requests by `scripts/ci-convergence-scope.sh` (test.yml `changes`; never by `package.json` alone) | Named exception | Every merge-queue run and every push to master; the nightly cell runs in `convergence-nightly.yml` |
+| `openclaw-skill-resolver-bench.yml` | The skill-resolver plugin's labelled-set bench in a real OpenClaw gateway (`scripts/bench/openclaw-skill-resolver-real.ts`), idle and loaded: dispatch only (run by hand after a resolver change), reports numbers and gates nothing | Named exception | Itself (a manual dispatch) |
 | `convergence-nightly.yml` | The convergence gate's nightly cell (2,000 pages, 50 ms, 20 kills, run-id seed): schedule and dispatch only, outside `test-status`; the PR cell (200 pages, 10 ms, 6 kills, seed 6650) runs in `persistence-validation.yml` | Named exception | Itself (nightly Convergence schedule) |
 | `persistence-validation.yml` | `SOAK_OPERATIONS` 2,500 vs 10,000 | Named exception | Every push to master and the nightly Test schedule |
 | `persistence-validation.yml` | Crash robot `--robot-scope=pr` (Postgres lease-bound seams skipped, 820 s PGLite and 620 s Postgres ceilings) vs `full` (1200 s PGLite, 880 s Postgres; [ceilings](#crash-robot-ceilings)); the nightly adds that day's exploration seeds | Named exception | The full-ci dispatch, every push to master (same fixed list, so it may reuse that run) and the nightly Test schedule |
@@ -40,6 +41,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `native-locks.yml` | darwin-arm64 and darwin-x64 cells and the darwin-x64 heartbeat finalize: never on a pull request | Named exception ([below](#macos-runners)) | The full-ci dispatch, every push to master, the merge queue and the nightly Test schedule |
 | `e2e.yml` | Doc-only merge-queue entry selects no E2E file | Named exception | Every push to master (whole corpus) and the nightly E2E schedule |
 | `e2e.yml` | Full-corpus coverage lanes and their `e2e-status` checks | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch) |
+| `e2e.yml` | `openclaw-skill-resolver` (keyless, real OpenClaw gateway, one cell per OpenClaw version) | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch); `scripts/require-executed-tests.ts` fails an all-skip run |
 | `e2e.yml` | Tier 2 (LLM Skills) runs keyed on the nightly only; other events skip it, and `e2e-status` prints "not run: keys withheld" instead of counting it green | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch), keyed; `scripts/require-executed-tests.ts` fails the job when any test skipped or none ran, and each test fails unless the agent called a gbrain MCP tool |
 | `heavy-tests.yml` | Label-gated jobs on pull requests | Named exception | Nightly Heavy Tests schedule |
 | `heavy-tests.yml` | `grok-door` (label or input only) | Recorded decision: no scheduled run until the `XAI_API_KEY` secret exists | None yet, by decision |
@@ -234,6 +236,9 @@ inventory:
   the same run, attempt and commit. Otherwise both are left out with a warning:
   the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
   A push that reused a run has no `full-suite` job, so it is never evidence.
+- `tree.json` carries `os`, the runner's OS from `RUNNER_OS` (`Linux` for both
+  jobs). A run profile that sets `os` refuses a run whose `tree.json` records a
+  different OS or none (`os_mismatch`).
 - `bash scripts/pregate-remote-gate.sh --list` prints the inventory: the gate
   command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
   discovery the gate runs, one file per line. It exits non-zero when the
@@ -246,7 +251,10 @@ inventory:
   gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
   as remote-gate reuse already does. The gate leaves out the keyed-only
   Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
-  openclaw, so every test in it would skip.
+  openclaw, so every test in it would skip. It also leaves out
+  `test/e2e/openclaw-skill-resolver-real.test.ts`, which needs the OpenClaw
+  CLI and runs only in the full-corpus `openclaw-skill-resolver` job, so a
+  labelled head's E2E run never lists it.
 - gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
   succeeded. After "Re-run failed jobs", the failed jobs and the jobs that need
   them (the ledger job that writes the manifest included) run again; the
@@ -259,7 +267,12 @@ inventory:
   (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
   (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
   accepting `workflow_dispatch` and `push` runs from the last 24 hours, and
-  `remote_gate_runs` naming both with this inventory command. gstack reads them
+  `remote_gate_runs` naming both with this inventory command. Both profiles set
+  `os` to `Linux`, the OS of the runners that execute these jobs: gstack uses a
+  run only when its `tree.json` records that OS, and the final pregate's tests
+  stage reuses it only on a machine running the same OS (on macOS or Windows
+  that stage runs the selected tests locally; the lane carries below don't
+  need it). gstack reads the profiles
   only from `origin/<base>`, so a branch cannot loosen them. gstack accepts
   these keys from 1.91.377.0 on.
 

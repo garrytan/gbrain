@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::{
-    DuplicateQuery, ExpireFactArgs, FactQuery, InsertFactArgs, InsertFactsArgs, PageDeleteArgs,
-    SupersessionQuery, TrajectoryQuery, UnattributedQuery,
+    DuplicateQuery, ExpireFactArgs, FactQuery, FenceTarget, InsertFactArgs, InsertFactsArgs,
+    PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
 };
 
 #[napi]
@@ -160,6 +160,21 @@ impl Brain {
         self.run(env, move |s| s.count_unconsolidated_facts(&source_id))
     }
 
+    /// `listFenceRetireCandidates({ sourceId, slug, incoming })`: the before-state of each fence row the
+    /// incoming fence does not hold. The opened ids come from the store's write trust context
+    /// (`applyWriteTrust`): an opened row moves in place and is no candidate.
+    #[napi]
+    pub fn list_fence_retire_candidates<'env>(
+        &self,
+        env: &'env Env,
+        target: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let t: FenceTarget = required(target, "listFenceRetireCandidates target")?;
+            s.list_fence_retire_candidates(&t, &s.fence_context())
+        })
+    }
+
     /// `consolidateFact(id, takeId)`: resolves null.
     #[napi]
     pub fn consolidate_fact<'env>(
@@ -185,6 +200,22 @@ impl Brain {
         })
     }
 
+    /// `pageCollapseFacts(ids, bodyIds)`: resolves one `{ id, target, body_chars, body, lead }` row
+    /// per page found, by id.
+    #[napi]
+    pub fn page_collapse_facts<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+        body_ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<i64> = required(ids, "pageCollapseFacts ids")?;
+            let body_ids: Vec<i64> = required(body_ids, "pageCollapseFacts bodyIds")?;
+            s.page_collapse_facts(&ids, &body_ids)
+        })
+    }
+
     /// `getFactsHealth(source_id)`: resolves the counts and the top entities.
     #[napi]
     pub fn get_facts_health<'env>(
@@ -206,22 +237,6 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.migrate_facts_to_canonical(&phantom_slug, &canonical_slug, &source_id)
-        })
-    }
-
-    /// `pageCollapseFacts(ids, bodyIds)`: resolves one `{ id, target, body_chars, body, lead }` row
-    /// per page found, by id.
-    #[napi]
-    pub fn page_collapse_facts<'env>(
-        &self,
-        env: &'env Env,
-        ids: Value,
-        body_ids: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let ids: Vec<i64> = required(ids, "pageCollapseFacts ids")?;
-            let body_ids: Vec<i64> = required(body_ids, "pageCollapseFacts bodyIds")?;
-            s.page_collapse_facts(&ids, &body_ids)
         })
     }
 }

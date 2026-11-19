@@ -26,6 +26,8 @@ const PLAIN: Record<string, string> = {
   'src/core/link-relationships.ts refreshRelationships privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/ops/valid-time-read.ts resolveIdentity privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',
+  'src/core/persistence/concept-rebuild.ts ACCESS_SQL privatePagesFilterFragment': 'maintenance: compares a hidden concept\'s access with its rebuild\'s, to refuse a wider one',
+  'src/core/persistence/concept-rebuild.ts readHeldConceptRows privatePagesFilterFragment': 'maintenance: classifies a held concept\'s members as private for the purge preview; callers get a count or the local CLI',
   'src/core/persistence/origin-twins.ts readOriginClaimants privatePagesFilterFragment': 'maintenance: classifies twin pages as private',
   'src/core/persistence/rows-behind.ts scanRowsBehind privatePagesFilterFragment': 'maintenance: lineage privacy of rows behind the projection',
 };

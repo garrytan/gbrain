@@ -50,6 +50,7 @@ use crate::pages::{
     write_page,
 };
 use crate::sources::{read_source, require_source};
+use crate::trust::TrustTable;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -763,7 +764,17 @@ impl Store {
     ) -> Result<u64> {
         let new_slug = validate_slug(new_slug)?;
         let source = source_id.unwrap_or(DEFAULT_SOURCE);
+        // #9735: a move only re-keys the page and the facts that name it, so both keep their tier
+        // (`withTrustKeep(tx, ['pages', 'facts'])` in `engine-sql/pages.ts` `updateSlug`).
+        let mut trust = self.write_trust()?;
+        for table in [TrustTable::Pages, TrustTable::Facts] {
+            if !trust.keep.contains(&table) {
+                trust.keep.push(table);
+            }
+        }
+        let trust = &trust;
         self.write(|tx| {
+            let _keep = crate::write_trust::stamp_context::open(trust.clone());
             let Some(page) = read_page(&*tx, source, old_slug)? else {
                 return Ok(0);
             };
@@ -779,7 +790,7 @@ impl Store {
                 record_rename_alias(tx, source, &page.slug, &moved.slug)?;
                 // `moveSlugBindings`: the other families' records keyed by slug (steps 1-6), then
                 // this family's page aliases (steps 7-8).
-                crate::cascade::rename_slug_rows(tx, source, &page.slug, &moved.slug)?;
+                crate::cascade::rename_slug_rows(tx, trust, source, &page.slug, &moved.slug)?;
                 move_page_aliases(tx, source, &page.slug, &moved.slug)?;
             }
             Ok(1)

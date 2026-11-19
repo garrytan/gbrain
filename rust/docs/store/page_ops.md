@@ -7,6 +7,9 @@ Every date is an ISO string with microseconds (`2026-08-10T12:00:00.000123Z`) or
 TypeScript members turn them into `Date` where PGLite returns one. Text sorts in byte order.
 There are no secondary indexes yet: each method scans the pages of its scope.
 
+The `pages` capability stays unreported while `replaceDerivedAliases`, `getPageSealState`, `refreshPageOrigin`,
+`listEntityKeyRows`, `listIdentityDecisions`, `listRestrictedIdentityMembers` and `applyIdentityDecisions` refuse.
+
 A read scope (`PageReadScope`) is `{ sourceId?, sourceIds?, live?, excludePrivate? }`. A non-empty `sourceIds`
 wins over a non-empty `sourceId`; with neither, every source. `live: true` also hides deleted pages,
 pages whose frontmatter has a `quarantine` key and pages of a missing or archived source. The

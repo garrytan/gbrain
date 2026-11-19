@@ -320,17 +320,19 @@ fn anomalies_under_exclude_private_skip_hidden_pages_in_today_and_the_baseline()
         honor_aliases: true,
         entity_privacy: true,
         owner_only: OwnerOnly::Lineage,
+        ..Default::default()
     };
     assert_eq!(
         slugs(&read(since, None)),
         ["alias", "open", "readers", "secret"]
     );
-    assert_eq!(slugs(&read(since, Some(strict))), ["open"]);
+    assert_eq!(slugs(&read(since, Some(strict.clone()))), ["open"]);
     // With aliases off, `access: restricted` is no longer private.
     let no_alias = PrivacyPolicy {
         honor_aliases: false,
         entity_privacy: true,
         owner_only: OwnerOnly::Lineage,
+        ..Default::default()
     };
     assert_eq!(slugs(&read(since, Some(no_alias))), ["alias", "open"]);
     // With the privacy part off (privacy relaxed), only the reader list still hides a page.
@@ -338,6 +340,7 @@ fn anomalies_under_exclude_private_skip_hidden_pages_in_today_and_the_baseline()
         honor_aliases: true,
         entity_privacy: false,
         owner_only: OwnerOnly::Lineage,
+        ..Default::default()
     };
     assert_eq!(
         slugs(&read(since, Some(relaxed))),

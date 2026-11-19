@@ -2,9 +2,11 @@
 //! (src/core/search/private-visibility.ts), which PGLite adds to a read that passes
 //! `excludePrivate`. rust/docs/store/facts.md names the file and line of every rule below.
 //!
-//! The policy is the one PGLite renders with no caller record: the empty identity, no folder
-//! rule satisfied, no lineage read. The TypeScript member refuses any other caller before it
-//! reads. Two process settings change that rendering, and the member passes both:
+//! The policy is the one PGLite renders with no caller record (the empty identity, no folder
+//! rule satisfied, no lineage read), or for a record of only a reader identity and a
+//! private-readable grant: the entity gate then judges by both, and the provenance page by the
+//! identity on the caller's own member page only (`member_page`). The TypeScript member refuses
+//! any other caller before it reads. Two process settings change that rendering, and the member passes both:
 //! `honor_aliases` (`visibility.honor_aliases`) and `entity_privacy` (false when an operator
 //! relaxed remote privacy, which drops the privacy part of the entity-page gate only).
 //!
@@ -20,15 +22,15 @@
 //!
 //! The owner-only rule is the one part of the member-access test the store can answer for a page: a page of an
 //! owner-only source, and a concept or question synthesized from one, is hidden (`OwnerOnly::Lineage`), or every page
-//! is while the brain holds an owner-only source (`OwnerOnly::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
-//! page hidden after its owner-only input is deleted for good, as SQL's delete trigger does. The store keeps no
-//! `derivation_inputs`, so a page derived from an owner-only row by that table alone is not hidden here.
+//! is while the brain holds an owner-only source or has held owner-only data (`OwnerOnly::Closed`). `owner_only_marks`
+//! (`owner_only_marks.rs`) keeps a page hidden after its owner-only input is deleted for good, as SQL's delete trigger
+//! does. A fact read applies the rule to the provenance page, the entity and holding pages, and the fact row itself
+//! (`ownerOnlyFactSql`: a fact of an owner-only source). The store keeps no `derivation_inputs`, so a row derived from an
+//! owner-only row by that table alone is not hidden here.
 //!
 //! The owner-only sources are read once per read, on the first page it judges ([`OwnerOnlyCache`]): the page reads
 //! (`searchVector`, the link, alias, salience and page-read members) each keep one, so a read of many pages does not
-//! scan the sources for each. A fact read ends with the same rule (`ownerOnlyFactAllowedSql`): a fact held in an
-//! owner-only source is hidden, or every fact is under the closed form, and the provenance page is judged by the
-//! owner-only rule as a page ([`hidden_by_private_provenance`]).
+//! scan the sources for each.
 
 use super::FactRecord;
 use crate::Result;
@@ -44,7 +46,7 @@ use serde_json::{Map, Value};
 use std::collections::HashSet;
 
 /// The policy settings the TypeScript member read from the rendered SQL.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrivacyPolicy {
     /// `honorAliases()`: a page with no `visibility` and a private `access` or
@@ -52,22 +54,45 @@ pub struct PrivacyPolicy {
     pub honor_aliases: bool,
     /// `privacyForCaller`: the entity and holding pages are judged by the privacy part too.
     pub entity_privacy: bool,
+    /// The caller's reader identity (`member:<id>` and `group:<g>` principals) that the page
+    /// policy judges a page's readers by (`readersAllowedSql`). Empty for the no-caller rendering.
+    /// The fact policy judges the entity and holding pages by it, and the provenance page only
+    /// when that page is `member_page`.
+    #[serde(default)]
+    pub identity: Vec<String>,
+    /// The fact policy's member-page case (`privateProvenanceFilterUnderPolicy`): the caller's own
+    /// member page (`memory/members/<member>`), the one provenance page judged by `identity`;
+    /// every other provenance page keeps the empty identity. None for a page read, for the
+    /// no-caller rendering and for `privateFactFilterForCaller`, which has no such case.
+    #[serde(default)]
+    pub member_page: Option<String>,
+    /// The caller's private-readable grant (`orPrivateReadableSource`): a page of one of these
+    /// sources that is not a pinned question passes the privacy part.
+    #[serde(default)]
+    pub private_readable_sources: Vec<String>,
     /// The owner-only form the baseline rendered (`src/core/access/owner-only.ts`): see [`OwnerOnly`].
     pub owner_only: OwnerOnly,
+    /// `remoteProvenanceFloorSql('facts')`, the remote floor: only the provenance page is judged
+    /// (`privateProvenanceFilterFragment`), with no entity or holding-page gate.
+    #[serde(default)]
+    pub provenance_only: bool,
 }
 
 /// The owner-only part of `accessAllowedSql` for the no-caller baseline (`ownerOnlyPageSql`). It is part of the
 /// member-access test, so `entity_privacy` does not switch it off.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OwnerOnly {
-    /// `gbrain_owner_only_lineage('pages', id)` behind its guard (schema v320 and above): a page held in an owner-only
+    /// `gbrain_owner_only_lineage('pages', id)` behind its guard (schema v320 and above), or its v328 form with the login's
+    /// read mode, which is always the exact lineage here (the store has no logins whose reads row security narrows): a page held in an owner-only
     /// source is hidden, and so is a concept or question with a `concept-provenance` input page in one, and a page
     /// `owner_only_marks` names (`owner_only_marks.rs`). The rows `derivation_inputs` names are not here: this store
     /// keeps no such table.
+    #[default]
     Lineage,
-    /// `ANY_OWNER_ONLY_SQL` (a brain below v320, or a call outside an engine scope): any owner-only source in the
-    /// brain hides every page.
+    /// The closed form (a brain below v320, or a call outside an engine scope): any owner-only source in the brain, or
+    /// SQL's held flag (the brain has held owner-only data), hides every page. The store's held flag is a mark
+    /// (`any_marked`), as for the lineage guard.
     Closed,
 }
 
@@ -122,10 +147,13 @@ impl OwnerOnlySources {
     }
 
     /// `ownerOnlyFactSql(facts, form)` for the no-caller baseline: a fact held in an owner-only source is hidden, or
-    /// every fact is while the brain holds an owner-only source (the closed form). The rows `derivation_inputs` and
+    /// every fact is while the brain holds an owner-only source or a mark (the closed form). The rows `derivation_inputs` and
     /// `owner_only_marks` name are not here: this store keeps no `derivation_inputs`, and its marks name pages only.
     fn fact_hidden(&self, form: OwnerOnly, source_id: &str) -> bool {
-        !self.ids.is_empty() && (form == OwnerOnly::Closed || self.holds(source_id))
+        match form {
+            OwnerOnly::Closed => self.guarded(),
+            OwnerOnly::Lineage => self.holds(source_id),
+        }
     }
 }
 
@@ -135,7 +163,7 @@ impl OwnerOnlySources {
 pub(crate) struct OwnerOnlyCache(Option<OwnerOnlySources>);
 
 impl OwnerOnlyCache {
-    /// [`page_hidden`] with the sources of this read.
+    /// [`page_hidden_with`] with the sources of this read.
     pub(crate) fn page_hidden(
         &mut self,
         read: &dyn KvRead,
@@ -146,7 +174,7 @@ impl OwnerOnlyCache {
             Some(sources) => sources,
             None => self.0.insert(OwnerOnlySources::read(read)?),
         };
-        page_hidden(read, page, policy, sources)
+        page_hidden_with(read, page, policy, sources)
     }
 }
 
@@ -173,21 +201,25 @@ pub(crate) fn hidden_by_private_provenance(
     read: &dyn KvRead,
     row: &FactRecord,
     policy: &PrivacyPolicy,
-    owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
-    // `ownerOnlyFactAllowedSql`: the fact itself is held in an owner-only source.
+    let owner_only = &OwnerOnlySources::read(read)?;
+    // `ownerOnlyFactSql(facts, form)` for a caller that is not the owner: a fact of an owner-only
+    // source (`Lineage`; the store marks no fact rows), or any fact while the brain holds an
+    // owner-only source (`Closed`).
     if owner_only.fact_hidden(policy.owner_only, &row.source_id) {
         return Ok(true);
     }
-    // The provenance page is judged by `readPolicyFragment('pp', ..)`: the member-access part (which holds the
-    // owner-only rule) and the privacy part.
     if let Some(slug) = &row.source_markdown_slug
         && let Some(page) = read_page(read, &row.source_id, slug)?
-        && !(!owner_only_hidden(read, &page, policy.owner_only, owner_only)?
-            && readers_allowed(read, &page)?
-            && privacy_allows(read, &page, policy.honor_aliases)?)
+        && owner_only_hidden(read, &page, policy.owner_only, owner_only)?
     {
         return Ok(true);
+    }
+    if hidden_by_provenance_page(read, row, policy)? {
+        return Ok(true);
+    }
+    if policy.provenance_only {
+        return Ok(false);
     }
     let held = match (&row.entity_slug, &row.source_markdown_slug) {
         (Some(_), Some(slug)) if holding_slug(slug) => Some(slug),
@@ -197,18 +229,20 @@ pub(crate) fn hidden_by_private_provenance(
         let Some(page) = read_page(read, &row.source_id, slug)? else {
             continue;
         };
-        if page_hidden(read, &page, policy, owner_only)? {
+        if page_hidden_with(read, &page, policy, owner_only)? {
             return Ok(true);
         }
     }
-    // GBRA-574: a bare name key (no `/`) reads as the page later written at `<dir>/<key>`, so each
-    // such page's privacy covers it.
-    if let Some(key) = row.entity_slug.as_deref().filter(|e| !e.contains('/')) {
+    // GBRA-574: a bare name key reads as the page later written at `<dir>/<key>`, so that page's
+    // privacy covers the fact too (`privateEntityFilterForCaller`'s `keyed`).
+    if let Some(entity) = row.entity_slug.as_deref()
+        && !entity.contains('/')
+    {
         for dir in NAME_KEY_PAGE_DIRS {
-            let Some(page) = read_page(read, &row.source_id, &format!("{dir}/{key}"))? else {
+            let Some(page) = read_page(read, &row.source_id, &format!("{dir}/{entity}"))? else {
                 continue;
             };
-            if page_hidden(read, &page, policy, owner_only)? {
+            if page_hidden_with(read, &page, policy, owner_only)? {
                 return Ok(true);
             }
         }
@@ -217,7 +251,7 @@ pub(crate) fn hidden_by_private_provenance(
     Ok(false)
 }
 
-/// `NAME_KEY_PAGE_DIRS` (`src/core/entities/basename-dirs.ts`): the directories whose page at
+/// `NAME_KEY_PAGE_DIRS` (src/core/entities/basename-dirs.ts): the directories whose page at
 /// `<dir>/<key>` covers a bare name key's facts for privacy.
 const NAME_KEY_PAGE_DIRS: [&str; 8] = [
     "people",
@@ -230,18 +264,60 @@ const NAME_KEY_PAGE_DIRS: [&str; 8] = [
     "organizations",
 ];
 
-/// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
-/// for the empty identity (named readers, origin readers, the owner-only rule), then the privacy part
-/// unless `entity_privacy` is false. It is the test the entity gate puts on an entity page.
+/// Whether the row's provenance page (`source_markdown_slug`) fails the page policy: the
+/// provenance half of the policy above, and by itself `privateProvenanceFilterFragment` (the
+/// remote provenance floor, `remoteProvenanceFloorSql`, for a caller that is not labelled-only),
+/// which judges no entity or holding page. A missing page hides nothing.
+pub(crate) fn hidden_by_provenance_page(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let Some(slug) = &row.source_markdown_slug else {
+        return Ok(false);
+    };
+    let Some(page) = read_page(read, &row.source_id, slug)? else {
+        return Ok(false);
+    };
+    let access = readers_allowed(read, &page, provenance_identity(policy, slug))?;
+    Ok(!(access && privacy_allows(read, &page, policy.honor_aliases)?))
+}
+
+/// The identity the provenance page at `slug` is judged by: the caller's on its own member page,
+/// else the empty identity (`readPolicyFragment('pp', [], ...)`).
+fn provenance_identity<'a>(policy: &'a PrivacyPolicy, slug: &str) -> &'a [String] {
+    if policy.member_page.as_deref() == Some(slug) {
+        &policy.identity
+    } else {
+        &[]
+    }
+}
+
+/// [`page_hidden_with`], reading the owner-only sources for this one page.
 pub(crate) fn page_hidden(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    page_hidden_with(read, page, policy, &OwnerOnlySources::read(read)?)
+}
+
+/// Whether the page policy `privatePagesFilterForCaller(p)` hides `page`: the member-access part
+/// for the policy's identity (named readers, origin readers, the owner-only rule), then the privacy
+/// part unless `entity_privacy` is false, which a page of a private-readable source passes unless it
+/// is a pinned question. It is the test the entity gate puts on an entity page. A read over many
+/// pages reads `owner_only` once ([`OwnerOnlySources::read`]).
+pub(crate) fn page_hidden_with(
     read: &dyn KvRead,
     page: &PageRecord,
     policy: &PrivacyPolicy,
     owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
     let allowed = !owner_only_hidden(read, page, policy.owner_only, owner_only)?
-        && readers_allowed(read, page)?
-        && (!policy.entity_privacy || privacy_allows(read, page, policy.honor_aliases)?);
+        && readers_allowed(read, page, &policy.identity)?
+        && (!policy.entity_privacy
+            || private_source_open(page, policy)
+            || privacy_allows(read, page, policy.honor_aliases)?);
     Ok(!allowed)
 }
 
@@ -258,10 +334,29 @@ fn owner_only_hidden(
     sources: &OwnerOnlySources,
 ) -> Result<bool> {
     if form == OwnerOnly::Closed {
-        // `ANY_OWNER_ONLY_SQL` reads sources only: no mark is read in a brain below v320.
-        return Ok(!sources.ids.is_empty());
+        // The closed form reads the sources and the held flag, which a mark stands for here.
+        return Ok(sources.guarded());
     }
     Ok(sources.guarded() && sources.lineage_strict(read, page)?)
+}
+
+/// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
+/// does not carry `pinned_question`.
+fn private_source_open(page: &PageRecord, policy: &PrivacyPolicy) -> bool {
+    policy.private_readable_sources.contains(&page.source_id)
+        && !page.frontmatter.contains_key("pinned_question")
+}
+
+/// Whether the no-caller policy hides a page version (`callerReadersAllowedSql(pv, 'snapshot') AND
+/// privacyForCaller(p, privateSnapshotFilterFragment(pv))`): the version names readers, or, with
+/// `entity_privacy`, its own fields are private. Only the version's type and frontmatter count.
+pub(crate) fn version_hidden(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    fm.contains_key("readable_by")
+        || (policy.entity_privacy && !snapshot_fields_allow(page_type, fm, policy.honor_aliases))
 }
 
 /// `frontmatter ->> key`.
@@ -271,8 +366,13 @@ fn text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
 
 /// `derivedPageSql`: an atom, a question, or a concept with `synthesized_by`.
 fn derived_page(page: &PageRecord) -> bool {
-    matches!(page.page_type.as_str(), "atom" | "question")
-        || (page.page_type == "concept" && text(&page.frontmatter, "synthesized_by").is_some())
+    derived_fields(&page.page_type, &page.frontmatter)
+}
+
+/// `derivedPageSql` over a row's type and frontmatter (a page or one of its versions).
+fn derived_fields(page_type: &str, frontmatter: &Map<String, Value>) -> bool {
+    matches!(page_type, "atom" | "question")
+        || (page_type == "concept" && text(frontmatter, "synthesized_by").is_some())
 }
 
 /// A concept-provenance input of a question or synthesized concept (`gbrain_access_origin_restricted`
@@ -370,10 +470,61 @@ fn explicitly_private(page: &PageRecord) -> bool {
     text(&page.frontmatter, "visibility").as_deref() == Some("private")
 }
 
-/// The member-access part for the empty identity (`accessAllowedSql`): no readers of its own,
-/// and no origin that names readers.
-fn readers_allowed(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-    if names_readers(page) {
+/// `NOBODY`: the readers of a `readable_by` value that is present but malformed.
+const NOBODY: &str = "!nobody";
+
+/// `ACCESS_ID_RE`, `^[a-z0-9][a-z0-9._-]{0,63}$`.
+fn access_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    (1..=64).contains(&bytes.len())
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes[1..].iter().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
+}
+
+/// `gbrain_access_norm_readers` for one entry: trimmed of ASCII spaces and ASCII lower-cased, a
+/// bare or `member:` id reads as `member:<id>`, a `group:` id as itself; anything else is none.
+fn norm_reader(raw: &str) -> Option<String> {
+    let v = raw.trim_matches(' ').to_ascii_lowercase();
+    if let Some(group) = v.strip_prefix("group:") {
+        return access_id(group).then(|| v.clone());
+    }
+    let id = v.strip_prefix("member:").unwrap_or(&v);
+    access_id(id).then(|| format!("member:{id}"))
+}
+
+/// `gbrain_access_readers(frontmatter)` (schema migration v282), the `page_readers` column: none
+/// without a `readable_by` key; the sorted, distinct principals of a string or of a list of 1 to
+/// 256 strings that all normalize; `['!nobody']` for any other value.
+pub(crate) fn access_readers(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
+    let value = frontmatter.get("readable_by")?;
+    let items: Option<Vec<&str>> = match value {
+        Value::String(one) => Some(vec![one.as_str()]),
+        Value::Array(items) if (1..=256).contains(&items.len()) => {
+            items.iter().map(Value::as_str).collect()
+        }
+        _ => None,
+    };
+    let readers: Option<Vec<String>> =
+        items.and_then(|items| items.into_iter().map(norm_reader).collect());
+    Some(match readers {
+        Some(mut readers) => {
+            readers.sort();
+            readers.dedup();
+            readers
+        }
+        None => vec![NOBODY.to_string()],
+    })
+}
+
+/// The member-access part (`accessAllowedSql`) for `identity`: no readers of its own or readers
+/// that name one of its principals (`readersAllowedSql`), and no origin that names readers.
+fn readers_allowed(read: &dyn KvRead, page: &PageRecord, identity: &[String]) -> Result<bool> {
+    if names_readers(page)
+        && !access_readers(&page.frontmatter)
+            .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
+    {
         return Ok(false);
     }
     let plain = !matches!(
@@ -453,13 +604,19 @@ fn privacy_allows(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> 
 /// `privateSnapshotFilterFragment`: `visibility` (an absent one is private on a derived page),
 /// the `pinned_question` marker, and the privacy aliases of a page with no `visibility`.
 fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
-    let fm = &page.frontmatter;
+    snapshot_fields_allow(&page.page_type, &page.frontmatter, honor_aliases)
+}
+
+/// `privateSnapshotFilterFragment` over a row's type and frontmatter.
+fn snapshot_fields_allow(page_type: &str, fm: &Map<String, Value>, honor_aliases: bool) -> bool {
     let visibility = text(fm, "visibility");
-    let effective = visibility.as_deref().unwrap_or(if derived_page(page) {
-        "private"
-    } else {
-        "world"
-    });
+    let effective = visibility
+        .as_deref()
+        .unwrap_or(if derived_fields(page_type, fm) {
+            "private"
+        } else {
+            "world"
+        });
     effective != "private"
         && !fm.contains_key("pinned_question")
         && !(honor_aliases && visibility.is_none() && alias_private(fm))
@@ -546,7 +703,53 @@ fn declared_lineage_private(read: &dyn KvRead, page: &PageRecord) -> Result<bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::{Map, Value, json};
+
+    fn readers(value: Value) -> Option<Vec<String>> {
+        let mut frontmatter = Map::new();
+        frontmatter.insert("readable_by".to_string(), value);
+        access_readers(&frontmatter)
+    }
+
+    #[test]
+    fn access_readers_normalizes_as_gbrain_access_readers() {
+        assert_eq!(access_readers(&Map::new()), None);
+        assert_eq!(
+            readers(json!([
+                "bob-example",
+                " Member:Alice-Example ",
+                "group:team-a",
+                "bob-example"
+            ])),
+            Some(vec![
+                "group:team-a".to_string(),
+                "member:alice-example".to_string(),
+                "member:bob-example".to_string(),
+            ])
+        );
+        assert_eq!(
+            readers(json!("group:team-a")),
+            Some(vec!["group:team-a".to_string()])
+        );
+        let nobody = Some(vec!["!nobody".to_string()]);
+        for bad in [
+            json!([]),
+            json!([42]),
+            json!(["alice-example", "not valid!"]),
+            json!(null),
+            json!({"a": 1}),
+            json!(["group:"]),
+            json!(["-alice"]),
+            json!([format!("a{}", "b".repeat(64))]),
+            Value::Array(vec![json!("a"); 257]),
+        ] {
+            assert_eq!(readers(bad), nobody);
+        }
+        assert_eq!(
+            readers(json!([format!("a{}", "b".repeat(63))])).map(|r| r[0].len()),
+            Some("member:".len() + 64)
+        );
+    }
 
     /// The owner-only rules of `privateProvenanceFilterUnderPolicy` (its last term, `ownerOnlyFactAllowedSql`, and the
     /// provenance page judged by the member-access test): a fact held in an owner-only source, a fact whose provenance
@@ -577,13 +780,13 @@ mod tests {
         };
         let hidden = |form: OwnerOnly, row: &FactRecord| {
             let read = store.read().unwrap();
-            let sources = OwnerOnlySources::read(&*read).unwrap();
             let policy = PrivacyPolicy {
                 honor_aliases: true,
                 entity_privacy: true,
                 owner_only: form,
+                ..Default::default()
             };
-            hidden_by_private_provenance(&*read, row, &policy, &sources).unwrap()
+            hidden_by_private_provenance(&*read, row, &policy).unwrap()
         };
         put_in("default", "notes/open");
         let open = fact("default", Some("notes/open"));
@@ -602,6 +805,12 @@ mod tests {
         assert!(!hidden(OwnerOnly::Lineage, &open) && !hidden(OwnerOnly::Lineage, &bare));
         // The closed form hides every fact while the brain holds an owner-only source.
         assert!(hidden(OwnerOnly::Closed, &open) && hidden(OwnerOnly::Closed, &bare));
+        // Once the brain has held owner-only data (a mark), the closed form keeps hiding every fact after the source
+        // stops being owner-only, as SQL's held flag does; the lineage form hides only the marked rows.
+        store.delete_page("notes/vault", Some("vault")).unwrap();
+        source("vault", json!({}));
+        assert!(hidden(OwnerOnly::Closed, &open) && hidden(OwnerOnly::Closed, &bare));
+        assert!(!hidden(OwnerOnly::Lineage, &open) && !hidden(OwnerOnly::Lineage, &in_vault));
     }
 
     /// `privateEntityFilterForCaller`'s keyed arm (GBRA-574): a bare name key is covered by the privacy
@@ -627,13 +836,13 @@ mod tests {
         };
         let hidden = |row: &FactRecord| {
             let read = store.read().unwrap();
-            let sources = OwnerOnlySources::read(&*read).unwrap();
             let policy = PrivacyPolicy {
                 honor_aliases: true,
                 entity_privacy: true,
                 owner_only: OwnerOnly::Lineage,
+                ..Default::default()
             };
-            hidden_by_private_provenance(&*read, row, &policy, &sources).unwrap()
+            hidden_by_private_provenance(&*read, row, &policy).unwrap()
         };
         assert!(hidden(&fact("alice-example")));
         assert!(hidden(&fact("people/alice-example")));

@@ -190,6 +190,7 @@ import { assertSchemaNotAhead } from './schema-client-behind.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
 import { insertEvalCandidate } from './feedback/store.ts';
+import { noteSchemaVersion } from './migrate-pending.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -1162,10 +1163,8 @@ export class PGLiteEngine implements BrainEngine {
 
   async initSchema(): Promise<void> {
     // Tier 3: snapshot was loaded into PGlite — schema + migrations already
-    // applied. Nothing to do. Returns immediately.
-    if (this._snapshotLoaded) {
-      return;
-    }
+    // applied. Only record the schema version, as a cold init does.
+    if (this._snapshotLoaded) return noteSchemaVersion(this, parseInt(await this.getConfig('version') ?? '', 10));
     let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
     let model: string = DEFAULT_EMBEDDING_MODEL;
     const embedded = embeddedSchemaEmbedding(this); // settings.embedding, never the process gateway
@@ -1337,7 +1336,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async purgeDeletedPages(
     olderThanHours: number,
-    opts?: { dryRun?: boolean; excludeIds?: number[] },
+    opts?: { dryRun?: boolean; excludeIds?: number[]; onlyIds?: number[] },
   ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; source_id: string; deleted_at: Date }[] }> {
     return pagesImpl.purgeDeletedPages(this.engineSql, olderThanHours, opts);
   }

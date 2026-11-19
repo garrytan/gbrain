@@ -23,6 +23,7 @@ use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
 use crate::pages::next_id;
 use crate::sources::all_sources;
+use crate::trust::{TrustTier, WriteTrust};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
@@ -194,6 +195,7 @@ impl Store {
         let valid_until = time_arg(OP, "validTo", &obs.valid_to)?;
         let now = self.env.now_micros();
         let noop = json!({ "action": "noop", "factId": null, "supersededId": null });
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let rows = entity_rows(tx, &obs.source_id, &obs.entity_slug)?;
             let same_dimension = |r: &&FactRecord| r.dimension.as_deref() == Some(&obs.dimension);
@@ -238,21 +240,21 @@ impl Store {
                         && r.valid_from_us >= cur.valid_from_us
                 });
                 if seen {
-                    return Ok(noop);
+                    return Ok(noop.clone());
                 }
-                free_key(tx, obs, valid_from)?;
+                free_key(tx, trust, obs, valid_from)?;
                 row.expired_at_us = Some(now);
                 row.consolidated_into = Some(cur.id as i64);
-                return Ok(match insert(tx, &mut row)? {
+                return Ok(match insert(tx, trust, &mut row)? {
                     true => {
                         json!({ "action": "corroborated", "factId": row.id, "supersededId": null })
                     }
-                    false => noop,
+                    false => noop.clone(),
                 });
             }
-            free_key(tx, obs, valid_from)?;
-            if !insert(tx, &mut row)? {
-                return Ok(noop);
+            free_key(tx, trust, obs, valid_from)?;
+            if !insert(tx, trust, &mut row)? {
+                return Ok(noop.clone());
             }
             let mut superseded = None;
             if let Some(cur) = &current
@@ -260,13 +262,14 @@ impl Store {
                 && valid_from.is_none_or(|from| from >= cur.valid_from_us)
                 && let Some(old) = crate::facts::read_fact(tx, cur.id)?
                 && old.valid_until_us.is_none()
+                // ONTOLOGY_SUPERSEDE_GUARD: a writer closes only a row no more trusted than it
+                // (an undeclared writer ranks as `unknown`).
+                && old.tier().rank() <= trust.writer.unwrap_or(TrustTier::Unknown).rank()
             {
-                // ONTOLOGY_SUPERSEDE_GUARD: every row the store writes carries trust tier
-                // `unknown`, the tier of an undeclared writer, so the guard always passes.
                 let mut new = old.clone();
                 new.valid_until_us = Some(valid_from.unwrap_or(now));
                 new.superseded_by = Some(row.id);
-                write_fact(tx, Some(&old), &new)?;
+                write_fact(tx, trust, Some(&old), &new)?;
                 superseded = Some(cur.id);
             }
             Ok(json!({
@@ -416,6 +419,7 @@ fn real_arg(op: &str, value: f64) -> Result<f32> {
 /// (dimension, value, value_hash and dim_status set null). Only a dated observation has a key.
 fn free_key(
     tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
     obs: &OntologyObservation,
     valid_from: Option<i64>,
 ) -> Result<()> {
@@ -434,7 +438,7 @@ fn free_key(
             new.value = None;
             new.value_hash = None;
             new.dim_status = None;
-            write_fact(tx, Some(&old), &new)?;
+            write_fact(tx, trust, Some(&old), &new)?;
         }
     }
     Ok(())
@@ -442,7 +446,7 @@ fn free_key(
 
 /// `INSERT ... ON CONFLICT (stint key) DO NOTHING`: the row's checks, then the stint key, then the
 /// source (the foreign key Postgres checks after the row). True when the row was stored.
-fn insert(tx: &mut dyn KvWrite, row: &mut FactRecord) -> Result<bool> {
+fn insert(tx: &mut dyn KvWrite, trust: &WriteTrust, row: &mut FactRecord) -> Result<bool> {
     check_row("mergeOntologyFact", row)?;
     let held = stint_holder(
         tx,
@@ -458,7 +462,7 @@ fn insert(tx: &mut dyn KvWrite, row: &mut FactRecord) -> Result<bool> {
     }
     require_fact_source(tx, &row.source_id)?;
     row.id = next_id(tx, COUNTER)?;
-    write_fact(tx, None, row)?;
+    write_fact(tx, trust, None, row)?;
     Ok(true)
 }
 
@@ -710,7 +714,7 @@ mod tests {
                 ..FactRecord::default()
             };
             row.id = next_id(tx, COUNTER)?;
-            write_fact(tx, None, &row)
+            write_fact(tx, &WriteTrust::default(), None, &row)
         })
         .unwrap();
         assert_eq!(

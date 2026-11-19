@@ -284,7 +284,7 @@ impl Store {
             }
             let record = RunRecord {
                 ran_at_us: self.env.now_micros(),
-                ..record
+                ..record.clone()
             };
             put_json(tx, &key, &record)?;
             tx.put(&run_time_key(record.ran_at_us, &record.run_id), &[])?;

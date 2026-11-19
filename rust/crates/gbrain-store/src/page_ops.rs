@@ -977,6 +977,7 @@ impl Store {
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
             return Ok(json!({ "slugs": slugs, "count": slugs.len(), "pages": rows }));
         }
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let pages = select(&*tx, self.env.now_micros())?;
             let mut by_source: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -996,7 +997,7 @@ impl Store {
             let now = self.env.now_micros();
             for (source, slugs) in &by_source {
                 scrub_purged_slugs(tx, source, slugs)?;
-                crate::facts::expire_gone_page_facts(tx, source, slugs, now)?;
+                crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;
             }
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
             Ok(json!({ "slugs": slugs, "count": slugs.len() }))
