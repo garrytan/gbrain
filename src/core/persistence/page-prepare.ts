@@ -822,6 +822,11 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     apply: async tx => {
       if (row.authority.remote) await refuseRemoteGuestDelete(tx, row.source_id, row.slug, requestPrincipal(row));
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
+      // GST-3179: a concept rebuild's purge runs only while the tombstone is still held at the delete synthesis read.
+      const unheld = preparedPurge && p.concept_hold !== undefined
+        ? await (await import('./concept-rebuild.ts')).conceptPurgeRefusal(tx, row.source_id, row.slug, p.concept_hold) : null;
+      if (unheld) throw pageRefusal('revision_conflict', `The concept rebuild's purge left the page alone: ${unheld}.`, row,
+        `Page ${row.slug} of source ${row.source_id} changed after concept synthesis read it.`, pageFix(row.source_id, row.slug));
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...(bodyUnread(snapshot.page) ? withoutBody(snapshot.page) : snapshot.page), source_path: null, source_uri: null } as Page }, preparedPurge);
       if (preparedPurge) return purgePageInTransaction(tx, row, snapshot, preparedPurge);
@@ -1034,6 +1039,14 @@ function remoteCoreMarkingKept(row: WriteRequest, snapshot: PageSnapshot | null,
   const carried = carryCoreMarking(snapshot.page.frontmatter, parsed.frontmatter ?? {});
   if (carried.always_load === parsed.frontmatter?.always_load && carried.core_priority === parsed.frontmatter?.core_priority) return content;
   return serializePageToMarkdown({ ...snapshot.page, ...parsed, frontmatter: carried }, parsed.tags);
+}
+
+/** GST-3179: a concept rebuild publishes only while every member is live at the revision its narrative read. */
+async function assertRebuildMembersUnchanged(tx: BrainEngine, row: WriteRequest, p: Record<string, unknown>): Promise<void> {
+  if (row.operation !== 'submit_job' || p.kind !== 'managed_maintenance_page' || p.rebuild_members === undefined) return;
+  if (Array.isArray(p.rebuild_members) && await (await import('./concept-rebuild.ts')).membersUnchanged(tx, row.source_id, p.rebuild_members as Array<{ slug: string; revision: string }>)) return;
+  throw pageRefusal('revision_conflict', 'A member the rebuilt concept was built from changed or was removed during synthesis, so nothing was published; the next run writes the concept again.', row,
+    `A member of concept ${row.slug} in source ${row.source_id} moved after synthesis read it.`, pageFix(row.source_id, row.slug));
 }
 
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
@@ -1260,7 +1273,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
   const publication: PreparedMutation = { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnly,
     ...(core ? { exclusiveSources: core.exclusiveSources } : {}), ...(trust ? { trust } : {}), ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
-    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, incoming, labelGuard); },
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, incoming, labelGuard); await assertRebuildMembersUnchanged(tx, row, p); },
     apply: async (tx, preimage) => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     let removedTimeline: TimelineRowsRemoved | null = null;

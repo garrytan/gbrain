@@ -558,7 +558,7 @@ export async function runPhaseSynthesizeConcepts(
       // world, so a strict source never commits an intermediate private page.
       const covered = !rebuild && visibility === 'world' && await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs);
       const write: ConceptWrite = { concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, visibility, covered, synthesisMode, synthesized, narrative,
-        revision: rebuild ? null : existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '', ...(rebuild ? { rebuild: maintenance ? 'purged' as const : rebuild } : {}) };
+        revision: rebuild ? null : existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '', ...(rebuild ? { rebuild: maintenance ? { purgedMembers: rebuild.members } : rebuild } : {}) };
       if (rebuild) rebuilds.push(write);
       // GBRA-60: a managed run's concepts publish in batches (concept-writes.ts), each one publication group on Postgres.
       await stopIfAborted();
