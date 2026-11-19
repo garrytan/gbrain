@@ -28,6 +28,9 @@
  * policies judge the caller as the same record with `restricted` true. That is no wider than the short form on any
  * brain the premise holds for, and on a brain it does not (a store that keeps no such trigger) it is the policy the
  * short form stands in for: readers named by `readable_by` still apply and a page derived from one stays hidden.
+ * The Rust page write sets the flag too (access_flag.rs), so a Rust brain that once held a `readable_by` page renders
+ * the full form and never reaches this mapping; a brain that never held one still renders the short form, so the
+ * mapping stays (test/engine-parity/restriction-flag-reads.test.ts stops on that brain without it).
  *
  * The concept-input test is rendered either inline or as a call of `gbrain_concept_inputs_private` (migration v311),
  * by the schema version the context carries. The two forms are the same test, so the comparison reads both as one.

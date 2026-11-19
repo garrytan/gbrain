@@ -81,7 +81,7 @@ getPage	pages	yes	76	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	316	yes	yes	yes	serves
+putPage	pages	yes	318	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -226,7 +226,7 @@ getUnverifiedExtractionPageIds	links	yes	3	no	yes	yes	serves
 getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	3	no	yes	yes	serves
 getSalienceScores	links	yes	4	yes	yes	yes	serves
-findOrphanPages	links	yes	4	yes	yes	yes	serves
+findOrphanPages	links	yes	6	yes	yes	yes	serves
 addTag	tags	yes	10	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
@@ -241,11 +241,11 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	31	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	33	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	15	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	4	no	yes	yes	serves
-getSince	timeline	yes	4	no	yes	yes	serves
+getSince	timeline	yes	6	no	yes	yes	serves
 getOnThisDay	timeline	yes	3	no	yes	yes	serves
 getLastSeen	timeline	yes	3	no	yes	yes	serves
 upsertEventProjection	timeline	yes	16	no	yes	yes	serves
@@ -292,7 +292,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	39	yes	yes	yes	serves
-insertFacts	facts	yes	36	no	yes	yes	serves
+insertFacts	facts	yes	38	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	21	no	yes	yes	serves
 listFactsByEntity	facts	yes	17	yes	yes	yes	serves
@@ -339,7 +339,7 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	10	no	yes	yes	serves
+getConfig	config	yes	12	no	yes	yes	serves
 setConfig	config	yes	22	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -522,7 +522,7 @@ readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactRescanChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
-listUnattributedFacts	cli_reads_ops	yes	3	no	yes	yes	serves
+listUnattributedFacts	cli_reads_ops	yes	5	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	6	no	yes	yes	serves
 listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
 countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
@@ -616,7 +616,7 @@ listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
 setEmotionalWeightBatch	salience_enrich	yes	7	yes	yes	yes	serves
-getRecentSalience	salience_enrich	yes	4	yes	yes	yes	serves
+getRecentSalience	salience_enrich	yes	6	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	4	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
