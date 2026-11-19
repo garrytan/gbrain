@@ -1,6 +1,8 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
+import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -36,7 +38,7 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest } from './engine-sql/persistence-effect-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
@@ -3383,6 +3385,8 @@ export interface BrainEngine {
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  /** The request a FIFO claim takes next, locked FOR UPDATE SKIP LOCKED until the transaction ends, or null (journal.ts `claimNextWrite`). */
+  selectClaimableWrite<R = Record<string, unknown>>(spec: ClaimHeadSpec): Promise<R | null>;
   /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */
   listHostConsumerRows(hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;
   probeLiveConsumerRows(probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;
@@ -3438,6 +3442,28 @@ export interface BrainEngine {
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
   /** Starts the current transaction as one snapshot (`REPEATABLE READ`, and `READ ONLY` with `readOnly`); call it first. */
   beginSnapshotRead(opts?: { readOnly?: boolean }): Promise<void>;
+
+  /**
+   * The writer's trust declaration in force on this transaction: the raw `gbrain.write_trust_tier` and
+   * `gbrain.write_origin` settings, each null (or '') where unset (persistence/context.ts `currentWriteTrust` parses them).
+   */
+  readCurrentWriteTrust(): Promise<{ tier: string | null; origin: string | null }>;
+
+  /**
+   * Establishes a coordinated write's context on the current transaction in one statement (persistence/context.ts
+   * `withCoordinatedWrite`): source scope, actor (an enclosing actor is kept), trust (nests as min(outer, inner)) and the
+   * git protocol. Sets nothing when the persistence identity row is missing (`brainId` null). `previous` holds the values
+   * it replaced, '' where unset, in engine-sql/transaction-settings.ts WRITE_CONTEXT_SETTINGS order.
+   */
+  setWriteContext(input: WriteContextInput): Promise<WriteContextResult>;
+
+  // The writer-version reads (engine-sql/writer-versions.ts): which binaries admitted and published the retained requests.
+  /** When the brain started stamping writer versions (migration 178), as ISO text; null when not recorded. */
+  readWriterVersionCutoff(): Promise<string | null>;
+  /** The latest admitter and consumer version per host and principal across all retained requests, newest first, at most `limit`. */
+  listWriterVersions(limit: number): Promise<WriterVersionRow[]>;
+  /** Committed requests published in the last `days`, grouped per role, host, principal and version, stamped after the cutoff. */
+  recentWriterVersions(days: number): Promise<RecentWriterVersionRow[]>;
 
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */

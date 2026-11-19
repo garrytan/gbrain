@@ -272,6 +272,19 @@ impl Brain {
         })
     }
 
+    /// `selectClaimableWrite({ excludeRoots, fifoRoots, laneRoots, priority })`: the request row
+    /// `claimNextWrite` claims next, or `null`.
+    #[napi]
+    pub fn select_claimable_write<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.select_claimable_write(&required(spec, "selectClaimableWrite spec")?)
+        })
+    }
+
     /// `readCounterRows(keys)`: the counter rows that exist, in key order, unlocked.
     #[napi]
     pub fn read_counter_rows<'env>(
@@ -419,6 +432,32 @@ impl Brain {
         retention_days: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_compactable_receipts(retention_days))
+    }
+
+    /// `readWriterVersionCutoff()`: the brain's creation time as ISO text, or `null`.
+    #[napi]
+    pub fn read_writer_version_cutoff<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_writer_version_cutoff())
+    }
+
+    /// `listWriterVersions(limit)`: `{ role, host_id, principal, version, last_seen }` rows.
+    #[napi]
+    pub fn list_writer_versions<'env>(
+        &self,
+        env: &'env Env,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_writer_versions(limit))
+    }
+
+    /// `recentWriterVersions(days)`: the same rows with a `requests` count.
+    #[napi]
+    pub fn recent_writer_versions<'env>(
+        &self,
+        env: &'env Env,
+        days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.recent_writer_versions(days))
     }
 
     #[napi]

@@ -772,16 +772,6 @@ export async function hasClaimableWrite(engine: Pick<BrainEngine, 'hasClaimableW
  * claimed ahead of a queued sync row (`passed_sync`) committed since it last claimed a sync row, so there the claim is plain FIFO.
  */
 /**
- * #6712 PR 2 (Garry, 2026-10-16, via GBRA-40): while a source's drain lease is live, only the lease holder publishes that
- * source's managed-sync requests. A non-resident consumer (a short-lived command such as `put` or `remember`, waiting on its
- * own write) ranks a sync row whose source's lease another process holds after every other row and claims it only when that
- * holder is provably dead (a killed same-host sync whose TTL has not lapsed yet), so it never publishes a live drainer's pages
- * or breaks up its lane groups. With no live lease nothing changes: a crashed drainer's rows still drain through any consumer.
- * The holder is read only when the head row is a sync row, so a foreground write's claim costs no extra statement.
- */
-const LEASE_HELD = `EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE ${SYNC_KIND('r')} AND l.id=$7::text||r.source_id
-  AND l.ttl_expires_at>now() AND NOT (l.holder_pid=$8::integer AND l.holder_host IS NOT DISTINCT FROM $9::text))`;
-/**
  * #5984 Phase 4.5: the worktrees (`f.worktree_id`) where a foreground write that may go first waits, so no new sync head
  * is claimed there: one queued or recovering, or claimed by another process (claim owner nonce other than `nonce`) that
  * has not begun to publish (it cannot publish while this process's sync group holds the worktree, so it releases the claim
@@ -794,7 +784,7 @@ const LEASE_HELD = `EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE ${SYNC_KIND
  * an earlier one), so it holds back nothing: counting it held back the very sync row the earlier write waited on, and
  * the three rows waited on each other with no foreground commit left to earn the sync side a head.
  */
-const FOREGROUND_WAITING_ON = (nonce: string, seen: string, worktree = 'TRUE') => `SELECT f.worktree_id, f.sequence FROM persistence_requests f
+export const FOREGROUND_WAITING_ON = (nonce: string, seen: string, worktree = 'TRUE') => `SELECT f.worktree_id, f.sequence FROM persistence_requests f
     WHERE ${worktree} AND (f.state IN ('queued','running','recovering') OR ${RELEASED_DEFERRED('f')}) AND (f.state<>'running' OR (NOT f.publication_started
       AND f.claim_phase->'owner'->>'nonce' IS DISTINCT FROM ${nonce}))
     AND f.recovery IS NULL AND NOT ${SYNC_KIND('f')}
@@ -815,24 +805,15 @@ const FOREGROUND_WAITING_ON = (nonce: string, seen: string, worktree = 'TRUE') =
  */
 export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseMs = 30_000, excludeRoots: string[] = [], fifoRoots: string[] = [],
   laneRoots: string[] = [], syncSeen: Record<string, string> = {}): Promise<(WriteRequest & { passed_sync?: boolean; seen_sequence?: string | null }) | null> {
-  const first = `(${foregroundPrioritySql()}) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[]))`;
   const holderOnly = !RESIDENT_CONSUMER_KINDS.includes(claimOwnerKind());
   requireTransactions(engine, 'claimNextWrite', 'it selects the head under FOR UPDATE SKIP LOCKED and stamps the claim in one transaction');
   return engine.transactionDirect(async tx => {
     // The protocol declaration and the FIFO head read are sent together.
-    const [, [row]] = await pipelined(tx, [
+    const [, row] = await pipelined(tx, [
       () => declarePersistenceProtocol(tx),
-      () => tx.executeRaw<WriteRequest>(`WITH waiting AS MATERIALIZED (SELECT f.worktree_id, max(f.sequence) AS last
-        FROM (${FOREGROUND_WAITING_ON('$5::text', "($6::text::jsonb->>f.worktree_id::text)::bigint")}) f GROUP BY f.worktree_id)
-      SELECT r.* FROM persistence_requests r
-      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-      WHERE ${claimableWriteSql(`(${first})`, '$4::text[]')}
-        -- On a root whose lane groups run in this process only a foreground write is claimed (beside them).
-        AND NOT (r.worktree_id::text=ANY($4::text[]) AND (${SYNC_KIND('r')} OR NOT (${first})))
-        AND NOT (${SYNC_KIND('r')} AND ${first} AND EXISTS (SELECT 1 FROM waiting g WHERE g.worktree_id=r.worktree_id AND g.last>r.sequence))
-      ORDER BY ${holderOnly ? `${LEASE_HELD}, ` : ''}${CLAIM_ORDER(`(${first})`)} LIMIT 1 FOR UPDATE OF r SKIP LOCKED`,
-      [hostId, excludeRoots, fifoRoots, laneRoots, consumerIdentity().nonce, JSON.stringify(syncSeen), ...(holderOnly ? [syncLockId(''), process.pid, hostname()] : [])]),
-    ]) as [unknown, WriteRequest[]];
+      () => tx.selectClaimableWrite<WriteRequest>({ hostId, excludeRoots, fifoRoots, laneRoots, nonce: consumerIdentity().nonce, syncSeen,
+        priority: foregroundPriorityOverride(), leaseHolder: holderOnly ? { lockPrefix: syncLockId(''), pid: process.pid, host: hostname() } : null }),
+    ]) as [unknown, WriteRequest | null];
     if (!row) return null;
     if (holderOnly && String(row.intent?.kind ?? '').startsWith('managed_sync_')) {
       const [lease] = await tx.executeRaw<{ holder_pid: number; holder_host: string | null }>(`SELECT holder_pid, holder_host FROM gbrain_cycle_locks

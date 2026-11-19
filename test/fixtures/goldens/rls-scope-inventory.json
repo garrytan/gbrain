@@ -2919,6 +2919,17 @@
         ],
         "flagOnScopes": []
       },
+      "listWriterVersions#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "loadContradictionsTrend#default": {
         "flagOffLanes": [
           "pool"
@@ -3139,6 +3150,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readCurrentWriteTrust#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
         ],
         "flagOnScopes": []
       },
@@ -3499,6 +3521,28 @@
         "flagOnScopes": []
       },
       "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriterVersionCutoff#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "recentWriterVersions#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4029,6 +4073,61 @@
           "src-a"
         ]
       },
+      "selectClaimableEffect#dead": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableEffect#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableWrite#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableWrite#fifo-holder": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableWrite#priority": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "selectProjectionWindowJobs#default": {
         "flagOffLanes": [
           "pool"
@@ -4099,6 +4198,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "setWriteContext#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
         ],
         "flagOnScopes": []
       },
@@ -4612,6 +4722,7 @@
         "countOnboardSignal": "none",
         "countOpenJobsByOwner": "none",
         "countOrphanChunks": "none",
+        "countOutstandingBySource": "none",
         "countOversizedEmbedSkips": "none",
         "countPagesBy": "direct",
         "countPagesDueForMentions": "none",
@@ -4638,6 +4749,7 @@
         "countUnconsolidatedFactsBySource": "none",
         "countUnlinkedFactStats": "none",
         "countUnlinkedFactsByOrigin": "none",
+        "countUnscannedTrustRows": "none",
         "countWakeWatches": "none",
         "countWorldFacts": "none",
         "countZeroWeightWithTakes": "none",
@@ -4651,6 +4763,7 @@
         "deleteChunksExcept": "none",
         "deleteChunksForPages": "none",
         "deleteCodeEdgesForChunks": "none",
+        "deleteConsumerRow": "none",
         "deleteCycleLock": "none",
         "deleteCycleLockIfStale": "none",
         "deleteEvalCandidatesBefore": "none",
@@ -4798,6 +4911,7 @@
         "keywordStatementTimeoutSetting": "none",
         "killTimedOutJobs": "none",
         "killWallClockJobs": "none",
+        "linkConversationFact": "none",
         "linkRead": "none",
         "linkRelationshipKeysForOrigin": "none",
         "linkRelationshipKeysForPages": "none",
@@ -4815,6 +4929,8 @@
         "listConfigKeys": "none",
         "listContextualModeCandidates": "none",
         "listConversationFactRows": "none",
+        "listConversationRelinkPages": "none",
+        "listCorePageRows": "none",
         "listCorpusSample": "direct",
         "listDeadFactsAbsorbJobsByKeys": "none",
         "listDueWakeWatches": "none",
@@ -4847,6 +4963,7 @@
         "listGatedMirrorRequests": "none",
         "listGuestSourceIds": "none",
         "listHeldFenceFactRows": "none",
+        "listHostConsumerRows": "none",
         "listIdentityDecisions": "none",
         "listJobAttachmentNames": "none",
         "listJobAttachments": "none",
@@ -4921,12 +5038,17 @@
         "listTimelineOrphanPages": "none",
         "listTrueUpRequests": "none",
         "listTrustProposals": "none",
+        "listTrustScanRows": "none",
         "listUnattributedFacts": "none",
         "listUnfencedFactRows": "none",
         "listUnlinkedConversationSlugs": "none",
         "listUnpreviewedTrustFacts": "none",
         "listUnreviewedJobs": "none",
         "listUnwithdrawnFacts": "none",
+        "listValidTimeIdentities": "none",
+        "listVersionReasonWriters": "none",
+        "listVersionTrustTiers": "none",
+        "listVisibleBeliefLifetimes": "none",
         "listWaitingByQueue": "none",
         "listWakeCrons": "none",
         "listWakeWatches": "none",
@@ -4936,6 +5058,7 @@
         "listWorldFactsFromPrivateSources": "none",
         "listWriteGateHoldRows": "none",
         "listWriteGateReceiptsFor": "none",
+        "listWriterVersions": "none",
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "loadPurgeTarget": "none",
@@ -4967,14 +5090,18 @@
         "openBodyStaging": "none",
         "openWakeWatch": "none",
         "ownerOnlyMarkTriggers": "none",
+        "ownsSchemaTables": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "pauseJob": "none",
         "pendingTrustProposalsFor": "none",
+        "pickValidTimeEdition": "none",
+        "placeRelinkedFact": "none",
         "planFactPurgeIds": "none",
         "planFactPurgeTakes": "none",
         "postInboxMessage": "none",
         "preparationRead": "none",
+        "probeLiveConsumerRows": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",
         "pruneFrontmatterTags": "none",
@@ -4990,11 +5117,15 @@
         "queueWakeForget": "none",
         "rankEntities": "none",
         "rawTransaction": "none",
+        "readAdmissionRate": "none",
         "readAdmissionSource": "none",
+        "readBeliefHistoryRows": "none",
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
         "readChildCompletions": "none",
         "readClientOpUsage": "none",
+        "readCounterRows": "none",
+        "readCurrentWriteTrust": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readEmbedBackfillBySource": "none",
@@ -5048,6 +5179,7 @@
         "readQueuedPageChars": "none",
         "readQueuedSpendRows": "none",
         "readReceiptBudget": "none",
+        "readRowTrustRows": "none",
         "readSearchStats": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
@@ -5066,6 +5198,9 @@
         "readWedgeSignals": "none",
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
+        "readWriteRequestProgress": "none",
+        "readWriterVersionCutoff": "none",
+        "recentWriterVersions": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordSearchTelemetry": "none",
@@ -5086,6 +5221,7 @@
         "removeTag": "none",
         "removeTimelineRows": "none",
         "removeWakeCron": "none",
+        "renewConsumerRow": "none",
         "renewJobLease": "none",
         "renewPrivateQueueLease": "none",
         "renewWriteClaim": "none",
@@ -5129,6 +5265,8 @@
         "searchTakesVector": "none",
         "searchTitles": "direct",
         "searchVector": "direct",
+        "selectClaimableEffect": "none",
+        "selectClaimableWrite": "none",
         "selectProjectionWindowJobs": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",
@@ -5137,6 +5275,7 @@
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
         "setSourceChunkerVersion": "none",
+        "setWriteContext": "none",
         "settleSpendReservation": "none",
         "settleWakeForget": "none",
         "settleWakeWatch": "none",
@@ -5150,6 +5289,7 @@
         "stageSegmentTexts": "none",
         "staleLinkRelationshipKeys": "none",
         "stampPageIngest": "none",
+        "stampWorktreeHeartbeats": "none",
         "stampWriteClaim": "none",
         "startSubagentToolExecution": "none",
         "storedTimelineRowsByPageIds": "none",
