@@ -177,4 +177,21 @@ describe('access policy members (engine-sql/access-policy.ts)', () => {
     expect(carol).toEqual(['notes/acme-later', 'notes/acme-out']);
     return { written, renamed, carol };
   });
+
+  parityTest('a reader the rule names is served the folder, except while its prefix is still pending', { methods: ['findPagesByTitles', 'readFolderAccess', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    const pending: unknown[] = [];
+    policySeams.afterInstall = async () => {
+      pending.push({ alice: await folderAccessFor(engine, ['member:alice-example']), served: await served(engine, 'alice-example') });
+    };
+    try {
+      await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    const applied = { alice: await folderAccessFor(engine, ['member:alice-example']), served: await served(engine, 'alice-example'), carol: await served(engine, 'carol-example') };
+    expect(pending).toEqual([{ alice: { satisfiedRuleIds: [`${SRC}:diary`], folderCoverage: [{ source_id: SRC, prefix: 'private/' }] }, served: ['notes/acme-open'] }]);
+    expect(applied).toEqual({ alice: { satisfiedRuleIds: [`${SRC}:diary`], folderCoverage: [] }, served: ['notes/acme-open', 'private/acme-diary'], carol: ['notes/acme-open'] });
+    return { pending, applied };
+  });
 });

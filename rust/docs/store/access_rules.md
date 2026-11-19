@@ -82,9 +82,11 @@ every put of a `z 0x02` or `z 0x03` key, whatever code path made it ([access-fla
 The store's privacy filter (`crates/gbrain-store/src/facts/privacy.rs`) applies these records to the pages a served
 caller reads:
 
-- a page whose slug is under a rule of its source is stamped (`pages.folder_rule_ids IS NOT NULL`). A served caller
-  satisfies no rule (the TypeScript members refuse a caller-access record with satisfied rule ids or folder coverage),
-  so a stamped page is hidden from it, in the full form and in the unrestricted short form;
+- a page whose slug is under a rule of its source is stamped (`pages.folder_rule_ids IS NOT NULL`). The policy carries
+  the caller's satisfied rule ids (`satisfiedRuleIds`, `source:rule_id`) and its record's coverage (`folderCoverage`).
+  A stamped page passes the full form only when the caller satisfies every rule that covers it and no coverage entry
+  covers it; the unrestricted short form passes no stamped page. The satisfied rules count only for the caller's own
+  identity, never for the empty identity that judges a provenance page;
 - a page under a pending prefix is hidden in the full form, as the coverage conjuncts of `folderRulesAllowedSql` hide
   it;
 - as a fact's origin or a derivative's input, a rule stored with `covers_derived: false` does not count
@@ -94,17 +96,21 @@ One difference remains: PGLite stamps `folder_rule_ids` when a page is written a
 the store judges a page against the rules it holds when the read runs. The two agree after `restampSource`, which is
 the state a finished policy change leaves.
 
-The folder test has no `PrivacyPolicy` field: it reads the store's rules and pending prefixes,
-and `member_access_allows` ANDs it with the owner-only test (`owner_only`, absent means `closed`).
+The folder test reads the store's rules and pending prefixes, and the policy's `satisfiedRuleIds` and `folderCoverage`
+(both default to empty). `member_access_allows` ANDs it with the owner-only test (`owner_only`, absent means `closed`).
 So a policy with every defaulted field missing still hides a folder-restricted page, and no
 owner-only form reopens one (`a_policy_missing_its_defaulted_fields_still_hides_a_folder_restricted_page`).
+
+The store also hides a page under a pending prefix when the caller's record has no coverage entries, where the
+Postgres text renders no pending conjunct for such a record. That hides more than Postgres hides, never less.
 
 ## Tests
 
 - `crates/gbrain-store/src/access_rules.rs` (unit tests): reads in key order, the flag on a rule or pending put, the
   newest applied revision per source, folder restriction and stamping, and the writes the v283 checks refuse.
-- `crates/gbrain-store/src/facts/privacy.rs` (unit test): a folder rule and a pending prefix hide pages from every
-  served caller; a raw-only rule does not close an origin.
+- `crates/gbrain-store/src/facts/privacy.rs` (unit tests): a folder rule and a pending prefix hide pages from a
+  caller that satisfies no rule; a raw-only rule does not close an origin; a reader a rule names is served the folder
+  unless its record covers the prefix or the prefix is invalid, and only for its own identity.
 - `test/engine-parity/write-misc.test.ts` and `test/engine-parity/import-path.test.ts`: `readFolderAccess`,
   `folderAccessForAll`, `appliedAccessSummary`, `isFolderRestricted` and `listAppliedPolicyRevisions` on every arm, and
   a private folder that refuses a caller its rule does not name (no rule satisfied, the folder's page hidden from
@@ -115,5 +121,6 @@ owner-only form reopens one (`a_policy_missing_its_defaulted_fields_still_hides_
   stamped in its write, page prefixes cover one page, and invalid coverage is replaced and cleared.
 - `test/engine-parity/access-policy.test.ts`: on every arm, a rule added through `policy.ts` hides the folder, a
   removal waits for approval and then shows it, the pending prefix between install and restamp, the revision count, a
-  rule change refused part way, two concurrent rule changes that cannot both apply against one revision, and a page
-  written or renamed under an applied rule that a later restamp does not count.
+  rule change refused part way, two concurrent rule changes that cannot both apply against one revision, a page
+  written or renamed under an applied rule that a later restamp does not count, and a reader a rule names that
+  `findPagesByTitles` serves the folder, except while its prefix is pending.

@@ -684,7 +684,7 @@ attachSourcePath	write_misc	yes	1	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	3	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	2	no	yes	yes	serves
-readFolderAccess	write_misc	yes	3	no	yes	yes	serves
+readFolderAccess	write_misc	yes	4	no	yes	yes	serves
 readAccessStoreConfig	write_misc	no	0	no	-	-	-
 writeAccessStoreConfig	write_misc	no	0	no	-	-	-
 ensureAccessPolicyState	write_misc	no	0	no	-	-	-
@@ -693,7 +693,7 @@ listAccessRules	write_misc	yes	1	no	yes	yes	serves
 readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
 readAccessStateUnreadable	write_misc	no	0	no	-	-	-
-applyAccessRuleChanges	write_misc	yes	4	no	yes	yes	serves
+applyAccessRuleChanges	write_misc	yes	5	no	yes	yes	serves
 restampAccessWindow	write_misc	yes	2	no	yes	yes	serves
 finishAccessRestamp	write_misc	yes	2	no	yes	yes	serves
 insertAccessPolicyRevision	write_misc	yes	3	no	yes	yes	serves
@@ -715,7 +715,7 @@ readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
 logChatUsage	telemetry	yes	2	no	yes	yes	serves
 readChatUsage	telemetry	yes	2	no	yes	yes	serves
 readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
-findPagesByTitles	alias_fanout_reads	yes	6	no	yes	yes	serves
+findPagesByTitles	alias_fanout_reads	yes	7	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves

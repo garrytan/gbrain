@@ -164,20 +164,24 @@ describe('Rust engine on the store', () => {
     expect(await tag(true)).toBeUndefined();
   });
 
-  withAddon('excludePrivate refuses for a caller whose folder-rule grants change the page policy PGLite renders', async () => {
+  withAddon('excludePrivate serves a caller whose record holds a reader identity and the folder rules it satisfies, and refuses lineage', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    // A reader identity alone is served (the callerReaders opt-in); a satisfied folder rule still refuses.
+    // A reader identity and a satisfied folder rule are served (the callerReaders opt-in); lineage still refuses.
     const asReader = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
     expect(await code(() => asReader(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBeUndefined();
-    const asMember = <T>(fn: () => Promise<T>) =>
-      withCallerAccess({ identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] }, fn);
+    const member = { identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] };
+    const asMember = <T>(fn: () => Promise<T>) => withCallerAccess(member, fn);
     const refs = [{ slug: 'notes/a', source_id: 'default' }];
-    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asMember(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
+    expect((await asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true }))).map(r => r.slug)).toEqual(['notes/a']);
+    expect([...(await asMember(() => engine.getSalienceScores(refs, { excludePrivate: true }))).keys()]).toEqual(['default::notes/a']);
+    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBeUndefined();
+    const asLineage = <T>(fn: () => Promise<T>) => withCallerAccess({ ...member, lineage: true }, fn);
+    expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asLineage(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asLineage(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
     // Without excludePrivate the caller's record does not matter: the read applies no page policy.
-    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
+    expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
   });
 
   withAddon('excludePrivate on the fact reads serves a reader identity and grant but refuses folder rules, audiences, lineage and labelled-only', async () => {
