@@ -4,8 +4,9 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
  *    settleFactsReconcile, lockReconcileRevision, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
- *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs and
- *    expireFactsByWithdrawal return the same observable result on every engine arm (PGLite always; Postgres with
+ *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs,
+ *    expireFactsByWithdrawal and listDerivedRows (one hop of the derivation walk) return the same observable result
+ *    on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes which rows `forget --purge` removes and counts
  *    as left, which pages a withdrawal rewrites, which facts relink and fence repair touch, and which fact a save treats
@@ -27,6 +28,10 @@ import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from '
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
 import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
+import { derivedRowsFrom, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -536,6 +541,36 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { found, other, row: { fact: row.fact, attributed_to: row.attributed_to, kind: row.kind, visibility: row.visibility, confidence: row.confidence, embedding_model: row.embedding_model, created: row.created_at instanceof Date, row_num: row.row_num, trust_tier: row.trust_tier, write_origin: row.write_origin } };
   });
 
+  parityTest('findActiveSingleFact with newest answers the highest-id active copy, as remember links the unlinked copy of a claim', { methods: ['findActiveSingleFact'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
+    await seed.one('old', { fact: 'Likes tea' });
+    await seed.one('new', { fact: 'likes  TEA.', attributed_to: 'user' });
+    const expired = await seed.one('expired', { fact: 'Likes tea' });
+    await engine.expireFact(expired);
+    await seed.one('linked', { fact: 'Likes tea', entity_slug: 'people/a' });
+    await seed.one('world', { fact: 'Likes tea', visibility: 'world' });
+    await seed.fence([
+      { label: 'member-old', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'memory/members/alice' },
+      { label: 'member-new', fact: 'Likes tea', row_num: 2, source_markdown_slug: 'memory/members/alice' },
+    ]);
+    await seed.fence([{ label: 'on-private', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/private' }]);
+    const find = async (pageSlug: string | null, newest: boolean | undefined, remoteFloor = false) => {
+      const row = await engine.findActiveSingleFact({ sourceId: SRC, entitySlug: null, visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor, ...(newest === undefined ? {} : { newest }) });
+      return row === null ? null : seed.name(row.id);
+    };
+    const found = {
+      lowest: await find(null, undefined), lowestFalse: await find(null, false), newest: await find(null, true),
+      member: await find('memory/members/alice', true), memberLowest: await find('memory/members/alice', undefined),
+      emptyPage: await find('', true), privatePage: await find('notes/private', true),
+      privateFloor: await find('notes/private', true, true), noPageFloor: await find(null, true, true),
+    };
+    // The private page's fence row is the highest id, so the floor is not vacuous: it hides that row and keeps 'new'.
+    expect(found).toEqual({ lowest: 'old', lowestFalse: 'old', newest: 'on-private', member: 'member-new', memberLowest: 'member-old',
+      emptyPage: null, privatePage: 'on-private', privateFloor: null, noPageFloor: 'new' });
+    return found;
+  });
+
   parityTest('findActiveSingleFact under the remote provenance floor drops facts on private pages', { methods: ['findActiveSingleFact'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
@@ -578,6 +613,32 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
       'none:open': 'readers-page', 'none:floor': 'open-page',
     });
     return found;
+  });
+
+  parityTest('findActiveSingleFact under the remote provenance floor hides a fact of an owner-only source, closed with no schema version and per source with one', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    const find = async (sourceId: string, remoteFloor: boolean) => {
+      const row = await engine.findActiveSingleFact({ sourceId, entitySlug: 'people/a', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug: null, remoteFloor });
+      return row === null ? null : seed.name(row.id);
+    };
+    const read = async () => ({
+      open: await find(SRC, false), openFloor: await find(SRC, true),
+      chat: await find('fact-chat', false), chatFloor: await find('fact-chat', true),
+    });
+    await seed.one('default-row', { fact: 'Likes tea', entity_slug: 'people/a' });
+    // Before any owner-only source exists the floor keeps the default-source fact, so the case is not vacuous.
+    const before = { openFloor: await find(SRC, true) };
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    // The harness brain records no schema version: the closed form hides every fact while any source is owner-only.
+    const closed = await read();
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    // Schema version 320 or later: only a fact of the owner-only source is hidden.
+    const fn = await withEngineScope(engine, read);
+    expect(before).toEqual({ openFloor: 'default-row' });
+    expect(closed).toEqual({ open: 'default-row', openFloor: null, chat: 'chat-row', chatFloor: null });
+    expect(fn).toEqual({ open: 'default-row', openFloor: 'default-row', chat: 'chat-row', chatFloor: null });
+    return { before, closed, fn };
   });
 
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {
@@ -722,5 +783,43 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(row.valid_until).toBeInstanceOf(Date);
     expect(row.valid_until!.getTime()).toBeLessThanOrEqual(row.expired_at!.getTime());
     return { first, again, afterFirst, member, everyone, world, left, expired: history.map((r) => ({ visibility: r.visibility, expired: r.expired_at instanceof Date, closed: r.valid_until instanceof Date })) };
+  });
+
+  // The derivation walk's edges are written only through raw SQL (recordDerivationInputs), which the Rust engine
+  // refuses, so only the SQL arms can record one; the Rust store keeps no derivation_inputs and every hop answers no
+  // rows. A page with no recorded derivation, an empty frontier and the walk itself answer the same on every arm.
+  parityTest('listDerivedRows answers one hop of the derivation walk; the Rust store records none and answers no rows', {
+    methods: ['putPage', 'listDerivedRows'],
+  }, async (engine, backend) => {
+    const id = async (slug: string) => String((await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body` })).id);
+    const [input, mid, leaf, alone] = [await id('derive/input'), await id('derive/mid'), await id('derive/leaf'), await id('derive/alone')];
+    const slugOf = new Map([[input, 'input'], [mid, 'mid'], [leaf, 'leaf'], [alone, 'alone']]);
+    const name = (table: string, rowId: string) => (table === 'pages' ? slugOf.get(rowId) ?? rowId : rowId);
+    if (backend !== 'rust') {
+      await recordDerivationInputs(engine, { table: 'pages', id: mid, sourceId: SRC }, [{ table: 'pages', id: input }, { table: 'facts', id: '7' }]);
+      await recordDerivationInputs(engine, { table: 'pages', id: leaf, sourceId: SRC }, [{ table: 'pages', id: mid }]);
+      await recordDerivationInputs(engine, { table: 'takes', id: '3', sourceId: SRC }, [{ table: 'pages', id: input }]);
+    }
+    const hop = async (frontier: Array<{ table: string; id: string }>, limit: number) =>
+      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${name(r.derived_table, r.derived_id)}`);
+    const fromInput = await hop([{ table: 'pages', id: input }], 10);
+    const capped = await hop([{ table: 'pages', id: input }, { table: 'facts', id: '7' }], 1);
+    const walk = await derivedRowsFrom(engine, [{ table: 'pages', id: input }]);
+    const walked = walk.rows.map((r) => `${r.table}:${name(r.table, r.id)}@${r.depth}`);
+    if (backend === 'rust') {
+      expect(fromInput).toEqual([]);
+      expect(capped).toEqual([]);
+      expect(walked).toEqual([]);
+    } else {
+      expect(fromInput).toEqual(['pages:mid', 'takes:3']);
+      expect(capped).toEqual(['pages:mid']);
+      expect(walked).toEqual(['pages:mid@1', 'takes:3@1', 'pages:leaf@2']);
+    }
+    expect(walk.truncated).toBe(false);
+    return {
+      unrecorded: await hop([{ table: 'pages', id: alone }], 10),
+      emptyFrontier: await hop([], 10),
+      unrecordedWalk: await derivedRowsFrom(engine, [{ table: 'pages', id: alone }]),
+    };
   });
 });

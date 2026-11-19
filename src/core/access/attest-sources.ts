@@ -61,6 +61,12 @@ const sqlOf = (db: Db): SqlQuery => typeof db === 'function' ? db : sqlQueryForE
  */
 export async function markedScopeSources(db: Db, ids: readonly string[], lock?: 'share' | 'update'): Promise<Set<string>> {
   if (!ids.length) return new Set();
+  if (!lock && typeof db !== 'function') {
+    // An unlocked check on an engine reads each source through the typed source read, so every engine answers it.
+    const unique = [...new Set(ids)];
+    const rows = await Promise.all(unique.map(id => db.getSource(id)));
+    return new Set(rows.filter(r => r && isScopeSourceConfig(r.config)).map(r => String(r!.id)));
+  }
   const sql = sqlOf(db);
   const list = JSON.stringify([...new Set(ids)]);
   const rows = lock === 'update'

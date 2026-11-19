@@ -48,6 +48,25 @@ const PAGE = (title: string, body: string, timeline = '') => ({ type: 'note' as 
 
 describe('engine parity: chunks', () => {
   parityTest(
+    'a fresh brain records the embedding model it was created with, and a chunk with no model of its own carries it',
+    { methods: ['getConfig', 'putPage', 'upsertChunks', 'getChunks'] },
+    async (engine) => {
+      const config = {
+        embedding_model: await engine.getConfig('embedding_model'),
+        embedding_dimensions: await engine.getConfig('embedding_dimensions'),
+        chunk_strategy: await engine.getConfig('chunk_strategy'),
+      };
+      expect(config.embedding_model).toBeTruthy();
+      expect(config.embedding_dimensions).toBeTruthy();
+      await engine.putPage('notes/modelled', PAGE('Modelled', 'a body with no embedding.'));
+      await engine.upsertChunks('notes/modelled', [chunk(0, 'a body with no embedding.')]);
+      const models = (await engine.getChunks('notes/modelled', { includeUnsealed: true })).map((c) => c.model);
+      expect(models).toEqual([config.embedding_model!]);
+      return { config, models };
+    },
+  );
+
+  parityTest(
     'upsertChunks stores chunks that getChunks serves only once the projection is sealed',
     { methods: ['putPage', 'upsertChunks', 'getChunks'] },
     async (engine) => {
@@ -598,4 +617,59 @@ describe('engine parity: chunks', () => {
       return { implicitDefault, work, federated, staleDefault, staleWork, staleAll, staleRows, workAfter, defaultAfter, chunklessWork, chunklessDefault };
     },
   );
+
+  parityTest(
+    'getChunks with requireSafeChunks reads no chunks of a page chunked before the fence chunker version',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      for (const slug of ['notes/fence-safe', 'notes/fence-short']) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Body.', timeline: '' });
+        await installChunks(engine, slug, [chunk(0, `About ${slug}.`), chunk(1, 'Second.')]);
+      }
+      await engine.setChunkerVersion('notes/fence-short', 3);
+      const read = async (slug: string, requireSafeChunks?: boolean) =>
+        view(await engine.getChunks(slug, { sourceId: 'default', includeEmbedding: true, ...(requireSafeChunks === undefined ? {} : { requireSafeChunks }) }));
+      const out = {
+        safe: await read('notes/fence-safe', true),
+        short: await read('notes/fence-short', true),
+        shortOff: await read('notes/fence-short', false),
+        shortDefault: await read('notes/fence-short'),
+      };
+      expect(out.safe).toHaveLength(2);
+      expect(out.short).toEqual([]);
+      expect(out.shortOff).toHaveLength(2);
+      return out;
+    },
+  );
+
+  parityTest(
+    'getChunks under requireSafeChunks reads only a page whose chunks were cut at the safe fence chunker version',
+    { methods: ['getChunks', 'setChunkerVersion', 'upsertChunks', 'sealChunks'] },
+    async (engine) => {
+      await seedPage(engine, { slug: 'notes/safe', input: PAGE('Safe', 'safe zero. safe one.'), chunks: [chunk(0, 'safe zero.', { embedding: basisEmbedding(2) }), chunk(1, 'safe one.')] });
+      const texts = async (opts?: { includeUnsealed?: boolean; requireSafeChunks?: boolean; includeEmbedding?: boolean; sourceId?: string }) =>
+        (await engine.getChunks('notes/safe', opts)).map((c) => c.chunk_text);
+      // The read import-chunk-reuse.ts makes before it reuses stored vectors.
+      const reuse = (await engine.getChunks('notes/safe', { sourceId: 'default', includeEmbedding: true, requireSafeChunks: true }))
+        .map((c) => [c.chunk_text, axis(c.embedding)]);
+      const sealedSafe = await texts({ requireSafeChunks: true });
+      expect({ reuse, sealedSafe }).toEqual({ reuse: [['safe zero.', 2], ['safe one.', null]], sealedSafe: ['safe zero.', 'safe one.'] });
+
+      await engine.setChunkerVersion('notes/safe', 3);
+      const oldVersion = { safe: await texts({ requireSafeChunks: true }), unsealedSafe: await texts({ includeUnsealed: true, requireSafeChunks: true }), plain: await texts(), notRequired: await texts({ requireSafeChunks: false }) };
+      expect(oldVersion).toEqual({ safe: [], unsealedSafe: [], plain: ['safe zero.', 'safe one.'], notRequired: ['safe zero.', 'safe one.'] });
+
+      await engine.setChunkerVersion('notes/safe', 4);
+      const restored = await texts({ requireSafeChunks: true });
+      // An unsealed fragment write cannot certify the fence boundary, so the page reads as unsafe until the next seal.
+      await engine.upsertChunks('notes/safe', [chunk(0, 'a fragment.')]);
+      const fragment = { safe: await texts({ includeUnsealed: true, requireSafeChunks: true }), unsealed: await texts({ includeUnsealed: true }) };
+      await engine.sealChunks('notes/safe', [chunk(0, 'resealed.')]);
+      const resealed = await texts({ requireSafeChunks: true });
+      const missing = await engine.getChunks('notes/nobody', { requireSafeChunks: true });
+      expect({ restored, fragment, resealed, missing }).toEqual({ restored: ['safe zero.', 'safe one.'], fragment: { safe: [], unsealed: ['a fragment.'] }, resealed: ['resealed.'], missing: [] });
+      return { reuse, sealedSafe, oldVersion, restored, fragment, resealed, missing };
+    },
+  );
 });
+

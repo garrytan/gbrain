@@ -10,7 +10,8 @@
  *    it; listValidTimeIdentities lists the live pages with a slug in the source scope by source; pickValidTimeEdition
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
  *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
- *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
+ *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
  *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
@@ -30,6 +31,11 @@ import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
+import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
+import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -117,6 +123,52 @@ describe('engine parity: typed trust tier reads', () => {
       expect(plainEligible.find(r => r.slug === 'core/unknown')).toMatchObject({ trust_tier: 'unknown', write_origin: null });
       expect(slugs(narrow)).toEqual(['default:core/agent', 'default:core/agent-flagged']);
       return { all, scoped, excluded, floor, caller, agent, curated, suppressed, plainEligible, narrow };
+    },
+  );
+
+  parityTest(
+    'listCorePageRows under excludePrivate drops the pages of an owner-only source: every page while one exists with no schema version, only that source\'s and its concept lineage under the function form',
+    { methods: ['putPage', 'addLink', 'listCorePageRows'] },
+    async (engine, backend) => {
+      const core = (slug: string, type: 'note' | 'concept', sourceId: string) =>
+        engine.putPage(slug, { type, title: `T ${slug}`, compiled_truth: `body ${slug}`, timeline: '', frontmatter: { always_load: true } }, { sourceId });
+      const reads = async () => {
+        const slugs = async (spec: Parameters<BrainEngine['listCorePageRows']>[0]) =>
+          (await engine.listCorePageRows(spec)).map(r => `${r.source_id}:${r.slug}`);
+        return {
+          floor: await slugs({ excludePrivate: true, limit: 50 }),
+          caller: await slugs({ excludePrivate: true, forCaller: true, limit: 50 }),
+          unfiltered: await slugs({ limit: 50 }),
+        };
+      };
+      await createSource(engine, backend, 'work');
+      await core('core/open', 'note', 'default');
+      await core('core/from-chat', 'concept', 'default');
+      await core('core/work', 'note', 'work');
+      // Before any owner-only source exists every page is listed: the case is not vacuous.
+      const before = await reads();
+      const all = ['default:core/from-chat', 'default:core/open', 'work:core/work'];
+      expect(before).toEqual({ floor: all, caller: all, unfiltered: all });
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await core('core/chat', 'note', 'chat');
+      await core('core/vault', 'note', 'vault');
+      await engine.addLink('core/from-chat', 'core/chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+
+      // No schema version in context: while an owner-only source exists the non-owner policy hides every page.
+      const closed = await reads();
+      expect(closed).toEqual({
+        floor: [], caller: [],
+        unfiltered: ['chat:core/chat', ...all.slice(0, 2), 'vault:core/vault', 'work:core/work'],
+      });
+
+      // Schema version 320 or later: only the owner-only sources' pages, and the concept synthesized from one, are hidden.
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, reads);
+      const open = ['default:core/open', 'work:core/work'];
+      expect(fn).toEqual({ floor: open, caller: open, unfiltered: closed.unfiltered });
+      return { before, closed, fn };
     },
   );
 
@@ -315,6 +367,64 @@ describe('engine parity: typed trust tier reads', () => {
       expect(hidden.map(r => r.source_id)).toEqual(['alpha', 'beta']);
       expect(missing).toEqual([]);
       return { all, one, granted, hidden, missing };
+    },
+  );
+
+  parityTest(
+    'listValidTimeIdentities and pickValidTimeEdition apply the page policy to an owner-only source: every page while one exists with no schema version, only that source\'s and its concept lineage under the function form',
+    { methods: ['putPage', 'addLink', 'getPage', 'listValidTimeIdentities', 'pickValidTimeEdition'] },
+    async (engine, backend) => {
+      const put = (slug: string, type: 'note' | 'concept', sourceId: string) =>
+        engine.putPage(slug, { type, title: slug, compiled_truth: `body ${slug}`, timeline: '', frontmatter: { valid_from: '2026-01-01' } }, { sourceId });
+      const reads = async (pickSources: string[]) => {
+        const identities = async (slug: string, excludePrivate: boolean) =>
+          (await engine.listValidTimeIdentities({ slug, sourceId: null, sourceIds: null, excludePrivate })).map(r => `${r.source_id}:${r.world ? 'world' : 'hidden'}`);
+        const visible = async (slug: string, sourceId: string) => {
+          const page = (await engine.getPage(slug, { sourceId }))!;
+          const row = await engine.pickValidTimeEdition({ pageId: page.id, asOf: '2026-07-01', excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 });
+          return `${sourceId}:${slug}:${row?.visible}`;
+        };
+        return {
+          shared: await identities('vt/shared', true),
+          sharedUnfiltered: await identities('vt/shared', false),
+          synth: await identities('vt/synth', true),
+          picks: [...await Promise.all(pickSources.map(src => visible('vt/shared', src))), await visible('vt/synth', 'default')],
+        };
+      };
+      await createSource(engine, backend, 'work');
+      await put('vt/shared', 'note', 'default');
+      await put('vt/shared', 'note', 'work');
+      await put('vt/synth', 'concept', 'default');
+      // Before any owner-only source exists every page is listed and visible: the case is not vacuous.
+      const before = await reads(['default', 'work']);
+      expect(before).toEqual({
+        shared: ['default:world', 'work:world'], sharedUnfiltered: ['default:world', 'work:world'], synth: ['default:world'],
+        picks: ['default:vt/shared:true', 'work:vt/shared:true', 'default:vt/synth:true'],
+      });
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await put('vt/shared', 'note', 'chat');
+      await put('vt/shared', 'note', 'vault');
+      await put('vt/synth', 'note', 'chat');
+      await engine.addLink('vt/synth', 'vt/synth', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+      const sources = ['default', 'work', 'chat', 'vault'];
+
+      const closed = await reads(sources);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, () => reads(sources));
+      // No schema version in context: while an owner-only source exists the non-owner policy hides every page, and the
+      // `world` mark of an unfiltered listing is false for every page.
+      expect(closed).toEqual({
+        shared: [], sharedUnfiltered: ['chat:hidden', 'default:hidden', 'vault:hidden', 'work:hidden'], synth: [],
+        picks: ['default:vt/shared:false', 'work:vt/shared:false', 'chat:vt/shared:false', 'vault:vt/shared:false', 'default:vt/synth:false'],
+      });
+      // Schema version 320 or later: only the owner-only sources' pages, and the concept synthesized from one, are hidden.
+      expect(fn).toEqual({
+        shared: ['default:world', 'work:world'], sharedUnfiltered: ['chat:hidden', 'default:world', 'vault:hidden', 'work:world'], synth: [],
+        picks: ['default:vt/shared:true', 'work:vt/shared:true', 'chat:vt/shared:false', 'vault:vt/shared:false', 'default:vt/synth:false'],
+      });
+      return { before, closed, fn };
     },
   );
 
@@ -584,4 +694,38 @@ describe('engine parity: typed trust tier reads', () => {
       return { seeded, raisedMover, plainMover };
     },
   );
+  // GST-687 quoting: get_timeline, the chronicle reads and get_chunks look up each row's page type (and get_chunks its
+  // page's slug and source) by page id. Ids differ between arms, so answers are keyed by slug.
+  parityTest('listPageRefsByIds, pageTypesById and quoteTimelineRows read each page by id: deleted pages and other sources included, unknown ids absent', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'listPageRefsByIds'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('quote/chat', { type: 'chat' as never, title: 'Chat', compiled_truth: 'chat body', timeline: '' });
+    await engine.putPage('quote/note', { type: 'note', title: 'Note', compiled_truth: 'note body', timeline: '' });
+    await engine.putPage('quote/gone', { type: 'transcript' as never, title: 'Gone', compiled_truth: 'gone body', timeline: '' });
+    await engine.putPage('quote/elsewhere', { type: 'person', title: 'Elsewhere', compiled_truth: 'other body', timeline: '' }, { sourceId: 'other' });
+    const idOf = async (slug: string, sourceId = 'default') => Number((await engine.getPage(slug, { sourceId }))!.id);
+    const ids = { chat: await idOf('quote/chat'), note: await idOf('quote/note'), gone: await idOf('quote/gone'), elsewhere: await idOf('quote/elsewhere', 'other') };
+    await engine.softDeletePage('quote/gone', { sourceId: 'default' });
+    const missing = Math.max(...Object.values(ids)) + 100_000;
+    const types = await pageTypesById(engine, [ids.chat, ids.note, ids.gone, ids.elsewhere, ids.chat, missing]);
+    const byName = Object.fromEntries(Object.entries(ids).map(([name, id]) => [name, types.get(id) ?? null]));
+    expect(byName).toEqual({ chat: 'chat', note: 'note', gone: 'transcript', elsewhere: 'person' });
+    expect({ size: types.size, missing: types.has(missing), empty: (await pageTypesById(engine, [])).size }).toEqual({ size: 4, missing: false, empty: 0 });
+    const refs = (await engine.listPageRefsByIds([ids.elsewhere, ids.gone, ids.note, ids.chat, ids.note, missing])).map(({ id, ...ref }) => ref);
+    expect(refs).toEqual([
+      { source_id: 'default', slug: 'quote/chat', type: 'chat' },
+      { source_id: 'default', slug: 'quote/note', type: 'note' },
+      { source_id: 'default', slug: 'quote/gone', type: 'transcript' },
+      { source_id: 'other', slug: 'quote/elsewhere', type: 'person' },
+    ]);
+    expect(await engine.listPageRefsByIds([])).toEqual([]);
+    const rows = [
+      { page_id: ids.chat, summary: 'said a thing', trust_tier: 'operator_curated' },
+      { page_id: ids.note, summary: 'wrote a thing', trust_tier: 'operator_curated' },
+    ];
+    const quoted = await quoteTimelineRows({ engine, remote: true }, 'quote/chat', rows);
+    expect(quoted.map(r => ('quoted' in r ? r.quoted : null))).toEqual(['transcript', null]);
+    return { byName, refs, quoted: quoted.map(r => ({ quoted: 'quoted' in r ? r.quoted : null, summary: r.summary })) };
+  });
 });

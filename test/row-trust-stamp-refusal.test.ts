@@ -2,10 +2,10 @@
  * stampRowTrust reads the row trust through the typed `readRowTrustRows` member.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: a capability refusal from `readRowTrustRows` (the Rust engine refuses `facts` and `takes`) reaches the
+ *  - Contract: a capability refusal from `readRowTrustRows` (an engine that does not serve a table refuses it) reaches the
  *    caller; any other read failure keeps the fail-open label `unknown` / `unrecorded`; a row the read returns is
  *    labeled with its tier, origin, flag and contested proposal.
- *  - Regression: a catch-all would turn the Rust refusal into rows labeled `unrecorded`, which a reader cannot tell
+ *  - Regression: a catch-all would turn a capability refusal into rows labeled `unrecorded`, which a reader cannot tell
  *    apart from rows a legacy writer left unstamped.
  *  - Why existing coverage misses it: fence-chunk-trust-read.test.ts runs on SQL engines, which never refuse.
  *  - Seam: a fake engine with only `readRowTrustRows`, the one member stampRowTrust calls.

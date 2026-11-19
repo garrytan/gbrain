@@ -44,7 +44,7 @@ import { ALLOWED_TYPE_ALIASES } from '../facts/conversation-types.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX } from '../facts/audit-sources.ts';
 import type { SearchResult } from '../types.ts';
 import type { BrainEngine } from '../engine.ts';
-import { admitsTrust, OWNER_TIER_FLOOR, storedTrustTier, TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
+import { admitsTrust, OWNER_TIER_FLOOR, storedTrustTier } from '../trust/tier.ts';
 
 /**
  * Page types whose text is someone else's words: every concrete type the
@@ -105,11 +105,11 @@ export function quotePageText(text: string, slug: string, type: string | null | 
   return text ? fenceTranscriptText(isQuotedPageType(type) ? neutralizeToolCalls(text) : text, slug) : text;
 }
 
-/** Each page id's stored type (one query), for reads whose rows name only their page_id (get_timeline, get_chunks). */
-export async function pageTypesById(engine: Pick<BrainEngine, 'executeRaw'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
+/** Each page id's stored type (one read), for reads whose rows name only their page_id (get_timeline, get_chunks). */
+export async function pageTypesById(engine: Pick<BrainEngine, 'listPageRefsByIds'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
   if (!ids.length) return new Map();
-  const rows = await engine.executeRaw<{ id: number | string; type: string | null }>('SELECT id, type FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(ids.map(Number))]]);
-  return new Map(rows.map(r => [Number(r.id), r.type]));
+  const rows = await engine.listPageRefsByIds(ids);
+  return new Map(rows.map(r => [r.id, r.type]));
 }
 
 /** The fact was saved by the conversation-facts extractor from such a page, by its stored `facts.source`. */
@@ -129,19 +129,10 @@ const BACKSTOP_SESSION_PREFIXES: ReadonlyArray<readonly [source: string, prefix:
  * facts backstop and extract_facts already write), or the page a backstop fact's `source_session` names (facts saved
  * before those edges, or rebuilt from git without them). Read time only; a session naming a chat page can only add a fence.
  */
-export async function factsFromQuotedPages(engine: Pick<BrainEngine, 'executeRaw'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
+export async function factsFromQuotedPages(engine: Pick<BrainEngine, 'listFactsFromQuotedPages'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
   if (!ids.length) return new Set();
-  const [[syncSource, syncPrefix], [putSource, putPrefix]] = BACKSTOP_SESSION_PREFIXES;
-  const rows = await engine.executeRaw<{ id: number | string }>(
-    `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
-       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
-       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
-         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
-       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
-         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
-         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`,
-    [[...new Set(ids.map(Number))], [...QUOTED_PAGE_TYPES], syncSource, syncPrefix, putSource, putPrefix]);
-  return new Set(rows.map(r => Number(r.id)));
+  const [sync, put] = BACKSTOP_SESSION_PREFIXES;
+  return new Set(await engine.listFactsFromQuotedPages({ ids, pageTypes: [...QUOTED_PAGE_TYPES], backstop: [sync!, put!] }));
 }
 
 /** What a third-party row's marker names (its slug, or `fact <id>` for a fact row); null otherwise. Only these rows get tool calls summarized. */
@@ -505,12 +496,8 @@ export function relabelGuestQuote(text: string, slug: string, guest: string): st
 }
 
 /** Of `ids`, the facts whose stored tier is at or above the owner's (OWNER_TIER_FLOOR); an id with no row is not among them. */
-async function ownerTierFacts(engine: Pick<BrainEngine, 'executeRaw'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
-  if (!ids.length) return new Set();
-  const rows = await engine.executeRaw<{ id: number | string }>(
-    `SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${trustRankSql('trust_tier')} >= $2`,
-    [[...new Set(ids.map(Number))], TRUST_TIER_RANK[OWNER_TIER_FLOOR]]);
-  return new Set(rows.map(r => Number(r.id)));
+async function ownerTierFacts(engine: Pick<BrainEngine, 'listOwnerTierFacts'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
+  return ids.length ? new Set(await engine.listOwnerTierFacts({ ids, floor: OWNER_TIER_FLOOR })) : new Set();
 }
 
 /**
@@ -520,7 +507,7 @@ async function ownerTierFacts(engine: Pick<BrainEngine, 'executeRaw'>, ids: read
  * live-ingested fact, read from the database, not from the caller's row); any other comes back as it is.
  */
 export async function quoteFacts<T extends { id: number; fact: string; source?: string | null; collapsed_ids?: number[] }>(
-  engine: Pick<BrainEngine, 'executeRaw'>, facts: T[], untrusted = false): Promise<Array<T & { quoted?: 'transcript' }>> {
+  engine: Pick<BrainEngine, 'listFactsFromQuotedPages' | 'listOwnerTierFacts'>, facts: T[], untrusted = false): Promise<Array<T & { quoted?: 'transcript' }>> {
   const [fromPages, owners] = await Promise.all([factsFromQuotedPages(engine, facts.flatMap(f => f.collapsed_ids ?? [f.id])),
     untrusted ? ownerTierFacts(engine, facts.map(f => f.id)) : null]);
   return facts.map(f => isQuotedFactSource(f.source) || (f.collapsed_ids ?? [f.id]).some(id => fromPages.has(Number(id))) || (owners !== null && !owners.has(Number(f.id)))

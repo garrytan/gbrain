@@ -1,8 +1,11 @@
 /**
  * The reads `remember` and `forget` make before admission (src/core/engine-sql/memory-mutation-reads.ts), served from
  * the store (rust/crates/gbrain-store/src/memory_mutation_reads.rs): `readSourceWriteRow` and `readSourceLocalPath`
- * over the source record, `readFactEntitySlug`, `factReadableUnder` and `readRemoteForgetTier` over the fact rows,
- * and `hasLiveFileBackedPage` over the page records.
+ * over the source record, `readFactEntitySlug`, `factReadableUnder`, `readRemoteForgetTier` and `readForgetTarget`
+ * over the fact rows, and `hasLiveFileBackedPage` over the page records. `readForgetTarget`'s `lock` (FOR UPDATE)
+ * changes nothing here: one store call reads under the store's own lock. `isFactEntityUnbacked`, `readLinkedFactCopies`,
+ * `hasHiddenFactCopy` and `ownerReachesFact` (what a forget's withdrawal reaches) read the fact and page records.
+ * `readFactWithdrawalClaim` (the claim a withdrawal changes) reads the fact record and, for its subject, the page records.
  *
  * Refused (`engine_capability_missing`):
  *  - a fact id that is not an integer, rather than guess at Postgres's bind error;
@@ -12,15 +15,20 @@
  *  - `readRemoteForgetTier` under `remoteFloor` for a caller whose remote provenance floor (remoteProvenanceFloorSql)
  *    is none of the forms the store models: the floor with no caller record, or a caller record on a brain with or
  *    without member-access restrictions, for the owner or not, at the caller's schema version. A labelled-only caller,
- *    folder coverage or a relaxed privacy setting renders other text.
+ *    folder coverage or a relaxed privacy setting renders other text. `readForgetTarget`, `readLinkedFactCopies`
+ *    and `readFactWithdrawalClaim` under `remoteFloor`, and `hasHiddenFactCopy` (always under the floor), refuse the same;
+ *  - `ownerReachesFact` for an owner bound to a member (ownerReadPolicyFragment renders GST-2490's owner read rule rather
+ *    than FALSE), which the store does not model.
  */
-import type { BrainEngine } from '../../engine.ts';
-import { factVisibilitySql } from '../../access/member-facts.ts';
+import type { BrainEngine, FactWithdrawalClaim, ForgetTargetRow, LinkedFactCopy } from '../../engine.ts';
+import { MEMBER_PAGE_PREFIX, factVisibilitySql } from '../../access/member-facts.ts';
+import { withDates } from '../store-codec.ts';
 import {
-  currentCallerAccess, privacyAliasSql, privateProvenanceFilterUnderPolicy, remoteProvenanceFloorSql, withCallerAccess, withoutCallerAccess,
+  privateProvenanceFilterUnderPolicy, ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { normalizeConceptInputs, storePrivacyPolicy } from './private-provenance.ts';
+import { storePrivacyPolicy } from './private-provenance.ts';
+import { storeRemoteFloor } from './remote-floor.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -63,28 +71,63 @@ export const factReadableUnder: Member<'factReadableUnder'> = (brain, spec) => {
   }));
 };
 
-/**
- * The remote provenance floor as the store reads it: the rendering with no caller record (which reads pending folder
- * coverage live), or the rendering of a fresh record carrying only the caller's `restricted` and `owner` flags and its
- * schema version (remotePolicy). The floor never reads the caller's identity, and the store keeps no owner-only source,
- * folder rule or pending coverage, so those forms differ only in text the store answers the same way, except
- * `restricted: false`, which drops the origin test (sent as a flag). Any other rendering refuses.
- */
-function storeRemoteFloor(member: string): { honorAliases: boolean; restricted: boolean } {
-  const got = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
-  const unscoped = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
-  if (got === normalizeConceptInputs(unscoped)) return { honorAliases: unscoped.includes(privacyAliasSql('pp')), restricted: true };
-  const { restricted, owner, remotePolicy } = currentCallerAccess();
-  const fresh = withoutCallerAccess(() => withCallerAccess({ restricted, owner, remotePolicy }, () => remoteProvenanceFloorSql('facts')));
-  if (got !== normalizeConceptInputs(fresh)) {
-    refuseMember(member, 'a remote provenance floor the store does not model (a labelled-only caller, folder coverage or a relaxed privacy setting)');
-  }
-  return { honorAliases: fresh.includes(privacyAliasSql('pp')), restricted };
-}
 
 export const readRemoteForgetTier: Member<'readRemoteForgetTier'> = (brain, spec) => {
   const member = 'readRemoteForgetTier';
   requireInteger(member, spec.factId);
   const remoteFloor = spec.remoteFloor ? storeRemoteFloor(member) : null;
   return storeCall({ member }, () => brain.readRemoteForgetTier({ factId: spec.factId, sourceId: spec.sourceId, remoteFloor }));
+};
+
+export const readForgetTarget: Member<'readForgetTarget'> = async (brain, spec) => {
+  const member = 'readForgetTarget';
+  requireInteger(member, spec.id);
+  const own = spec.ownPage;
+  const remoteFloor = !own && spec.remoteFloor ? storeRemoteFloor(member) : null;
+  const row = await storeCall({ member }, () => brain.readForgetTarget({
+    id: spec.id,
+    sourceId: spec.sourceId,
+    worldOnly: spec.worldOnly,
+    remoteFloor,
+    ownPage: own ? { slug: own, reader: `member:${own.slice(MEMBER_PAGE_PREFIX.length)}` } : null,
+  }));
+  return row ? withDates(row as ForgetTargetRow, ['expired_at']) : null;
+};
+
+export const isFactEntityUnbacked: Member<'isFactEntityUnbacked'> = (brain, id, sourceId) => {
+  requireInteger('isFactEntityUnbacked', id);
+  return storeCall({ member: 'isFactEntityUnbacked' }, () => brain.isFactEntityUnbacked(id, sourceId));
+};
+
+export const readLinkedFactCopies: Member<'readLinkedFactCopies'> = async (brain, spec) => {
+  const member = 'readLinkedFactCopies';
+  requireInteger(member, spec.id);
+  const remoteFloor = spec.remoteFloor ? storeRemoteFloor(member) : null;
+  return storeCall({ member }, () => brain.readLinkedFactCopies({ id: spec.id, sourceId: spec.sourceId, worldOnly: spec.worldOnly, remoteFloor })) as Promise<LinkedFactCopy[]>;
+};
+
+export const hasHiddenFactCopy: Member<'hasHiddenFactCopy'> = (brain, spec) => {
+  const member = 'hasHiddenFactCopy';
+  requireInteger(member, spec.id);
+  const remoteFloor = storeRemoteFloor(member);
+  return storeCall({ member }, () => brain.hasHiddenFactCopy({ id: spec.id, sourceId: spec.sourceId, remoteFloor }));
+};
+
+export const ownerReachesFact: Member<'ownerReachesFact'> = (brain, spec) => {
+  const member = 'ownerReachesFact';
+  requireInteger(member, spec.id);
+  if (ownerReadPolicyFragment('pp', spec.identity, spec.satisfied) !== 'FALSE') {
+    refuseMember(member, 'an owner bound to a member, whose pages the owner read rule (GST-2490 lineage) judges, which the store does not model');
+  }
+  return storeCall({ member }, () => brain.ownerReachesFact({ id: spec.id, sourceId: spec.sourceId }));
+};
+
+/** `lock` takes no row lock: the store serializes its writes, so the withdrawal's own Store::write is the lock. */
+export const readFactWithdrawalClaim: Member<'readFactWithdrawalClaim'> = (brain, spec) => {
+  const member = 'readFactWithdrawalClaim';
+  requireInteger(member, spec.id);
+  const remoteFloor = spec.remoteFloor ? storeRemoteFloor(member) : null;
+  return storeCall({ member }, () => brain.readFactWithdrawalClaim({
+    id: spec.id, sourceId: spec.sourceId, worldOnly: spec.worldOnly, memberPage: spec.memberPage, remoteFloor,
+  })) as Promise<FactWithdrawalClaim | null>;
 };

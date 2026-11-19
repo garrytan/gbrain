@@ -372,7 +372,7 @@ export const versionTimelineScan = (): VersionTimelineScan => ({ done: false, pr
  * row locked and only while the page is still at that revision; a page that moved deletes nothing and returns no rows.
  */
 export async function retractRemovedTimelineEntries(
-  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'listStoredTimelineRows'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'readSegmentedPageHead' | 'readSegmentedVersionBodyBytes' | 'listStoredTimelineRows'>,
   slug: string,
   sourceId: string,
   current: string | TimelineTextKeys,
@@ -468,7 +468,7 @@ export async function retractRemovedTimelineEntries(
     import('./trust/fence-guard.ts'), import('./trust/taint.ts'), import('./trust/tier.ts')]);
   const [page] = await engine.executeRaw<{ id: number; trust_tier: string | null }>('SELECT id, trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
   const writer = derivedWriteTrust({ channel: 'derive:timeline', inputs: page ? [{ table: 'pages', id: Number(page.id), tier: storedTrustTier(page.trust_tier) }] : [], projection: true }).tier;
-  const held = await heldRows(engine as BrainEngine, 'timeline_entries', found.map(row => Number(row.id)), { writer, pending: true });
+  const held = page ? await heldRows(engine as BrainEngine, 'timeline_entries', Number(page.id), found.map(row => Number(row.id)), { writer, pending: true }) : new Map();
   const orphans = found.filter(row => !held.has(Number(row.id)));
   if (opts.dryRun) return orphans;
   await contestHeldRows(engine as BrainEngine, { sourceId, slug, table: 'timeline_entries', proposer: 'timeline_reconcile', writer,

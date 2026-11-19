@@ -77,7 +77,7 @@ export async function selectClaimableEffect<R = Record<string, unknown>>(exec: L
 }
 
 /** `readRequestEffects`, every kind: $1 request id. The text `publicEffectsForRequest` (persistence/effect-journal.ts) has always sent. */
-export const REQUEST_EFFECTS_SQL = 'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind';
+export const REQUEST_EFFECTS_SQL = 'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"';
 
 /** `readRequestEffects`, the Git effect: $1 request id. The text `gitReceiptState` (persistence/effect-journal.ts) has always sent. */
 export const REQUEST_GIT_EFFECT_SQL = `SELECT state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid AND kind='git' ORDER BY id DESC LIMIT 1`;

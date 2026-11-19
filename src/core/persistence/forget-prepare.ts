@@ -21,14 +21,13 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { planFactWithdrawal, recordFactWithdrawal } from '../facts/withdrawal.ts';
 import { rebuildPendingPageProjections } from '../page-state/projections.ts';
-import { ownerReadPolicyFragment, readPolicyFragment, remoteProvenanceFloorSql, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { folderAccessForAll, memberIdentityFor } from '../access/caller.ts';
 import { remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { materializedPage } from './segmented-apply.ts';
 import { prepareFileTarget, snapshotLedger, unreadPageFile } from './page-prepare.ts';
 import { pageIdentityError } from './page-identity.ts';
-import { MEMBER_PAGE_PREFIX, onOwnedMemoryPageSql } from '../access/member-facts.ts';
-import { unbackedEntitySql } from '../facts/withdrawal-schema.ts';
+import { MEMBER_PAGE_PREFIX } from '../access/member-facts.ts';
 import { storedOwnerSpeaksForItself } from './page-visibility.ts';
 import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
@@ -48,15 +47,9 @@ interface ForgetTarget { id: number; entity_slug: string | null; trust_tier?: st
  */
 export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId: string, fact: ForgetTarget, remote: boolean, excludePrivate: boolean): Promise<void> {
   const id = fact.id;
-  const unbacked = fact.entity_slug !== null && (await tx.executeRaw<{ unbacked: boolean }>(
-    `SELECT ${unbackedEntitySql('u')} AS unbacked FROM facts u WHERE u.id=$1 AND u.source_id=$2`, [id, sourceId]))[0]?.unbacked === true;
+  const unbacked = fact.entity_slug !== null && await tx.isFactEntityUnbacked(id, sourceId);
   if (fact.entity_slug === null || unbacked) {
-    const linked = await tx.executeRaw<{ id: number; entity_slug: string }>(`SELECT l.id,l.entity_slug FROM facts u
-      JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.entity_slug IS DISTINCT FROM u.entity_slug AND l.id<>u.id
-        AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
-        AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
-      WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')${excludePrivate ? ` AND ${remoteProvenanceFloorSql('l')}` : ''}
-      ORDER BY l.id LIMIT 5`, [id, sourceId, remote]);
+    const linked = await tx.readLinkedFactCopies({ id, sourceId, worldOnly: remote, remoteFloor: excludePrivate });
     if (linked.length) {
       const named = linked.map(row => `#${row.id} (${row.entity_slug})`).join(', ');
       throw verbError('invalid_params',
@@ -65,13 +58,7 @@ export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId:
     }
   }
   if (!excludePrivate) return;
-  const hidden = await tx.executeRaw(`SELECT 1 FROM facts u
-    JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.id<>u.id
-      AND (u.entity_slug IS NULL OR ${unbackedEntitySql('u')} OR l.entity_slug=u.entity_slug)
-      AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
-      AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
-    WHERE u.id=$1 AND u.source_id=$2 AND NOT (${remoteProvenanceFloorSql('l')}) LIMIT 1`, [id, sourceId]);
-  if (!hidden.length) return;
+  if (!await tx.hasHiddenFactCopy({ id, sourceId })) return;
   throw verbError('invalid_params',
     `claim_linked: the same claim as fact #${id} is active elsewhere in this brain. Forgetting #${id} would withdraw it there too, so nothing was forgotten.`,
     'Keep the fact. To withdraw the claim everywhere, ask the user to forget it on the brain host.');
@@ -94,9 +81,7 @@ export async function storedOwnerReader(engine: BrainEngine, authority: WriteAut
  * page whose readers leave the owner out stays with the brain host; the owner opt-in to read such pages never widens this.
  */
 export async function ownerReachesFact(engine: BrainEngine, id: number, sourceId: string, owner: OwnerReader): Promise<boolean> {
-  const page = `(${ownerReadPolicyFragment('pp', owner.identity, owner.satisfied)} AND ${readPolicyFragment('pp', owner.identity, true, owner.satisfied)})`;
-  return (await engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND NOT ${onOwnedMemoryPageSql('facts')}
-    AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id=facts.source_id AND pp.slug IN (facts.source_markdown_slug, facts.entity_slug) AND NOT ${page})`, [id, sourceId])).length > 0;
+  return engine.ownerReachesFact({ id, sourceId, identity: owner.identity, satisfied: owner.satisfied });
 }
 
 /**
@@ -105,12 +90,7 @@ export async function ownerReachesFact(engine: BrainEngine, id: number, sourceId
  * the page names the member among its readers; the coordinator checks the page's visibility to the stored writer.
  */
 export async function readForgetTarget(engine: BrainEngine, id: number, sourceId: string, remote: boolean, excludePrivate: boolean, lock = false, ownPage: string | null = null) {
-  const [fact] = await engine.executeRaw<ForgetTarget & { source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null }>(`SELECT id,entity_slug,source_markdown_slug,row_num,expired_at,trust_tier FROM facts
-    WHERE id=$1 AND source_id=$2 AND ${ownPage ? `visibility='private' AND source_markdown_slug=$3 AND EXISTS (SELECT 1 FROM pages member_page
-      WHERE member_page.source_id=facts.source_id AND member_page.slug=$3 AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY[$4::text])`
-    : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`}${lock ? ' FOR UPDATE' : ''}`,
-  ownPage ? [id, sourceId, ownPage, `member:${ownPage.slice(MEMBER_PAGE_PREFIX.length)}`] : [id, sourceId, remote]);
-  return fact ?? null;
+  return engine.readForgetTarget({ id, sourceId, worldOnly: remote, remoteFloor: excludePrivate, lock, ownPage });
 }
 
 export async function prepareForgetMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig, signal?: AbortSignal): Promise<PreparedMutation> {
@@ -202,8 +182,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       pages = (await recordFactWithdrawal(tx, id, sourceId, worldOnly, ownPage
         ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication }
         : { requestId: row.id, semanticReview: p.semantic_review !== false, excludePrivate, publication })).pages.map(page => page.slug);
-      if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
-        WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
+      if (reason) await tx.appendFactForgetReason(id, sourceId, `forgotten: ${reason}`);
       return row.operation === 'forget'
         ? { id: rawId, expired: fact.expired_at === null, reason, protocol_version: 1 }
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };

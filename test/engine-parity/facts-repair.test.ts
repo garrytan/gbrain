@@ -11,15 +11,17 @@
  *    repair, which loops_close retires and which world facts the visibility check flags; the Rust engine has no SQL,
  *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves the four that read
  *    only `facts` and `pages`, closedLoopWithActiveFact and loopFactDrift over its open loops, countLabelFacts and
- *    countPurgedPageFacts over its `page_purges` ledger; the other two refuse (rust/docs/store/facts.md).
+ *    countPurgedPageFacts over its `page_purges` ledger, listUnwithdrawnFacts over its generation ledger and
+ *    listExtractorFactsForClassification over its write journal's requests (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
  *  - Seam: recordPagePurge and recordFenceRetirement (harness.ts) write a page_purges row and a facts-fence generation
  *    with SQL, as the page purge sweep and the fence writer do; the Rust arm stops there on the typed raw_sql refusal,
  *    because no member writes either ledger on Rust. Every fact, page, loop and withdrawal is seeded through the typed
- *    members. The table behind the refused member (persistence_requests, the write journal) has no typed writer on the
- *    engine, so its case seeds the facts the statement joins from and asserts the answer an empty table gives; the Rust
- *    arm counts it as a typed refusal. Generated values (ids) are compared by relation, never by value.
+ *    members. The write journal behind listExtractorFactsForClassification's receipts (persistence_requests) has no
+ *    typed writer that can complete a request at a fact's expiry instant, so its case asserts the answer with no receipt;
+ *    the receipt join is pinned by the store test rust/crates/gbrain-store/tests/facts_extractor_classify.rs. Generated
+ *    values (ids) are compared by relation, never by value.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, recordFenceRetirement, recordPagePurge } from './harness.ts';

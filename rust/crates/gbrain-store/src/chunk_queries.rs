@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, HashMap};
 mod site_reads;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
-    FrozenHitsInput, QualifiedNamesInput, WithdrawalChunksInput, WithdrawalKey,
+    FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
 };
 
 /// `listChunklessPagesWithContent`'s default batch size.
@@ -117,7 +117,7 @@ fn sealed(page: &PageRecord) -> bool {
 
 /// `safeChunksFilter('p')`: `chunker_version >= SAFE_FENCE_CHUNKER_VERSION`. A page that records
 /// no version fails it, as NULL fails the SQL comparison.
-fn safe_chunks(page: &PageRecord) -> bool {
+pub(crate) fn safe_chunks(page: &PageRecord) -> bool {
     page.chunker_version
         .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
 }

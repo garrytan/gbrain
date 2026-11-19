@@ -10,11 +10,15 @@
  *    or only a world one, hides one on a deleted or quarantined page or below the trust floor, and with excludePrivate
  *    one whose provenance page is private; readRemoteForgetTier answers the stored tier of a world fact of the source,
  *    and under the remote floor (restricted brain, unrestricted brain, owner) none whose provenance page is private or
- *    names readers.
+ *    names readers; readForgetTarget answers the fact a forget names (entity, provenance page, row, expiry, tier) of
+ *    any visibility, only a world one with worldOnly, under the remote floor none on a private or readers page, and
+ *    for a member's own page only a private fact on it while the live page names the member; lock changes nothing.
  *  - Regression: `gbrain remember` and `gbrain forget` read these before every write; an engine that drops a clause
  *    admits a write to an archived source, strikes the wrong file, or lets a member withdraw a fact it cannot read;
- *    a remote forget that misreads the tier forgets a fact the owner confirmed, or files a proposal for a hidden one.
- *  - Why existing coverage misses it: the reads were raw SQL inside memory-mutations.ts, so no engine arm ran them.
+ *    a remote forget that misreads the tier forgets a fact the owner confirmed, or files a proposal for a hidden one;
+ *    a forget that misreads its target withdraws a fact the caller cannot see, or answers not_found for one it can.
+ *  - Why existing coverage misses it: the reads were raw SQL inside memory-mutations.ts and forget-prepare.ts, so no
+ *    engine arm ran them.
  *  - Seam: none. Sources come from the harness fixture, rows from typed members. Ids differ between arms, so facts are
  *    named by their text and a source's incarnation is compared only as a stable non-empty string.
  */
@@ -212,6 +216,78 @@ describe('engine parity: memory mutation reads', () => {
       expect(out.ownerFloor).toEqual(out.floor);
       expect(Object.values(out.wrongSource).every(v => v === null)).toBe(true);
       expect(out.unknown).toEqual([null, null]);
+      return out;
+    });
+
+  parityTest('readForgetTarget reads the fact a forget names, under the caller visibility, the remote floor or a member page',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'expireFact', 'readForgetTarget'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await engine.putPage('notes/open', note('Open'));
+      await engine.putPage('notes/private', note('Private', { visibility: 'private' }));
+      await engine.putPage('notes/readers', note('Readers', { readable_by: ['member:alice-example'] }));
+      await engine.putPage('memory/members/alice-example', note('Alice', { readable_by: ['member:alice-example'] }));
+      await engine.putPage('memory/members/carol-example', note('Carol', { readable_by: ['member:dave-example'] }));
+      const rows: Array<{ fact: string; page: string | null; visibility: 'world' | 'private'; tier: string; entity: string | null }> = [
+        { fact: 'open world', page: 'notes/open', visibility: 'world', tier: 'operator_curated', entity: 'people/e-example' },
+        { fact: 'open private', page: 'notes/open', visibility: 'private', tier: 'agent_written', entity: 'people/e-example' },
+        { fact: 'on private page', page: 'notes/private', visibility: 'world', tier: 'operator_curated', entity: null },
+        { fact: 'on readers page', page: 'notes/readers', visibility: 'world', tier: 'tool_observed', entity: 'people/e-example' },
+        { fact: 'no page', page: null, visibility: 'world', tier: 'agent_written', entity: null },
+        { fact: 'alice private', page: 'memory/members/alice-example', visibility: 'private', tier: 'agent_written', entity: 'people/alice-example' },
+        { fact: 'alice world', page: 'memory/members/alice-example', visibility: 'world', tier: 'agent_written', entity: 'people/alice-example' },
+        { fact: 'carol private', page: 'memory/members/carol-example', visibility: 'private', tier: 'agent_written', entity: null },
+        { fact: 'ghost private', page: 'memory/members/ghost-example', visibility: 'private', tier: 'agent_written', entity: null },
+        { fact: 'expired world', page: 'notes/open', visibility: 'world', tier: 'operator_curated', entity: 'people/e-example' },
+      ];
+      const ids = new Map<string, number>();
+      for (const [i, r] of rows.entries()) {
+        const out = await declared(engine, r.tier, tx => tx.insertFacts([{
+          fact: r.fact, entity_slug: r.entity, source_markdown_slug: r.page, row_num: i + 1, kind: 'fact',
+          visibility: r.visibility, source: 'fence', valid_from: new Date(Date.UTC(2026, 7, 1 + i)),
+        }] as never, { source_id: 'default' }));
+        ids.set(r.fact, Number(out.ids[0]!));
+      }
+      expect(await engine.expireFact(ids.get('expired world')!, { at: new Date(Date.UTC(2026, 8, 1)) })).toBe(true);
+      type Spec = { worldOnly?: boolean; remoteFloor?: boolean; lock?: boolean; ownPage?: string | null; sourceId?: string };
+      const read = async (spec: Spec = {}, e: BrainEngine = engine) => {
+        const out: Record<string, unknown> = {};
+        for (const r of rows) {
+          const row = await e.readForgetTarget({ id: ids.get(r.fact)!, sourceId: spec.sourceId ?? 'default', worldOnly: spec.worldOnly ?? false,
+            remoteFloor: spec.remoteFloor ?? false, lock: spec.lock ?? false, ownPage: spec.ownPage ?? null });
+          out[r.fact] = row && {
+            sameId: Number(row.id) === ids.get(r.fact), entity_slug: row.entity_slug, source_markdown_slug: row.source_markdown_slug,
+            row_num: row.row_num, expired_at: row.expired_at instanceof Date ? row.expired_at.toISOString() : row.expired_at, trust_tier: row.trust_tier,
+          };
+        }
+        return out;
+      };
+      const seen = (out: Record<string, unknown>) => Object.keys(out).filter(k => out[k] !== null);
+      const unknown = Math.max(...ids.values()) + 1000;
+      const out = {
+        plain: await read(),
+        locked: await engine.transaction(tx => read({ lock: true }, tx)),
+        worldOnly: seen(await read({ worldOnly: true })),
+        floor: seen(await read({ worldOnly: true, remoteFloor: true })),
+        unrestrictedFloor: seen(await withCallerAccess({ restricted: false }, () => read({ worldOnly: true, remoteFloor: true }))),
+        alice: seen(await read({ worldOnly: true, ownPage: 'memory/members/alice-example' })),
+        carol: seen(await read({ worldOnly: true, ownPage: 'memory/members/carol-example' })),
+        ghost: seen(await read({ worldOnly: true, ownPage: 'memory/members/ghost-example' })),
+        wrongSource: seen(await read({ sourceId: 'other' })),
+        unknown: await engine.readForgetTarget({ id: unknown, sourceId: 'default', worldOnly: false, remoteFloor: false, lock: false, ownPage: null }),
+      };
+      expect(out.plain['open private']).toEqual({ sameId: true, entity_slug: 'people/e-example', source_markdown_slug: 'notes/open', row_num: 2, expired_at: null, trust_tier: 'agent_written' });
+      expect(out.plain['no page']).toEqual({ sameId: true, entity_slug: null, source_markdown_slug: null, row_num: 5, expired_at: null, trust_tier: 'agent_written' });
+      expect(out.plain['expired world']).toEqual({ sameId: true, entity_slug: 'people/e-example', source_markdown_slug: 'notes/open', row_num: 10, expired_at: '2026-09-01T00:00:00.000Z', trust_tier: 'operator_curated' });
+      expect(seen(out.plain)).toEqual(rows.map(r => r.fact));
+      expect(out.locked).toEqual(out.plain);
+      expect(out.worldOnly).toEqual(['open world', 'on private page', 'on readers page', 'no page', 'alice world', 'expired world']);
+      expect(out.floor).toEqual(['open world', 'no page', 'expired world']);
+      expect(out.unrestrictedFloor).toEqual(out.floor);
+      expect(out.alice).toEqual(['alice private']);
+      expect(out.carol).toEqual([]);
+      expect(out.ghost).toEqual([]);
+      expect(out.wrongSource).toEqual([]);
+      expect(out.unknown).toBeNull();
       return out;
     });
 });

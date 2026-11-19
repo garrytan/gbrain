@@ -323,7 +323,7 @@ impl Store {
                 json!({
                     "id": r.id,
                     "status": r.status,
-                    "submission_authority": r.submission_authority.as_ref().map(jsonb),
+                    "submission_authority": r.submission_authority.as_ref().map(ordered),
                     "legacy_authority_is_null": r.submission_authority.is_none(),
                 })
             })

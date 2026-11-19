@@ -56,6 +56,7 @@ foreign keys do.
 | `brain.reclaimStalledJobs(graceMs, suspectMark)` | `{ requeued, dead }` in id order. Drops drain-lease holder rows (`gbrain-drain-lease`) whose lease and cycle lock are gone; requeues a dead multi-claim worker's expired co-runners marked with `suspectMark` and no stall counted; requeues the rest with one stall counted, or kills them at `max_stalled` (notifying and waking their parents) | `reclaimStalledJobs` |
 | `brain.acquireCycleLock(id, opts)` / `refreshCycleLock` / `releaseCycleLock` / `deleteCycleLockIfStale` / `readCycleLocks(filter)` | as the SQL engines (`cycle-locks.ts`); `deleteCycleLock` is the release statement | the cycle lock members |
 | `brain.assertCycleLease(id, token)` | true when the lease is held under `token` and unexpired. A read: `FOR KEY SHARE` has nothing to wait for in one write transaction | `assertCycleLease` |
+| `brain.takePageEmbeddingLease(id, { holderPid, holderHost, acquisitionToken, ttlMinutes })` / `renewPageEmbeddingLease(id, { acquisitionToken, ttlMinutes })` / `releasePageEmbeddingLease(id, { acquisitionToken })` | the page embedding lease (`embed-page:<page id>`, page-embedding-lease.ts) on the same lock rows. Take writes the row when none stands or it expired, with no steal grace; renew matches the token alone, not the pid; release deletes this holder's row and every expired `embed-page:` row. A renew inside `transaction(fn)` runs in that write transaction | the page embedding lease members |
 
 Jobs slice 2 members. Each is one write transaction (or one read) and resolves what the `queue.ts` statement
 at the line cited in the TypeScript member returns. A row is a job row as above; "rows" are in id order unless
@@ -99,19 +100,20 @@ value, and `''` when missing. A NULL authority or no grant matches the four `''`
 
 Delegated client admission (`admitJob` with a `lock` or `checkCapacity` policy, and `retryJob` of a delegated
 job) runs the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`): the job
-reads, `countOpenJobsByOwner` and `readJobSourceState` come from the store. The store keeps no `oauth_clients` table, so the handle's
-`lockOAuthClient` locks nothing and the policy's next step, the client's grant read, refuses
-(`engine_capability_missing`, capability `minion_queue`) before anything is written.
+reads, `countOpenJobsByOwner` and `readJobSourceState` come from the store. The store keeps the `oauth_clients` row ([oauth-clients.md](oauth-clients.md)), so the handle serves the grant read
+(`readOauthClient`) and the active-source list (`listAllSources`) and a missing client is denied as on PGLite. It holds
+no row lock, so `lockOAuthClient` locks nothing and a policy that took it refuses (`engine_capability_missing`,
+capability `minion_queue`) before anything is written.
 
 `MinionQueue.retryJob` runs the job authority check first. An application job needs no read. An agent job
 (`remote_agent`) reads its source with `readJobSourceState`, so a source that is gone, archived or created again
-is denied on the store as on PGLite; a current source goes on to the owner's `oauth_clients` read, which refuses.
+is denied on the store as on PGLite; a current source goes on to the owner's `oauth_clients` read, which the store serves.
 The archived-source branch is pinned by cargo only (`job_source_state_reads_archived_and_the_creation_stamp` in
 `tests/jobs_slice2.rs`). The parity suite cannot reach it: no member the Rust engine serves archives a source, so
 a mutant that always reads `archived` as false passes parity and fails cargo.
 A generic remote job (`remote_generic`) reads its principal first (`SELECT client_id, deleted_at, scope, source_id,
 bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1`, or `SELECT * FROM
-access_tokens WHERE id = $1` for a legacy token), so its retry refuses at that read until the grants family is in
+access_tokens WHERE id = $1` for a legacy token), so its retry refuses at that read until the legacy-token read is in
 the store. A policy that got past the
 lock would still refuse before the write: the lock, the capacity count and the write are separate store calls, so
 they are not one admission. `lockOAuthClient` called directly is not served and refuses the same way.

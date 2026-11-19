@@ -15,7 +15,8 @@
  *    UPDATE) carries its path, raw config and archived flag, archived sources included, and null for an unknown id; the
  *    sync preflight reads the source's stamped chunker version, null before the first stamp; a source's page count keeps
  *    to that source and counts soft-deleted pages only when asked; `sources add` inserts a row with its name, path and
- *    config (a key set to undefined is dropped), and a taken id or name throws and leaves the first row as it was.
+ *    config (a key set to undefined is dropped), and a taken id or name throws and leaves the first row as it was; the
+ *    scope-source check of a remote recall (`withoutScopeSources`) drops exactly the sources whose config marks them.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
@@ -32,6 +33,7 @@
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
  */
 import { describe, expect } from 'bun:test';
+import { markedScopeSources, withoutScopeSources } from '../../src/core/access/attest-sources.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustEngine } from '../../src/core/rust-engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
@@ -39,6 +41,7 @@ import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { loadConnectorSourceIds } from '../../src/commands/orphans.ts';
 import { sourceConfigText, sourceRecordsRawConfig } from '../../src/core/source-rows.ts';
+import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../../src/core/access/owner-only.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -62,6 +65,54 @@ describe('engine parity: source-resolution reads', () => {
       { id: 'beta', local_path: '/srv/brain/beta', archived: true },
     ]);
     return { empty, rows };
+  });
+
+  parityTest('readPlainSyncSource reads the path, last commit and config of a source that is not archived', { methods: ['readPlainSyncSource'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'plain', { kind: null, note: 'x' }, '/srv/brain/plain');
+    await createSource(engine, backend, 'gone', {}, '/srv/brain/gone');
+    await archiveSource(engine, backend, 'gone');
+    const result = {
+      plain: await engine.readPlainSyncSource('plain'),
+      gone: await engine.readPlainSyncSource('gone'),
+      missing: await engine.readPlainSyncSource('missing'),
+      default: (await engine.readPlainSyncSource('default'))?.last_commit ?? null,
+    };
+    expect(result.plain?.local_path).toBe('/srv/brain/plain');
+    expect(result.plain?.last_commit).toBeNull();
+    expect(result.plain?.config as Record<string, unknown> | null | undefined).toEqual({ kind: null, note: 'x' });
+    expect(result.gone).toBeNull();
+    expect(result.missing).toBeNull();
+    return result;
+  });
+
+  parityTest('readOwnerOnlySourcesPresent and readOwnerOnlySourceConfig find owner-only sources by kind or flag, archived ones included', { methods: ['readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig'] }, async (engine, backend) => {
+    const none = await engine.readOwnerOnlySourcesPresent();
+    await createSource(engine, backend, 'plain', { note: 'x' });
+    await createSource(engine, backend, 'flagstr', { owner_only: 'false' });
+    const stillNone = await engine.readOwnerOnlySourcesPresent();
+    await createSource(engine, backend, 'phone', { kind: 'imessage' });
+    await archiveSource(engine, backend, 'phone');
+    const archivedKind = await engine.readOwnerOnlySourcesPresent();
+    await createSource(engine, backend, 'flag', { owner_only: true });
+    const configs = {
+      plain: await engine.readOwnerOnlySourceConfig('plain'),
+      phone: await engine.readOwnerOnlySourceConfig('phone'),
+      flag: await engine.readOwnerOnlySourceConfig('flag'),
+      missing: await engine.readOwnerOnlySourceConfig('missing'),
+    };
+    const verdicts = {
+      plain: await sourceIsOwnerOnly(engine, 'plain'),
+      flagstr: await sourceIsOwnerOnly(engine, 'flagstr'),
+      phone: await sourceIsOwnerOnly(engine, 'phone'),
+      flag: await sourceIsOwnerOnly(engine, 'flag'),
+      missing: await sourceIsOwnerOnly(engine, 'missing'),
+      present: await ownerOnlySourcesPresent(engine),
+    };
+    expect([none, stillNone, archivedKind]).toEqual([false, false, true]);
+    expect(configs.plain).toEqual({ config: { note: 'x' } });
+    expect(configs.missing).toBeNull();
+    expect(verdicts).toEqual({ plain: false, flagstr: false, phone: true, flag: true, missing: false, present: true });
+    return { none, stillNone, archivedKind, configs, verdicts };
   });
 
   parityTest('listSourceRoutingRows carries config, archived and whether default has a live page', { methods: ['listSourceRoutingRows'] }, async (engine, backend) => {
@@ -249,5 +300,18 @@ describe('engine parity: source-resolution reads', () => {
     expect(names).toEqual([['default', 'default'], ['bare', 'bare'], ['wiki', 'Wiki']]);
     return { refused, rows, names };
   });
-});
 
+  // A remote memory_recall drops the QM scope sources it did not name (withoutScopeSources); the census found the Rust
+  // engine refused it, because the scope check read the sources through sqlQueryForEngine. It reads getSource now.
+  parityTest('the scope-source check of a remote recall drops marked sources and keeps the rest', { methods: ['getSource'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'scope', { qm_scope: true, federated: false });
+    await createSource(engine, backend, 'plain', { federated: true });
+    const marked = [...await markedScopeSources(engine, ['plain', 'scope', 'scope', 'default', 'no-such-source'])];
+    expect(marked).toEqual(['scope']);
+    const remote = await withoutScopeSources({ remote: true, engine }, ['default', 'scope', 'plain']);
+    expect(remote).toEqual(['default', 'plain']);
+    const local = await withoutScopeSources({ remote: false, engine }, ['default', 'scope']);
+    expect(local).toEqual(['default', 'scope']);
+    return { marked, remote, local, none: [...await markedScopeSources(engine, [])] };
+  });
+});

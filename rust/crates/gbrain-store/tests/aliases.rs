@@ -217,7 +217,7 @@ fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
         ),
     ];
     assert_eq!(resolve(&store, &names, json!({})), everything);
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": policy })),
         vec![
@@ -226,8 +226,7 @@ fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
         ]
     );
     // Without the alias-key test (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": visibility_only })),
         vec![
@@ -560,7 +559,7 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         canonical_refs(&store, &refs, json!({ "live": true })),
         strings(&["default/c/open", "default/c/private", "other/c/away"])
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         canonical_refs(
             &store,
@@ -737,7 +736,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("restricted", &["default/c/restricted"]),
         ]
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": policy })),
         vec![
@@ -745,8 +744,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("open", &["default/c/open"]),
         ]
     );
-    let no_aliases =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": no_aliases })),
         vec![

@@ -10,8 +10,11 @@
 //!
 //! Every prune then marks the history it cut (`markPrunedHistory`): the retained version just
 //! before each pruned one gets `successor_pruned`, and the page records `version_history_gap_at`.
-//! The holding-page prune (`pruneHoldingPageVersions`) runs only from the fence fact append, a
-//! raw-SQL write the Rust engine refuses, so it has no Rust counterpart.
+//! The holding-page prune (`pruneHoldingPageVersions`, `src/core/engine-sql/version-prune.ts`) is
+//! a store call of its own: the fence fact append runs it after the version its append saved on a
+//! holding page (`memory/unattributed`, `memory/unattributed-private`). It keeps the newest
+//! `LARGE_PAGE_VERSIONS_KEPT` versions that are not segmented, deletes at most
+//! `HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE` of the oldest others, and marks the history it cut.
 
 use std::collections::BTreeMap;
 
@@ -28,6 +31,8 @@ use crate::put_json;
 pub(crate) const PAGE_INLINE_MAX_BYTES: u64 = 1024 * 1024;
 /// `LARGE_PAGE_VERSIONS_KEPT` (`src/core/page-body/limits.ts`).
 pub(crate) const LARGE_PAGE_VERSIONS_KEPT: usize = 5;
+/// `HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE` (`src/core/engine-sql/version-prune.ts`).
+pub(crate) const HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE: usize = 100;
 /// `DEFAULT_SEGMENTED_VERSIONS_MAX_PER_PAGE`.
 const DEFAULT_SEGMENTED_MAX_PER_PAGE: i64 = 50;
 /// `DEFAULT_SEGMENTED_VERSIONS_MAX_PINNED_BYTES`.
@@ -79,6 +84,27 @@ pub(crate) fn prune_after_snapshot(
         tx.delete(&keys::version(page_id, *id))?;
     }
     mark_pruned_history(tx, env, page_id, &pruned)
+}
+
+/// `pruneHoldingPageVersions`: past the newest `LARGE_PAGE_VERSIONS_KEPT` versions of the page
+/// that are not segmented (`body_storage IS DISTINCT FROM 'segmented'`), deletes the oldest, at most
+/// `HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE` of them, marks the history it cut and answers how many
+/// it deleted.
+pub(crate) fn prune_holding(tx: &mut dyn KvWrite, env: &dyn Env, page_id: u64) -> Result<u64> {
+    let mut inline: Vec<u64> = versions_of(&*tx, page_id)?
+        .iter()
+        .filter(|v| v.body_storage.as_deref() != Some("segmented"))
+        .map(|v| v.id)
+        .collect();
+    inline.sort_unstable_by(|a, b| b.cmp(a));
+    let mut excess: Vec<u64> = inline.into_iter().skip(LARGE_PAGE_VERSIONS_KEPT).collect();
+    excess.sort_unstable();
+    excess.truncate(HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE);
+    for id in &excess {
+        tx.delete(&keys::version(page_id, *id))?;
+    }
+    mark_pruned_history(tx, env, page_id, &excess)?;
+    Ok(excess.len() as u64)
 }
 
 /// `pruneSegmentedVersions`: deletes the segmented versions past the count cap or the pinned

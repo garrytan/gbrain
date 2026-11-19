@@ -150,9 +150,7 @@ async function suffixRows(engine: BrainEngine, page: SplicePage, from: number): 
 
 /** Seq of the live row holding stored byte p (the last row starting at or before it). */
 async function rowAt(engine: BrainEngine, page: SplicePage, p: number): Promise<number> {
-  const [row] = await engine.executeRaw<{ seq: number }>('SELECT seq FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2'
-    + ' AND (gen_to IS NULL OR gen_to>$2) AND byte_start<=$3 ORDER BY byte_start DESC, seq DESC LIMIT 1', [page.id, page.generation, p]);
-  return Number(row?.seq ?? 0);
+  return (await engine.readManifestSeqAt(page.id, page.generation, p)) ?? 0;
 }
 
 /** One region of the whole body with the replacements applied (the rescan path). */

@@ -4,7 +4,9 @@
 //!
 //! Members: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes.
+//! listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages.
+//! readEntityInboundEdges reads the links countInboundLinks counts (`kept_inbound_links`), with
+//! their temporal columns, in link_temporal.rs.
 //!
 //! Each method reads what its statement reads and keeps the statement's tests: a "live" page here
 //! is `deleted_at IS NULL` alone unless the statement also asks for `pageReadFilter(.., live)`.
@@ -17,8 +19,8 @@ use crate::error::Result;
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::links::in_links;
-use crate::pages::{PageRecord, all_pages, read_page};
+use crate::links::{LinkRecord, in_links, out_links};
+use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use crate::sources::{SourceRecord, all_sources};
 use crate::stats::EntityTypeFilter;
 use crate::timeline_queries::jsonb_field_text;
@@ -93,6 +95,37 @@ pub struct TitledInput {
     pub scope: GraphScope,
 }
 
+/// One ask of `readLinkContextMatches(asks)`: a returned link context, its row index and the
+/// stored edge it came from.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LinkContextAsk {
+    pub i: i64,
+    pub from_source_id: String,
+    pub from_slug: String,
+    pub to_source_id: String,
+    pub to_slug: String,
+    pub link_type: String,
+    pub context: String,
+}
+
+/// The ellipsis a read appends to a truncated link context.
+const ELLIPSIS: char = '\u{2026}';
+
+/// The context test of `readLinkContextMatches`: `l.context = ctx`, or, for a `ctx` that ends in
+/// the ellipsis, `left(l.context, n - 1) = left(ctx, n - 1)` with `n` the length of `ctx` in
+/// characters.
+fn context_matches(stored: &str, ctx: &str) -> bool {
+    if stored == ctx {
+        return true;
+    }
+    if !ctx.ends_with(ELLIPSIS) {
+        return false;
+    }
+    let n = ctx.chars().count() - 1;
+    stored.chars().take(n).eq(ctx.chars().take(n))
+}
+
 /// `->>` of a frontmatter key.
 fn field_text(page: &PageRecord, key: &str) -> Option<String> {
     page.frontmatter.get(key).and_then(jsonb_field_text)
@@ -113,6 +146,55 @@ fn is_entity(filter: &EntityTypeFilter, page: &PageRecord) -> bool {
         .find(|b| b.source_id == page.source_id)
         .map_or(&filter.types, |b| &b.types)
         .contains(&page.page_type)
+}
+
+/// The inbound links `countInboundLinks` counts and `readEntityInboundEdges` reads, each with its
+/// referrer's slug, in link id order.
+pub(super) fn kept_inbound_links(
+    read: &dyn KvRead,
+    input: &InboundCountInput,
+) -> Result<Vec<(LinkRecord, String)>> {
+    let Some(target) = read_page(read, &input.source_id, &input.slug)? else {
+        return Ok(Vec::new());
+    };
+    let mut pages = Pages::new(read);
+    let mut kept = Vec::new();
+    for link in in_links(read, target.id)? {
+        if !not_mentions(&link) {
+            continue;
+        }
+        let Some(from) = pages.get(link.from_page_id)? else {
+            continue;
+        };
+        if from.source_id != input.source_id || !live(&from) {
+            continue;
+        }
+        let origin = match link.origin_page_id {
+            Some(id) => match pages.get(id)? {
+                Some(origin) => Some(origin),
+                None => continue,
+            },
+            None => None,
+        };
+        if let Some(policy) = &input.exclude_private {
+            if page_hidden(read, &from, policy)? {
+                continue;
+            }
+            if let Some(origin) = &origin
+                && page_hidden(read, origin, policy)?
+            {
+                continue;
+            }
+        }
+        if let Some(origin) = &origin
+            && (!live(origin) || (input.origin_same_source && origin.source_id != input.source_id))
+        {
+            continue;
+        }
+        kept.push((link, from.slug.clone()));
+    }
+    kept.sort_by_key(|(link, _)| link.id);
+    Ok(kept)
 }
 
 fn live(page: &PageRecord) -> bool {
@@ -327,47 +409,7 @@ impl Store {
     /// the origin must be readable; an origin must be live, in `sourceId` with `originSameSource`.
     pub fn count_inbound_links(&self, input: &InboundCountInput) -> Result<u64> {
         let read = self.read()?;
-        let Some(target) = read_page(&*read, &input.source_id, &input.slug)? else {
-            return Ok(0);
-        };
-        let mut pages = Pages::new(&*read);
-        let mut n = 0u64;
-        for link in in_links(&*read, target.id)? {
-            if !not_mentions(&link) {
-                continue;
-            }
-            let Some(from) = pages.get(link.from_page_id)? else {
-                continue;
-            };
-            if from.source_id != input.source_id || !live(&from) {
-                continue;
-            }
-            let origin = match link.origin_page_id {
-                Some(id) => match pages.get(id)? {
-                    Some(origin) => Some(origin),
-                    None => continue,
-                },
-                None => None,
-            };
-            if let Some(policy) = &input.exclude_private {
-                if page_hidden(&*read, &from, policy)? {
-                    continue;
-                }
-                if let Some(origin) = &origin
-                    && page_hidden(&*read, origin, policy)?
-                {
-                    continue;
-                }
-            }
-            if let Some(origin) = &origin
-                && (!live(origin)
-                    || (input.origin_same_source && origin.source_id != input.source_id))
-            {
-                continue;
-            }
-            n += 1;
-        }
-        Ok(n)
+        Ok(kept_inbound_links(&*read, input)?.len() as u64)
     }
 
     /// `listLinkEndpointPages`: `[{ slug, source_id, type, knowledge_revision }]`, the live pages of
@@ -461,6 +503,66 @@ impl Store {
                 })
             })
             .collect())
+    }
+
+    /// `readLinkContextMatches(asks)`: `[{ i, link_source, context, page_id }]`, for each ask the
+    /// links of its edge (from page, to page and link type; the pages deleted or not) whose context
+    /// passes [`context_matches`], with `page_id` the link's origin page (its from page when it has
+    /// none) when that page is live, else null. In ask order, then link id order; the SQL leaves
+    /// the row order to the plan.
+    pub fn read_link_context_matches(&self, asks: &[LinkContextAsk]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for ask in asks {
+            let (Some(from), Some(to)) = (
+                read_page(&*read, &ask.from_source_id, &ask.from_slug)?,
+                read_page(&*read, &ask.to_source_id, &ask.to_slug)?,
+            ) else {
+                continue;
+            };
+            for link in out_links(&*read, from.id)? {
+                if link.to_page_id != to.id
+                    || link.link_type != ask.link_type
+                    || !context_matches(&link.context, &ask.context)
+                {
+                    continue;
+                }
+                let origin = link.origin_page_id.unwrap_or(link.from_page_id);
+                let page_id = read_page_by_id(&*read, origin)?.filter(live).map(|p| p.id);
+                out.push(json!({
+                    "i": ask.i,
+                    "link_source": link.link_source,
+                    "context": link.context,
+                    "page_id": page_id,
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `readLinkContextOriginPages(ids)`: `[{ id, source_id, slug, compiled_truth, timeline }]`
+    /// for the pages in `ids` (deleted or not) that are not segmented shells, by id. The SQL leaves
+    /// the row order to the plan.
+    pub fn read_link_context_origin_pages(&self, ids: &[u64]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = ids.iter().copied().collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            let Some(page) = read_page_by_id(&*read, id)? else {
+                continue;
+            };
+            if page.compiled_truth.is_null() {
+                continue;
+            }
+            out.push(json!({
+                "id": page.id,
+                "source_id": page.source_id,
+                "slug": page.slug,
+                "compiled_truth": page.compiled_truth.as_deref(),
+                "timeline": page.timeline.as_deref(),
+            }));
+        }
+        Ok(out)
     }
 
     /// `wordLexemes(words)` under the English configuration: `[{ w, lexemes }]`, each word's

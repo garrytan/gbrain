@@ -219,6 +219,9 @@
       "raw": 3,
       "tx": 1
     },
+    "isSourceClaimed#default": {
+      "raw": 1
+    },
     "listActiveTakesForPages#allowList": {},
     "listActiveTakesForPages#default": {},
     "listAllPageRefs#default": {},
@@ -249,6 +252,8 @@
     "listFactsKeyset#strictTime": {},
     "listFactsSince#allFilters": {},
     "listFactsSince#default": {},
+    "listFiles#default": {},
+    "listFiles#page_slug": {},
     "listFilesForPage#default": {},
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},

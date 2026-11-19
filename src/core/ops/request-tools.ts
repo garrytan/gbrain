@@ -28,6 +28,7 @@ import { hostFix, invalidParam } from './op-fix.ts';
 /** stdio and legacy bearer tokens have no per-client surface row: the server's own start flag decides. */
 const NO_CLIENT_SURFACE = 'no per-client surface on this transport; the server surface is set on the host with `gbrain serve --surface <verbs|starter|full>`';
 import { opAllowedForBoundClient } from './context.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
 // --- WP4 (T9): request_tools — discovery + pull-based per-client unlock ---
 
@@ -220,12 +221,10 @@ const request_tools: Operation = {
         e.detail = `ceiling=${ceiling}`; // amendment 4 key=value denial grammar; ENG-11 assign-after
         throw e;
       }
-      let rows: Record<string, unknown>[];
+      let client: Record<string, unknown> | null;
       try {
-        rows = await ctx.engine.executeRaw(
-          `SELECT surface, surface_set_by FROM oauth_clients WHERE client_id = $1`,
-          [clientId],
-        );
+        const found = await ctx.engine.readOauthClient(clientId);
+        client = found && requireOauthClientColumns(found as unknown as Record<string, unknown>, ['surface', 'surface_set_by']);
       } catch (err) {
         if (isUndefinedColumnError(err, 'surface') || isUndefinedColumnError(err, 'surface_set_by')) {
           // D5: a capability-negotiation op never returns internal_error for
@@ -234,11 +233,11 @@ const request_tools: Operation = {
         }
         throw err;
       }
-      if (rows.length === 0) {
+      if (!client) {
         // Legacy bearer tokens carry a clientId that is not an oauth_clients row.
         return { persisted: false, reason: NO_CLIENT_SURFACE };
       }
-      const current = rows[0] as { surface?: string | null; surface_set_by?: string | null };
+      const current = client as { surface?: string | null; surface_set_by?: string | null };
       const operatorLocked = () => {
         const e = opError(
           'permission_denied',
@@ -266,13 +265,8 @@ const request_tools: Operation = {
       }
       // Atomic re-check: a concurrent operator pin between the SELECT and
       // this UPDATE must still win.
-      const updated = await ctx.engine.executeRaw(
-        `UPDATE oauth_clients SET surface = $1, surface_set_by = 'self'
-         WHERE client_id = $2 AND (surface_set_by IS DISTINCT FROM 'operator')
-         RETURNING client_id`,
-        [requested, clientId],
-      );
-      if (updated.length === 0) {
+      const updated = await ctx.engine.patchOauthClient(clientId, { surface: requested, surface_set_by: 'self' }, { unless_surface_set_by: 'operator' });
+      if (!updated) {
         // Concurrent operator pin won the race: the denial must not consume
         // the client's persist budget (the limiter meters actual writes).
         requestToolsPersistLimiter.refund(clientId);

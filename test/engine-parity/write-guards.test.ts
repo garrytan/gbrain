@@ -1,17 +1,20 @@
 /**
  * BrainEngine parity — the page write guards (engine-sql/write-guards.ts): the origin read, the origin claim read,
- * the origin bind, the ingest stamp, the import seal, the valid-time body read and the segment storage probe.
+ * the origin bind, the ingest stamp, the import seal, the valid-time body read, the append path's tail-digest body
+ * read, the page write gate's stored tier read and the segment storage probe.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody
- *    and hasSegmentStorage return the same observable result, and leave the same page columns, on every engine arm
- *    (PGLite always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts).
+ *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody,
+ *    readPageIndexingState, readInlinePageRegions, readStoredPageTier and hasSegmentStorage return the same observable result, and leave the
+ *    same page columns, on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
+ *    test/engine-parity/harness.ts).
  *  - Regression: an engine that answers one of these differently (a tombstone read as absent, a claim from a deleted
  *    page or from the page being written, a bind that overwrites an origin it was told to keep, a seal that moves the
  *    text projection of a stale revision) lets two pages claim one file or loses a page's provenance; the Rust engine
  *    has no SQL, so each statement has to exist as a typed member.
  *  - Why existing coverage misses it: these statements ran through `executeRaw` inside origin-guard.ts,
- *    page-prepare.ts, projections.ts, valid-time-advisory.ts and journal.ts, which the parity cases cannot call (D18).
+ *    page-prepare.ts, projections.ts, valid-time-advisory.ts, journal.ts, tail-digest.ts and trust/page-write.ts, which
+ *    the parity cases cannot call (D18).
  *  - Seam: none in the cases. Typed members only (no executeRaw: D18). Page ids are compared as "the page putPage
  *    wrote", time stamps as presence.
  */
@@ -165,6 +168,73 @@ describe('engine parity: page write guards', () => {
       body: { frontmatter: { valid_from: '2026-01-01' }, compiled_truth: 'An origin example.', timeline: '- 2026-01-02: body', body_storage: 'inline', hashIsPages: true },
       gone: null, otherSource: null,
     });
+    return answers;
+  });
+
+  parityTest('readPageIndexingState reads the chunker version, corpus generation and page kind of a page, tombstones included', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'readPageIndexingState'],
+  }, async (engine) => {
+    await engine.putPage('notes/index-cr', NOTE, { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-1' } });
+    await engine.putPage('notes/index-plain', NOTE);
+    await engine.putPage('notes/index-gone', NOTE);
+    const goneId = await idOf(engine, 'notes/index-gone');
+    await engine.softDeletePage('notes/index-gone');
+    const answers = {
+      cr: await engine.readPageIndexingState(await idOf(engine, 'notes/index-cr')),
+      plain: await engine.readPageIndexingState(await idOf(engine, 'notes/index-plain')),
+      gone: await engine.readPageIndexingState(goneId),
+      missing: await engine.readPageIndexingState(987654321),
+    };
+    expect({
+      crGeneration: answers.cr?.corpus_generation, crKind: answers.cr?.page_kind,
+      plainGeneration: answers.plain?.corpus_generation, plainKind: answers.plain?.page_kind,
+      goneKind: answers.gone?.page_kind, missing: answers.missing,
+    }).toEqual({ crGeneration: 'gen-1', crKind: 'markdown', plainGeneration: null, plainKind: 'markdown', goneKind: 'markdown', missing: null });
+    return answers;
+  });
+
+  parityTest('readInlinePageRegions reads a page\'s stored body columns by id, a tombstone included, and null otherwise', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'readInlinePageRegions'],
+  }, async (engine) => {
+    await engine.putPage('notes/regions', { ...NOTE, timeline: '- 2026-01-02: a region' });
+    await engine.putPage('notes/regions-gone', { ...NOTE, compiled_truth: 'A deleted body.' });
+    const id = await idOf(engine, 'notes/regions');
+    const goneId = await idOf(engine, 'notes/regions-gone');
+    await engine.softDeletePage('notes/regions-gone');
+    const answers = {
+      live: await engine.readInlinePageRegions(id),
+      tombstone: await engine.readInlinePageRegions(goneId),
+      missing: await engine.readInlinePageRegions(id + goneId + 1000),
+    };
+    expect(answers).toEqual({
+      live: { compiled_truth: 'An origin example.', timeline: '- 2026-01-02: a region' },
+      tombstone: { compiled_truth: 'A deleted body.', timeline: '' },
+      missing: null,
+    });
+    return answers;
+  });
+
+  parityTest('readStoredPageTier reads the tier a page write stamped by source and slug, a tombstone included, and null otherwise', {
+    methods: ['transaction', 'applyTransactionSettings', 'putPage', 'softDeletePage', 'readStoredPageTier'],
+  }, async (engine) => {
+    await engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], ['operator_curated', JSON.stringify({ channel: 'import' })]);
+      await tx.putPage('notes/tier', NOTE);
+    });
+    await engine.putPage('notes/tier-plain', NOTE);
+    await engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], ['agent_written', JSON.stringify({ channel: 'agent' })]);
+      await tx.putPage('notes/tier-gone', NOTE);
+    });
+    await engine.softDeletePage('notes/tier-gone');
+    const answers = {
+      curated: await engine.readStoredPageTier('default', 'notes/tier'),
+      plain: await engine.readStoredPageTier('default', 'notes/tier-plain'),
+      tombstone: await engine.readStoredPageTier('default', 'notes/tier-gone'),
+      missing: await engine.readStoredPageTier('default', 'notes/tier-missing'),
+      otherSource: await engine.readStoredPageTier('parity-missing', 'notes/tier'),
+    };
+    expect(answers).toEqual({ curated: 'operator_curated', plain: 'unknown', tombstone: 'unknown', missing: null, otherSource: null });
     return answers;
   });
 

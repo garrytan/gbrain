@@ -122,9 +122,11 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
-    'redactions: copies read by subject or by field hash, a release binds the publication and hash; tombstones and purge epochs read back',
-    { methods: ['insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones', 'readSourcePurgeEpoch'] },
+    'redactions: copies read by subject or by field hash, a release binds the publication and hash; a fact purge tombstone and the purge epochs read back',
+    { methods: ['insertFactPurge', 'insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones', 'readSourcePurgeEpoch'] },
     async (engine, backend) => {
+      // A fact purge tombstone of the source (subject '*'), so the tombstone read has a row to find.
+      await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: 'fp1', requestId: PURGE, actor: 'owner:local', reason: 'parity' });
       if (backend === 'rust') refuseAll(await refusals(engine));
       const a = await engine.insertBeliefRedaction({ sourceId: 'default', subjectKey: 'fact:a', field: 'value', purgeRequest: PURGE, fieldHash: 'ha' });
       const b = await engine.insertBeliefRedaction({ sourceId: 'default', subjectKey: 'fact:b', field: 'claim', purgeRequest: PURGE, fieldHash: 'hb' });
@@ -143,7 +145,8 @@ describe('engine parity: belief ledger writes', () => {
       return {
         bySubject, byHash, both, afterRelease,
         otherSource: await read(['fact:a'], ['hb'], 'missing'),
-        tombstones: await engine.readBeliefTombstones('default', ['fp1'], ['tp1']),
+        tombstones: await engine.readBeliefTombstones('default', ['fp1', 'fp2'], ['tp1']),
+        tombstonesOtherSource: await engine.readBeliefTombstones('missing', ['fp1'], []),
         tombstonesEmpty: await engine.readBeliefTombstones('default', [], []),
         epoch: await engine.readSourcePurgeEpoch('default'),
         epochMissing: await engine.readSourcePurgeEpoch('missing'),

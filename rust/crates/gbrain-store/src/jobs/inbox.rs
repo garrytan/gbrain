@@ -7,7 +7,7 @@ fn inbox_json(r: &InboxRecord) -> Value {
         "id": r.id,
         "job_id": r.job_id,
         "sender": r.sender,
-        "payload": jsonb(&r.payload),
+        "payload": ordered(&r.payload),
         "sent_at": iso(r.sent_at),
         "read_at": r.read_at.map(iso),
     })
@@ -126,6 +126,6 @@ impl Store {
             })
             .collect();
         rows.sort_by_key(|r| (r.sent_at, r.id));
-        Ok(rows.iter().map(|r| jsonb(&r.payload)).collect())
+        Ok(rows.iter().map(|r| ordered(&r.payload)).collect())
     }
 }

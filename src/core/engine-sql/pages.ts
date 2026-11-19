@@ -783,12 +783,13 @@ export async function resolveSlugs(
     const exact = await exec.run<{ slug: string }>(sqlFragment`SELECT slug FROM pages WHERE slug = ${partial} AND deleted_at IS NULL${scopeFragment}${privacy}`);
     if (exact.rows.length > 0) return [exact.rows[0].slug];
 
-    // Fuzzy match via pg_trgm
+    // Fuzzy match via pg_trgm. Equal similarity sorts by slug, then source, in byte order, so the
+    // five rows kept are the same on every engine (the Rust store sorts the same way).
     const fuzzy = await exec.run<{ slug: string }>(sqlFragment`
       SELECT slug, similarity(title, ${partial}) AS sim
       FROM pages
       WHERE deleted_at IS NULL AND (title % ${partial} OR slug ILIKE ${'%' + partial + '%'})${scopeFragment}${privacy}
-      ORDER BY sim DESC
+      ORDER BY sim DESC, slug COLLATE "C", source_id COLLATE "C"
       LIMIT 5
     `);
     return fuzzy.rows.map((r) => r.slug);
@@ -1084,6 +1085,15 @@ export function replacedBecauseSql(pv: string, excludePrivate: boolean): string 
 const VERSION_VALID_TIME_COLUMNS = `${validDateSql("pv.frontmatter->>'valid_from'")} AS valid_from, ${validDateSql("pv.frontmatter->>'valid_until'")} AS valid_until`;
 
 /**
+ * The `excludePrivate` predicate of get_versions in the current caller context, over the live page `p` and the
+ * snapshot `pv`: the caller's page policy on `p`, the snapshot's readers, its privacy (widened by the caller's
+ * private-readable grant on `p`), and, while private pages are hidden, no `pinned_question` marker.
+ */
+export function versionPrivacySql(): string {
+  return `${privatePagesFilterForCaller('p')} AND ${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}${currentCallerAccess().hidePrivate ? " AND NOT COALESCE(pv.frontmatter ? 'pinned_question', false)" : ''}`;
+}
+
+/**
  * Newest first (`pv.id` breaks snapshot_at ties). Scope, privacy and
  * re-derivation (a page a purge hid) predicates sit in WHERE, so `limit`
  * bounds only rows the caller may read; `includeBody: false` never selects
@@ -1094,8 +1104,7 @@ export async function getVersions<B extends boolean = true>(
   slug: string,
   opts?: GetVersionsOpts<B>,
 ): Promise<PageVersionRows<B>> {
-    const privacy = opts?.excludePrivate
-      ? trustedSql(`AND ${privatePagesFilterForCaller('p')} AND ${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}${currentCallerAccess().hidePrivate ? " AND NOT COALESCE(pv.frontmatter ? 'pinned_question', false)" : ''}`) : sqlFragment``;
+    const privacy = opts?.excludePrivate ? trustedSql(`AND ${versionPrivacySql()}`) : sqlFragment``;
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
       : opts?.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;
@@ -1284,4 +1293,27 @@ export async function refreshPageOrigin(exec: SqlExecutor, slug: string, opts: {
   await exec.executeRaw(`UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
         AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
   [opts.sourcePath, opts.sourceId, slug, opts.sourceUri ?? null]);
+}
+
+/**
+ * The retrieval bump of `bumpLastRetrievedAt` (last-retrieved.ts): records now in page_retrievals for each id that
+ * names a page. Ids of pages that do not exist are skipped, as the UPDATE of `pages` skipped them. The SELECT drops
+ * rows still inside the 5-minute window before the upsert, because ON CONFLICT locks (and so dirties) a conflicting
+ * row even when its WHERE then skips it; the ON CONFLICT test keeps a concurrent bump from moving a row twice.
+ */
+function bumpRetrievalsFragment(pageIds: number[]): SqlFragment {
+  return sqlFragment`INSERT INTO page_retrievals (page_id, last_retrieved_at)
+  SELECT p.id, NOW() FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id
+   WHERE p.id = ANY(${pageIds}::int[]) AND (r.page_id IS NULL OR r.last_retrieved_at < NOW() - INTERVAL '5 minutes')
+  ON CONFLICT (page_id) DO UPDATE SET last_retrieved_at = EXCLUDED.last_retrieved_at
+    WHERE page_retrievals.last_retrieved_at < NOW() - INTERVAL '5 minutes'`;
+}
+
+/** The bump statement's text, with `$1` the page ids (tests run it with RETURNING). */
+export const BUMP_LAST_RETRIEVED_SQL = renderFragment(bumpRetrievalsFragment([])).text;
+
+/** Runs the retrieval bump for `pageIds`; an empty list writes nothing. */
+export async function bumpPageRetrievals(exec: SqlExecutor, pageIds: number[]): Promise<void> {
+  if (pageIds.length === 0) return;
+  await exec.run(bumpRetrievalsFragment(pageIds));
 }

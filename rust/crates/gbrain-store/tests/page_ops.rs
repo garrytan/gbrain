@@ -455,6 +455,58 @@ fn find_pages_matches_name_prefix_and_glob_patterns() {
 }
 
 #[test]
+fn find_pages_under_untrusted_hides_private_and_quarantined_pages() {
+    let dir = TempDir::new("ops-find-untrusted");
+    let store = open(&dir);
+    put(
+        &store,
+        "people/alice-example",
+        json!({ "type": "person", "title": "Alice", "compiled_truth": "a" }),
+    );
+    put(
+        &store,
+        "people/private-example",
+        json!({ "type": "person", "title": "Private", "compiled_truth": "p",
+            "frontmatter": { "visibility": "private" } }),
+    );
+    put(
+        &store,
+        "people/quarantined-example",
+        json!({ "type": "person", "title": "Quarantined", "compiled_truth": "q",
+            "frontmatter": { "quarantine": { "reason": "test" } } }),
+    );
+    let find = |untrusted: Value| {
+        let found = store
+            .find_pages(&de(
+                json!({ "pattern": { "kind": "prefix", "like": "people/%" },
+                "limit": 10, "excludeSlugPrefixes": [], "untrusted": untrusted }),
+            ))
+            .unwrap();
+        (
+            found["total"].clone(),
+            slugs_of(found["rows"].as_array().unwrap()),
+        )
+    };
+    let (total, rows) = find(Value::Null);
+    assert_eq!(total, 3);
+    assert_eq!(
+        rows,
+        vec![
+            "people/alice-example",
+            "people/private-example",
+            "people/quarantined-example"
+        ]
+    );
+    let (total, rows) = find(json!({ "live": true }));
+    assert_eq!(total, 2, "a live read scope hides a quarantined page");
+    assert_eq!(rows, vec!["people/alice-example", "people/private-example"]);
+    let (total, rows) = find(json!({ "live": true,
+        "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }));
+    assert_eq!(total, 1, "excludePrivate hides a private page");
+    assert_eq!(rows, vec!["people/alice-example"]);
+}
+
+#[test]
 fn count_pages_by_counts_visible_pages_with_and_without_groups() {
     let dir = TempDir::new("ops-count");
     let store = open(&dir);
@@ -746,15 +798,14 @@ fn marker_reads_under_exclude_private_hide_the_pages_the_policy_hides() {
         ids,
         "a scope alone hides nothing private"
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
     // `visibility` decides when a page has it; the alias keys only count for a page without one.
     assert_eq!(
         read(json!({ "live": true, "excludePrivate": policy })),
         vec![ids[0], ids[3]]
     );
     // Without the alias keys (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         read(json!({ "live": true, "excludePrivate": visibility_only })),
         vec![ids[0], ids[2], ids[3]]

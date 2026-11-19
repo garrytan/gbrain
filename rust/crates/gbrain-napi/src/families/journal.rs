@@ -9,6 +9,8 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
+use gbrain_store::persistence::{Settle, TrueUpReservation};
+
 use crate::store_binding::{Brain, required};
 
 #[napi]
@@ -191,6 +193,25 @@ impl Brain {
         })
     }
 
+    /// `listWriteRequestRows(principal, sourceId, filter)`: the principal's request rows in one live
+    /// source, newest sequence first, through the filter's cursor and fences.
+    #[napi]
+    pub fn list_write_request_rows<'env>(
+        &self,
+        env: &'env Env,
+        principal: Value,
+        source_id: String,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_write_request_rows(
+                &required(principal, "listWriteRequestRows principal")?,
+                &source_id,
+                &required(filter, "listWriteRequestRows filter")?,
+            )
+        })
+    }
+
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the row or `null`.
     #[napi]
     pub fn read_write_request_by_id<'env>(
@@ -237,6 +258,18 @@ impl Brain {
         })
     }
 
+    /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `null` when the row does not exist.
+    #[napi]
+    pub fn cancel_write_row<'env>(
+        &self,
+        env: &'env Env,
+        cancellation: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.cancel_write_row(&required(cancellation, "cancelWriteRow cancellation")?)
+        })
+    }
+
     /// `renewWriteClaim({ id, token, leaseMs, phaseJson })`: `true` while the claim is held.
     #[napi]
     pub fn renew_write_claim<'env>(
@@ -258,6 +291,18 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.insert_publication_effects(&required(spec, "insertPublicationEffects spec")?)
+        })
+    }
+
+    /// `insertWithdrawalEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
+    #[napi]
+    pub fn insert_withdrawal_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_withdrawal_effects(&required(spec, "insertWithdrawalEffects spec")?)
         })
     }
 
@@ -413,6 +458,21 @@ impl Brain {
         self.run(env, move |s| s.list_true_up_requests(&ids))
     }
 
+    /// `trueUpReservations(rows)`: the bytes the true-up gave back, as text.
+    #[napi]
+    pub fn true_up_reservations<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.true_up_reservations(&required::<Vec<TrueUpReservation>>(
+                rows,
+                "trueUpReservations rows",
+            )?)
+        })
+    }
+
     /// `listGatedMirrorRequests(hostId)`: the requests to requeue; `[]` (no worktree here).
     #[napi]
     pub fn list_gated_mirror_requests<'env>(
@@ -452,15 +512,135 @@ impl Brain {
         })
     }
 
-    /// `selectClaimableEffect(hostId)`: the next effect to claim; `null` (this engine claims no
-    /// effect yet, so a stored effect waits).
+    /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or `null`.
     #[napi]
     pub fn select_claimable_effect<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        dead_owners: Vec<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.select_claimable_effect(&host_id))
+        self.run(env, move |s| {
+            s.select_claimable_effect(&host_id, &dead_owners)
+        })
+    }
+
+    /// `stampEffectClaim({ id, token, ownerJson })`: the claimed row, or `null`.
+    #[napi]
+    pub fn stamp_effect_claim<'env>(
+        &self,
+        env: &'env Env,
+        claim: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_effect_claim(&required(claim, "stampEffectClaim claim")?)
+        })
+    }
+
+    /// `readMirrorGateRows(requestIds)`: the withdrawal mirrors that gate these requests.
+    #[napi]
+    pub fn read_mirror_gate_rows<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_mirror_gate_rows(&request_ids))
+    }
+
+    /// `hasRearmableTargets(requestIds, code)`: whether a target parked under `code` waits on a
+    /// committed withdrawal mirror.
+    #[napi]
+    pub fn has_rearmable_targets<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+        code: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_rearmable_targets(&request_ids, &code))
+    }
+
+    /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
+    /// projection window stands (`{ work, projection_work, projection_last, high_water }`).
+    #[napi]
+    pub fn probe_idle_work<'env>(&self, env: &'env Env, spec: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.probe_idle_work(&required(spec, "probeIdleWork spec")?)
+        })
+    }
+
+    /// `probeNoopEmbeddingSettle(from)`: whether an unattempted queued embedding effect lies past
+    /// effect id `from`.
+    #[napi]
+    pub fn probe_noop_embedding_settle<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.probe_noop_embedding_settle(&from))
+    }
+
+    /// `lockNoopEmbeddingWindow({ from, limit })`: the newest effect id and the next `limit`
+    /// unattempted embedding effects past `from` (`{ newest, rows }`).
+    #[napi]
+    pub fn lock_noop_embedding_window<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+        limit: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_noop_embedding_window(&from, limit))
+    }
+
+    /// `readNoopEmbeddingCandidates(spec)`: the window effects with nothing left to embed.
+    #[napi]
+    pub fn read_noop_embedding_candidates<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_noop_embedding_candidates(&required(spec, "readNoopEmbeddingCandidates spec")?)
+        })
+    }
+
+    /// `settleNoopEmbeddingRows(ids)`: settles these queued effects; `[{ id, request_id }]`.
+    #[napi]
+    pub fn settle_noop_embedding_rows<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.settle_noop_embedding_rows(&ids))
+    }
+
+    /// One effect settle statement, `action` naming the member (`renewEffectClaim`,
+    /// `advanceEffectRow`, `completeEffectRow`, `retryEffectRow`, `retryBusyEffectRow`,
+    /// `requeueEffectRow`, `parkEffectRow`, `failEffectRow`): `true` when it matched the claim.
+    #[napi]
+    pub fn settle_effect<'env>(
+        &self,
+        env: &'env Env,
+        action: String,
+        settle: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let action = match action.as_str() {
+                "renewEffectClaim" => Settle::Renew,
+                "advanceEffectRow" => Settle::Advance,
+                "completeEffectRow" => Settle::Complete,
+                "retryEffectRow" => Settle::Retry,
+                "retryBusyEffectRow" => Settle::RetryBusy,
+                "requeueEffectRow" => Settle::Requeue,
+                "parkEffectRow" => Settle::Park,
+                "failEffectRow" => Settle::Fail,
+                other => {
+                    return Err(gbrain_store::error::StoreError::invalid(format!(
+                        "unknown effect settle member {other}"
+                    )));
+                }
+            };
+            s.settle_effect(action, &required(settle, "effect settle")?)
+        })
     }
 
     /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes past their hold; `[]`
@@ -583,6 +763,73 @@ impl Brain {
                 &required(cursor, "selectProjectionWindowJobs cursor")?,
                 retry_cooldown,
             )
+        })
+    }
+
+    /// `claimSegmentedProjection({ sourceId, slug }, claim)`: `claimed`, `held` or `absent`.
+    #[napi]
+    pub fn claim_segmented_projection<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.claim_segmented_projection(&source_id, &slug, &claim)
+        })
+    }
+
+    /// `renewSegmentedProjectionClaim({ sourceId, slug }, claim)`: false when the job no longer
+    /// carries the claim.
+    #[napi]
+    pub fn renew_segmented_projection_claim<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.renew_segmented_projection_claim(&source_id, &slug, &claim)
+        })
+    }
+
+    /// `releaseSegmentedProjectionClaim({ sourceId, slug }, claim)`.
+    #[napi]
+    pub fn release_segmented_projection_claim<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.release_segmented_projection_claim(&source_id, &slug, &claim)
+        })
+    }
+
+    /// `deleteProjectionJob({ sourceIncarnation, slug, revision })`.
+    #[napi]
+    pub fn delete_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_projection_job(&required(job, "deleteProjectionJob job")?)
+        })
+    }
+
+    /// `markProjectionRebuildFailed({ sourceIncarnation, slug, revision })`.
+    #[napi]
+    pub fn mark_projection_rebuild_failed<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.mark_projection_rebuild_failed(&required(job, "markProjectionRebuildFailed job")?)
         })
     }
 

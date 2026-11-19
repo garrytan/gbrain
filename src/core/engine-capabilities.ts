@@ -59,6 +59,8 @@ export const ENGINE_CAPABILITIES = [
   'eval_capture',
   /** Search telemetry, MCP usage, retrieval feedback and the budget ledger (key tag `a`). */
   'telemetry',
+  /** Cross-source entity identity groups (migration v137; key tag `i`). */
+  'entity_identities',
   'ingest_log',
   'dream_verdicts',
   'contradictions',

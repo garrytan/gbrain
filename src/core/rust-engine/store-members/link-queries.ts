@@ -5,8 +5,8 @@
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
- * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
- * listLinkEndpointPages, listPagesTitledIn, wordLexemes).
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
+ * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -35,7 +35,10 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
-import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from '../../engine-sql/link-reads.ts';
+import type {
+  EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary,
+  TitledPage,
+} from '../../engine-sql/link-reads.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
@@ -473,6 +476,17 @@ export const countInboundLinks: StoreMember<[slug: string, sourceId: string, opt
       () => brain.countInboundLinks({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource })));
   };
 
+/** The entity card's incoming edges: the links countInboundLinks counts, by link id, with raw temporal columns. */
+export const readEntityInboundEdges: StoreMember<[slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }], EntityInboundEdgeRow[]> =
+  async (brain, slug, sourceId, opts) => {
+    const excludePrivate = storePagePolicy('readEntityInboundEdges', opts.excludePrivate, CALLER_READERS) ?? null;
+    const rows: EntityInboundEdgeRow[] = await storeCall({ member: 'readEntityInboundEdges' },
+      () => brain.readEntityInboundEdges({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource }));
+    // The store prints timestamps as ISO text; Postgres returns them as Date (timestamptz).
+    const at = (v: Date | string | null) => v == null ? null : new Date(v);
+    return rows.map(r => ({ ...r, temporal_recorded_at: at(r.temporal_recorded_at), temporal_retired_at: at(r.temporal_retired_at) }));
+  };
+
 /** Automatic link preparation's endpoint pages: the origin source's rows first. */
 export const listLinkEndpointPages: StoreMember<[sourceId: string, slugs: string[], crossSourceSlugs: string[]], LinkEndpointPage[]> =
   async (brain, sourceId, slugs, crossSourceSlugs) => storeCall({ member: 'listLinkEndpointPages' },
@@ -493,4 +507,21 @@ export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> 
     if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
     const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
     return new Map(rows.map(r => [r.w, r.lexemes]));
+  };
+
+/** The stored link rows behind returned link contexts (worldLinkContexts): in ask order, then link id order. */
+export const readLinkContextMatches: StoreMember<[asks: readonly LinkContextAsk[]], LinkContextMatch[]> =
+  async (brain, asks) => {
+    if (asks.length === 0) return [];
+    const rows: LinkContextMatch[] = await storeCall({ member: 'readLinkContextMatches' }, () => brain.readLinkContextMatches(asks));
+    return rows.map(r => ({ ...r, i: Number(r.i), page_id: r.page_id == null ? null : Number(r.page_id) }));
+  };
+
+/** The origin page bodies worldLinkContexts reads, segmented pages left out: by id. */
+export const readLinkContextOriginPages: StoreMember<[ids: readonly number[]], LinkContextOriginPage[]> =
+  async (brain, ids) => {
+    if (ids.length === 0) return [];
+    const rows: LinkContextOriginPage[] = await storeCall({ member: 'readLinkContextOriginPages' },
+      () => brain.readLinkContextOriginPages(ids.map(Number)));
+    return rows.map(r => ({ ...r, id: Number(r.id) }));
   };

@@ -656,4 +656,28 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       };
     },
   );
+
+  parityTest(
+    'the segmented embed read finds a sealed live segmented page by id and by slug, and nothing else',
+    { methods: ['readSegmentedEmbedPage', 'sealSegmentedPage', 'softDeletePage'] },
+    async (engine) => {
+      const { pageId } = await publishApart(engine, 'notes/embed-read');
+      const view = (page: Awaited<ReturnType<BrainEngine['readSegmentedEmbedPage']>>) =>
+        page === null ? null : { ...page, id: page.id === pageId ? 'the page' : page.id };
+      const unsealed = await engine.readSegmentedEmbedPage({ id: pageId });
+      await engine.sealSegmentedPage(pageId);
+      const byId = view(await engine.readSegmentedEmbedPage({ id: pageId }));
+      const bySlug = view(await engine.readSegmentedEmbedPage({ sourceId: 'default', slug: 'notes/embed-read' }));
+      const otherSource = await engine.readSegmentedEmbedPage({ sourceId: 'no-such-source', slug: 'notes/embed-read' });
+      const missing = await engine.readSegmentedEmbedPage({ id: 987_654_321 });
+      await engine.putPage('notes/embed-inline', { type: 'note', title: 'Inline', compiled_truth: 'an inline body' });
+      const inline = await engine.readSegmentedEmbedPage({ sourceId: 'default', slug: 'notes/embed-inline' });
+      await engine.softDeletePage('notes/embed-read');
+      const deleted = await engine.readSegmentedEmbedPage({ id: pageId });
+      expect(unsealed).toBeNull();
+      expect(byId).toMatchObject({ id: 'the page', slug: 'notes/embed-read', source_id: 'default', body_storage: 'segmented' });
+      expect(bySlug).toEqual(byId);
+      return { unsealed, byId, bySlug, otherSource, missing, inline, deleted };
+    },
+  );
 });

@@ -119,7 +119,8 @@ Rules for every method:
   while the first is open; nothing is waited for.
 - `FORMAT` is read before the records are opened. A `format_version` this build does not read
   (`addon.formatVersions` lists them) rejects `format_unknown` and nothing is written. A missing
-  `FORMAT` is rebuilt from the records.
+  `FORMAT` is rebuilt from the records. Every format number, its upgrade and what an older build
+  does with a newer brain are in [`docs/store/format.md`](docs/store/format.md).
 
 ### Lifecycle
 
@@ -131,8 +132,10 @@ Rules for every method:
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
 
-`options` is `{ schemaVersion?: number, createdBy?: string }`. `schemaVersion` is what a fresh brain
-stores as config `version`; pass `LATEST_SCHEMA_VERSION`. `close` waits for calls already running,
+`options` is `{ schemaVersion?: number, createdBy?: string, embeddingModel?: string,
+embeddingDimensions?: number, chunkStrategy?: string }`. `schemaVersion` is what a fresh brain
+stores as config `version`; pass `LATEST_SCHEMA_VERSION`. The other three are config entries a fresh
+brain records ([docs/store/config.md](docs/store/config.md)). `close` waits for calls already running,
 then gives up the lock.
 
 ### Methods by family
@@ -182,6 +185,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
 | `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
+| `page_ambiguous` | `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the identifier; the binding maps it to `PageSnapshotAmbiguousError`. |
 | `constraint_violation` | A write breaks a table constraint PGLite enforces: a `linkSource` outside its CHECK, or a `deletePage` whose origin clear collides with another link. |
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |

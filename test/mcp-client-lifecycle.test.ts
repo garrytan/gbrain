@@ -76,7 +76,7 @@ test('revoke then delete deny delegated execution and issuance while retaining r
 
 test('transient lookup failures remain retryable errors', async () => {
   const transient = new Error('connection reset');
-  const failing = { executeRaw: async () => { throw transient; } } as unknown as BrainEngine;
+  const failing = { executeRaw: async () => { throw transient; }, readOauthClient: async () => { throw transient; } } as unknown as BrainEngine;
   await expect(currentDelegationGrant(failing, 'example')).rejects.toBe(transient);
 });
 

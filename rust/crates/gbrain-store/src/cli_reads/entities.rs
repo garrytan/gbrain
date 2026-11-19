@@ -5,9 +5,10 @@
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
-use crate::env::parse_iso;
+use crate::cli_reads::pg_text::pg_lower;
+use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{PrivacyPolicy, like, page_hidden};
 use crate::pages::{PageRecord, all_pages};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -49,6 +50,53 @@ pub struct SiblingCandidateRow {
     pub page_type: String,
     pub identity: Option<String>,
 }
+
+/// One retirement hop (`readRetirementHop`): the page, whether it is retired (`retiredPageSql`),
+/// and its trimmed `superseded_by`, else `merged_into`, value as the redirect target.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RetirementHopRow {
+    pub slug: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub retired: bool,
+    pub target: Option<String>,
+}
+
+/// `readEntityCardRows` match: the name arm (`lower(title) = title_lc OR slug = ANY(slugs) OR slug
+/// LIKE slug_like`) or the hydrate arm (`slug = ANY(slugs)`).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum EntityCardMatch {
+    Name {
+        #[serde(rename = "titleLc")]
+        title_lc: String,
+        slugs: Vec<String>,
+        #[serde(rename = "slugLike")]
+        slug_like: String,
+    },
+    Slugs {
+        slugs: Vec<String>,
+    },
+}
+
+/// One entity-card candidate row (`readEntityCardRows`). `compiled_truth` is the bounded body
+/// prefix, `left(coalesce(compiled_truth, truth_lead), 65536)`. `last_retrieved_at` is always
+/// NULL: the store records no retrievals.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EntityCardRow {
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Value,
+    pub compiled_truth: Option<String>,
+    pub updated_at: String,
+    pub last_retrieved_at: Option<String>,
+}
+
+/// `left(coalesce(compiled_truth, truth_lead), BOUNDED_PREFIX_BYTES)`; `left()` counts code points.
+const CARD_PREFIX_CHARS: usize = 64 * 1024;
 
 /// `readIgnoredPrivacyLabelPages` scope: the run's own slugs, or pages updated since an ISO time.
 #[derive(Debug, Deserialize)]
@@ -145,6 +193,121 @@ impl Store {
         Ok(None)
     }
 
+    /// `findExactBasenameCandidates(sourceId, slugs)`: at most two of `slugs` at which a live page
+    /// sits, in slug byte order. Postgres reads them with `LIMIT 2` and no `ORDER BY`, so when more
+    /// than two match, the two it returns can differ from these.
+    pub fn find_exact_basename_candidates(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+    ) -> Result<Vec<String>> {
+        let wanted: BTreeSet<&String> = slugs.iter().collect();
+        let read = self.read()?;
+        let mut found = Vec::new();
+        for slug in wanted {
+            let page = crate::pages::read_page(&*read, source_id, slug)?;
+            if let Some(p) = page.filter(|p| p.deleted_at_us.is_none()) {
+                found.push(p.slug);
+                if found.len() == 2 {
+                    break;
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// `readRetirementHop(sourceId, slug, privacy)`: the live page at `slug` in the source with its
+    /// retirement and redirect target, or `None` when no live page sits there or `policy` hides it
+    /// (`page_hidden`). `None` policy reads every page.
+    pub fn read_retirement_hop(
+        &self,
+        source_id: &str,
+        slug: &str,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Option<RetirementHopRow>> {
+        let read = self.read()?;
+        let Some(p) =
+            crate::pages::read_page(&*read, source_id, slug)?.filter(|p| p.deleted_at_us.is_none())
+        else {
+            return Ok(None);
+        };
+        if let Some(policy) = policy
+            && page_hidden(&*read, &p, policy)?
+        {
+            return Ok(None);
+        }
+        // `NULLIF(btrim(x), '')`: btrim trims spaces only.
+        let target = |key: &str| {
+            p.frontmatter
+                .get(key)
+                .and_then(arrow_text)
+                .map(|v| v.trim_matches(' ').to_string())
+                .filter(|v| !v.is_empty())
+        };
+        Ok(Some(RetirementHopRow {
+            retired: is_retired(&p),
+            target: target("superseded_by").or_else(|| target("merged_into")),
+            slug: p.slug.clone(),
+            page_type: p.page_type.clone(),
+        }))
+    }
+
+    /// `readEntityCardRows(sourceId, match, policy)`: the live pages of the source the match names,
+    /// with the bounded body prefix, that the page policy (when given) does not hide. No order.
+    pub fn read_entity_card_rows(
+        &self,
+        source_id: &str,
+        matcher: &EntityCardMatch,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<EntityCardRow>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for p in all_pages(&*read)? {
+            if p.source_id != source_id || p.deleted_at_us.is_some() {
+                continue;
+            }
+            let hit = match matcher {
+                EntityCardMatch::Name {
+                    title_lc,
+                    slugs,
+                    slug_like,
+                } => {
+                    pg_lower(&p.title) == *title_lc
+                        || slugs.contains(&p.slug)
+                        || like(&p.slug, slug_like, false)?
+                }
+                EntityCardMatch::Slugs { slugs } => slugs.contains(&p.slug),
+            };
+            if !hit {
+                continue;
+            }
+            if let Some(policy) = policy
+                && page_hidden(&*read, &p, policy)?
+            {
+                continue;
+            }
+            let body = match p.compiled_truth.as_deref() {
+                Some(text) => Some(text.to_string()),
+                None => crate::page_body::truth_lead(&*read, p.id)?,
+            };
+            out.push(EntityCardRow {
+                compiled_truth: body.map(|b| {
+                    b.char_indices()
+                        .nth(CARD_PREFIX_CHARS)
+                        .map_or(b.clone(), |(at, _)| b[..at].to_string())
+                }),
+                updated_at: iso(p.updated_at_us),
+                last_retrieved_at: None,
+                frontmatter: Value::Object(p.frontmatter.clone()),
+                slug: p.slug,
+                source_id: p.source_id,
+                title: p.title,
+                page_type: p.page_type,
+            });
+        }
+        Ok(out)
+    }
+
     /// `readIgnoredPrivacyLabelPages(sourceId, scope)`: the live pages of the source in the scope
     /// that carry a privacy label key and no `readable_by`. The caller applies the label rule
     /// (`ignoredPrivacyLabels`) and the limit.
@@ -187,7 +350,7 @@ impl Store {
 
 /// `retiredPageSql`: `canonical` is false or no, `superseded_by` or `merged_into` names a page, or
 /// `status` contains the word alias, redirect or redirected.
-fn is_retired(p: &PageRecord) -> bool {
+pub(crate) fn is_retired(p: &PageRecord) -> bool {
     let text = |key: &str| {
         p.frontmatter
             .get(key)

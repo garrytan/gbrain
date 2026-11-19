@@ -13,11 +13,17 @@
 //! `similarity` is a `real`, and PGLite types the `$minSimilarity` parameter from it, so the test
 //! is an f32 comparison; `%` compares the f32 score with the f64 threshold 0.3. The unscoped arm
 //! reads soft-deleted pages too (follow-up `fuzzy-title-unscoped-deleted`).
+//!
+//! When the keyword index serves, only the pages whose titles share enough of the name's trigrams
+//! (`R 0x03`, [`min_shared`]) are read and scored; else every page is.
 
-use super::trgm::{TRGM_SIMILARITY_THRESHOLD, trgm_similarity};
+use super::index::{serves, title_trigram_pages};
+use super::trgm::{TRGM_SIMILARITY_THRESHOLD, trgm_similarity, trigram_bytes};
 use crate::Store;
+use crate::cli_reads::pg_text::pg_lower;
 use crate::error::{Result, StoreError};
-use crate::pages::all_pages;
+use crate::kv::KvRead;
+use crate::pages::{PageRecord, all_pages, read_page_by_id};
 use serde_json::{Value, json};
 
 /// `findByTitleFuzzy`'s default `minSimilarity`.
@@ -91,6 +97,13 @@ pub(crate) fn sql_like(text: &str, pattern: &str) -> bool {
     tokens[pi..].iter().all(|token| matches!(token, Like::Any))
 }
 
+/// SQL `ILIKE`: [`sql_like`] after both sides are lowered one character at a time with PGLite's
+/// case table (`pg_lower`), as Postgres lowers both sides for a multibyte database. `%`, `_` and
+/// `\` in the pattern stay wildcards and the escape.
+pub(crate) fn sql_ilike(text: &str, pattern: &str) -> bool {
+    sql_like(&pg_lower(text), &pg_lower(pattern))
+}
+
 /// A JS number bound to a `real` parameter: PG reads its text with `strtof`, and a finite value
 /// that rounds to infinity or to zero from a non-zero value is out of range.
 fn real_param(value: f64) -> Result<f32> {
@@ -105,6 +118,51 @@ fn real_param(value: f64) -> Result<f32> {
         )));
     }
     Ok(real)
+}
+
+/// The largest name trigram set [`min_shared`] is proved for; a larger one admits every title that
+/// shares a trigram.
+const BOUND_TRIGRAMS: usize = 2_048;
+
+/// The fewest trigrams a title must share with a name of `n1` trigrams to have f32 similarity
+/// `>= min`, or `None` when a title sharing none can (`min` zero, negative or not finite: the read
+/// scans).
+///
+/// `similarity` is `c / (n1 + n2 - c)` divided once in f32, with both sides exact, and `n2 >= c`,
+/// so the real quotient is at most `c / n1`. A correctly rounded quotient exceeds the real one by
+/// at most half a step, so a score `>= min` means the real quotient is above `min` lowered by one
+/// f32 step; `t_low` lowers it by two. Then `c >= n1 * t_low`, a product f64 holds exactly, and
+/// `c` is an integer. The exhaustive test checks this against `calc_sml`.
+pub(super) fn min_shared(n1: usize, min: f32) -> Option<usize> {
+    if !min.is_finite() || min <= 0.0 {
+        return None;
+    }
+    if n1 > BOUND_TRIGRAMS {
+        return Some(1);
+    }
+    let t_low = f32::from_bits(min.to_bits().saturating_sub(2));
+    let need = (n1 as f64 * f64::from(t_low)).ceil();
+    Some((need as usize).max(1))
+}
+
+/// The pages the fuzzy read scores: those the trigram postings admit, in page-id order, or every
+/// page. Order does not change the answer: it is the best `(similarity, slug)`, and two pages that
+/// tie on both answer the same `{ slug, similarity }`.
+fn fuzzy_pages(read: &dyn KvRead, name: &str, min: f32) -> Result<Vec<PageRecord>> {
+    let trigrams = trigram_bytes(name);
+    let need = min_shared(trigrams.len(), min);
+    let (true, Some(need)) = (serves(read)?, need) else {
+        return all_pages(read);
+    };
+    #[cfg(test)]
+    super::index::tests::served_by_index();
+    let mut pages = Vec::new();
+    for id in title_trigram_pages(read, &trigrams, need)? {
+        if let Some(page) = read_page_by_id(read, id)? {
+            pages.push(page);
+        }
+    }
+    Ok(pages)
 }
 
 /// A `real` as JavaScript reads it from PGLite: the shortest text that reads back as the f32.
@@ -133,7 +191,7 @@ impl Store {
         let source = source_id.filter(|s| !s.is_empty());
         let read = self.read()?;
         let mut best: Option<(f32, String)> = None;
-        for page in all_pages(&*read)? {
+        for page in fuzzy_pages(&*read, name, min_real)? {
             if let Some(s) = source
                 && (page.source_id != s || page.deleted_at_us.is_some())
             {
@@ -311,6 +369,16 @@ mod tests {
         assert!(!sql_like("people", "people/%"));
     }
 
+    #[test]
+    fn ilike_lowers_both_sides_first() {
+        // Postgres (en_US.utf8) and PGLite (C.UTF-8) agree on each of these.
+        assert!(sql_ilike("people/ada", "%ADA%"));
+        assert!(sql_ilike("Ä", "ä"));
+        assert!(sql_ilike("notes/a_b", "%A\\_B"));
+        assert!(!sql_ilike("notes/axb", "%A\\_B"));
+        assert!(!sql_ilike("people/adam", "%ADA"));
+    }
+
     fn put(store: &Store, slug: &str, title: &str) {
         let input: crate::pages::PageInput = serde_json::from_value(json!({
             "type": "note", "title": title, "compiled_truth": "body", "timeline": ""
@@ -372,5 +440,62 @@ mod tests {
         assert!(real_param(f64::NAN).unwrap().is_nan());
         assert_eq!(real_param(f64::NEG_INFINITY).unwrap(), f32::NEG_INFINITY);
         assert_eq!(real_to_js(1.0f32 / 3.0), 0.33333334);
+    }
+
+    /// Every score `calc_sml(c, n1, n2) >= min` has `c >= min_shared(n1, min)`. The bound needs
+    /// only `n1` and `min` and rises with `min`, so the hardest `min` for a `(c, n1, n2)` is its
+    /// own score: checking that covers every lower threshold.
+    fn admitted(c: usize, n1: usize, n2: usize) {
+        let s = super::super::trgm::calc_sml(c, n1, n2);
+        if let Some(need) = min_shared(n1, s) {
+            assert!(c >= need, "c {c} n1 {n1} n2 {n2} score {s} need {need}");
+        }
+    }
+
+    /// Every `(c, n1, n2)` with `n1, n2 <= 2,048`. The score falls as `n2` grows (a correctly
+    /// rounded division is monotone in its divisor), so `n2 = c` has the highest score of each
+    /// `(c, n1)`; that case runs for every pair, and every `n2` runs for `n1 <= 192` and for the
+    /// largest `n1` values.
+    #[test]
+    fn the_trigram_bound_admits_every_title_that_reaches_the_threshold() {
+        for n1 in 1..=BOUND_TRIGRAMS {
+            let every_n2 = n1 <= 192 || n1 > BOUND_TRIGRAMS - 8;
+            for c in 1..=n1 {
+                admitted(c, n1, c);
+                if every_n2 {
+                    for n2 in c..=BOUND_TRIGRAMS {
+                        admitted(c, n1, n2);
+                    }
+                }
+            }
+        }
+        // The divisor monotonicity the reduction rests on, over a band of numerators.
+        for c in [1usize, 2, 3, 7, 1_000, 2_048] {
+            let mut last = f32::INFINITY;
+            for d in c..=2 * BOUND_TRIGRAMS {
+                let s = c as f32 / d as f32;
+                assert!(s <= last);
+                last = s;
+            }
+        }
+        // A title sharing no trigram has score 0 and is never needed.
+        assert_eq!(min_shared(10, 0.0), None);
+        assert_eq!(min_shared(10, -1.0), None);
+        assert_eq!(min_shared(10, f32::NAN), None);
+        assert_eq!(min_shared(10, f32::INFINITY), None);
+        assert_eq!(min_shared(BOUND_TRIGRAMS + 1, 0.9), Some(1));
+        assert_eq!(min_shared(0, 0.5), Some(1));
+        assert_eq!(min_shared(10, f32::from_bits(1)), Some(1));
+    }
+
+    /// The review's case: a score of exactly the rounded threshold, which a bound of
+    /// `ceil(n1 * min)` would drop.
+    #[test]
+    fn a_score_equal_to_the_rounded_threshold_is_admitted() {
+        let min = real_param(0.200000001).unwrap();
+        let (c, n1) = (2, 10);
+        assert_eq!(super::super::trgm::calc_sml(c, n1, 2), min);
+        assert!((n1 as f64 * f64::from(min)).ceil() as usize > c);
+        assert_eq!(min_shared(n1, min), Some(2));
     }
 }

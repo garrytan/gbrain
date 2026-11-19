@@ -22,6 +22,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { RetirementPrivacy } from '../engine-sql/entity-reads.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { slugifySegment } from '../sync.ts';
@@ -237,20 +238,13 @@ export async function followRetirement(
   engine: BrainEngine,
   source_id: string,
   slug: string,
-  privacy = '',
+  privacy: RetirementPrivacy = 'none',
 ): Promise<{ slug: string; type: string | null } | null> {
   const seen = new Set<string>();
   let current: string | null = slug;
   while (current && !seen.has(current) && seen.size <= MAX_RETIREMENT_HOPS) {
     seen.add(current);
-    const [row]: Array<{ slug: string; type: string | null; retired: boolean; target: string | null }> = await engine.executeRaw(
-      `SELECT p.slug, p.type, ${retiredPageSql('p')} AS retired,
-              COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
-         FROM pages p
-        WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${privacy}
-        LIMIT 1`,
-      [source_id, current],
-    );
+    const row = await engine.readRetirementHop(source_id, current, privacy);
     if (!row) return null;
     if (!row.retired) return { slug: row.slug, type: row.type };
     current = row.target ? redirectSlug(row.target) : null;
@@ -263,7 +257,7 @@ async function canonicalPages(
   engine: BrainEngine,
   source_id: string,
   slugs: string[],
-  privacy = '',
+  privacy: RetirementPrivacy = 'none',
 ): Promise<Array<{ slug: string; type: string | null }>> {
   const out = new Map<string, { slug: string; type: string | null }>();
   for (const slug of new Set(slugs)) {
@@ -361,18 +355,8 @@ async function findExactBasenameCandidates(
 ): Promise<Array<{ slug: string }>> {
   const token = slugify(raw);
   if (raw.includes('/') || !token.includes('-')) return [];
-  let rows: Array<{ slug: string }>;
-  try {
-    rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
-        LIMIT 2`,
-      [source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`)],
-    );
-  } catch {
-    return [];
-  }
-  return canonicalPages(engine, source_id, rows.map(r => r.slug));
+  const slugs = await engine.findExactBasenameCandidates(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`));
+  return canonicalPages(engine, source_id, slugs);
 }
 
 /**
@@ -487,6 +471,7 @@ export async function resolveStrictEntityReference(
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
   const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
+  const retirementPrivacy: RetirementPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
   const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.executeRaw<{ slug: string; type: string | null }>(
     `SELECT p.slug, p.type FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${privacy}`,
@@ -502,7 +487,7 @@ export async function resolveStrictEntityReference(
   const pick = async (found: Array<{ slug: string; type: string | null }>, arm: StrictResolutionArm): Promise<StrictResolution | null> => {
     if (found.length === 0) return null;
     // #6898: a retired page answers through its superseded_by target, which must be readable too.
-    const rows = await canonicalPages(engine, source_id, found.map(r => r.slug), privacy);
+    const rows = await canonicalPages(engine, source_id, found.map(r => r.slug), retirementPrivacy);
     if (rows.length === 0) return { slug: null, miss: 'not_entity' };
     if (rows.length > 1) {
       const sibling = await siblingCanonical(engine, source_id, rows.map(r => r.slug), { excludePrivate: opts.excludePrivate });
@@ -866,24 +851,7 @@ async function tryFuzzyMatch(
   // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
-    const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; score: number }>(
-      `SELECT slug, title, type,
-         GREATEST(
-           similarity(lower(title), $2),
-           similarity(slug, $3)
-         ) AS score
-       FROM pages
-       WHERE source_id = $1
-         AND deleted_at IS NULL
-         AND NOT ${retiredPageSql('pages')}
-         AND (
-           lower(title) % $2
-           OR slug ILIKE '%' || $3 || '%'
-         )
-       ORDER BY score DESC, slug ASC
-       LIMIT 5`,
-      [source_id, lc, fragment],
-    );
+    const rows = await engine.findFuzzyEntityCandidates(source_id, lc, fragment);
     // A trigram score alone attributes facts about "Alicia Example" to Alice,
     // and facts about a person with no page to a meeting page that carries
     // their name. Entity resolution takes a candidate only when it names the

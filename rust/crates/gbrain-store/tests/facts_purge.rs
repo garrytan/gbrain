@@ -310,6 +310,42 @@ fn similar_active_facts_rank_same_model_neighbours_of_the_entity() {
 }
 
 #[test]
+fn find_active_single_fact_with_newest_answers_the_highest_id_copy() {
+    let b = brain("purge-single-newest");
+    let old = insert(&b, fact(None, "Likes tea", "private"));
+    let newer = insert(&b, fact(None, "likes  TEA.", "private"));
+    let expired = insert(&b, fact(None, "Likes tea", "private"));
+    b.expire_fact(&args::<ExpireFactArgs>(json!({ "id": expired as f64 })))
+        .unwrap();
+    insert(&b, fact(Some("people/a"), "Likes tea", "private"));
+    insert(&b, fact(None, "Likes tea", "world"));
+    let member = batch(
+        &b,
+        json!([{ "fact": "Likes tea", "source": "chat", "source_markdown_slug": "memory/members/alice", "row_num": 1 },
+              { "fact": "Likes tea", "source": "chat", "source_markdown_slug": "memory/members/alice", "row_num": 2 }]),
+    );
+    let find = |page: Option<&str>, newest: Option<bool>| {
+        let mut q = json!({ "sourceId": "default", "entitySlug": null, "visibility": "private",
+            "fact": "likes tea", "attributedTo": null, "pageSlug": page });
+        if let Some(n) = newest {
+            q["newest"] = json!(n);
+        }
+        b.find_active_single_fact(&args::<SingleFactQuery>(q))
+            .unwrap()["id"]
+            .as_u64()
+    };
+    assert_eq!(find(None, None), Some(old));
+    assert_eq!(find(None, Some(false)), Some(old));
+    assert_eq!(find(None, Some(true)), Some(newer));
+    assert_eq!(
+        find(Some("memory/members/alice"), Some(true)),
+        Some(member[1])
+    );
+    assert_eq!(find(Some("memory/members/alice"), None), Some(member[0]));
+    assert_eq!(find(Some(""), Some(true)), None);
+}
+
+#[test]
 fn find_active_single_fact_matches_the_speaker_slot_and_page() {
     let b = brain("purge-single");
     let plain = insert(&b, fact(Some("people/a"), "Likes tea", "private"));
@@ -543,7 +579,7 @@ fn find_active_single_fact_under_the_remote_floor_judges_only_the_holding_page()
     let (hidden, open) = (rows[0], rows[1]);
     let find = |page: Option<&str>, floor: bool| {
         let floor = floor.then(
-            || json!({ "honorAliases": true, "entityPrivacy": false, "provenanceOnly": true, "ownerOnly": "lineage" }),
+            || json!({ "honorAliases": true, "entityPrivacy": false, "provenanceOnly": true, "ownerOnly": "fn" }),
         );
         b.find_active_single_fact(&args::<SingleFactQuery>(json!({
             "sourceId": "default", "entitySlug": "people/secret", "visibility": "private",

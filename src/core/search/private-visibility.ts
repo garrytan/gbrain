@@ -1252,18 +1252,20 @@ export function servesPolicyFrom(config: Record<string, string | undefined>): Se
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
- * the brain holds member-access restrictions. Takes any executeRaw engine (a
- * transaction included). An unreadable config counts as not opted out and
+ * the brain holds member-access restrictions. Reads through the typed keyed
+ * config read (getConfigValues) when the engine has it, so the Rust engine
+ * serves it, and through executeRaw otherwise (a bare transaction handle
+ * included; readConfigRows). An unreadable config counts as not opted out and
  * restricted (fail closed); the env hatch needs no read. Whom the brain serves
  * is then unknown (servesUnknown, GST-363): the requester-scope gate reads the
  * serves keys once more (readServesPolicy) and refuses an unbound read when that
  * fails too, because a timeout or a dropped pooled connection can fail this one
  * statement while the next read succeeds.
  */
-export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
+export async function readRemotePolicyNow(engine: ConfigReader): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
-      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY, SCHEMA_VERSION_KEY]]);
+    const rows = await readConfigRows(engine, [REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
+      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY, SCHEMA_VERSION_KEY]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
     return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, servesUnknown: true };
@@ -1271,7 +1273,7 @@ export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'
 }
 
 /** GST-2687: the schema version a scope or attested caller record carries, read now; absent when unreadable, so the read rule stays inline. */
-export async function schemaVersionNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Pick<RemotePolicy, 'schemaVersion'>> {
+export async function schemaVersionNow(engine: ConfigReader): Promise<Pick<RemotePolicy, 'schemaVersion'>> {
   const { schemaVersion } = await readRemotePolicyNow(engine);
   return schemaVersion === undefined ? {} : { schemaVersion };
 }

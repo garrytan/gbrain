@@ -6,7 +6,7 @@
 //! Members: readLinkRelationshipEvidence, writeLinkRelationshipState,
 //! linkRelationshipKeysForPages, staleLinkRelationshipKeys, linkRelationshipKeysForOrigin,
 //! linkRelationshipKeysTouching, applyLinkTemporalRows, writeManualLinkTransitions,
-//! removeManualLinkTransitions, listRelationshipNoteRows, edgeValidityCounts,
+//! removeManualLinkTransitions, listRelationshipNoteRows, readEntityInboundEdges, edgeValidityCounts,
 //! listPageStatusByRef, listRecordMetadataRows, countSearchVectorRows.
 //!
 //! The state itself (stints, status, evidence hash) is built by the pure TypeScript builder in
@@ -26,7 +26,8 @@
 //! `ON DELETE CASCADE`). `valid_ranges` is kept in the canonical text form Postgres prints for a
 //! `datemultirange`.
 
-use super::{Pages, QUARANTINE_KEY, origin_links};
+use super::site_reads::kept_inbound_links;
+use super::{InboundCountInput, Pages, QUARANTINE_KEY, origin_links};
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
@@ -145,7 +146,7 @@ impl RelationshipKey {
         }
     }
 
-    fn of_link(link: &LinkRecord) -> Self {
+    pub(crate) fn of_link(link: &LinkRecord) -> Self {
         RelationshipKey::new(link.from_page_id, link.to_page_id, &link.link_type)
     }
 }
@@ -417,6 +418,22 @@ pub struct NoteRow {
     pub temporal_retired_at: Option<String>,
 }
 
+/// One `readEntityInboundEdges` row: the referrer, the link, and the temporal columns of
+/// `TEMPORAL_LINK_SELECT_SQL`, all null when the link has no relationship row in the scope.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InboundEdgeRow {
+    pub from_slug: String,
+    pub link_type: String,
+    pub context: String,
+    pub temporal_ranges: Option<String>,
+    pub temporal_semantics: Option<String>,
+    pub temporal_disputed: Option<bool>,
+    pub temporal_undated_past: Option<i64>,
+    pub temporal_first_start: Option<String>,
+    pub temporal_recorded_at: Option<String>,
+    pub temporal_retired_at: Option<String>,
+}
+
 /// `edgeValidityCounts`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -596,7 +613,7 @@ fn transitions_of(
     }
 }
 
-fn relationship(
+pub(crate) fn relationship(
     read: &dyn KvRead,
     key: &RelationshipKey,
     scope: &str,
@@ -614,7 +631,7 @@ fn links_of(read: &dyn KvRead, key: &RelationshipKey) -> Result<Vec<LinkRecord>>
         .collect())
 }
 
-fn iso_ms(micros: i64) -> String {
+pub(crate) fn iso_ms(micros: i64) -> String {
     let full = iso(micros);
     format!("{}Z", &full[..full.len() - 4])
 }
@@ -678,7 +695,7 @@ fn check_no_nul(field: &str, value: &str) -> Result<()> {
     }
 }
 
-fn today(now_us: i64) -> String {
+pub(crate) fn today(now_us: i64) -> String {
     iso(now_us)[..10].to_string()
 }
 
@@ -768,8 +785,18 @@ pub(crate) fn canonical_multirange(text: &str) -> Result<String> {
     Ok(format!("{{{}}}", parts.join(",")))
 }
 
+/// `valid_ranges && daterange(from, until)`: some range overlaps `[from, until)`. An empty
+/// multirange overlaps nothing.
+pub(crate) fn multirange_overlaps(text: &str, from: &str, until: &str) -> bool {
+    parse_multirange(text).is_ok_and(|ranges| {
+        ranges.iter().any(|(lo, hi)| {
+            lo.as_deref().is_none_or(|l| l < until) && hi.as_deref().is_none_or(|h| h > from)
+        })
+    })
+}
+
 /// `valid_ranges @> date`.
-fn multirange_contains(text: &str, date: &str) -> bool {
+pub(crate) fn multirange_contains(text: &str, date: &str) -> bool {
     parse_multirange(text).is_ok_and(|ranges| {
         ranges.iter().any(|(lo, hi)| {
             lo.as_deref().is_none_or(|l| l <= date) && hi.as_deref().is_none_or(|h| date < h)
@@ -1557,6 +1584,39 @@ impl Store {
                     temporal_retired_at: state.retired_at_us.map(iso_ms),
                 });
             }
+        }
+        Ok(out)
+    }
+
+    /// `readEntityInboundEdges`: the links `countInboundLinks` counts, in link id order, each with
+    /// its referrer's slug and the temporal columns of its relationship in the `world` scope under
+    /// the policy, else `all` (`temporalLinkJoinSql`).
+    pub fn read_entity_inbound_edges(
+        &self,
+        input: &InboundCountInput,
+    ) -> Result<Vec<InboundEdgeRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = if input.exclude_private.is_some() {
+            "world"
+        } else {
+            "all"
+        };
+        let mut out = Vec::new();
+        for (link, from_slug) in kept_inbound_links(read, input)? {
+            let state = relationship(read, &RelationshipKey::of_link(&link), scope)?;
+            out.push(InboundEdgeRow {
+                from_slug,
+                link_type: link.link_type.clone(),
+                context: link.context.clone(),
+                temporal_ranges: state.as_ref().map(|r| r.valid_ranges.clone()),
+                temporal_semantics: state.as_ref().map(|r| r.semantics.clone()),
+                temporal_disputed: state.as_ref().map(|r| r.disputed),
+                temporal_undated_past: state.as_ref().map(|r| r.undated_past),
+                temporal_first_start: state.as_ref().and_then(|r| r.first_start.clone()),
+                temporal_recorded_at: state.as_ref().map(|r| iso_ms(r.recorded_at_us)),
+                temporal_retired_at: state.as_ref().and_then(|r| r.retired_at_us.map(iso_ms)),
+            });
         }
         Ok(out)
     }

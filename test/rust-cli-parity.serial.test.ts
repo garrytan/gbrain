@@ -52,6 +52,7 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
+const EFFECT_PASS = join(ROOT, 'test', 'helpers', 'effect-pass-process.ts');
 const FIXTURE = join(ROOT, 'test', 'fixtures', 'rust-cli-parity-brain');
 const TARGET = detectAddonTarget();
 const ADDON = TARGET ? join(ROOT, 'rust', 'target', 'addon', `gbrain_engine.${TARGET}.node`) : '';
@@ -89,10 +90,14 @@ function childEnv(brain: Brain): Record<string, string> {
   };
 }
 
-async function cli(brain: Brain, args: string[]): Promise<Run> {
-  const proc = Bun.spawn(['bun', 'run', CLI, ...args], { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+async function run(argv: string[], brain: Brain): Promise<Run> {
+  const proc = Bun.spawn(argv, { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+async function cli(brain: Brain, args: string[]): Promise<Run> {
+  return run(['bun', 'run', CLI, ...args], brain);
 }
 
 function makeBrain(backend: Backend, name: BrainName = backend): Brain {
@@ -177,6 +182,30 @@ function withAgeDecayCompared(args: string[], ref: unknown, rust: unknown): unkn
     if (typeof r.updated_at !== 'string' || typeof want.updated_at !== 'string') return row;
     return Math.abs(clockFree(r) - clockFree(want)) <= 1e-4 ? { ...r, score: want.score } : row;
   });
+}
+
+/**
+ * The one intended difference in the embeddings readiness fix: a Rust brain names `gbrain embeddings enable`, which
+ * keeps the Rust engine, where a PGLite brain names `gbrain init --force ... --path <db>` (it would rebuild a Rust
+ * store as PGLite; test/rust-engine-readiness-fix.test.ts pins both). Where the Rust answer holds exactly that Rust
+ * form and the reference holds the PGLite form with the same model and width, the Rust answer takes the reference
+ * value; the datastore label ("the Rust brain at") is mapped the same way. Anything else still differs.
+ */
+function withEnableFixCompared(ref: unknown, rust: unknown): unknown {
+  if (typeof rust === 'string' && typeof ref === 'string') {
+    return rust.replace(/for the Rust brain at /g, 'for the PGLite brain at ') === ref ? ref : rust;
+  }
+  if (Array.isArray(rust) && Array.isArray(ref)) {
+    const rustForm = rust.length === 7 && rust.slice(0, 3).join(' ') === 'gbrain embeddings enable';
+    const refForm = ref.length === 9 && ref.slice(0, 3).join(' ') === 'gbrain init --force' && ref[7] === '--path';
+    if (rustForm && refForm && JSON.stringify(rust.slice(3)) === JSON.stringify(ref.slice(3, 7))) return ref;
+    return rust.map((item, i) => withEnableFixCompared(ref[i], item));
+  }
+  if (rust && ref && typeof rust === 'object' && typeof ref === 'object') {
+    const r = ref as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(rust as Record<string, unknown>).map(([k, v]) => [k, withEnableFixCompared(r[k], v)]));
+  }
+  return rust;
 }
 
 /** stdout parsed as JSON, or undefined when it is not JSON. */
@@ -333,7 +362,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       const refJson = parseJson(ref.stdout);
       const rustJson = parseJson(rust.stdout);
       const want = { exitCode: ref.exitCode, json: asJson(ref, refBrain, refJson) };
-      const got = { exitCode: rust.exitCode, json: asJson(rust, brains.rust, rustJson === undefined ? undefined : withAgeDecayCompared(args, refJson, rustJson)) };
+      const rustSide = asJson(rust, brains.rust, rustJson === undefined ? undefined : withAgeDecayCompared(args, refJson, rustJson));
+      const got = { exitCode: rust.exitCode, json: withEnableFixCompared(want.json, rustSide) };
       const equal = got.exitCode === want.exitCode && same(got.json, want.json);
       const notes = [useMirror ? 'vs mirror' : '', equal && ref.exitCode !== 0 ? `both exit ${ref.exitCode}` : '', equal ? '' : `exit ${rust.exitCode}`].filter(Boolean);
       table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: notes.join(', ') });
@@ -364,20 +394,21 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         const equal = got.exitCode === want.exitCode && got.member === null && same(got.json, want.json);
         table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: equal ? 'written' : member ?? `exit ${rust.exitCode}` });
         if (!equal) expect(got).toEqual(want);
-        // The write's receipt reads the same on both brains, but for its effects: PGLite ran its effect pass and
-        // settled each one; the Rust brain stores every effect and runs none yet, so each one waits queued with
-        // nothing recorded against it (rust/docs/store/persistence.md, "Publication effects").
+        // The write's receipt reads the same on both brains, its effects included: each brain ran its effect pass and
+        // settled each effect the same way (rust/docs/store/persistence.md, "Effect worker"). The put's own process stops
+        // its effect drain once it has replied (GBRA-156), so each brain runs one effect pass first, in its own
+        // environment; otherwise the receipt reads whichever side of that race the put landed on.
+        const passes = await Promise.all([brains.pglite, brains.rust].map((brain) => run(['bun', 'run', EFFECT_PASS], brain)));
+        expect(passes.map((pass) => pass.exitCode)).toEqual([0, 0]);
         const requestOf = (run: Run) => String((parseJson(run.stdout) as { request_id?: unknown } | undefined)?.request_id ?? '');
         const [pgReceipt, rustReceipt] = await Promise.all([cli(brains.pglite, ['write-request', requestOf(pg), '--json']),
           cli(brains.rust, ['write-request', requestOf(rust), '--json'])]);
         type Receipt = { effects?: Array<Record<string, unknown>> } & Record<string, unknown>;
         const pgBody = parseJson(pgReceipt.stdout) as Receipt | undefined;
         const rustBody = parseJson(rustReceipt.stdout) as Receipt | undefined;
-        const without = (body: Receipt | undefined) => body && normalize({ ...body, effects: undefined }, []);
-        expect({ exitCode: rustReceipt.exitCode, receipt: without(rustBody), member: refusedMember(rustReceipt) })
-          .toEqual({ exitCode: pgReceipt.exitCode, receipt: without(pgBody), member: null });
+        expect({ exitCode: rustReceipt.exitCode, receipt: normalize(rustBody, []), member: refusedMember(rustReceipt) })
+          .toEqual({ exitCode: pgReceipt.exitCode, receipt: normalize(pgBody, []), member: null });
         expect(pgBody?.effects?.some((e) => e.kind === 'embedding' && e.state === 'skipped')).toBe(true);
-        expect(rustBody?.effects).toEqual([{ kind: 'embedding', state: 'queued' }]);
         return;
       }
       if (outcome === 'queued') {
@@ -441,8 +472,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
       // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
+      // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
+      // does, so the check reads the same model and passes with PGLite's message.
       untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
-        'extract_atoms_backlog', 'fact_take_vectors', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
+        'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog

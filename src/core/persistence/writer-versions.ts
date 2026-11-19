@@ -1,7 +1,7 @@
 /** Writer-version stamps on persistence_requests (migration 178): observation of older writers, not prevention. */
 import { VERSION } from '../../version.ts';
 import { existingHostIdFor, hostIdFor } from './identity.ts';
-import type { SqlEngine } from './model.ts';
+import type { RawSqlEngine, SqlEngine } from './model.ts';
 import { lacksRawSql } from '../engine-capabilities.ts';
 import type { BrainEngine } from '../engine.ts';
 
@@ -94,12 +94,12 @@ export interface SegmentedGateWriter {
  * ingest-log row (a single-page put on a brain without managed persistence, a run that dies before logging), and
  * one-shot readers and exporters, which write nothing.
  */
-export async function segmentedGateWriters(engine: SqlEngine, days: number, floor: string): Promise<SegmentedGateWriter[]> {
+export async function segmentedGateWriters(engine: RawSqlEngine, days: number, floor: string): Promise<SegmentedGateWriter[]> {
   return (await segmentedGateEvidence(engine, days)).filter(row => !row.segment_reader || writerVersionBelowFloor(row.version, floor));
 }
 
 /** Every writer the gate read in the last `days`, passing or not, grouped as `segmentedGateWriters` groups them. */
-export async function segmentedGateEvidence(engine: SqlEngine, days: number): Promise<SegmentedGateWriter[]> {
+export async function segmentedGateEvidence(engine: RawSqlEngine, days: number): Promise<SegmentedGateWriter[]> {
   // An engine without raw SQL (Rust, D18) has no request journal or ingest log for an older writer to have left rows in.
   if (lacksRawSql(engine)) return [];
   const rows = await engine.executeRaw<Omit<SegmentedGateWriter, 'version_label' | 'last_seen' | 'requests' | 'first_seen'> & { last_seen: unknown; requests: number; first_seen: unknown }>(

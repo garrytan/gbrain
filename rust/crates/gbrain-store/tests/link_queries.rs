@@ -545,9 +545,9 @@ fn ranking_reads_under_exclude_private_hide_private_targets_linkers_and_origins(
     let scope = |policy: Value| -> GraphScope {
         serde_json::from_value(json!({"scoped": true, "excludePrivate": policy})).unwrap()
     };
-    let all = scope(json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"}));
+    let all = scope(json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}));
     let visibility_only =
-        scope(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"}));
+        scope(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"}));
     let unpoliced = scope(Value::Null);
 
     // getBacklinkCounts: a private target is dropped, a private linker or a private origin does
@@ -627,7 +627,7 @@ fn ranking_reads_under_exclude_private_hide_private_targets_linkers_and_origins(
     assert_eq!(slugs(&all), vec!["open-from"]);
     assert_eq!(slugs(&visibility_only), vec!["open-from", "alias-from"]);
     let private_target: GraphScope = serde_json::from_value(
-        json!({"scoped": true, "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"}}),
+        json!({"scoped": true, "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}}),
     )
     .unwrap();
     assert!(

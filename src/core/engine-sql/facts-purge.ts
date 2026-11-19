@@ -194,9 +194,10 @@ export type ExactFactRow = FactRow & { source_markdown_slug: string | null; row_
 /**
  * decideSingleFact: the first active fact (lowest id) with the same fingerprint, entity, visibility and speaker slot. With
  * `pageSlug` it is a fact on that page; without, one on no owned memory page (an empty `pageSlug` matches nothing).
- * `remoteFloor` adds the remote provenance floor (a remote caller's own reads).
+ * `remoteFloor` adds the remote provenance floor (a remote caller's own reads). `newest` answers the highest id instead
+ * (remember linking the unlinked copy of a claim).
  */
-export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean }): Promise<ExactFactRow | null> {
+export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean; newest?: boolean }): Promise<ExactFactRow | null> {
   const floor = trustedSql(opts.remoteFloor ? ` AND ${remoteProvenanceFloorSql('facts')}` : '');
   const page = opts.pageSlug ? sqlFragment`source_markdown_slug=${opts.pageSlug}`
     : sqlFragment`(${opts.pageSlug}::text IS NULL AND NOT ${trustedSql(onOwnedMemoryPageSql('facts'))})`;
@@ -205,7 +206,7 @@ export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId:
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint(${opts.fact})
     AND (${opts.attributedTo}::text IS NULL OR attributed_to IS NULL OR attributed_to=${opts.attributedTo}::text)${floor}
     AND ${page}
-    ORDER BY id LIMIT 1`);
+    ORDER BY id${trustedSql(opts.newest ? ' DESC' : '')} LIMIT 1`);
   const [exact] = await raw<ExactFactRow>(text, params);
   return exact ?? null;
 }
@@ -254,7 +255,30 @@ export async function listWithdrawalSlugs(raw: EngineRawRead, sourceId: string, 
   return raw<{ slug: string }>(text, params);
 }
 
+/** One hop of the derivation walk (facts/derivation-inputs.ts derivedRowsFrom): the rows a `derivation_inputs` edge
+ * derives from a frontier row, distinct, in (table, id) order, at most `limit`. */
+export async function listDerivedRows(raw: EngineRawRead, frontier: ReadonlyArray<{ table: string; id: string }>, limit: number):
+  Promise<Array<{ derived_table: string; derived_id: string }>> {
+  return raw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
+      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
+        ON d.input_table=f.input_table AND d.input_id=f.input_id
+      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
+}
+
 /** recordFactWithdrawal: expires every live fact of the claim under `subject` now, closing its valid time at now; the ids it expired. */
+/** A fact purge tombstone, the row purge_fact writes into `fact_purges`. */
+export interface FactPurgeInsert {
+  sourceId: string; visibility: string; subject: string; factHash: string;
+  requestId: string | null; actor: string | null; reason: string | null;
+}
+
+/** purge_fact: stores the tombstone; false when one already holds the same (source, visibility, subject, fingerprint). */
+export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert): Promise<boolean> {
+  const rows = await raw<{ inserted: number }>(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason) VALUES ($1,$2,$3,$4,$5::uuid,$6,$7) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+    [row.sourceId, row.visibility, row.subject, row.factHash, row.requestId, row.actor, row.reason]);
+  return rows.length > 0;
+}
+
 export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>> {
   const { text, params } = renderFragment(sqlFragment`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now()) FROM ${subjectOf(subject)}
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})

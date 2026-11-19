@@ -29,15 +29,15 @@ import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 type PageRef = { slug: string; source_id: string };
 
 /** The no-caller page policy of `privatePagesFilterFragment`, which decides whether an evidence origin is public. */
-function originPolicy(member: string) {
-  return pagePolicyFlags(member, privatePagesFilterFragment('p'));
+function originPolicy() {
+  return pagePolicyFlags(privatePagesFilterFragment('p'));
 }
 
 const ids = (pageIds: readonly number[]) => pageIds.map(Number);
 
 export const readLinkRelationshipEvidence: StoreMember<[keys: readonly RelationshipKey[]], RelationshipEvidence> = (brain, keys) =>
   storeCall({ member: 'readLinkRelationshipEvidence' }, () =>
-    brain.readLinkRelationshipEvidence({ keys: [...keys], originPolicy: originPolicy('readLinkRelationshipEvidence') }));
+    brain.readLinkRelationshipEvidence({ keys: [...keys], originPolicy: originPolicy() }));
 
 export const writeLinkRelationshipState: StoreMember<[write: RelationshipStateWrite], number> = (brain, write) =>
   storeCall({ member: 'writeLinkRelationshipState' }, () =>

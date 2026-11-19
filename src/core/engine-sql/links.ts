@@ -728,6 +728,8 @@ export async function traversePathsDetailed(
     // The walk visits pages at depth < `depth`; each qualifying edge is
     // returned once, at one past the depth of its shallower visited endpoint
     // on the walked side ('both' counts either endpoint).
+    // Ties on depth, slugs and sources break by link_type in byte order, then
+    // link id, so every engine returns one order (the Rust store sorts the same way).
     const walk = bfsWalkCtes({
       seed: sqlFragment`p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${sourceScope('p', opts)}`,
       maxLayer: depth - 1,
@@ -739,7 +741,7 @@ export async function traversePathsDetailed(
     const edges = direction === 'out'
       ? sqlFragment`w.id as from_id, w.slug as from_slug, w.source_id as from_source_id,
                p2.id as to_id, p2.slug as to_slug, p2.source_id as to_source_id,
-               l.link_type, l.context, w.depth + 1 as depth
+               l.id AS link_id, l.link_type, l.context, w.depth + 1 as depth
         FROM nodes w
         JOIN links l ON l.from_page_id = w.id
         JOIN pages p2 ON p2.id = l.to_page_id
@@ -750,7 +752,7 @@ export async function traversePathsDetailed(
       : direction === 'in'
         ? sqlFragment`p2.id as from_id, p2.slug as from_slug, p2.source_id as from_source_id,
                w.id as to_id, w.slug as to_slug, w.source_id as to_source_id,
-               l.link_type, l.context, w.depth + 1 as depth
+               l.id AS link_id, l.link_type, l.context, w.depth + 1 as depth
         FROM nodes w
         JOIN links l ON l.to_page_id = w.id
         JOIN pages p2 ON p2.id = l.from_page_id
@@ -760,7 +762,7 @@ export async function traversePathsDetailed(
           ${sourceScope('p2', opts)} ${liveOriginFilter('l', opts)}`
         : sqlFragment`pf.id as from_id, pf.slug as from_slug, pf.source_id as from_source_id,
                pt.id as to_id, pt.slug as to_slug, pt.source_id as to_source_id,
-               l.link_type, l.context, e.depth + 1 as depth
+               l.id AS link_id, l.link_type, l.context, e.depth + 1 as depth
         FROM (
           SELECT l.id AS link_id, wf.depth FROM nodes wf
           JOIN links l ON l.from_page_id = wf.id
@@ -784,10 +786,12 @@ export async function traversePathsDetailed(
     const rows = (await exec.run(sqlFragment`
       WITH RECURSIVE ${walk}, ${visited}
       SELECT ${walkTruncated}, ${edges}
-      ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
+      ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id, link_type COLLATE "C", link_id
       LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
     `)).rows;
 
+    // Ties between two links of one edge pair go by link type in byte order, then link id, so
+    // every engine returns them, and keeps the same duplicate below, in one order.
     // Row cap: the LIMIT above fetched CAP + 1 rows; the probe row only tells
     // us the walk overflowed and is dropped with everything past the cap.
     const truncated = rows.length > TRAVERSE_PATH_ROW_CAP || (rows as Array<{ walk_truncated?: boolean }>).some((r) => r.walk_truncated === true);

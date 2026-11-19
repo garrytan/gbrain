@@ -1,5 +1,5 @@
 //! Page versions: snapshot a page, list its versions, stamp the reason a write gave on the
-//! versions it archived.
+//! versions it archived, cap a holding page's versions.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -31,7 +31,7 @@ impl Brain {
         })
     }
 
-    /// `getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody? }?)`: newest first.
+    /// `getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)`: newest first.
     #[napi]
     pub fn get_versions<'env>(
         &self,
@@ -52,6 +52,30 @@ impl Brain {
         page_id: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_latest_version_id(page_id))
+    }
+
+    /// `pruneHoldingPageVersions(pageId)`: resolves how many versions the holding-page cap deleted.
+    #[napi]
+    pub fn prune_holding_page_versions<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.prune_holding_page_versions(page_id))
+    }
+
+    /// `readLatestVersionIdAtTier(pageId, tier)`: resolves the page's newest version id stamped
+    /// with the tier, or null.
+    #[napi]
+    pub fn read_latest_version_id_at_tier<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        tier: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_latest_version_id_at_tier(page_id, &tier)
+        })
     }
 
     /// `stampVersionChangeReason({ pageId, afterVersionId, reason })`: resolves how many versions

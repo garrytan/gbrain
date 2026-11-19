@@ -51,7 +51,7 @@ const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
 const STAGING: u8 = 0x03;
 const DERIVATION: u8 = 0x04;
-const BODY: u8 = 0x05;
+pub(crate) const BODY: u8 = 0x05;
 const STAGING_CLIENT: u8 = 0x06;
 const STAGING_TEXT: u8 = 0x07;
 const STAGING_BY_PAGE: u8 = 0x08;
@@ -158,15 +158,15 @@ pub struct ManifestRow {
     pub line_start: i64,
     pub line_count: i64,
     pub cut_kind: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub entry_state: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub protected_regions: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub facts_slots: Value,
     pub static_proj_bytes: i64,
     pub static_proj_lines: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_value")]
     pub outline: Value,
     #[serde(default)]
     pub date_min: Option<String>,
@@ -180,27 +180,27 @@ pub struct ManifestRow {
 /// The segmented-body columns of a page. Postgres keeps them on `pages`; the page record does not
 /// hold them, so they live under this family's tag.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct BodyState {
-    body_storage: String,
-    body_generation: i64,
+pub(crate) struct BodyState {
+    pub(crate) body_storage: String,
+    pub(crate) body_generation: i64,
     #[serde(default)]
-    body_bytes: Option<i64>,
+    pub(crate) body_bytes: Option<i64>,
     #[serde(default)]
-    truth_bytes: Option<i64>,
+    pub(crate) truth_bytes: Option<i64>,
     #[serde(default)]
-    body_lines: Option<i64>,
+    pub(crate) body_lines: Option<i64>,
     #[serde(default)]
-    segment_count: Option<i64>,
+    pub(crate) segment_count: Option<i64>,
     #[serde(default)]
-    segmenter_version: Option<i64>,
+    pub(crate) segmenter_version: Option<i64>,
     #[serde(default)]
-    truth_lead: Option<String>,
+    pub(crate) truth_lead: Option<String>,
     #[serde(default)]
-    timeline_lead: Option<String>,
+    pub(crate) timeline_lead: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
+    pub(crate) body_flags: Option<Value>,
     #[serde(default)]
-    body_flags: Option<Value>,
-    #[serde(default)]
-    chunker_version: Option<i64>,
+    pub(crate) chunker_version: Option<i64>,
 }
 
 /// `BodyStagingInput`; dates as ISO strings, `declaredSha256` as hex.
@@ -280,7 +280,9 @@ struct DerivationRecord {
     segment_sha256: String,
     context_hash: String,
     state: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     output: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     receipt: Value,
     created_at_us: i64,
     updated_at_us: i64,
@@ -360,6 +362,32 @@ pub struct ReadManifestOptions {
     pub staging_id: Option<String>,
     pub region: Option<String>,
     pub last_n: Option<i64>,
+}
+
+/// `readSegmentedEmbedPage(ref)`: a page by id, or by source and slug.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SegmentedEmbedRef {
+    Id {
+        id: i64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Slug {
+        source_id: String,
+        slug: String,
+    },
+}
+
+/// The page fields a segmented embed reads (`SegmentedEmbedPage`): metadata only, never the body.
+/// `body_bytes` is the stored count, `None` when the shell recorded none (PGLite's NULL column).
+#[derive(Debug, Clone, Serialize)]
+pub struct SegmentedEmbedPage {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    pub contextual_retrieval_mode: Option<String>,
+    pub body_bytes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -534,7 +562,7 @@ fn signed(v: i64) -> [u8; 8] {
 }
 
 /// A page id from JavaScript; ids start at 1, so anything else names no page.
-fn page_u64(id: i64) -> Option<u64> {
+pub(crate) fn page_u64(id: i64) -> Option<u64> {
     u64::try_from(id).ok().filter(|v| *v > 0)
 }
 
@@ -640,7 +668,7 @@ fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
+pub(crate) fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }
 
@@ -654,7 +682,8 @@ pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<St
 
 /// The `truth_lead` of segmented page `page_id`: the raw prefix of its compiled truth that the last flip stored, `None`
 /// for an inline page, a shell no flip has published or a missing page (PGLite's NULL column). The bounded body prefix
-/// reads (`left(coalesce(compiled_truth, truth_lead), ..)`, page-window/bounded-lead.ts) take it for a segmented page.
+/// reads (`left(coalesce(compiled_truth, truth_lead), ..)`, page-window/bounded-lead.ts) and the entity card
+/// (`coalesce(compiled_truth, truth_lead)`) take it for a segmented page, whose `compiled_truth` is NULL.
 pub(crate) fn truth_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     Ok(read_body_state(read, page_id)?.and_then(|state| state.truth_lead))
 }
@@ -683,7 +712,10 @@ fn is_segmented(state: Option<&BodyState>) -> bool {
     state.is_some_and(|s| s.body_storage == "segmented")
 }
 
-fn manifest_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<(Vec<u8>, ManifestRow)>> {
+pub(crate) fn manifest_rows(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Vec<(Vec<u8>, ManifestRow)>> {
     collect(read, &manifest_prefix(page_id))
 }
 
@@ -693,7 +725,7 @@ fn live_published(row: &ManifestRow) -> bool {
 
 /// Rows of generation `g` that are published: Postgres's
 /// `staging_id IS NULL AND gen_from <= g AND (gen_to IS NULL OR gen_to > g)`.
-fn in_generation(row: &ManifestRow, g: i64) -> bool {
+pub(crate) fn in_generation(row: &ManifestRow, g: i64) -> bool {
     row.staging_id.is_none() && row.gen_from <= g && row.gen_to.is_none_or(|to| to > g)
 }
 
@@ -873,6 +905,21 @@ pub(crate) fn segmented_reference(
     Ok(read_body_state(read, page_id)?
         .filter(|state| state.body_storage == "segmented")
         .map(|state| (state.body_generation, state.body_bytes)))
+}
+
+/// Whether a page body is segmented, its `body_bytes` and its `truth_bytes`.
+pub(crate) type BodySizes = (bool, Option<i64>, Option<i64>);
+
+/// The size columns of page `page_id`'s body state: whether it is segmented, `body_bytes` and
+/// `truth_bytes`. `None` when the page has no body state (an inline page that was never segmented).
+pub(crate) fn body_sizes(read: &dyn KvRead, page_id: u64) -> Result<Option<BodySizes>> {
+    Ok(read_body_state(read, page_id)?.map(|state| {
+        (
+            state.body_storage == "segmented",
+            state.body_bytes,
+            state.truth_bytes,
+        )
+    }))
 }
 
 /// PGLite's `liveStagingIds`: stagings in a live state, plus the stagings an outstanding request
@@ -1156,6 +1203,47 @@ impl Store {
         })
     }
 
+    /// `readSegmentedEmbedPage(ref)`: the page `ref` names when it is segmented, not deleted, in a
+    /// source that exists and is not archived, and sealed (its text projection is at its knowledge
+    /// revision, `currentTextProjectionFilter`); `None` otherwise, an inline page included. The
+    /// same tests as the `pages JOIN sources` read PGLite sends.
+    pub fn read_segmented_embed_page(
+        &self,
+        reference: &SegmentedEmbedRef,
+    ) -> Result<Option<SegmentedEmbedPage>> {
+        let read = self.read()?;
+        let page = match reference {
+            SegmentedEmbedRef::Id { id } => match page_u64(*id) {
+                Some(id) => read_page_by_id(&*read, id)?,
+                None => None,
+            },
+            SegmentedEmbedRef::Slug { source_id, slug } => read_page(&*read, source_id, slug)?,
+        };
+        let Some(page) = page else {
+            return Ok(None);
+        };
+        let Some((_, body_bytes)) = segmented_reference(&*read, page.id)? else {
+            return Ok(None);
+        };
+        let sealed =
+            page.text_projection_revision.as_deref() == Some(page.knowledge_revision.as_str());
+        if page.deleted_at_us.is_some() || !sealed {
+            return Ok(None);
+        }
+        match crate::sources::read_source(&*read, &page.source_id)? {
+            Some(source) if !source.archived => {}
+            _ => return Ok(None),
+        }
+        Ok(Some(SegmentedEmbedPage {
+            id: page.id,
+            contextual_retrieval_mode: crate::aliases::contextual_retrieval_mode(&*read, page.id)?,
+            slug: page.slug,
+            source_id: page.source_id,
+            title: page.title,
+            body_bytes,
+        }))
+    }
+
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? })`: with `stagingId`, that
     /// staging's rows; otherwise the published rows of `generation` (default: the page's body
     /// generation; none for a page that does not exist). By seq; `lastN` keeps the last n.
@@ -1273,6 +1361,7 @@ impl Store {
                 trust_tier: None,
                 write_origin: None,
                 version_history_gap_at_us: None,
+                revision_receipt: Default::default(),
             };
             write_page(tx, &record)?;
             let state = BodyState {
@@ -1856,8 +1945,8 @@ impl Store {
                 "segmentSha256": record.segment_sha256,
                 "contextHash": record.context_hash,
                 "state": record.state,
-                "output": record.output,
-                "receipt": record.receipt,
+                "output": crate::jsonb::ordered(&record.output),
+                "receipt": crate::jsonb::ordered(&record.receipt),
                 "createdAt": crate::env::iso(record.created_at_us),
                 "updatedAt": crate::env::iso(record.updated_at_us),
             }));
@@ -2086,6 +2175,31 @@ pub(crate) fn closed_manifest_rows(read: &dyn KvRead, page_id: u64) -> Result<Ve
         .map(|(_, row)| row)
         .filter(|row| row.gen_to.is_some() && row.staging_id.is_none())
         .collect())
+}
+
+/// The live published manifest rows of segmented page `page_id` that carry facts slots
+/// (`gen_to IS NULL AND staging_id IS NULL AND facts_slots <> '[]'`), each with the bytes of its
+/// segment text (`None` when the source holds no text of that sha). An inline or missing page has
+/// none. Withdrawal discovery (facts/withdrawal_discovery.rs) scans them for facts fences.
+pub(crate) fn live_facts_slot_rows(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Vec<(ManifestRow, Option<Vec<u8>>)>> {
+    if !is_segmented(read_body_state(read, page_id)?.as_ref()) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (_, row) in manifest_rows(read, page_id)? {
+        if !live_published(&row) || row.facts_slots.as_array().is_none_or(Vec::is_empty) {
+            continue;
+        }
+        let sha = from_hex(&row.sha256, "sha256")?;
+        let text = get_json::<TextRecord>(read, &text_key(&row.source_id, &sha))?
+            .map(|t| from_hex(&t.body, "body"))
+            .transpose()?;
+        out.push((row, text));
+    }
+    Ok(out)
 }
 
 /// The body of `sweepSegments`, run in the open write `tx`: `prune_versions` calls it after a

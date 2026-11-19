@@ -21,6 +21,15 @@ Keys (tag `A`, `keys::TAKE`):
 the `source_id` of its page and a `claim_rev` that moves each time the claim text changes (for the
 embedding staleness check owned by core). `addTakesBatch` that changes a take's claim drops the take's stored vector (`embeddings::remove_take_vector`, which also raises the vector generation), as Postgres nulls the embedding in that upsert; deleting a take deletes its vector too.
 
+A take record also holds the `trust_tier` and `write_origin` PGLite's `trust_tier_stamp` trigger stamps
+(`trust::stamp_row`, [trust.md](trust.md)), left out of the record while the tier is `unknown` with no origin, so a
+record stored before them decodes unchanged. Every takes writer stores through `store_take`: an insert takes the
+write's declared tier and origin; an update (`addTakesBatch` in place, `updateTake`, both `supersedeTake` rows,
+`resolveTake`) keeps the stored tier and origin unless `claim`, `kind` or `holder` changed, and then lowers them to
+the write's. `readRowTrustRows` ([cli-reads-import.md](cli-reads-import.md)) and the fence guard's held-row read
+`listHeldRows` ([trust.md](trust.md)) read them; the take reads return neither column, as PGLite's `takeRowToTake` does. The embedding write changes no trust column and stores
+the record as it is.
+
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.addTakesBatch(rows)` | number of rows sent. Inserts or, when one of the nine written columns is DISTINCT, updates in place (`updated_at` moves, `created_at` stays). `constraint_violation` for a `NOT NULL` column, `takes_weight_check`, the same key twice in one batch ("ON CONFLICT DO UPDATE command cannot affect row a second time") or a missing page (`takes_page_id_fkey`, raised after every row is read); `invalid_argument` for a NUL byte, an `int4` overflow or an `f32` overflow | `addTakesBatch` |

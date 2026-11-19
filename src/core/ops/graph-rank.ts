@@ -130,17 +130,15 @@ async function readCoverage(ctx: OperationContext, sourceIds: string[] | undefin
 async function readRemoteCoverage(ctx: OperationContext, sourceIds: string[] | undefined, includeMentions: boolean, excludePrivate: boolean): Promise<Coverage> {
   const { effectiveLinkExtractorWatermark } = await import('../link-extraction-watermark.ts');
   const { linkableTypesFor, loadSourcePack, readMentionPolicy } = await import('../mentions/policy.ts');
-  const { rankCoverageStatement } = await import('../engine-sql/graph-rank.ts');
   try {
     const versionTs = await effectiveLinkExtractorWatermark(ctx.engine);
     const policy = includeMentions ? await readMentionPolicy(ctx.engine) : null;
-    const ids = sourceIds ?? (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map(r => r.id);
+    const ids = sourceIds ?? (await ctx.engine.listSourceRecords()).filter(r => r.archived !== true).map(r => r.id).sort();
     if (ids.length > COVERAGE_SOURCE_CAP) return { state: 'unread', reason: 'too_many_sources' };
     for (const sourceId of ids) {
       const mentionTypes = policy?.enabled ? linkableTypesFor(await loadSourcePack(ctx.engine, sourceId), policy) : undefined;
-      const { text, params } = rankCoverageStatement({ sourceId, excludePrivate, versionTs, ...(mentionTypes ? { mentionTypes } : {}) });
-      const [row] = await ctx.engine.executeRaw<{ link_behind: boolean; mention_due: boolean }>(text, params, { timeoutMs: 10_000 });
-      if (row?.link_behind || row?.mention_due) return { state: 'behind' };
+      const row = await ctx.engine.readRankCoverage({ sourceId, excludePrivate, versionTs, ...(mentionTypes ? { mentionTypes } : {}) }, 10_000);
+      if (row.link_behind || row.mention_due) return { state: 'behind' };
     }
   } catch (err) {
     rethrowCapabilityRefusal(err); // an engine that cannot read coverage refuses; it never ranks as if coverage were unknown
@@ -163,7 +161,7 @@ async function attachDuplicates(ctx: OperationContext, rows: RankedEntity[], fil
       entityTypes: new Set(typesFor(filter, row.source_id)),
       omitQuarantined: ctx.remote !== false,
       privatePredicate: excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '',
-      retirementPrivacy: excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '',
+      retirementPrivacy: excludePrivate ? 'caller' : 'none',
     });
     if (duplicates.length) row.possible_duplicates = duplicates;
   }
