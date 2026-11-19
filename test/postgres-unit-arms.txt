@@ -76,6 +76,14 @@ test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
 test/cli-page-writes.test.ts
 test/code-edges-parity.test.ts
+test/collate-agent-session-takes.test.ts
+test/collate-body-tiling.test.ts
+test/collate-core-memory.test.ts
+test/collate-facts-pages.test.ts
+test/collate-forecast-journal.test.ts
+test/collate-git-holds.test.ts
+test/collate-marker-repair.test.ts
+test/collate-repair-propose.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
