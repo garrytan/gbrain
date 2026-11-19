@@ -8,9 +8,12 @@
  * policy is the no-caller one (private-provenance.ts), the keyword arm runs in the `english` FTS configuration, and the
  * facts embedding column is `halfvec` (the only column type the store keeps).
  *
+ * `listLexicalContestCandidates`, the keyless conflict slot's read of a remember, is served from
+ * rust/crates/gbrain-store/src/facts/contest.rs.
+ *
  * Refused (not exported): `matchSavedFacts`, `readFactForOwnerAction`, `listStandingPreferences`,
- * `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns
- * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
+ * `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`,
+ * `write_origin`, the write-gate receipts), but no store read for them is built yet. The
  * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -73,3 +76,7 @@ export const countUncomparableFacts: Member<'countUncomparableFacts'> = async (b
     declared: q.declared,
   }));
 };
+
+export const listLexicalContestCandidates: Member<'listLexicalContestCandidates'> = (brain, q) =>
+  storeCall({ member: 'listLexicalContestCandidates', sourceId: q.sourceId }, () => brain.listLexicalContestCandidates({
+    sourceId: q.sourceId, entitySlug: q.entitySlug, kind: q.kind, visibility: q.visibility, pageSlug: q.pageSlug ?? null, writer: q.writer }));

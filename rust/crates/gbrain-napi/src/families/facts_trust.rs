@@ -9,6 +9,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::facts::contest::LexicalContestQuery;
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 
 #[napi]
@@ -36,6 +37,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: UncomparableQuery = required(query, "countUncomparableFacts query")?;
             s.count_uncomparable_facts(&a)
+        })
+    }
+
+    /// `listLexicalContestCandidates(query)`: resolves `{ id, fact, trust_tier }` rows, highest id first.
+    #[napi]
+    pub fn list_lexical_contest_candidates<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LexicalContestQuery = required(query, "listLexicalContestCandidates query")?;
+            s.list_lexical_contest_candidates(&a)
         })
     }
 }

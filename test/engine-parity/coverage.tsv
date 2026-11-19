@@ -584,7 +584,7 @@ countUncomparableFacts	facts_trust	yes	2	no	yes	yes	serves
 matchSavedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
 readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
 listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
-listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
+listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	serves
 listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
 countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
 listCorePageRows	trust_tier_reads	yes	2	no	yes	yes	serves
