@@ -4493,6 +4493,8 @@ export interface BrainEngine {
   readLatestConnectorReceipt(): Promise<string | null>;
   /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
   listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
+  /** The credential re-chunk holds that still apply at chunker generation `producer`, oldest page first (doctor credential_projection_pending, text_projection_readiness). */
+  listCredentialResealHoldRows(producer: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.CredentialResealHoldRow[]>;
   // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw
   /** The terminal receipts of the window and every receipt holding a recovery record, grouped on the columns the classifier reads, with the per-source totals row (`opts` bounds the statement on Postgres). */
   readTerminalFailureGroups(query: DoctorTerminalSql.TerminalGroupsQuery, opts?: DoctorTerminalSql.TerminalReadOpts): Promise<DoctorTerminalSql.TerminalGroupRow[]>;

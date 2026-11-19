@@ -5,7 +5,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member returns the same answer on every engine arm (PGLite always; Postgres with DATABASE_URL; the
  *    Rust arm through test/engine-parity/harness.ts). The relations a Rust brain has no writer for (every op_checkpoints
- *    operation except doctor last-known) read as the empty brain on every arm; the ingest-log reads, the last-known pair
+ *    operation except doctor last-known, including the credential re-chunk holds) read as the empty brain on every arm; the ingest-log reads, the last-known pair
  *    and the sync-admission setting are seeded through the engine's own writers.
  *  - Regression: an engine whose read drifts (or does not serve it) gives a different doctor status or message per backend.
  *  - Why existing coverage misses it: the doctor check tests run these reads on PGLite only and never compare arms.
@@ -14,6 +14,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SETTING_PARAMS } from '../../src/core/persistence/sync-admission.ts';
+import { CREDENTIAL_RESEAL_PRODUCER } from '../../src/core/page-state/credential-reseal.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -31,7 +32,7 @@ describe('doctor checkpoint reads', () => {
     { methods: ['readOpCheckpointKeys', 'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows',
       'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow',
       'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows',
-      'readDoctorLastKnown'] },
+      'readDoctorLastKnown', 'listCredentialResealHoldRows'] },
     async (engine) => {
       const empty = {
         keys: await engine.readOpCheckpointKeys('eligibility-scan', 'cursor'),
@@ -50,10 +51,12 @@ describe('doctor checkpoint reads', () => {
         downgrades: await engine.listOpenIdentityDowngrades('sync-identity-downgrade'),
         held: await engine.listHeldManagedAtomRows(undefined, 'storage'),
         lastKnown: await engine.readDoctorLastKnown(LAST_KNOWN_OP),
+        resealHolds: await engine.listCredentialResealHoldRows(CREDENTIAL_RESEAL_PRODUCER),
+        resealHoldsScoped: await engine.listCredentialResealHoldRows(CREDENTIAL_RESEAL_PRODUCER, ['default']),
       };
       expect(empty).toEqual({
         keys: null, fence: [], fenceScoped: [], derived: [], purge: [], soak: [], cursors: [], stops: [], stopsScoped: [], headers: [],
-        passRow: null, livePasses: [], blocked: [], downgrades: [], held: [], lastKnown: [],
+        passRow: null, livePasses: [], blocked: [], downgrades: [], held: [], lastKnown: [], resealHolds: [], resealHoldsScoped: [],
       });
       return empty;
     },

@@ -424,6 +424,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       warnLikePglite: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && likePglite(c)).map((c) => c.name)),
       // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
+      // Checks a refused read stopped (they warn with the typed refusal, health unknown).
+      typedRefusals: sorted(checks.filter((c) => TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
       fail: [],
       // default_source_local_path, frontmatter_repairable and image_assets are gone from this list: the sources reads
@@ -464,6 +466,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_column_registry', 'embedding_provider',
         'pack_upgrade_available', 'timeline_coverage'],
       okWhileRefused: [],
+      // credential_projection_pending is gone from this list: listCredentialResealHoldRows answers a Rust brain's holds
+      // (none: only the credential re-seal migration writes them, through executeRaw).
+      typedRefusals: ['person_title_duplicates'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

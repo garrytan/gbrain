@@ -27,6 +27,7 @@ export const listLiveManagedSyncPassRows: Member<'listLiveManagedSyncPassRows'> 
 export const listCheckpointBlockedSources: Member<'listCheckpointBlockedSources'> = async () => [];
 export const listOpenIdentityDowngrades: Member<'listOpenIdentityDowngrades'> = async () => [];
 export const listHeldManagedAtomRows: Member<'listHeldManagedAtomRows'> = async () => [];
+export const listCredentialResealHoldRows: Member<'listCredentialResealHoldRows'> = async () => [];
 
 /** The candidate parts the census wrote (`upsertFenceCandidatePart`), of live source incarnations, by fingerprint. */
 export const listFenceCandidateRecords: Member<'listFenceCandidateRecords'> = (brain, op, sourceIds) =>

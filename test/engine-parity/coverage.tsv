@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 855/855
+# covered: 856/856
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -48,7 +48,7 @@
 # doctor_pages: 19/19
 # doctor_search: 11/11
 # doctor_reads_acc: 33/33
-# doctor_checkpoints: 18/18
+# doctor_checkpoints: 19/19
 # doctor_sync: 3/3
 # doctor_brain: 8/8
 # doctor_terminal: 4/4
@@ -706,6 +706,7 @@ writeDoctorLastKnown	doctor_checkpoints	yes	2	no	yes	yes	serves
 readSyncAdmissionSettingRow	doctor_checkpoints	yes	1	no	yes	yes	serves
 readLatestConnectorReceipt	doctor_checkpoints	yes	1	no	yes	yes	serves
 listFactsAbsorbFailureGroups	doctor_checkpoints	yes	1	no	yes	yes	serves
+listCredentialResealHoldRows	doctor_checkpoints	yes	1	no	yes	yes	serves
 listManagedSyncCursorFailureRows	doctor_sync	yes	1	no	yes	yes	serves
 listManagedSyncOrphanRowsets	doctor_sync	yes	1	no	yes	yes	serves
 listDurableManagedSyncFailureKeys	doctor_sync	yes	1	no	yes	yes	serves

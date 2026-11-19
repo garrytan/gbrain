@@ -295,6 +295,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readSyncAdmissionSettingRow': OOS.doctorCheckpoints,
   'readLatestConnectorReceipt': OOS.doctorCheckpoints,
   'listFactsAbsorbFailureGroups': OOS.doctorCheckpoints,
+  'listCredentialResealHoldRows': OOS.doctorCheckpoints,
   'readTerminalFailureGroups': OOS.doctorTerminal,
   'listTerminalFailureBatch': OOS.doctorTerminal,
   'listOpenPassCheckpointBlockers': OOS.doctorTerminal,

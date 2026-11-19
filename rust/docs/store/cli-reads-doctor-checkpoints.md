@@ -33,13 +33,14 @@ pass row's `set_at`; the store keeps no dating row for a config key, so `row_val
 ## Members with no writer on a Rust brain (answer empty)
 
 These read `op_checkpoints` rows that only the managed-sync (git) pass writes: per-source cursors, pass rows, stops, backlog headers,
-derived-origin and purge parks, soak counters, identity downgrades and held atoms. A Rust brain has no
+derived-origin and purge parks, soak counters, identity downgrades and held atoms; and the credential re-chunk holds,
+which only the credential re-seal migration writes through `executeRaw`. A Rust brain has no such writer and no
 managed-sync writer (`persistence_journal` family in `members.ts`), so the true answer is none: a list member returns `[]`, a single-row
 member returns null. They are listed here so a later writer knows which reads it must feed:
 
 `readOpCheckpointKeys`, `listDerivedOriginParks`, `listPurgeParks`, `readSoakCounterRows`,
 `listUnfinishedManagedSyncCursors`, `listManagedSyncPassStops`, `listManagedSyncBacklogHeaders`, `readManagedSyncPassRow`,
-`listLiveManagedSyncPassRows`, `listCheckpointBlockedSources`, `listOpenIdentityDowngrades`, `listHeldManagedAtomRows`.
+`listLiveManagedSyncPassRows`, `listCheckpointBlockedSources`, `listOpenIdentityDowngrades`, `listHeldManagedAtomRows`, `listCredentialResealHoldRows`.
 
 `crates/gbrain-store/tests/cli_reads_doctor_checkpoints.rs` covers the three served stores. `test/engine-parity/doctor-checkpoints.test.ts`
 runs every member on PGLite, Postgres and Rust and compares them.

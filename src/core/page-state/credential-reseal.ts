@@ -59,6 +59,8 @@ const PRODUCER = `chunker-v${MARKDOWN_CHUNKER_VERSION}.fence-v${SAFE_FENCE_CHUNK
 const LIVE_HOLD = `p.deleted_at IS NULL AND p.knowledge_revision::text = h.completed_keys->0->>'revision'
   AND h.completed_keys->0->>'producer' = '${PRODUCER}' AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision`;
 const HOLD_PAGES = `op_checkpoints h JOIN pages p ON p.id = (h.completed_keys->0->>'page_id')::int`;
+/** The pieces the hold statements splice in; test/doctor-checkpoints-sql.test.ts pins the typed read against them. */
+export { HOLD_OP as CREDENTIAL_RESEAL_HOLD_OP, PRODUCER as CREDENTIAL_RESEAL_PRODUCER, LIVE_HOLD as CREDENTIAL_RESEAL_LIVE_HOLD, HOLD_PAGES as CREDENTIAL_RESEAL_HOLD_PAGES };
 
 /** SQL predicate over `pages p`: the page has a live credential re-chunk hold (`gbrain repair safe-chunks` retries it). */
 export const CREDENTIAL_RESEAL_HELD = `(p.text_projection_revision IS DISTINCT FROM p.knowledge_revision AND EXISTS (SELECT 1 FROM op_checkpoints h
@@ -75,10 +77,9 @@ function holdFix(hold: Pick<CredentialResealHold, 'source_id'>, segmented: boole
 }
 
 /** Live holds (optionally for some sources), oldest page first, each with the command that retries it. */
-export async function readCredentialResealHolds(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<Array<CredentialResealHold & { fix: Action }>> {
-  const rows = await engine.executeRaw<{ hold: CredentialResealHold; segmented: boolean }>(`SELECT h.completed_keys->0 AS hold, p.body_storage IS NOT DISTINCT FROM 'segmented' AS segmented
-    FROM ${HOLD_PAGES} WHERE h.op='${HOLD_OP}' AND ${LIVE_HOLD} ${sourceIds ? 'AND p.source_id=ANY($1::text[])' : ''} ORDER BY p.id`, sourceIds ? [sourceIds] : []);
-  return rows.map(row => ({ ...row.hold, fix: holdFix(row.hold, row.segmented === true) }));
+export async function readCredentialResealHolds(engine: Pick<BrainEngine, 'listCredentialResealHoldRows'>, sourceIds?: string[]): Promise<Array<CredentialResealHold & { fix: Action }>> {
+  const rows = await engine.listCredentialResealHoldRows(PRODUCER, sourceIds);
+  return rows.map(row => ({ ...row.hold, fix: holdFix(row.hold, row.segmented) }));
 }
 
 /**

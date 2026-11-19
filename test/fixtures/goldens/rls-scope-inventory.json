@@ -4905,6 +4905,7 @@
         "listConversationRelinkPages": "none",
         "listCorePageRows": "none",
         "listCorpusSample": "direct",
+        "listCredentialResealHoldRows": "none",
         "listDanglingFederatedReads": "none",
         "listDeadFactsAbsorbJobsByKeys": "none",
         "listDecideCalibrationRows": "none",

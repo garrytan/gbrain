@@ -503,6 +503,7 @@ export const RUST_ENGINE_MEMBERS = {
   listCheckpointBlockedSources: 'persistence_journal',
   listOpenIdentityDowngrades: 'persistence_journal',
   listHeldManagedAtomRows: 'persistence_journal',
+  listCredentialResealHoldRows: 'persistence_journal',
   readDoctorLastKnown: 'health',
   writeDoctorLastKnown: 'health',
   readSyncAdmissionSettingRow: 'config',
