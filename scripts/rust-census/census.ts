@@ -5,7 +5,7 @@
  *
  *   bun run rust:build
  *   bun scripts/rust-census/census.ts [--only cli|mcp] [--filter <substring>] [--concurrency N] [--work-dir DIR]
- *        [--out docs/research/rust-census.md] [--json docs/research/rust-census.json]
+ *        [--out docs/research/rust-census.md] [--json docs/research/rust-census.json] [--no-member] [--composition <text>]
  *   bun scripts/rust-census/census.ts --from-json docs/research/rust-census.json   (re-render the report and packages only)
  *  The report also counts hidden refusals: equal rows that log a refusal a fail-soft path caught (see hiddenRefusals).
  *   GBRAIN_CENSUS_PG_URL=postgres://postgres:postgres@127.0.0.1:5439/postgres  (optional Postgres arm)
@@ -17,6 +17,9 @@
  *  - Runs every case in scripts/rust-census/cases.ts on a fresh copy of each base brain (Postgres: a database made
  *    from the base as a template), so writes never leak between cases. Each MCP tool runs through a real stdio
  *    `gbrain serve` (remote caller) on a fresh copy too.
+ *  - The member-caller pass (scripts/rust-census/member-pass.ts; off with --no-member) runs every MCP tool again
+ *    through `serve --stdio-member`, on base copies where `access member add` and `access owner set` made a live
+ *    member with a group. Its results are the member column and section; they are not in the totals.
  *  - On the Rust arm the child loads scripts/rust-census/trace-preload.ts, which records the first capability
  *    refusal (capability, member, call site file:line) and every engine member and raw-SQL statement the case hit.
  *  - Keyless and isolated: HOME and GBRAIN_HOME point at the case directory, provider keys and DATABASE_URL are
@@ -39,6 +42,7 @@ import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { CLI_CASES, MCP_OVERRIDES, MCP_PARAM_FILL, type CliCase } from './cases.ts';
 import { buildPackages, renderPackages } from './packages.ts';
 import { normalize } from './normalize.ts';
+import { MEMBER_SERVE_ARGS, MEMBER_SETUP, memberCell, optionRefusals, renderMemberPass, type MemberResult } from './member-pass.ts';
 
 const ROOT = resolve(import.meta.dir, '..', '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
@@ -58,6 +62,9 @@ const OUT_MD = resolve(flag('--out') ?? join(ROOT, 'docs', 'research', 'rust-cen
 const OUT_JSON = resolve(flag('--json') ?? join(ROOT, 'docs', 'research', 'rust-census.json'));
 const PG_URL = process.env.GBRAIN_CENSUS_PG_URL;
 const TIMEOUT_MS = Number(flag('--timeout-ms') ?? 120_000);
+/** --no-member skips the member-caller pass; --composition names a tree that is not one commit (written to the meta). */
+const NO_MEMBER = process.argv.includes('--no-member');
+const COMPOSITION = flag('--composition');
 
 if (!flag('--from-json') && (!ADDON || !existsSync(ADDON))) throw new Error(`the Rust addon ${ADDON || '(no target)'} does not exist; run bun run rust:build`);
 
@@ -86,6 +93,10 @@ interface Row {
   /** The first 600 characters of each arm's output (JSON report only), for reading a differs row without a rerun. */
   rustExcerpt?: string;
   refExcerpt?: string;
+  /** MCP: the run's "(option X)" refusals (member-pass.ts optionRefusals), minus the serve's startup refusals. */
+  options?: string[];
+  /** MCP: the same tool for the member caller (member-pass.ts); never counted in the totals. */
+  member?: MemberResult;
 }
 
 const work = flag('--work-dir') ?? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'gbrain-census-'));
@@ -136,10 +147,14 @@ function takeCensusRef<R extends Run & { response?: any }>(run: R): R {
 }
 
 /** One MCP tools/call through a real stdio `gbrain serve` (remote caller), then stdin closes. */
-async function mcpCall(brain: Brain, method: string, params: Record<string, unknown>, trace?: string): Promise<Run & { response?: any }> {
+async function mcpCall(brain: Brain, method: string, params: Record<string, unknown>, trace?: string, serveArgs: readonly string[] = []): Promise<Run & { response?: any }> {
   const started = Date.now();
-  const cmd = ['bun', ...(trace ? ['--preload', PRELOAD] : []), CLI, 'serve'];
-  const proc = Bun.spawn(cmd, { cwd: brain.dir, env: childEnv(brain, trace), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  const cmd = ['bun', ...(trace ? ['--preload', PRELOAD] : []), CLI, 'serve', ...serveArgs];
+  // GBRAIN_NO_ONBOARD_NUDGE: at boot `serve` starts the onboarding refresher (src/mcp/server.ts), whose first check
+  // loads the active schema pack into the pack cache. It races the tools/call on every engine, so reload_schema_pack
+  // answered [gbrain-base] or [] by timing alone. Turning the refresher off makes MCP rows depend on the call only.
+  const env = { ...childEnv(brain, trace), GBRAIN_NO_ONBOARD_NUDGE: '1' };
+  const proc = Bun.spawn(cmd, { cwd: brain.dir, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   const send = (msg: unknown) => { proc.stdin!.write(JSON.stringify(msg) + '\n'); proc.stdin!.flush?.(); };
   send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gbrain-rust-census', version: '1' } } });
   let timedOut = false;
@@ -190,7 +205,7 @@ async function pool<T, R>(items: T[], n: number, fn: (item: T, i: number) => Pro
 // ---- brains --------------------------------------------------------------------------------------------------
 
 async function pgExec(sql: string): Promise<void> {
-  const { default: postgres } = await import('postgres');
+  const { default: postgres } = await import('#postgres');
   const db = postgres(PG_URL!, { max: 1, onnotice: () => undefined });
   try { await db.unsafe(sql); } finally { await db.end(); }
 }
@@ -411,27 +426,31 @@ function mcpOut(r: Run & { response?: any }): { exit: number; out: unknown; text
   return { exit: res.isError ? 1 : 0, out: { isError: !!res.isError, body: parseOut(text) }, text };
 }
 
+/** The refusals the anonymous `serve` builds at startup (the anonymous pass's baseline; hiddenRefusals and --from-json read it). */
 const SERVE_BASELINE = new Set<string>();
-const SERVE_BASELINE_RAW = new Set<string>();
 
-async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, bases: Bases): Promise<Row> {
+/** One MCP caller: its base brains, its serve arguments and the refusals its serve builds at startup (not counted per tool). */
+interface McpPass { tag: string; bases: Bases; serveArgs: readonly string[]; baseline: Set<string>; baselineRaw: Set<string> }
+
+async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, pass: McpPass): Promise<Row> {
+  const { bases, serveArgs, baseline: startup, baselineRaw: startupRaw } = pass;
   const params = fillParams(tool);
-  const caseDir = join(work, 'cases', `mcp-${i}`);
+  const caseDir = join(work, 'cases', `mcp${pass.tag}-${i}`);
   const arms = { ref: bases.ref, rust: bases.rust, ...(bases.pg ? { pg: bases.pg } : {}) } as Record<string, Brain>;
   const clones: Record<string, Brain> = {};
   for (const [k, b] of Object.entries(arms)) clones[k] = await cloneBrain(b, join(caseDir, k));
   const trace = join(caseDir, 'rust-trace.jsonl');
   const runs: Record<string, Run & { response?: any }> = {};
   await Promise.all(Object.entries(clones).map(async ([k, b]) => {
-    runs[k] = await mcpCall(b, 'tools/call', { name: tool.name, arguments: params }, k === 'rust' ? trace : undefined);
+    runs[k] = await mcpCall(b, 'tools/call', { name: tool.name, arguments: params }, k === 'rust' ? trace : undefined, serveArgs);
   }));
   const ref = mcpOut(runs.ref!), rust = mcpOut(runs.rust!);
   const refN = normalize(ref.out, pathsOf(clones.ref!)), rustN = normalize(rust.out, pathsOf(clones.rust!));
   const t = readTrace(trace);
   // Refusals every `serve` builds before the call (startup, notifier) are listed once in Setup, not per tool.
-  t.first = t.all.find((x) => !SERVE_BASELINE.has(`${x.member}@${x.site}`));
-  t.raw = t.raw.filter((x) => !SERVE_BASELINE_RAW.has(`${x.member}@${x.site}`));
-  t.refusals = t.all.filter((x) => !SERVE_BASELINE.has(`${x.member}@${x.site}`)).length;
+  t.first = t.all.find((x) => !startup.has(`${x.member}@${x.site}`));
+  t.raw = t.raw.filter((x) => !startupRaw.has(`${x.member}@${x.site}`));
+  t.refusals = t.all.filter((x) => !startup.has(`${x.member}@${x.site}`)).length;
   let status: Status; let note = ''; let decisive: string | undefined;
   const crash = crashed(runs.rust!, runs.ref!) ?? (rust.exit === -1 ? `no MCP response: ${rust.text.replace(/\s+/g, ' ').slice(-200)}` : null);
   if (crash) { status = 'crash'; note = crash; }
@@ -449,7 +468,8 @@ async function runMcpTool(tool: { name: string; inputSchema?: any }, i: number, 
   if (runs.pg) { const pg = mcpOut(runs.pg); pgStatus = pg.exit === -1 ? 'crash' : pg.exit === ref.exit && JSON.stringify(normalize(pg.out, pathsOf(clones.pg!))) === JSON.stringify(refN) ? 'equal' : 'differs'; }
   for (const b of Object.values(clones)) await dropBrain(b);
   rmSync(caseDir, { recursive: true, force: true });
-  return { surface: 'mcp', name: tool.name, invocation: JSON.stringify(params).slice(0, 120), status, pgStatus, refExit: ref.exit, rustExit: rust.exit, decisive, endSite: endSiteOf(t, decisive, runs.rust!.censusRef), first: t.first, sites: t.all.slice(0, 40).map((x) => `${x.member}@${x.site}`), refusals: t.refusals, members: t.members, raw: t.raw, note,
+  const options = optionRefusals(t.all.filter((x) => !startup.has(`${x.member}@${x.site}`)).map((x) => `${x.member}@${x.site}`));
+  return { surface: 'mcp', name: tool.name, invocation: JSON.stringify(params).slice(0, 120), status, pgStatus, refExit: ref.exit, rustExit: rust.exit, decisive, endSite: endSiteOf(t, decisive, runs.rust!.censusRef), first: t.first, sites: t.all.slice(0, 40).map((x) => `${x.member}@${x.site}`), refusals: t.refusals, members: t.members, raw: t.raw, note, options,
     rustExcerpt: rust.text.slice(0, 600), refExcerpt: ref.text.slice(0, 600) };
 }
 
@@ -483,7 +503,7 @@ function hiddenLine(h: { rows: Row[]; sites: HiddenSite[] }): string {
   return `Hidden refusals: ${h.rows.length} equal rows (cli ${by('cli')}, mcp ${by('mcp')}) log ${h.sites.length} distinct refusal sites; serve startup refusals are not counted.`;
 }
 
-function report(rows: Row[], setup: string[], meta: Record<string, string>, tools: number, cliCommands: string[]): string {
+function report(rows: Row[], setup: string[], meta: Record<string, string>, tools: number, cliCommands: string[], memberSetup: string[] = []): string {
   const count = (surface: string, s: Status) => rows.filter((r) => r.surface === surface && r.status === s).length;
   const lines: string[] = [];
   lines.push('<!-- BEGIN GENERATED census (scripts/rust-census/census.ts; do not edit by hand) -->', '');
@@ -519,17 +539,19 @@ function report(rows: Row[], setup: string[], meta: Record<string, string>, tool
   for (const h of hidden.sites) lines.push(`| ${esc(h.site)} | ${h.score} | ${h.rows} | ${h.hot.length} | ${esc(h.cases.join(', '))} |`);
   lines.push('');
   for (const s of ['cli', 'mcp'] as const) {
-    lines.push(`## ${s === 'cli' ? 'CLI commands' : 'MCP tools'}`, '', `| ${s === 'cli' ? 'invocation' : 'tool (params)'} | status | pg | first refusal (capability, member, site) | ended on | members / raw SQL hit | note |`, '|---|---|---|---|---|---|---|');
+    const memberCol = s === 'mcp' && rows.some((r) => r.member);
+    lines.push(`## ${s === 'cli' ? 'CLI commands' : 'MCP tools'}`, '', `| ${s === 'cli' ? 'invocation' : 'tool (params)'} | status | pg | first refusal (capability, member, site) | ended on | members / raw SQL hit | note |${memberCol ? ' member caller |' : ''}`, `|---|---|---|---|---|---|---|${memberCol ? '---|' : ''}`);
     for (const r of rows.filter((x) => x.surface === s)) {
       const first = r.first ? `${r.first.capability}: ${r.first.member} @ ${r.first.site}` : '';
       const raw = (r.raw ?? []).map((x) => `${x.member} \`${x.sql.slice(0, 70)}\` @ ${x.site}`).join('; ');
       const members = (r.members ?? []).filter((m) => !/^(connect|disconnect|reconnect|kind|capabilities|registerBeforeDisconnect)$/.test(m));
       const hit = [members.length ? members.slice(0, 12).join(', ') + (members.length > 12 ? ` (+${members.length - 12})` : '') : '', raw].filter(Boolean).join(' / ');
       const inv = s === 'cli' ? r.invocation : `${r.name} ${r.invocation}`;
-      lines.push(`| ${esc(inv)} | ${r.status} | ${r.pgStatus ?? ''} | ${esc(first)} | ${esc(r.decisive ? `${r.decisive}${r.endSite ? ` @ ${r.endSite}` : ''}` : '')} | ${esc(hit)} | ${esc(r.note)} |`);
+      lines.push(`| ${esc(inv)} | ${r.status} | ${r.pgStatus ?? ''} | ${esc(first)} | ${esc(r.decisive ? `${r.decisive}${r.endSite ? ` @ ${r.endSite}` : ''}` : '')} | ${esc(hit)} | ${esc(r.note)} |${memberCol ? ` ${esc(memberCell(r))} |` : ''}`);
     }
     lines.push('');
   }
+  if (rows.some((r) => r.surface === 'mcp')) lines.push(renderMemberPass(rows, memberSetup));
   lines.push('<!-- END GENERATED census -->');
   return lines.join('\n');
 }
@@ -552,7 +574,7 @@ async function main(): Promise<void> {
     d.packages = buildPackages(d.rows, ROOT);
     d.hidden = hiddenRefusals(d.rows).sites;
     writeFileSync(OUT_JSON, JSON.stringify(d, null, 1) + '\n');
-    writeReport(report(d.rows, d.setup, d.meta, d.tools.length, d.cliCommands));
+    writeReport(report(d.rows, d.setup, d.meta, d.tools.length, d.cliCommands, d.memberSetup ?? []));
     if (!flag('--work-dir')) rmSync(work, { recursive: true, force: true });
     process.stderr.write(`[census] re-rendered ${OUT_MD} from ${from}\n`);
     return;
@@ -587,15 +609,22 @@ async function main(): Promise<void> {
   }
   const bases: Bases = { ref, rust, pg, pglite, useMirror };
 
-  // MCP tool list from the reference brain's stdio server (full surface).
-  const list = await mcpCall(ref, 'tools/list', {});
+  // MCP tool list from the reference brain's stdio server (full surface). Each baseline `serve` runs on a throwaway
+  // copy: stdin closes while serve may still be registering its local writers, and a registration cut short there
+  // must not ride into the base brains every case is copied from.
+  const baselineOf = async (b: Brain, name: string, trace?: string, serveArgs: readonly string[] = []) => {
+    const copy = await cloneBrain(b, join(work, `baseline-${name}`));
+    try { return await mcpCall(copy, 'tools/list', {}, trace, serveArgs); } finally { await dropBrain(copy); }
+  };
+  const list = await baselineOf(ref, 'ref');
   const tools: Array<{ name: string; inputSchema?: any }> = list.response?.result?.tools ?? [];
   if (!tools.length) throw new Error(`tools/list returned no tools: ${list.stderr.slice(-500)}`);
+  const anon: McpPass = { tag: '', bases, serveArgs: [], baseline: SERVE_BASELINE, baselineRaw: new Set() };
   const baseTrace = join(work, 'serve-baseline.jsonl');
-  const rustList = await mcpCall(rust, 'tools/list', {}, baseTrace);
+  const rustList = await baselineOf(rust, 'rust', baseTrace);
   const bt = readTrace(baseTrace);
-  for (const x of bt.all) SERVE_BASELINE.add(`${x.member}@${x.site}`);
-  for (const x of bt.raw) SERVE_BASELINE_RAW.add(`${x.member}@${x.site}`);
+  for (const x of bt.all) anon.baseline.add(`${x.member}@${x.site}`);
+  for (const x of bt.raw) anon.baselineRaw.add(`${x.member}@${x.site}`);
   setup.push(`Rust \`serve\` startup (tools/list) built ${bt.all.length} refusal(s), caught and not counted per tool: ${bt.all.map((x) => `${x.capability}: ${x.member} @ ${x.site}`).join('; ') || 'none'}`);
   const rustTools = new Set<string>((rustList.response?.result?.tools ?? []).map((t: any) => t.name));
   const missingOnRust = tools.map((t) => t.name).filter((n) => !rustTools.has(n));
@@ -620,18 +649,55 @@ async function main(): Promise<void> {
   const harness = (surface: 'cli' | 'mcp', name: string, invocation: string, e: unknown): Row =>
     ({ surface, name, invocation, status: 'crash', note: `census harness error: ${String((e as Error)?.message ?? e).slice(0, 200)}` });
   const cliRows = await pool(cliCases, CONCURRENCY, async (c, i) => tick(await runCliCase(c, i, bases).catch((e) => harness('cli', c.cmd, labelOf(c.args), e))));
-  const mcpRows = await pool(mcpTools, CONCURRENCY, async (t, i) => tick(await runMcpTool(t, i, bases).catch((e) => harness('mcp', t.name, '', e))));
+  const mcpRows = await pool(mcpTools, CONCURRENCY, async (t, i) => tick(await runMcpTool(t, i, anon).catch((e) => harness('mcp', t.name, '', e))));
   const rows = [...cliRows, ...mcpRows];
+
+  // The member-caller pass (member-pass.ts): the same MCP tools through a serve bound to a live member.
+  const memberSetup: string[] = [];
+  const memberBrains: Brain[] = [];
+  if (mcpTools.length && !NO_MEMBER) {
+    const mb = async (b: Brain | undefined, k: string) => { if (!b) return undefined; const c = await cloneBrain(b, join(base, `member-${k}`)); memberBrains.push(c); return c; };
+    const m: Bases = { ref: (await mb(ref, 'ref'))!, rust: (await mb(rust, 'rust'))!, pg: await mb(pg, 'pg'), pglite: useMirror ? (await mb(pglite, 'pglite'))! : undefined as unknown as Brain, useMirror };
+    if (!useMirror) m.pglite = m.ref;
+    let ok = true;
+    for (const args of MEMBER_SETUP) {
+      const arms = [m.ref, m.rust, ...(m.pg ? [m.pg] : [])];
+      const tr = join(work, `member-setup-${memberSetup.length}.jsonl`);
+      const res = await Promise.all(arms.map((b) => spawnCli(b, args, b === m.rust ? { trace: tr } : {})));
+      const why = (b: Brain, r: Run) => { const d = decisiveMember(r); const site = b === m.rust && d ? endSiteOf(readTrace(tr), d) : undefined; return d ? `${d}${site ? ` @ ${site}` : ''}` : snippet(r); };
+      memberSetup.push(`${labelOf(args)}: ${arms.map((b, j) => `${b.arm} exit ${res[j]!.exitCode}${res[j]!.exitCode ? ` (${why(b, res[j]!)})` : ''}`).join(', ')}`);
+      if (res.some((r) => r.exitCode !== 0)) ok = false;
+    }
+    if (!ok) memberSetup.push('member setup failed on an arm: the member pass did not run (every member cell is skipped, with the first failed step as its note)');
+    const pass: McpPass = { tag: '-member', bases: m, serveArgs: MEMBER_SERVE_ARGS, baseline: new Set(), baselineRaw: new Set() };
+    if (ok) {
+      const mt = join(work, 'serve-baseline-member.jsonl');
+      await baselineOf(m.rust, 'rust-member', mt, MEMBER_SERVE_ARGS);
+      const t = readTrace(mt);
+      for (const x of t.all) pass.baseline.add(`${x.member}@${x.site}`);
+      for (const x of t.raw) pass.baselineRaw.add(`${x.member}@${x.site}`);
+      memberSetup.push(`member \`serve ${MEMBER_SERVE_ARGS.join(' ')}\` startup (tools/list) built ${t.all.length} refusal(s), not counted per tool: ${t.all.map((x) => `${x.capability}: ${x.member} @ ${x.site}`).join('; ') || 'none'}`);
+    }
+    let mdone = 0;
+    const byName = new Map(mcpRows.map((r) => [r.name, r]));
+    await pool(mcpTools, CONCURRENCY, async (tool, i) => {
+      const row = byName.get(tool.name)!;
+      const r = ok ? await runMcpTool(tool, i, pass).catch((e) => harness('mcp', tool.name, '', e)) : { status: 'skipped' as Status, note: `member setup failed: ${memberSetup.find((x) => / exit [1-9]/.test(x)) ?? ''}` } as Row;
+      row.member = { status: r.status, decisive: r.decisive, endSite: r.endSite, sites: r.sites?.filter((x) => !pass.baseline.has(x)), options: r.options, note: r.note };
+      process.stderr.write(`[census] member ${++mdone}/${mcpTools.length} ${tool.name}: ${r.status}\n`);
+    });
+  }
 
   const head = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd: ROOT }).stdout.toString().trim();
   const meta = {
     'gbrain commit': head, 'addon': ADDON.replace(ROOT + '/', ''), 'bun': Bun.version, 'fixture': 'test/fixtures/rust-cli-parity-brain (20 synthetic pages)',
     'reference': useMirror ? 'mirror (PGLite with the Rust-completed setup steps)' : 'PGLite', 'postgres arm': pg ? 'on (pgvector, a template database per case)' : 'off (set GBRAIN_CENSUS_PG_URL)',
-    'filter': FILTER ?? 'none', 'only': ONLY ?? 'cli and mcp', 'wall time': `${Math.round((Date.now() - t0) / 1000)} s`,
+    'filter': FILTER ?? 'none', 'only': ONLY ?? 'cli and mcp', 'member-caller pass': NO_MEMBER || !mcpTools.length ? 'off' : `on (serve ${MEMBER_SERVE_ARGS.join(' ')})`,
+    ...(COMPOSITION ? { 'composition': COMPOSITION } : {}), 'wall time': `${Math.round((Date.now() - t0) / 1000)} s`,
   };
-  writeFileSync(OUT_JSON, JSON.stringify({ meta, setup, cliCommands, tools: tools.map((t) => t.name), serveBaseline: [...SERVE_BASELINE], packages: buildPackages(rows, ROOT), hidden: hiddenRefusals(rows).sites, rows }, null, 1) + '\n');
-  writeReport(report(rows, setup, meta, tools.length, cliCommands));
-  for (const b of [pglite, rust, ...(pg ? [pg] : []), ...(useMirror ? [ref] : [])]) await dropBrain(b);
+  writeFileSync(OUT_JSON, JSON.stringify({ meta, setup, memberSetup, cliCommands, tools: tools.map((t) => t.name), serveBaseline: [...SERVE_BASELINE], packages: buildPackages(rows, ROOT), hidden: hiddenRefusals(rows).sites, rows }, null, 1) + '\n');
+  writeReport(report(rows, setup, meta, tools.length, cliCommands, memberSetup));
+  for (const b of [pglite, rust, ...(pg ? [pg] : []), ...(useMirror ? [ref] : []), ...memberBrains]) await dropBrain(b);
   if (!flag('--work-dir')) rmSync(work, { recursive: true, force: true });
   process.stderr.write(`[census] wrote ${OUT_MD} and ${OUT_JSON}\n`);
 }
