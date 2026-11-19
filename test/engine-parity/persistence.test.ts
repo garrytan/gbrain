@@ -145,6 +145,16 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the held fence read is empty on a brain with no held fence result', { methods: ['listFenceHoldRows'] }, async (engine) => {
+    const kinds = ['fact_fence', 'take_fence'];
+    const everyOwner = await engine.listFenceHoldRows(['default'], kinds);
+    const oneOwner = await engine.listFenceHoldRows(['default', 'other'], kinds, 'page:people/alice-example');
+    const noSources = await engine.listFenceHoldRows([], kinds);
+    const answers = { everyOwner, oneOwner, noSources };
+    expect(answers).toEqual({ everyOwner: [], oneOwner: [], noSources: [] });
+    return answers;
+  });
+
   parityTest('one request is admitted, read, claimed, locked and completed, and its counters are charged then released', {
     methods: ['readLedgerSource', 'transaction', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readWriteRequestById', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow'],
   }, async (engine) => {
