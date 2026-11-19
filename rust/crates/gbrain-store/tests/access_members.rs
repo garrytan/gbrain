@@ -217,6 +217,37 @@ fn email_and_kind_writes_skip_removed_members_and_keep_email_unique() {
 }
 
 #[test]
+fn the_labelled_only_write_skips_removed_members_and_leaves_the_serves_keys() {
+    let dir = TempDir::new("access-members");
+    let store = open(&dir);
+    add(&store, "alice-example", None, &[]);
+    add(&store, "bob-example", None, &[]);
+    let serves = store.get_config("access.serves_since").unwrap();
+    store
+        .set_access_member_labelled_only("alice-example", true)
+        .unwrap();
+    let after = one(&store, "alice-example");
+    assert_eq!(after["labelled_only"], json!(true));
+    assert_eq!(one(&store, "bob-example")["labelled_only"], json!(false));
+    assert_eq!(store.get_config("access.serves_since").unwrap(), serves);
+    store
+        .set_access_member_labelled_only("alice-example", false)
+        .unwrap();
+    assert_eq!(one(&store, "alice-example")["labelled_only"], json!(false));
+    store.tombstone_access_member("bob-example").unwrap();
+    store
+        .set_access_member_labelled_only("bob-example", true)
+        .unwrap();
+    let removed = rows(&store, true);
+    let bob = removed.iter().find(|r| r["id"] == "bob-example").unwrap();
+    assert_eq!(bob["labelled_only"], json!(false));
+    store
+        .set_access_member_labelled_only("nobody", true)
+        .unwrap();
+    assert_eq!(rows(&store, true).len(), 2);
+}
+
+#[test]
 fn a_tombstone_clears_email_and_groups_and_hides_the_member() {
     let dir = TempDir::new("access-members");
     let store = open(&dir);

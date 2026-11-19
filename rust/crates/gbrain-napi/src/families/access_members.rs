@@ -62,6 +62,19 @@ impl Brain {
         self.run(env, move |s| s.set_access_member_kind(&id, &kind))
     }
 
+    /// `setAccessMemberLabelledOnly(id, labelledOnly)`: resolves null.
+    #[napi]
+    pub fn set_access_member_labelled_only<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        labelled_only: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_access_member_labelled_only(&id, labelled_only)
+        })
+    }
+
     /// `tombstoneAccessMember(id)`: resolves null.
     #[napi]
     pub fn tombstone_access_member<'env>(
