@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 650/650
+# covered: 655/655
 # lifecycle: 9/9
 # pages: 37/37
 # search: 7/7
@@ -57,6 +57,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 15/15
+# write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
 # alias_fanout_reads: 4/4
@@ -240,7 +241,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	29	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	30	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	15	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	4	no	yes	yes	serves
@@ -259,7 +260,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	30	yes	yes	yes	serves
+addTakesBatch	takes	yes	31	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 listTakes	takes	yes	12	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
@@ -290,7 +291,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	44	yes	yes	yes	serves
+insertFact	facts	yes	45	yes	yes	yes	serves
 insertFacts	facts	yes	39	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	23	no	yes	yes	serves
@@ -320,7 +321,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	16	no	yes	yes	serves
+createVersion	versions	yes	17	no	yes	yes	serves
 getVersions	versions	yes	7	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
@@ -348,9 +349,9 @@ readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	2	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
-insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
+insertLocalWriterRow	import_guards	yes	2	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	12	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	33	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	34	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readLedgerSource	import_guards	yes	8	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
@@ -366,7 +367,7 @@ ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	17	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	17	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	18	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	13	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	10	no	yes	yes	serves
@@ -663,6 +664,11 @@ expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
+readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
+readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
+readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves
+readOldestVersionAttribution	write_attribution	yes	2	no	yes	yes	serves
+readRowAttribution	write_attribution	yes	2	no	yes	yes	serves
 recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	3	no	yes	yes	serves

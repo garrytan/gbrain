@@ -53,6 +53,10 @@ import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInse
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
+import type {
+  ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
+  WriteAttributionNameIds, WriteAttributionNames,
+} from './engine-sql/write-attribution.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type {
@@ -1399,6 +1403,16 @@ export interface BrainEngine {
   notifierCoverageRecorded(): Promise<boolean>;
   /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
   readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
+  /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
+  readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
+  /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */
+  readPageRevisionAttribution(pageId: number): Promise<PageRevisionAttributionRow | null>;
+  /** Each listed version's writer, archiving writer and trust tier. */
+  readVersionAttributions(versions: VersionRef[]): Promise<VersionAttributionRow[]>;
+  /** The writer of a page's oldest version snapshot; null when it has none. */
+  readOldestVersionAttribution(pageId: number): Promise<ActorAttributionRow | null>;
+  /** The fact, take or timeline entry `target` names with its write receipts, filtered before the pick; null when none is visible. */
+  readRowAttribution(target: RowAttributionTarget): Promise<RowAttributionRow | null>;
   /** The get_health memo's page clock: a string that changes whenever a page is written (health-memo.ts). */
   readHealthMemoClock(): Promise<string>;
   /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */

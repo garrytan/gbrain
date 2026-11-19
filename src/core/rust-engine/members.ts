@@ -133,6 +133,12 @@ export const RUST_ENGINE_MEMBERS = {
   notifierCoverageRecorded: 'sources',
   readOpCheckpointKeys: 'persistence_journal',
   readHealthMemoClock: 'health',
+  // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
+  readWriteAttributionNames: 'persistence_journal',
+  readPageRevisionAttribution: 'pages',
+  readVersionAttributions: 'page_versions',
+  readOldestVersionAttribution: 'page_versions',
+  readRowAttribution: 'pages',
   listSynopsisSourceIds: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',

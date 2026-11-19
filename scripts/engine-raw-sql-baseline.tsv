@@ -566,7 +566,6 @@ src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	6
 src/core/ops/admin.ts	execute_raw	2
-src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet

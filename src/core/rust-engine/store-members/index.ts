@@ -60,6 +60,7 @@ import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as writeAttribution from './write-attribution.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as writeGuards from './write-guards.ts';
@@ -106,6 +107,8 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...persistence, ...housekeeping, ...effectScans,
   ...writeMisc,
+  // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
+  ...writeAttribution,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).

@@ -213,7 +213,7 @@ fn extra_bool(record: &RequestRecord, column: &str) -> bool {
 }
 
 /// A `::uuid` parameter: lower-cased; anything else is refused, as Postgres refuses the cast.
-fn uuid_param(text: &str, what: &str) -> Result<String> {
+pub(crate) fn uuid_param(text: &str, what: &str) -> Result<String> {
     if is_uuid(text) {
         Ok(text.to_lowercase())
     } else {

@@ -200,6 +200,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
   write_misc: ['readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding',
     'hasExtractedEvents', 'listActiveAccessMembers', 'notifierCoverageRecorded', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'attachSourcePath', 'readOpCheckpointKeys', 'readHealthMemoClock', 'listSynopsisSourceIds'],
+  // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
+  write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
+    'readOldestVersionAttribution', 'readRowAttribution'],
   // telemetry: search telemetry, MCP usage and the chat usage ledger (engine-sql/telemetry.ts, engine-sql/chat-usage.ts)
   telemetry: [
     'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',

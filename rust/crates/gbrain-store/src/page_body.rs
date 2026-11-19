@@ -1257,6 +1257,7 @@ impl Store {
                 tag_sources: BTreeMap::new(),
                 trust_tier: None,
                 write_origin: None,
+                revision_receipt: Default::default(),
             };
             write_page(tx, &record)?;
             let state = BodyState {

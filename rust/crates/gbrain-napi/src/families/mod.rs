@@ -25,6 +25,7 @@ mod trust;
 mod trust_fence;
 mod trust_proposals;
 mod versions;
+mod write_attribution;
 mod write_guards;
 mod write_misc;
 mod write_trust;
