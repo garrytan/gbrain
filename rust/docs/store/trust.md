@@ -228,9 +228,9 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 - The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
-- The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
-  members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
-  one (TODOS.md `rust-belief-ledger`).
+- The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) are not store members yet and
+  refuse for every input. The store keeps the ledger's rows ("The belief ledger", below); these two reads of them are
+  still to come (TODOS.md `rust-belief-ledger`).
 - `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
   whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
   (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
@@ -240,3 +240,57 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   only when the version that replaced it is visible and was not pruned, as on PGLite. `gap_at` is the page's
   `version_history_gap_at`.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
+
+## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`)
+
+The store keeps the belief ledger's four tables (src/core/belief/schema.ts) and serves the eleven statements of
+src/core/engine-sql/belief-ledger.ts as store members (src/core/rust-engine/store-members/belief-ledger.ts). The
+history reads, `readSourcePurgeEpoch` and the `belief_ledger` capability itself are not served yet, so a brain still
+reports the capability missing.
+
+| Key | Value | PGLite row or index |
+| --- | --- | --- |
+| `t 0x09 0x00 source \0 incarnation \0 id` | the event record | `belief_events` |
+| `t 0x09 0x01 event_key` (raw bytes) | the event's `0x00` key | `UNIQUE (event_key)` |
+| `t 0x09 0x02 publication_id` | `{observed_at_us}` | `belief_commit_marks` |
+| `t 0x09 0x03 source \0 subject_kind \0 subject_key \0 id` | incarnation | `belief_events_subject` |
+| `t 0x09 0x04 publication_id \0 id` | `recorded_at_us` | `belief_events_publication` |
+| `t 0x0a 0x00 page_lifetime` | the lifetime record | `belief_page_lifetimes` |
+| `t 0x0a 0x01 incarnation \0 slug` | the open lifetime | `belief_page_lifetimes_open` (partial unique) |
+| `t 0x0a 0x02 page_id \0 page_lifetime` | empty, open lifetimes only | the moved read's `page_id = ANY` |
+| `t 0x0b source \0 claim_fp \0 id` | incarnation | `belief_events_claim_fp` |
+| `t 0x0c 0x00 id` | the suppression record | `belief_redactions` |
+| `t 0x0c 0x01 source \0 subject_key \0 id` | empty | `belief_redactions_subject` |
+| `t 0x0c 0x02 source \0 field_hash \0 id` | empty | `belief_redactions_field_hash` |
+
+Ids are 8 bytes big-endian, from the `belief_events` and `belief_redactions` counters; a page id is 4 bytes with the
+sign bit flipped. UUIDs are stored as Postgres prints them (lowercase, hyphenated); the uuid input takes the
+hyphenated form or 32 hex digits, either case. Event and lifetime times are the store clock at each row
+(`clock_timestamp()`); a suppression's `created_at` is the transaction clock (`now()`).
+
+Differences from the design sketch: the open-lifetime key has no source (the unique index is on incarnation and
+slug alone); a suppression is keyed by id alone, since a release names ids across every source; the subject index
+carries `subject_kind`, as `belief_events_subject` does; and `t 0x09 0x04` is new, for the commit mark's newest
+`recorded_at`. The page tier index the trust module doc reserved moves from `t 0x09` to `t 0x0d`.
+
+- `insertBeliefEvents` casts every row first (uuid, timestamptz, jsonb, `decode(hex)`), then inserts in `ord` order
+  (a null `ord` last). Each row takes an id, a skipped one too, as the `BIGSERIAL` default runs before
+  `ON CONFLICT DO NOTHING`; a key already recorded, by an earlier row of the same call included, is skipped. A row
+  fails on its first NOT NULL column, then on the `subject_kind`, `origin` and `tier_basis` checks, and the call
+  writes nothing. One difference: Postgres does not roll back a sequence, so after a failed call its next id is
+  higher than the store's.
+- `markBeliefCommits` reads the clock once and marks each listed publication whose newest event is not after it,
+  unless it has a mark.
+- `mintBeliefLifetime` answers the lifetime already open at the pair, or fails on the primary key for a lifetime id
+  already used. `renameBeliefLifetime` moves an open or an ended lifetime; an open one moved onto a pair with
+  another open lifetime fails on `belief_page_lifetimes_open`. `readOpenBeliefLifetimes` answers a pair given twice
+  twice, as the `unnest` join does. `readMovedBeliefLifetimes` matches the page by id in any source, deleted or not.
+- `readBeliefRedactions` answers each matching suppression once, in id order. `releaseBeliefRedactions` updates the
+  listed ids in any source.
+- `readBeliefTombstones` reads the take half from the take purge ledger (`facts.md`, "The take purge ledger"). The
+  store does not yet read a fact purge tombstone by fingerprint: when fact fingerprints are asked and the source has
+  a fact purge tombstone, the answer says so (`factPathUnread`) and the member refuses.
+- No table has a foreign key, so a source delete keeps the ledger's rows, as Postgres does; a source created again
+  has another incarnation, and the reads by incarnation do not see the old rows. The suppression and claim reads are
+  by source id and do see them, as on Postgres.
+- Pinned by `test/engine-parity/belief-ledger.test.ts` on every arm and by the unit tests in each module.

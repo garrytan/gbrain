@@ -71,13 +71,6 @@ pub(crate) fn has_take_purges(read: &dyn KvRead, source_id: &str) -> Result<bool
 
 /// `SELECT claim_hash FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($2)`: the hashes
 /// among `hashes` that a tombstone of the source names, under any subject, each once.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the Rust readBeliefTombstones member reads it later in push 2"
-    )
-)]
 pub(crate) fn tombstoned_hashes(
     read: &dyn KvRead,
     source_id: &str,

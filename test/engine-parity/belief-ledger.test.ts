@@ -4,8 +4,9 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the page lifetimes (mint, open read, moved read, rename, end), the event append and its commit marks,
  *    the redaction copies and releases, the tombstone read and the purge-epoch read return the same observable result
- *    on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, which
- *    refuses every member until its store keeps the ledger).
+ *    on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1). The
+ *    Rust store serves every write and the append's reads; it still refuses the history read (readBeliefHistoryRows)
+ *    and a tombstone read whose fact half needs a fact purge tombstone read by fingerprint.
  *  - Regression: an engine that mints a second open lifetime at one (incarnation, slug), that reports a renamed page's
  *    lifetime as moved, that re-inserts an event key, that drops a redaction's release, or that answers 0 instead of
  *    null for an unknown source's purge epoch: the ledger would fork a page's history or lose a suppression.
@@ -27,33 +28,6 @@ const PUB1 = '00000000-0000-4000-8000-0000000000b1';
 const PUB2 = '00000000-0000-4000-8000-0000000000b2';
 const PURGE = '00000000-0000-4000-8000-0000000000c1';
 
-/** Every member of the domain, called with harmless input; on Rust each must refuse for the belief_ledger capability. */
-async function refusals(engine: BrainEngine): Promise<unknown[]> {
-  const fail = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e);
-  return [
-    await fail(engine.readBeliefTombstones('default', [], [])),
-    await fail(engine.readBeliefRedactions('default', [], [])),
-    await fail(engine.insertBeliefRedaction({ sourceId: 'default', subjectKey: 'k', field: 'value', purgeRequest: PURGE, fieldHash: 'h' })),
-    await fail(engine.releaseBeliefRedactions([], PUB1, 'h')),
-    await fail(engine.insertBeliefEvents([])),
-    await fail(engine.markBeliefCommits([])),
-    await fail(engine.readOpenBeliefLifetimes([])),
-    await fail(engine.endBeliefLifetime(L1)),
-    await fail(engine.mintBeliefLifetime({ lifetime: L1, sourceId: 'default', incarnation: L2, slug: 's', pageId: 1 })),
-    await fail(engine.renameBeliefLifetime(L1, 's', 1)),
-    await fail(engine.readMovedBeliefLifetimes([])),
-  ];
-}
-
-function refuseAll(errors: unknown[]): never {
-  const refused = (e: unknown) => {
-    const err = (e ?? {}) as { code?: unknown; reason?: unknown; capability?: unknown };
-    return err.code === 'engine_capability_missing' && (err.reason === 'belief_ledger' || err.capability === 'belief_ledger');
-  };
-  expect(errors.map(refused)).toEqual(errors.map(() => true));
-  throw errors[0];
-}
-
 async function incarnationOf(engine: BrainEngine): Promise<string> {
   const source = await engine.readLedgerSource('default');
   return source!.incarnation;
@@ -73,11 +47,10 @@ describe('engine parity: belief ledger writes', () => {
   parityTest(
     'page lifetimes: one open lifetime per slug, the moved read follows the page, a rename moves the lifetime and an end closes it once',
     { methods: ['putPage', 'getPage', 'readLedgerSource', 'mintBeliefLifetime', 'readOpenBeliefLifetimes', 'readMovedBeliefLifetimes', 'renameBeliefLifetime', 'endBeliefLifetime'] },
-    async (engine, backend) => {
+    async (engine) => {
       await engine.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'body', timeline: '' });
       const page = await engine.getPage('notes/a');
       const inc = await incarnationOf(engine);
-      if (backend === 'rust') refuseAll(await refusals(engine));
       const pid = page!.id;
       const norm = <T extends { page_id?: number | null; source_incarnation?: string }>(rows: T[]) => rows
         .map(r => ({ ...r, ...(r.page_id === undefined ? {} : { page_id: r.page_id === pid ? 'PID' : r.page_id }), ...(r.source_incarnation === undefined ? {} : { source_incarnation: r.source_incarnation === inc ? 'INC' : r.source_incarnation }) }))
@@ -101,11 +74,30 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
+    'insertBeliefEvents counts the rows it inserts, a constraint failure inserts none, and commit marks accept any publication list',
+    { methods: ['readLedgerSource', 'insertBeliefEvents', 'markBeliefCommits'] },
+    async (engine) => {
+      const inc = await incarnationOf(engine);
+      const rows = [event(inc, 'bb02', 2), event(inc, 'BB01', 1), event(inc, 'bb01', 3)];
+      const inserted = await engine.insertBeliefEvents(rows);
+      const failed = (p: Promise<unknown>) => p.then(() => 'ok', () => 'failed');
+      const checks = {
+        origin: await failed(engine.insertBeliefEvents([event(inc, 'bb09', 0), event(inc, 'bb10', 1, { origin: 'nope' })])),
+        subjectKind: await failed(engine.insertBeliefEvents([event(inc, 'bb11', 0, { subject_kind: 'nope' })])),
+        stateHash: await failed(engine.insertBeliefEvents([event(inc, 'bb12', 0, { state_hash: null as unknown as string })])),
+      };
+      const afterFailures = await engine.insertBeliefEvents([event(inc, 'bb09', 0), event(inc, 'bb01', 1)]);
+      await engine.markBeliefCommits([PUB1, PUB2]);
+      await engine.markBeliefCommits([PUB1]);
+      return { inserted, checks, afterFailures, empty: await engine.insertBeliefEvents([]) };
+    },
+  );
+
+  parityTest(
     'insertBeliefEvents skips a repeated event key, the history read returns the rows in id order, and commit marks are idempotent',
     { methods: ['readLedgerSource', 'insertBeliefEvents', 'readBeliefHistoryRows', 'markBeliefCommits'] },
-    async (engine, backend) => {
+    async (engine) => {
       const inc = await incarnationOf(engine);
-      if (backend === 'rust') refuseAll(await refusals(engine));
       const rows = [event(inc, 'aa01', 0), event(inc, 'aa01', 1), event(inc, 'aa02', 2, { visibility: 'private', redacted_fields: ['value'], value: null, value_hash: null })];
       const inserted = await engine.insertBeliefEvents(rows);
       const repeated = await engine.insertBeliefEvents([event(inc, 'aa02', 0), event(inc, 'aa03', 1, { publication_id: PUB2, page_lifetime: null, subject_kind: 'take', value: JSON.stringify({ holder: 'people/x' }) })]);
@@ -124,12 +116,11 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
-    'redactions: copies read by subject or by field hash, a release binds the publication and hash; a fact purge tombstone reads back',
-    { methods: ['insertFactPurge', 'insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones'] },
-    async (engine, backend) => {
-      // A fact purge tombstone of the source (subject '*'), so the tombstone read has a row to find.
-      await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: 'fp1', requestId: PURGE, actor: 'owner:local', reason: 'parity' });
-      if (backend === 'rust') refuseAll(await refusals(engine));
+    'redactions: copies read by subject or by field hash, a release binds the publication and hash; a take purge tombstone reads back',
+    { methods: ['insertTakePurge', 'insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones'] },
+    async (engine) => {
+      // A take purge tombstone of the source (subject '*'), so the tombstone read has a row to find.
+      await engine.insertTakePurge({ sourceId: 'default', subject: '*', claimHash: 'tp1', requestId: PURGE });
       const a = await engine.insertBeliefRedaction({ sourceId: 'default', subjectKey: 'fact:a', field: 'value', purgeRequest: PURGE, fieldHash: 'ha' });
       const b = await engine.insertBeliefRedaction({ sourceId: 'default', subjectKey: 'fact:b', field: 'claim', purgeRequest: PURGE, fieldHash: 'hb' });
       expect(b).toBeGreaterThan(a);
@@ -147,9 +138,22 @@ describe('engine parity: belief ledger writes', () => {
       return {
         bySubject, byHash, both, afterRelease,
         otherSource: await read(['fact:a'], ['hb'], 'missing'),
-        tombstones: await engine.readBeliefTombstones('default', ['fp1', 'fp2'], ['tp1']),
-        tombstonesOtherSource: await engine.readBeliefTombstones('missing', ['fp1'], []),
+        tombstones: (await engine.readBeliefTombstones('default', ['fp1'], ['tp1', 'tp2', 'tp1'])).sort(),
+        tombstonesOtherSource: await engine.readBeliefTombstones('missing', ['fp1'], ['tp1']),
         tombstonesEmpty: await engine.readBeliefTombstones('default', [], []),
+      };
+    },
+  );
+
+  parityTest(
+    'readBeliefTombstones finds a fact purge tombstone by fingerprint, alongside a take one (Rust refuses the fact half for now)',
+    { methods: ['insertFactPurge', 'insertTakePurge', 'readBeliefTombstones'] },
+    async (engine) => {
+      await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: 'fp1', requestId: PURGE, actor: 'owner:local', reason: 'parity' });
+      await engine.insertTakePurge({ sourceId: 'default', subject: 'notes/a', claimHash: 'tp1', requestId: PURGE });
+      return {
+        both: (await engine.readBeliefTombstones('default', ['fp1', 'fp2'], ['tp1'])).sort(),
+        takesOnly: await engine.readBeliefTombstones('default', [], ['tp1']),
       };
     },
   );

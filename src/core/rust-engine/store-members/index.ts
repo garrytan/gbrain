@@ -96,6 +96,7 @@ import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+import * as beliefLedger from './belief-ledger.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -120,6 +121,8 @@ export const STORE_MEMBERS = {
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
+  // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").
+  ...beliefLedger,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).

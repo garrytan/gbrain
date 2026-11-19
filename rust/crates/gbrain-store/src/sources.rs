@@ -27,6 +27,15 @@ pub(crate) struct SourceRecord {
     /// `None` before the first stamp. Records written before the field existed read as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunker_version: Option<String>,
+    /// `sources.purge_epoch`: purge raises it, and the belief ledger refuses a payload prepared
+    /// under an older one. Records written before the field existed, and every record still at 0,
+    /// read and write as 0 with no bytes of their own.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub purge_epoch: i64,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 /// A source as JavaScript sees it: `SourceRow` of `src/core/engine.ts`, with `last_sync_at` as an
@@ -144,6 +153,7 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         archived: false,
         created_at_us: env.now_micros(),
         chunker_version: None,
+        purge_epoch: 0,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
@@ -217,6 +227,7 @@ impl Store {
                     archived: false,
                     created_at_us: self.env.now_micros(),
                     chunker_version: None,
+                    purge_epoch: 0,
                 },
             };
             if input.name.is_some() {
