@@ -1734,14 +1734,15 @@ and write provenance on content rows, and the trust records.
     `listVersionTrustTiers` and `listVersionReasonWriters` (`trust/tier_reads.rs`), and the valid-time page lookup
     `listValidTimeIdentities`, `pickValidTimeEdition`, `readPageVersionEdition`, `readCursorEdition` (`trust/valid_time.rs`)
     and `listAmendmentsNotApplied`
-    (`link_queries/link_temporal.rs`); it refuses the takes and timeline
+    (`link_queries/link_temporal.rs`). `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
+    fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets nothing, because a
+    store transaction holds the one writer from its start, and it does not enforce `READ ONLY`. It refuses the takes and timeline
     scan tables and a pick over a history PGLite would have pruned (TODOS.md `rust-version-prune`), and the belief
     history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`); it still refuses `excludePrivate` for a caller whose member pages, grants or
     lineage widen the page policy, and the search fan-out reads that refusal as no aliases.
-  - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, the valid-time
-    transaction isolation, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
+  - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
     their refusal.
   - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.
 

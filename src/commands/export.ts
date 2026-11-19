@@ -110,7 +110,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
       if (Date.now() - started > EXPORT_SNAPSHOT_MS + streamedBytes / EXPORT_STREAM_BYTES_PER_MS) throw new Error('Export snapshot time limit reached. Select a smaller scope with --source, --type or --slug-prefix.');
     };
     await engine.transaction(async tx => {
-      await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await tx.beginSnapshotRead({ readOnly: true });
       await tx.executeRaw('SET LOCAL statement_timeout = 60000');
       let source = requested ? await resolveSourceId(tx, requested) : undefined;
       let repo = explicitRepo;

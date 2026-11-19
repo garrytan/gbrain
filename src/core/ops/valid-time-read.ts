@@ -264,7 +264,7 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   await assertExplicitSourceLive(ctx, sourceIdParam);
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const read = await ctx.engine.transaction(async tx => {
-    await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await tx.beginSnapshotRead();
     const identity = await resolveIdentity(tx, ctx, slug, scope, excludePrivate, asOf);
     const pin = p.cursor !== undefined ? await pinnedOrd(tx, ctx, identity, p.cursor) : null;
     let picked = await pick(tx, identity.id, asOf, excludePrivate, pin?.ord ?? null);

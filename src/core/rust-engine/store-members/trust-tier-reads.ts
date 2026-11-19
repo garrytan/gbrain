@@ -4,7 +4,8 @@
  * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
- * `readCursorEdition` (trust/valid_time.rs).
+ * `readCursorEdition` (trust/valid_time.rs). `beginSnapshotRead` sets nothing: a store transaction is one snapshot
+ * already, and `READ ONLY` is not enforced.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
@@ -32,6 +33,8 @@ import {
   remoteReadFloorSql, withoutCallerAccess,
 } from '../../search/private-visibility.ts';
 import { validDate } from '../../valid-time.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
@@ -159,4 +162,13 @@ export const readCursorEdition: Member<'readCursorEdition'> = (brain, spec) => {
   const member = 'readCursorEdition';
   requireInteger(member, 'page id', spec.pageId);
   return storeCall({ member }, () => brain.readCursorEdition({ pageId: spec.pageId, revision: String(spec.revision) }));
+};
+
+/**
+ * `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ [READ ONLY]`: nothing to set. A store transaction holds the
+ * store's one writer from its start, so its reads already see one state. `READ ONLY` is not enforced: a write in the
+ * transaction still lands. Refuses on a transaction that has ended, as the other transaction members do.
+ */
+export const beginSnapshotRead = async function beginSnapshotRead(this: RustEngine): Promise<void> {
+  if (this._txScope?.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'beginSnapshotRead' });
 };
