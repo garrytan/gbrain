@@ -95,13 +95,13 @@ getPage	pages	yes	95	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	439	yes	yes	yes	serves
+putPage	pages	yes	440	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	16	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	142	yes	yes	yes	serves
+softDeletePage	pages	yes	143	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -335,7 +335,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	18	no	yes	yes	serves
+createVersion	versions	yes	19	no	yes	yes	serves
 getVersions	versions	yes	8	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
@@ -668,9 +668,9 @@ readMcpRequestLogBytes	doctor_reads_acc	yes	1	no	yes	yes	serves
 countMcpRequestLogRows	doctor_reads_acc	yes	1	no	yes	yes	serves
 hasMcpLogRowsPastWindow	doctor_reads_acc	yes	1	no	yes	yes	serves
 readKnowledgeRevisionNotNull	doctor_reads_acc	yes	1	no	yes	yes	serves
-readDriftSchema	doctor_reads_acc	yes	1	no	yes	yes	serves
-listDriftLiveRows	doctor_reads_acc	yes	1	no	yes	yes	serves
-listDriftVersionRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+readDriftSchema	doctor_reads_acc	yes	2	no	yes	yes	serves
+listDriftLiveRows	doctor_reads_acc	yes	2	no	yes	yes	serves
+listDriftVersionRows	doctor_reads_acc	yes	2	no	yes	yes	serves
 originIndexPresent	doctor_reads_acc	yes	1	no	yes	yes	serves
 listDecideCalibrationRows	doctor_reads_acc	yes	1	no	yes	yes	serves
 listRecentResolvedModels	doctor_reads_acc	yes	1	no	yes	yes	serves

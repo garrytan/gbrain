@@ -40,4 +40,4 @@ An answer the store cannot contradict, because it keeps no such state:
 | `readChronicleLedgerStats`, `readChronicleDuplicateEvents` | the available, empty tallies |
 | `readFeedbackStatus` | zero counts |
 | `listOrphanWorkspaceSources(suffix)` | composed from the source rows, page counts and fact health the store serves |
-| `listDriftLiveRows`, `listDriftVersionRows` | no rows for a source with no live pages; otherwise a typed `engine_capability_missing` refusal, because the store keeps no write attribution to read |
+| `listDriftLiveRows`, `listDriftVersionRows` | served by the store (`cli_reads/doctor_drift.rs`): the live pages of a source in id order (at most 500 after a cursor, or the one page at a slug) and the versions of the given pages. The store keeps no write-request attribution of a revision or a version, so `req`, `kind` and `remote` are null on every row, as the SQL answers on a brain from before write attribution. The scan reads every writer as `unattributed`, so a changed stamp or trust marker on a Rust brain is reported as ambiguous, never as remote or local. A page scan costs O(pages) per batch |

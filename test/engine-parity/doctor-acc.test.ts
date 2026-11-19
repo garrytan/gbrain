@@ -91,6 +91,39 @@ describe('doctor reads, second set', () => {
   );
 
   parityTest(
+    'the drift reads list the live pages of a source and the versions of those pages',
+    { methods: ['putPage', 'softDeletePage', 'createVersion', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows'] },
+    async (engine) => {
+      const page = (title: string, frontmatter: Record<string, unknown>) => ({ ...NOTE, title, frontmatter });
+      await engine.putPage('notes/a', page('A', { tag: 'one' }));
+      await engine.createVersion('notes/a');
+      await engine.putPage('notes/a', page('A', { tag: 'two' }));
+      await engine.putPage('notes/b', page('B', {}));
+      await engine.putPage('notes/gone', page('Gone', {}));
+      expect(await engine.softDeletePage('notes/gone')).toBeTruthy();
+      const schema = await engine.readDriftSchema();
+      const live = await engine.listDriftLiveRows(schema, 'default', { after: 0 });
+      const ids = live.map(r => Number(r.id));
+      const later = await engine.listDriftLiveRows(schema, 'default', { after: ids[0]! });
+      const bySlug = await engine.listDriftLiveRows(schema, 'default', { slug: 'notes/b' });
+      const deleted = await engine.listDriftLiveRows(schema, 'default', { slug: 'notes/gone' });
+      const elsewhere = await engine.listDriftLiveRows(schema, 'no-such-source', { after: 0 });
+      const versions = await engine.listDriftVersionRows(schema, ids);
+      // The write attribution (`req`, `kind`, `remote`) is the one thing the Rust store does not keep: it answers null on
+      // every row (rust/docs/store/cli-reads-doctor-acc.md), so the comparison reads the other columns only (the revision uuid is masked to its presence).
+      const view = (rows: typeof live) => rows.map(({ id: _id, req: _req, kind: _kind, remote: _remote, ingested_at, revision, ...r }) => ({ ...r, stamped: ingested_at !== null, revised: typeof revision === 'string' }));
+      const versionView = versions.map(({ page_id, req: _req, kind: _kind, remote: _remote, ...v }) => ({ ...v, first_page: Number(page_id) === ids[0] }));
+      expect(live.map(r => r.slug)).toEqual(['notes/a', 'notes/b']);
+      expect(later.map(r => r.slug)).toEqual(['notes/b']);
+      expect(bySlug.map(r => r.slug)).toEqual(['notes/b']);
+      expect(deleted).toEqual([]);
+      expect(elsewhere).toEqual([]);
+      expect(versionView.length).toBe(1);
+      return { live: view(live), later: view(later), bySlug: view(bySlug), versions: versionView };
+    },
+  );
+
+  parityTest(
     'the request log reads count rows, bound the count and find a row past the retention window',
     { methods: ['logMcpRequest', 'readMcpRequestLogBytes', 'countMcpRequestLogRows', 'hasMcpLogRowsPastWindow'] },
     async (engine) => {
