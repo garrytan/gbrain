@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 import HelperCore
+import ServiceManagement
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 let name = HelperIdentity.executable
@@ -61,7 +62,7 @@ func printJSON<T: Encodable>(_ value: T) {
     if let data = try? encoder.encode(value) { print(String(decoding: data, as: UTF8.self)) }
 }
 
-func admin(_ fields: [String: String], timeout: TimeInterval = 30, success: String? = nil) -> Never {
+func admin(_ fields: [String: String], timeout: TimeInterval = SendSetup.offWait, success: String? = nil) -> Never {
     let port = loadConfig().1.port
     guard case .answered(let status, let body) = AdminClient.post(port: port, fields: fields, timeout: timeout) else {
         fail("GBrain Helper isn't answering on 127.0.0.1:\(port). Check it is running: launchctl print gui/\(getuid())/\(HelperIdentity.bundleId)", code: 69)
@@ -79,7 +80,7 @@ let usage = """
 usage: \(name) serve | init --port <n> [--enable <source>] [--db <path>] | validate-config | check [--db <path>]
        | token add --name <name> --verifier <sha256> [--scope <scope>]... | token remove --name <name>
        | send-setup [--off] | send-key add --name <name> --public-key-file <path or -> | send-key remove --name <name>
-       | send-limits set <limit>=<n>... | send-audit show --redacted [--since <n>d] | --version
+       | send-limits set <limit>=<n>... | send-audit show --redacted [--since <n>d] | register | --version
 """
 
 switch arguments.first {
@@ -123,7 +124,8 @@ case "send-setup":
                           lockConfig: { let lockFile = lockConfigFile(); return { Darwin.close(lockFile) } },
                           loadConfig: { loadConfig().0 },
                           saveConfig: save,
-                          post: { fields, timeout in AdminClient.post(port: loadConfig().1.port, fields: fields, timeout: timeout) })
+                          post: { fields, timeout in AdminClient.post(port: loadConfig().1.port, fields: fields, timeout: timeout) },
+                          helperRunning: { HelperProcess.running(named: name) })
     let result = arguments.contains("--off") ? setup.off() : setup.on()
     result.out.forEach { print($0) }
     if let err = result.err { FileHandle.standardError.write(Data("\(name): \(err)\n".utf8)) }
@@ -171,6 +173,26 @@ case "send-audit":
         for record in audit.read(path, repair: false) where (record.date ?? .distantPast) >= since {
             printJSON(record.redacted)
         }
+    }
+
+case "register":
+    let agent = SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist")
+    if agent.status != .enabled, agent.status != .requiresApproval {
+        do {
+            try agent.register()
+        } catch where agent.status != .requiresApproval {
+            fail("macOS didn't register the background agent: \(error.localizedDescription)", code: 1)
+        } catch {}
+    }
+    switch agent.status {
+    case .enabled:
+        print("background agent registered and on")
+    case .requiresApproval:
+        print("background agent registered but switched off: turn on \(HelperIdentity.appName) in System Settings > General > Login Items & Extensions")
+    case .notFound:
+        fail("this app has no Contents/Library/LaunchAgents/\(HelperIdentity.bundleId).plist", code: 1)
+    default:
+        fail("background agent not registered", code: 1)
     }
 
 case "check":

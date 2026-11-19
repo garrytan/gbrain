@@ -123,7 +123,7 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
     const found = await bounded(e => e.executeRaw<{ source: string; slug: string; type: string | null; visible: unknown; fields: Record<string, unknown> | null; call_head: string | null }>(
       `SELECT p.source_id AS source, p.slug, p.type, (${privacyPartSql('p')}) AS visible,
               jsonb_strip_nulls(jsonb_build_object(${PROPOSAL_FIELDS.map(f => `'${f}', p.frontmatter->'${f}'`).join(', ')})) AS fields,
-              CASE WHEN p.frontmatter ? 'call_import' AND NOT (p.frontmatter ?| $2::text[]) THEN ${boundedBodyPrefixSql('p')} END AS call_head
+              CASE WHEN p.frontmatter ? 'call_import' AND NOT (p.frontmatter ?| $2::text[]) THEN left(${boundedBodyPrefixSql('p')}, 8192) END AS call_head
          FROM pages p
         WHERE ${openPageSql('p')} AND p.source_id = ANY($1::text[])
           AND (p.frontmatter ?| $2::text[] OR p.type = ANY($3::text[]) OR p.frontmatter ? 'call_import')
@@ -211,10 +211,17 @@ export function proposalLines(p: VisibilityProposal, limit = 20): string[] {
   else if (!p.owner) lines.push('  No owner is set (gbrain access owner set <member>), so each reader set names only the matched members.');
   if (p.sets.length) lines.push('', `Reader sets (slugs files in ${p.dir}). Preview each, then run the --apply --expect <hash> it prints:`);
   for (const s of p.sets) lines.push(`  ${s.source}: ${plural(s.pages, 'page')} -> ${s.readers.join(', ')}`, `    ${s.command}`);
-  if (p.unmatched.length) {
-    lines.push('', `Unmatched (${p.unmatched.length}): nothing is proposed for these. Where an address names no enabled member's declared email, declare it on the right member (gbrain access member set <id> --email <address>) and preview again; otherwise label these by hand:`);
-    for (const u of p.unmatched.slice(0, limit)) lines.push(u.reason ? `  ${u.source}:${JSON.stringify(u.slug)} (${u.reason}${u.addresses.length ? `: ${u.addresses.join(', ')}` : ''})` : `  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
-    if (p.unmatched.length > limit) lines.push(`  ... and ${p.unmatched.length - limit} more (--json lists every one)`);
+  const partial = p.unmatched.filter(u => u.reason === CALL_PARTIAL);
+  const unproposed = p.unmatched.filter(u => u.reason !== CALL_PARTIAL);
+  if (partial.length) {
+    lines.push('', `Proposed with names left out (${partial.length}): these calls are in a reader set above, and these names match no enabled member. Declare the right member's email (gbrain access member set <id> --email <address>) and preview again, or add who should read the call by hand:`);
+    for (const u of partial.slice(0, limit)) lines.push(`  ${u.source}:${JSON.stringify(u.slug)} (${u.addresses.join(', ')})`);
+    if (partial.length > limit) lines.push(`  ... and ${partial.length - limit} more (--json lists every one)`);
+  }
+  if (unproposed.length) {
+    lines.push('', `Unmatched (${unproposed.length}): nothing is proposed for these. Where an address names no enabled member's declared email, declare it on the right member (gbrain access member set <id> --email <address>) and preview again; otherwise label these by hand:`);
+    for (const u of unproposed.slice(0, limit)) lines.push(u.reason ? `  ${u.source}:${JSON.stringify(u.slug)} (${u.reason}${u.addresses.length ? `: ${u.addresses.join(', ')}` : ''})` : `  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
+    if (unproposed.length > limit) lines.push(`  ... and ${unproposed.length - limit} more (--json lists every one)`);
   }
   if (p.folders.length) {
     lines.push('', 'DM, chat and mail pages with no address list, by folder. Name who reads each folder (each command previews; --yes applies):');

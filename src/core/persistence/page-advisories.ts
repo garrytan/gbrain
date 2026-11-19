@@ -87,6 +87,14 @@ export function timelineRowsRemovedAdvisory(row: WriteRequest, removed: Timeline
       { mcp: { tool: 'get_versions', arguments: { slug: row.slug, limit: 5, include_body: false } } }) };
 }
 
+/** GST-3064: the private fact rows the owner's own remote write left out or reworded, kept as stored. Counts only. */
+export function privateRowsKeptAdvisory(row: WriteRequest, kept: { count: number; renumbered: number }): Record<string, unknown> {
+  return { ...kept,
+    message: `This write left out or reworded ${kept.count} private fact row(s) of ${row.slug}; a remote put_page keeps private rows as stored${kept.renumbered ? `, and stored ${kept.renumbered} reworded row(s) beside them as new rows` : ''}. A row written with the same number and claim takes your other cells. To withdraw a claim, or replace it with a different statement, forget_fact its id and then add the new row; forgetting withdraws every row of that entity with the same claim. Where forget_fact refuses (a private page, a more trusted row), use the local CLI.`,
+    fix: readFix(`Looks up the facts filed under ${row.slug} with their ids, read-only; a row filed under another entity needs that entity's lookup.`,
+      { mcp: { tool: 'recall', arguments: { entity: row.slug, source_id: row.source_id } } }) };
+}
+
 export function remoteLinkHint(row: WriteRequest): Record<string, unknown> {
   return row.authority.remote && !row.authority.autoLinkTrusted ? { auto_links: { skipped: 'remote',
     hint: 'Body wikilinks are saved as text but NOT reconciled into the graph inline. With mention_links: queued, a post-commit `links` effect (listed by get_write_request) adds plain mention edges to existing pages this connection can read; typed and frontmatter edges are not added. A stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` (delegates to a live serve over IPC), use trusted local capture/put_page for inline link extraction, or add_link for edges needed now.' } } : {};

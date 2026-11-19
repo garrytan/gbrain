@@ -248,7 +248,7 @@ impl ResRecord {
         json!({
             "reservation_id": self.reservation_id,
             "client_id": self.client_id,
-            "budget_key": self.budget_key,
+            "budget_key": self.budget_key.clone(),
             "job_id": self.job_id,
             "estimated_cents": cents(self.estimated),
             "actual_cents": self.actual.map(cents),
@@ -325,7 +325,7 @@ impl LogRecord {
         json!({
             "id": self.id,
             "job_id": self.job_id,
-            "lease_key": self.lease_key,
+            "lease_key": self.lease_key.clone(),
             "active_at_bounce": self.active_at_bounce,
             "max_concurrent": self.max_concurrent,
             "bounced_at": iso(self.bounced_at),
@@ -381,6 +381,12 @@ pub(super) fn save_res(
     new: &ResRecord,
 ) -> Result<()> {
     let id = new.id_bytes();
+    if res_owner(new).is_some_and(|(_, owner)| owner.contains('\0')) {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "mcp_spend_reservations owner: a NUL byte is not valid text",
+        ));
+    }
     if let Some(old) = old {
         if let Some(job) = old.job_id {
             tx.delete(&res_job_key(job, &id))?;

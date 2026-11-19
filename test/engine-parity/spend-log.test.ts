@@ -30,6 +30,7 @@ import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues } from
 import type { SpendReservationInsert } from '../../src/core/engine-sql/jobs-spend.ts';
 import type { ClientReserveSpec, GroupReserveSpec, OauthClientInsert } from '../../src/core/engine-sql/spend-log.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
+import { reserve, reserveGroup } from '../../src/core/minions/budget-meter.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -171,6 +172,46 @@ describe('engine parity: spend ledger and client budgets', () => {
       const threwNoJob = await threw(() => engine.reserveClientSpend(ask(8, { client_id: 'client-d', job_id: 987_654 })));
       const sweptAfterThrow = await engine.expireSpendReservations({ clientId: 'client-d' });
       return { refused, sweepOther, sweepGroup, sweepAgain, lateSettle, afterLate, afterLateFits, threwNoJob, sweptAfterThrow };
+    });
+
+  parityTest('a refused reservation through the budget meter leaves its overdue holds pending, a granted one sweeps them',
+    { methods: ['insertOauthClient', 'insertSpendReservation', 'reserveClientSpend', 'reserveGroupSpend', 'expireSpendReservations'] }, async engine => {
+      // The meter runs the admission inside engine.transaction and throws on a refusal, which rolls the sweep back.
+      const refusedClient = async (clientId: string, estimatedCents: number, capCents: number | null) => {
+        try {
+          await reserve(engine, { clientId, estimatedCents, capCents, model: 'anthropic:claude-sonnet', provider: 'anthropic' });
+          return 'reserved';
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const refusedGroup = async (budgetKey: string, estimatedCents: number, capCents: number | null) => {
+        try {
+          await reserveGroup(engine, { budgetKey, estimatedCents, capCents, model: 'anthropic:claude-sonnet', provider: 'anthropic' });
+          return 'reserved';
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      await engine.insertOauthClient(client('client-a'));
+      await engine.insertOauthClient(client('client-b'));
+      await engine.insertSpendReservation(hold(1, { estimated_cents: 70, expires_at: PAST }));
+      await engine.insertSpendReservation(hold(2, { client_id: 'client-b', estimated_cents: 1, expires_at: PAST }));
+      await engine.insertSpendReservation(hold(3, { client_id: null, budget_key: 'group:g1', estimated_cents: 100, expires_at: PAST }));
+      await engine.insertSpendReservation(hold(4, { client_id: null, budget_key: 'group:g2', estimated_cents: 1, expires_at: PAST }));
+      const clientRefused = await refusedClient('client-a', 40, 100);
+      const groupRefused = await refusedGroup('group:g1', 40, 100);
+      // Nothing of the refused admissions stays: the sweep still finds each overdue hold pending.
+      const clientSweepAfterRefusal = await engine.expireSpendReservations({ clientId: 'client-a' });
+      const groupSweepAfterRefusal = await engine.expireSpendReservations({ budgetKey: 'group:g1' });
+      // A granted reservation keeps its sweep: the overdue hold is already marked when the next sweep looks.
+      const clientGranted = await refusedClient('client-b', 1, 100);
+      const groupGranted = await refusedGroup('group:g2', 1, 100);
+      const clientSweepAfterGrant = await engine.expireSpendReservations({ clientId: 'client-b' });
+      const groupSweepAfterGrant = await engine.expireSpendReservations({ budgetKey: 'group:g2' });
+      expect([clientRefused, groupRefused, clientGranted, groupGranted]).toEqual(['BudgetExceededError', 'GroupBudgetRefusal', 'reserved', 'reserved']);
+      expect([clientSweepAfterRefusal, groupSweepAfterRefusal, clientSweepAfterGrant, groupSweepAfterGrant]).toEqual([1, 1, 0, 0]);
+      return { clientRefused, groupRefused, clientSweepAfterRefusal, groupSweepAfterRefusal, clientGranted, groupGranted, clientSweepAfterGrant, groupSweepAfterGrant };
     });
 
   parityTest('an unknown estimate or an open hold of unknown usage refuses under a cap and passes without one',

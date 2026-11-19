@@ -736,7 +736,7 @@ impl Store {
             };
             out.push(json!({
                 "job_id": r.job_id,
-                "job_key": job.idempotency_key,
+                "job_key": job.idempotency_key.clone(),
                 "input": jsonb(&r.input),
                 "output": r.output_json()?,
                 "started_at": iso(r.started_at),
