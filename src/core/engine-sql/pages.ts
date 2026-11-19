@@ -1199,15 +1199,17 @@ export interface DerivedAliasRow { alias_norm: string; origin: string; case_sens
 
 /**
  * Replace one page's derived alias rows (`origin` declared/subject) with `aliases`: delete the existing ones, insert
- * the new set (an empty list only deletes). Frontmatter rows are untouched. Runs on the caller's transaction engine
- * (the page import's, or `reindex --aliases`'s).
+ * the new set (an empty list only deletes). Frontmatter rows are untouched. A `frontmatter` row in `aliases` is
+ * stored as `setPageAliases` stores one: not case-sensitive, no `alias_text`. Runs on the caller's transaction engine
+ * (the page import's, or `reindex --aliases`'s); the engines open one for a caller outside a transaction.
  */
 export async function replaceDerivedAliases(exec: SqlExecutor, slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
   await exec.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin IN ('declared','subject')`, [sourceId, slug]);
   if (aliases.length) {
     await exec.executeRaw(
       `INSERT INTO page_aliases (source_id, alias_norm, slug, origin, case_sensitive, alias_text)
-       SELECT $1, a, $2, o, c::boolean, t FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, o, c, t) ON CONFLICT DO NOTHING`,
+       SELECT $1, a, $2, o, CASE WHEN o = 'frontmatter' THEN false ELSE c::boolean END, CASE WHEN o = 'frontmatter' THEN NULL ELSE t END
+       FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, o, c, t) ON CONFLICT DO NOTHING`,
       [sourceId, slug, aliases.map(a => a.alias_norm), aliases.map(a => a.origin), aliases.map(a => String(a.case_sensitive)), aliases.map(a => a.alias_text)]);
   }
 }

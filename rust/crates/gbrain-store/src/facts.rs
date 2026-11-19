@@ -485,6 +485,8 @@ pub(crate) fn stamp_fact(
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<FactRecord> {
+    // `gbrain_stamp_write_attribution` casts the request on every row written to `facts`.
+    trust.attribution.refuse_request_not_uuid()?;
     let row = match old {
         None => StampRow::Insert {
             supplied: new.tier(),

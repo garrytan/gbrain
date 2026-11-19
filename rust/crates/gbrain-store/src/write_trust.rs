@@ -32,8 +32,9 @@
 //! name that is no tier (PGLite raises `22023` in the stamp trigger, and the fence read ranks it 0),
 //! a `write_origin` that is not JSON (PGLite raises at `::jsonb` in the trigger), and a setting
 //! name outside the nine (the engine routes no other name here). TypeScript sets none of these. A
-//! `write_request` that is not a UUID is kept as set, as `set_config` keeps it; the timeline write
-//! refuses it, as the attribution trigger raises at its `::uuid` cast (`timeline::receipt`).
+//! `write_request` that is not a UUID is kept as set, as `set_config` keeps it; the page, version,
+//! fact, take and timeline writes refuse it, as the attribution triggers raise at their `::uuid`
+//! cast ([`WriteAttribution::refuse_request_not_uuid`]).
 //!
 //! Keys: none. The context is per open store, in memory, never written.
 
@@ -81,7 +82,8 @@ pub const WRITE_TRUST_SETTINGS: [&str; 9] = [
 
 /// The actor of one write, as the attribution trigger reads it: each setting with `''` read as
 /// unset (`NULLIF(current_setting(name, true), '')`). The request id is lower case, as a `uuid`
-/// reads back; the receipt writer refuses one that is not a UUID.
+/// reads back; every row writer the attribution triggers cover refuses one that is not a UUID
+/// ([`WriteAttribution::refuse_request_not_uuid`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WriteAttribution {
     /// `gbrain.write_request`: the persistence request, or `None` for a write with no journal request.
@@ -90,6 +92,22 @@ pub struct WriteAttribution {
     pub principal_kind: Option<String>,
     /// `gbrain.write_principal_id`.
     pub principal_id: Option<String>,
+}
+
+impl WriteAttribution {
+    /// `invalid_argument` when `gbrain.write_request` is set and is not a UUID. PGLite's three
+    /// attribution triggers (`gbrain_stamp_write_attribution`, `gbrain_stamp_revision_attribution`,
+    /// `gbrain_stamp_version_attribution`) cast it with `::uuid` before anything else, so every row
+    /// written to `pages`, `page_versions`, `facts`, `takes` and `timeline_entries` raises: the page,
+    /// version, fact, take and timeline writers call this first.
+    pub(crate) fn refuse_request_not_uuid(&self) -> Result<()> {
+        match self.request_id.as_deref() {
+            Some(request) if !crate::env::is_uuid(request) => Err(StoreError::invalid(format!(
+                "{WRITE_REQUEST} is not a UUID: {request}"
+            ))),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// The settings text of one open store (`Store::write_context`).
@@ -277,6 +295,21 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_request_that_is_not_a_uuid_refuses_and_a_uuid_or_none_passes() {
+        let with = |request: Option<&str>| WriteAttribution {
+            request_id: request.map(str::to_string),
+            ..WriteAttribution::default()
+        };
+        let refused = with(Some("req-1")).refuse_request_not_uuid().unwrap_err();
+        assert_eq!(refused.code, INVALID_ARGUMENT);
+        assert_eq!(refused.message, "gbrain.write_request is not a UUID: req-1");
+        with(Some("7c1e2a9e-5b3f-4d0a-9e61-0000000000a1"))
+            .refuse_request_not_uuid()
+            .unwrap();
+        with(None).refuse_request_not_uuid().unwrap();
     }
 
     #[test]

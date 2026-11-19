@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 use super::TimelineRecord;
 use crate::env::{iso, transaction_clock};
 use crate::error::{Result, StoreError};
-use crate::write_trust::{WRITE_REQUEST, WriteAttribution, stamp_context};
+use crate::write_trust::{WriteAttribution, stamp_context};
 
 /// The seven receipt columns. A record stored before the receipt reads every one as null.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,13 +120,7 @@ fn content_changed(old: &TimelineRecord, new: &TimelineRecord) -> bool {
 /// for every write, as the trigger casts it with `::uuid` before it reads anything else.
 pub(crate) fn stamp(old: Option<&TimelineRecord>, new: &TimelineRecord) -> Result<TimelineRecord> {
     let actor = stamp_context::current()?.attribution;
-    if let Some(request) = actor.request_id.as_deref()
-        && !crate::env::is_uuid(request)
-    {
-        return Err(StoreError::invalid(format!(
-            "{WRITE_REQUEST} is not a UUID: {request}"
-        )));
-    }
+    actor.refuse_request_not_uuid()?;
     let mut out = new.clone();
     let receipt = &mut out.receipt;
     let Some(old) = old else {
