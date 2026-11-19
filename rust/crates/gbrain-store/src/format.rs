@@ -40,24 +40,32 @@ pub struct FormatRecord {
 
 /// Checks a version number read from `FORMAT` or from the format record in the store.
 pub fn check_version(version: u32) -> Result<()> {
-    if FORMAT_VERSIONS.contains(&version) {
+    check_version_in(version, FORMAT_VERSIONS)
+}
+
+/// `check_version` for a build that opens only the formats in `known` (ascending). The store
+/// passes `FORMAT_VERSIONS`; tests pass an older list to show what an older build does.
+pub(crate) fn check_version_in(version: u32, known: &[u32]) -> Result<()> {
+    if known.contains(&version) {
         return Ok(());
     }
-    let why = if version > FORMAT_VERSION {
-        "newer"
-    } else {
-        "older"
-    };
+    let newest = known.last().copied().unwrap_or(0);
+    let why = if version > newest { "newer" } else { "older" };
     Err(StoreError::new(
         FORMAT_UNKNOWN,
         format!(
-            "this brain has store format {version}, {why} than the formats this build opens ({FORMAT_VERSIONS:?}); nothing was changed"
+            "this brain has store format {version}, {why} than the formats this build opens ({known:?}); nothing was changed"
         ),
     ))
 }
 
 /// Reads `FORMAT`; `None` when the file does not exist.
 pub fn read(dir: &Path) -> Result<Option<FormatRecord>> {
+    read_in(dir, FORMAT_VERSIONS)
+}
+
+/// `read` for a build that opens only the formats in `known` (see `check_version_in`).
+pub(crate) fn read_in(dir: &Path, known: &[u32]) -> Result<Option<FormatRecord>> {
     let path = dir.join(FORMAT_FILE);
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
@@ -73,7 +81,7 @@ pub fn read(dir: &Path) -> Result<Option<FormatRecord>> {
         .and_then(|v| v.as_u64())
         .and_then(|v| u32::try_from(v).ok())
         .ok_or_else(|| StoreError::new(FORMAT_UNKNOWN, "FORMAT has no format_version"))?;
-    check_version(version)?;
+    check_version_in(version, known)?;
     serde_json::from_value(value)
         .map(Some)
         .map_err(|e| StoreError::new(FORMAT_UNKNOWN, format!("FORMAT is malformed: {e}")))

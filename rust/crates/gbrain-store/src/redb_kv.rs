@@ -94,6 +94,22 @@ impl RedbKv {
     }
 }
 
+/// Reads one record from the file at `path` without changing a byte of it: no lock is taken
+/// for writing, no recovery runs and nothing is committed on close (a plain open commits redb's
+/// allocator state when it closes). `None` when the file is missing, needs recovery, is open
+/// elsewhere or cannot be read this way; the caller then opens it normally and gets that
+/// open's own answer.
+pub fn peek(path: &Path, key: &[u8]) -> Option<Vec<u8>> {
+    if !path.exists() {
+        return None;
+    }
+    let db = Database::builder().open_read_only(path).ok()?;
+    let tx = db.begin_read().ok()?;
+    let table = tx.open_table(TABLE).ok()?;
+    let value = table.get(key).ok()??;
+    Some(value.value().to_vec())
+}
+
 /// Reads one record by key, from whichever transaction the caller holds.
 type KeyLookup<'a> = dyn FnMut(&[u8]) -> Result<Option<Vec<u8>>> + 'a;
 
