@@ -40,7 +40,7 @@ import type {
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactInsertStatus,
   NewFact, FactListOpts, RecallFactReadOpts, FactsHealth,
-  SourceRow, PageTrustLookup, PageAtRevisionRef,
+  SourceRow, PageTrustLookup, RowTrustLookup, PageAtRevisionRef,
   WantedLinkRowsReplacement,
 } from './engine.ts';
 // Engine-path imports stay static unless a call site carries an explicit
@@ -1300,6 +1300,7 @@ export class PostgresEngine implements BrainEngine {
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }
+  readRowTrustRows(lookup: RowTrustLookup) { return cliReadsImpl.readRowTrustRows(this.cliReads, lookup); }
   readDatabaseClock() { return cliReadsImpl.readDatabaseClock(this.cliReads); }
   /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
   private get writeMiscReads() { return unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw'); }

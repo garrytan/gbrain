@@ -548,6 +548,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
@@ -2073,6 +2074,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
@@ -5024,6 +5026,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
+          "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
@@ -5573,6 +5576,25 @@
           "executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal; prepare?: boolean; }) => Promise<T[]>"
         ],
         "name": "ReservedConnection"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "ids: readonly number[]",
+          "table: \"takes\" | \"facts\" | \"timeline_entries\""
+        ],
+        "name": "RowTrustLookup"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "contested: string | null",
+          "flagged: boolean",
+          "id: number",
+          "trust_tier: string",
+          "write_origin: unknown"
+        ],
+        "name": "RowTrustRow"
       },
       {
         "kind": "interface",
@@ -9118,6 +9140,7 @@
           "readQueuedPageChars: (spec: { name: string; queue: string; maxChars: number; }) => Promise<number | null>",
           "readQueuedSpendRows: (spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number; }) => Promise<jobsChecks.QueuedSpendRows>",
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<housekeepingImpl.ReceiptBudget>",
+          "readRowTrustRows: (lookup: RowTrustLookup) => Promise<RowTrustRow[]>",
           "readSearchStats: (cutoffDate: string) => Promise<telemetryImpl.SearchTelemetryRow[]>",
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",

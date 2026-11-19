@@ -179,6 +179,10 @@ export interface GuestSourceLookupRow { hidden: boolean; source_id: string | nul
 export interface PageTrustLookup { ids?: readonly number[]; keys?: ReadonlyArray<{ source_id: string; slug: string }>; includeDeleted?: boolean }
 /** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source. */
 export interface PageTrustRow { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; byId: boolean }
+/** `readRowTrustRows` input: a row table and the row ids to read. */
+export interface RowTrustLookup { table: 'facts' | 'takes' | 'timeline_entries'; ids: readonly number[] }
+/** One fact, take or timeline row's trust fields; `flagged` marks an activation-suppressed row, `contested` its first pending supersede proposal (`tp<id>:challenger|challenged`, never set on a timeline row). */
+export interface RowTrustRow { id: number; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null }
 /** A live page with its frontmatter aliases and knowledge revision (`listLinkPageMetadata`). */
 export interface LinkPageMetadataRow { slug: string; source_id: string; type: string; title: string; aliases?: unknown; knowledge_revision: string }
 /** One stored non-event timeline row (`listStoredTimelineRows`); `date` is `YYYY-MM-DD`. */
@@ -1370,6 +1374,8 @@ export interface BrainEngine {
   hasGuestSource(): Promise<boolean>;
   /** Trust tier, write origin, activation flag and guest flag of pages by id and by (source_id, slug). */
   readPageTrustRows(lookup: PageTrustLookup): Promise<PageTrustRow[]>;
+  /** Trust tier, write origin, activation flag and pending-supersede ref of fact, take or timeline rows by id; an id with no row reads none. */
+  readRowTrustRows(lookup: RowTrustLookup): Promise<RowTrustRow[]>;
   /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
   readDatabaseClock(): Promise<string>;
   /**

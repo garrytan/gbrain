@@ -182,6 +182,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listGuestSourceIds': OOS.cliReadsImport,
   'hasGuestSource': OOS.cliReadsImport,
   'readPageTrustRows': OOS.cliReadsImport,
+  'readRowTrustRows': OOS.cliReadsImport,
   'readDatabaseClock': OOS.cliReadsImport,
   'listLinkPageMetadata': OOS.cliReadsImport,
   'listStoredTimelineRows': OOS.cliReadsImport,

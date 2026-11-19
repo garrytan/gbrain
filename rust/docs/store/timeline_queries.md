@@ -47,8 +47,8 @@ projection, LEFT JOINs its event page `ep`:
 - A soft-deleted event page in scope hides the row.
 - An entry whose event page is gone is skipped: Postgres removes it with `ON DELETE CASCADE`.
 
-Row: `date` (`YYYY-MM-DD`), `summary`, `detail`, `source`, `trust_tier` (always `unknown`, as the store keeps no
-tier), `page_id`, `page_slug`, `event_page_id`, `event_slug`, `effective_date` (`timestamptz::text` in UTC, for
+Row: `date` (`YYYY-MM-DD`), `summary`, `detail`, `source`, `trust_tier` (the tier the
+entry's last write stamped, links-graph-timeline.md), `page_id`, `page_slug`, `event_page_id`, `event_slug`, `effective_date` (`timestamptz::text` in UTC, for
 example `2026-06-18 09:00:00.25+00`) and `kind` (`frontmatter->'event'->>'kind'`: a string as is, another value as
 its jsonb text, JSON null as null).
 
@@ -148,16 +148,15 @@ event page (the hard delete of its depth page removes the entry and leaves the r
 - The core latest-entry marker `G` only goes up, except that `removeTimelineRows` and `deleteTimelineRows` set it
   again after their deletes. A projection moved to another depth page leaves `G` of the old page where it was, while
   Postgres computes the newest `created_at` each time. No parity case reads that today.
-- `trust_tier` of a timeline row is not modeled, so fence-guard's held-row count (`heldRows` for `timeline_entries`)
-  stays on the SQL path. Follow-up: `timeline-trust-tier-not-modeled`.
+- Fence-guard's held-row count (`heldRows` for `timeline_entries`) stays on the SQL path; the store now keeps the
+  row tier it needs. Follow-up: `timeline-held-rows-typed`.
 - Time zone: the store reads `current_date`, `te.date::timestamptz` and `effective_date::text` in UTC (the frozen
   contract). PGLite follows the process time zone; `bun test` pins it to UTC. Follow-up:
   `chronicle-reads-host-time-zone`.
 
 ## Follow-ups
 
-- `timeline-trust-tier-not-modeled` (tracked): the store keeps no `trust_tier` on a timeline row, so every read
-  returns `unknown` and fence-guard's held-row count (`heldRows` for `timeline_entries`) refuses on Rust and stays on
-  the SQL path. Done when the record carries the tier the write path stamps, `heldRows` for `timeline_entries` is a
-  typed member served from the store, and a parity case compares a held row on both arms.
+- `timeline-held-rows-typed`: fence-guard's held-row count (`heldRows` for `timeline_entries`) refuses on Rust and
+  stays on the SQL path. The record now carries the stamped tier, so this is done when `heldRows` for
+  `timeline_entries` is a typed member served from the store and a parity case compares a held row on every arm.
 - `chronicle-reads-host-time-zone`: see Known differences.

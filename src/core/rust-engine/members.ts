@@ -272,6 +272,7 @@ export const RUST_ENGINE_MEMBERS = {
   // timeline
   addTimelineEntry: 'timeline',
   addTimelineEntriesBatch: 'timeline',
+  readRowTrustRows: 'timeline',
   getTimeline: 'timeline',
   listStoredTimelineRows: 'timeline',
   getTimelineForDate: 'timeline',
