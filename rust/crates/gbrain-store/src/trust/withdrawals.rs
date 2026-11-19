@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The byte after `keys::TRUST` that marks a withdrawal.
-const WITHDRAWAL: u8 = 0x01;
+pub(crate) const WITHDRAWAL: u8 = 0x01;
 
 /// The two values of the table's `visibility` CHECK.
 const VISIBILITIES: [&str; 2] = ["private", "world"];

@@ -49,7 +49,7 @@ const MUTE_RECHECK: &str = "mute_recheck";
 
 /// What is stored for a loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LoopRecord {
+pub(crate) struct LoopRecord {
     source_id: String,
     dedup_key: String,
     loop_type: String,
@@ -170,7 +170,7 @@ fn real(value: f32) -> Value {
         .unwrap_or(Value::Null)
 }
 
-fn row_json(id: u64, r: &LoopRecord) -> Value {
+pub(crate) fn row_json(id: u64, r: &LoopRecord) -> Value {
     let mut m = Map::new();
     m.insert("id".into(), json!(id));
     m.insert("source_id".into(), json!(r.source_id));
@@ -541,7 +541,7 @@ pub(crate) fn loop_fact_ids(
 }
 
 /// Every loop row, in id order (the key order of `F 0x08 id`).
-fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
+pub(crate) fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
     let mut rows = Vec::new();
     let mut failed = None;
     scan_prefix(read, &[keys::FACT, ROW], false, &mut |k, v| {

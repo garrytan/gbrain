@@ -211,7 +211,8 @@ impl FactRecord {
     /// value, event_type, dimension and context.
     /// The content tuple the attribution trigger compares
     /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
-    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
+    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store has no such setting (its withdrawal
+    /// ledger, trust/withdrawals.rs, writes no fact row).
     fn attribution_content_changed(&self, new: &FactRecord) -> bool {
         use crate::write_receipt::float_distinct;
         let a = self;

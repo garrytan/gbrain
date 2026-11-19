@@ -1859,6 +1859,39 @@ impl Store {
             chunks: crate::chunks::read_stats(read)?.chunks,
         })
     }
+
+    /// `listManualLinkTransitions`: the manual dated statements of the relationships the page
+    /// (in any deletion state) starts, with each target's slug and source, by target source, target
+    /// slug, link type, kind and day (bytewise). The engine copier carries them with the page.
+    pub fn list_manual_link_transitions(&self, source_id: &str, slug: &str) -> Result<Value> {
+        let read = self.read()?;
+        let Some(from) = read_page(&*read, source_id, slug)? else {
+            return Ok(Value::Array(Vec::new()));
+        };
+        let mut prefix = family_prefix(&from.source_id, TRANSITION);
+        prefix.extend_from_slice(&from.id.to_be_bytes());
+        let mut rows = Vec::new();
+        for (_, t) in scan_under::<TransitionRecord>(&*read, &prefix)? {
+            if t.producer != "manual" {
+                continue;
+            }
+            let Some(to) = read_page_by_id(&*read, t.to_page_id)? else {
+                continue;
+            };
+            rows.push((to.source_id, to.slug, t.link_type, t.kind, t.occurred_on));
+        }
+        rows.sort();
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|(to_source_id, to_slug, link_type, kind, occurred_on)| {
+                    serde_json::json!({
+                        "to_slug": to_slug, "to_source_id": to_source_id, "link_type": link_type,
+                        "kind": kind, "occurred_on": occurred_on,
+                    })
+                })
+                .collect(),
+        ))
+    }
 }
 
 #[cfg(test)]

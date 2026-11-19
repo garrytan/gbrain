@@ -49,6 +49,7 @@ pub mod dream;
 pub mod embedding_catalog;
 pub mod embedding_install;
 pub mod embeddings;
+pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
 pub mod extraction;
