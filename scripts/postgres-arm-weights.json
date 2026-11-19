@@ -61,6 +61,7 @@
   "test/capture-dispatch-provenance-6524.test.ts": 6717,
   "test/chronicle-backfill-max-usd.test.ts": 7338,
   "test/claim-fifo-foreground-waiting.test.ts": 7613,
+  "test/claim-head-deferred-decisions.test.ts": 7302,
   "test/claim-lease-holder-only-6712.test.ts": 5716,
   "test/claude-cli-output-cap.test.ts": 6974,
   "test/cli-page-writes.test.ts": 192914,

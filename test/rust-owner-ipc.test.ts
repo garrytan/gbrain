@@ -445,22 +445,29 @@ describe.skipIf(!HAVE_ADDON)('a page write sent whole to a real Rust owner on th
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
 
-  test('put_page reaches the journal and stops at the publication effects step with a typed raw_sql refusal; it never reports committed', async () => {
+  test('put_page reaches the journal, meets a capability refusal, and ends failed with that typed refusal; never pending or committed', async () => {
     const { engine, close } = await clientOf(socketPath);
     try {
       const { operationsByName } = await import('../src/core/operations.ts');
       const requestId = crypto.randomUUID();
       const error = await operationsByName.put_page!.handler(localCtx(engine), { slug: 'journal/rust', content: wholePage('Rust'), request_id: requestId })
         .then(() => null, e => e) as OperationError | null;
-      // The caller is told the write is still pending, never that it committed.
-      expect(error?.code).toBe('write_pending');
-      // The write was sent whole and admitted by the real journal: its receipt names this request, still running.
+      // A capability refusal repeats on every attempt, so the caller gets it typed, never write_pending or committed.
+      expect(error).toBeInstanceOf(OperationError);
+      expect(error?.code).toBe('engine_capability_missing');
       const receipt = (error as unknown as { writeRequest?: Record<string, unknown> }).writeRequest;
-      expect(receipt).toMatchObject({ request_id: requestId, state: 'running' });
-      // The stop point: inside the publication transaction, the effects insert is the first member the owner refuses,
-      // typed engine_capability_missing (raw_sql).
-      expect(refusals.find(r => r.inTransaction)).toEqual({ inTransaction: true, code: 'engine_capability_missing', reason: 'raw_sql',
-        sql: 'INSERT INTO persistence_effects' });
+      expect(receipt).toMatchObject({ request_id: requestId, state: 'failed', write_error: 'engine_capability_missing',
+        write_error_detail: { origin: 'engine_capability', stage: 'publication' } });
+      // The write was admitted by the real journal and stopped on a typed capability refusal inside the publication.
+      // Keyed on the refusal, not its site: when the engine serves that member, the stop moves to the next one.
+      const refused = refusals.find(r => r.inTransaction);
+      expect(refused).toMatchObject({ inTransaction: true, code: 'engine_capability_missing' });
+      // The owner's own row names the refusal's code and site; the member and capability stay owner-side.
+      const fields = (error as unknown as { receiptFields: { principal_kind: Parameters<RustEngine['readWriteRequest']>[0]; principal_id: string } }).receiptFields;
+      const row = await owner.readWriteRequest(fields.principal_kind, fields.principal_id, requestId);
+      expect(row).toMatchObject({ state: 'failed', error_code: 'engine_capability_missing',
+        error_detail: { origin: 'engine_capability', capability: refused!.reason, stage: 'publication' } });
+      expect(String((row!.error_detail as { member?: unknown }).member)).toMatch(/^[A-Za-z]+$/);
       // The publication rolled back: no page.
       expect(await owner.getPage('journal/rust')).toBeNull();
     } finally { close(); }
@@ -782,16 +789,21 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
       rmSync(served.home, { recursive: true, force: true });
     }, 60_000);
 
-    test('gbrain call put_page goes to the owner\'s persistence socket, is admitted, and stops at the publication effects step; it never reports committed', async () => {
+    test('gbrain call put_page goes to the owner\'s persistence socket, is admitted, and ends failed with the typed capability refusal', async () => {
       expect(binding).not.toBeNull();
       const result = await cli(served.home, ['call', 'put_page', JSON.stringify({ slug: 'notes/rust-journal', content: page('Rust journal') })],
         { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT });
-      // Exit 10: the write is accepted and still pending (a running request in the real journal), never committed.
-      expect(result.code).toBe(10);
-      expect(result.output).toContain('write_pending');
-      expect(result.output).toMatch(/Request: [0-9a-f-]{36} \(running\)/);
+      // Not exit 10 (accepted, still pending): the refusal repeats on every attempt, so the request ended failed.
+      expect(result.code).not.toBe(10);
+      expect(result.code).toBe(1);
+      expect(result.output).not.toContain('write_pending');
+      expect(result.output).toMatch(/Request: [0-9a-f-]{36} \(failed\)/);
+      // The JSON refusal envelope every typed caller error carries.
+      const envelope = JSON.parse(result.stdout.slice(result.stdout.indexOf('{'), result.stdout.lastIndexOf('}') + 1)) as Record<string, unknown>;
+      expect(envelope).toMatchObject({ error: 'engine_capability_missing', code: 'engine_capability_missing', class: 'caller', retryable: false,
+        contract_version: 1, docs_cmd: ['gbrain', 'errors', 'engine_capability_missing'], write_request: { state: 'failed' } });
       expect(dispatched).toEqual(['put_page']);
-      expect(refusals[0]).toEqual({ code: 'engine_capability_missing', reason: 'raw_sql', sql: 'INSERT INTO persistence_effects' });
+      expect(refusals[0]).toMatchObject({ code: 'engine_capability_missing' });
       expect(await owner.getPage('notes/rust-journal')).toBeNull();
     }, 120_000);
   });
