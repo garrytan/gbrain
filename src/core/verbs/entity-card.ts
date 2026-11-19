@@ -47,6 +47,7 @@ import { readRowReferences, referencesUnavailableNotice, type RecordGroupView, t
 import type { Notice } from '../agent-output.ts';
 import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
 
 const EDGE_CAP = 10;
@@ -653,6 +654,9 @@ async function assembleCard(
       eligibility,
     })))
       .then(lists => lists.flat().sort((a, b) => factTime(b) - factTime(a)).slice(0, FACT_FETCH_CAP))
+      // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+      .then(rows => applySlotEnds(engine, { sourceId, worldOnly, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged }, rows,
+        { activeOnly: true, entities: [{ source_id: sourceId, slugs: factSlugs }] }))
       .catch(() => [] as FactRow[]),
     // Exact active-fact count: the payload fetch above is capped at
     // FACT_FETCH_CAP, so facts.length silently reports the cap for bigger

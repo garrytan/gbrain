@@ -917,7 +917,15 @@ function mergeNewestFirst(lists: FactRow[][], limit: number, keyOf: (r: FactRow)
   return lists.flat().sort((a, b) => time(b) - time(a)).slice(0, limit);
 }
 
-async function fetchRowsLocal(
+/** GST-3170: the local read with the recall op's read-time slot ends (search/slot-ends.ts); supersessions keep their stored rows. */
+async function fetchRowsLocal(engine: BrainEngine, flags: ParsedFlags, sourceId: string, resolvedSince: Date | null): Promise<FactRow[]> {
+  const rows = await listRowsLocal(engine, flags, sourceId, resolvedSince);
+  if (flags.supersessions) return rows;
+  const { applySlotEnds } = await import('../core/search/slot-ends.ts');
+  return applySlotEnds(engine, { sourceId, worldOnly: false, excludePrivate: false }, rows, { activeOnly: !flags.includeExpired });
+}
+
+async function listRowsLocal(
   engine: BrainEngine,
   flags: ParsedFlags,
   sourceId: string,
