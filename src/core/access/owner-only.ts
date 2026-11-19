@@ -14,6 +14,13 @@
  * its zero-argument form (does the brain hold an owner-only source at all?), so a brain without one never calls it.
  */
 import type { BrainEngine } from '../engine.ts';
+import { readOwnerOnlySourceConfig as readOwnerOnlySourceConfigOver, readOwnerOnlySourcesPresent as readOwnerOnlySourcesPresentOver } from '../engine-sql/sources.ts';
+
+/**
+ * An engine (the typed members, which a Rust brain answers) or an executeRaw-only view of one (persistence SqlEngine),
+ * which runs the same statement over that view's executeRaw.
+ */
+export type OwnerOnlyEngine = Pick<BrainEngine, 'readOwnerOnlySourcesPresent' | 'readOwnerOnlySourceConfig'> | Pick<BrainEngine, 'executeRaw'>;
 
 /** The `sources.config` flag that makes a source owner-only. */
 export const OWNER_ONLY_FLAG = 'owner_only';
@@ -51,20 +58,19 @@ function safeParse(text: string): unknown {
 }
 
 /** Does the brain hold an owner-only source? An unreadable answer counts as yes (fail closed). */
-export async function ownerOnlySourcesPresent(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
+export async function ownerOnlySourcesPresent(engine: OwnerOnlyEngine): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT ${ANY_OWNER_ONLY_SQL} AS present`);
-    return row?.present !== false;
+    return 'readOwnerOnlySourcesPresent' in engine ? await engine.readOwnerOnlySourcesPresent() : await readOwnerOnlySourcesPresentOver(engine);
   } catch {
     return true;
   }
 }
 
 /** Is this source owner-only? An unreadable answer counts as yes (fail closed). */
-export async function sourceIsOwnerOnly(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
+export async function sourceIsOwnerOnly(engine: OwnerOnlyEngine, sourceId: string): Promise<boolean> {
   try {
-    const rows = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
-    return rows.length > 0 && isOwnerOnlySourceConfig(rows[0]!.config);
+    const row = 'readOwnerOnlySourceConfig' in engine ? await engine.readOwnerOnlySourceConfig(sourceId) : await readOwnerOnlySourceConfigOver(engine, sourceId);
+    return row !== null && isOwnerOnlySourceConfig(row.config);
   } catch {
     return true;
   }

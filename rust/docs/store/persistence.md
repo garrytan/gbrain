@@ -17,7 +17,8 @@ PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/
 | `j <journal id>` | the request key of that row (journal.rs) |
 | `W <writer id>` | one `persistence_local_writers` row (journal.rs) |
 | `d 0x01 <counter key>` | one `persistence_counters` row, JSON |
-| `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row, JSON |
+| `d 0x02 <op> 0x00 <fingerprint>` | one `op_checkpoints` row `{ completed_keys, updated_at_us }`, JSON: a housekeeping turn or a resumable op's checkpoint parent (op_checkpoint.rs) |
+| `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row, empty (op_checkpoint.rs). Not `d 0x05` or `d 0x06`, which hold the `persistence_effects` rows and their claim-order index |
 | `d 0x03 <principal id> 0x00 <request id>` | one `persistence_topology_changes` row (a lifecycle receipt), JSON (topology.rs) |
 | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row `{ revision, reason, updated_at_us }`, JSON (projection_queue.rs) |
 
@@ -105,6 +106,40 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
+
+## Op checkpoints
+
+A resumable op's checkpoint (`src/core/op-checkpoint.ts`): the keys an op already finished, so a run
+that stopped midway resumes with only the pending keys. The parent shares the housekeeping key space
+(`d 0x02`); a housekeeping op and a resumable op never use the same op name. The child paths sit under
+their parent's op and fingerprint, so deleting a parent deletes its paths in the same write, as the
+`ON DELETE CASCADE` foreign key does. An op, fingerprint or path with a NUL byte refuses with
+`invalid_input`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readOpCheckpointKeys(op, fingerprint)` | `{ keys, corruptParent }`: the child paths in path (byte) order, then the parent's keys, each key once. A null element is skipped and any other non-text element is its JSON text. `corruptParent` is true when the parent's keys are not an array | `readOpCheckpointKeys` |
+| `brain.writeOpCheckpointKeys(op, fingerprint, keys)` | the parent's keys replaced with `keys`, stamped now; the paths stay | `writeOpCheckpointKeys` (`recordCompleted`) |
+| `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | the parent created with no keys or stamped now, then each path not yet stored added | `appendOpCheckpointPaths` (`appendCompleted`, `appendCompletedOnce`) |
+| `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
+| `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
+| `brain.purgeStaleCheckpoints(ttlDays)` | how many parents it deleted: each `d 0x02` parent (housekeeping turns included) stamped more than `ttlDays` days ago that no exemption keeps, with its paths. The exemptions read the rows as they were before the purge. A `ttlDays` that is not a finite number refuses with `invalid_input` | `purgeStaleCheckpoints` (the cycle's purge phase, `bookkeeping-gc.ts`) |
+
+Differences from the SQL engines:
+
+- The SQL read names no order; the store lists the paths in path order. `resumeFilter` and every caller
+  use the keys as a set.
+- The purge keeps the exemptions whose data the store has: the ops never purged, the sync delete
+  tombstone and identity downgrade while their page has the recorded `deleted_at` (read as
+  `::timestamptz` reads the writers' text: ISO with `Z`, or the Postgres jsonb form with the
+  session's offset, such as `2026-11-19T09:05:00.123456-08:00`), the rows kept
+  while their source incarnation lives, and the managed sync run and manifest rules. The store keeps
+  no `source_ingestion_receipts`, so the incomplete-receipt exemption never holds. A recorded time or
+  hold count the store cannot read keeps the row, where Postgres fails the whole purge (and the
+  caller answers 0).
+- The other `op_checkpoints` writers (sync delete tombstones, sync identity downgrades, sync holds,
+  fence repair, the persistence receipts) are still raw SQL. Their rows are not in this store, so
+  the store's unit test is the only check of the tombstone and downgrade exemptions on this engine.
 
 ## Effect scans
 

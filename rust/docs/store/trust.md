@@ -119,6 +119,10 @@ Rust guesses and gaps (1x parity):
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
 
+`listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) answers
+`[]` without a store call: the store keeps no `decide_proposals`, because `insertProposal` (ai/decide/proposals-store.ts)
+writes one through `executeRaw`, which the Rust engine refuses.
+
 ## The write gate (`trust::write_gate`)
 
 Receipts record a flag or quarantine verdict on a persisted row (a page, fact, take, timeline entry or hold). Holds
@@ -141,6 +145,10 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `listWriteGateHoldRows` | `list_write_gate_hold_rows`: filters on status, kind, source list or source and `beforeId`; sorted by id descending, cut to `limit` | `… ORDER BY id DESC LIMIT $n` |
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
 | `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
+
+`listTrustAllowRuleRows` (the owner's allow rules, `trust_allow_rules`) answers `[]` without a store call: the store
+keeps no allow rule, because `trust allow` writes one through `executeRaw`, which the Rust engine refuses. So
+`trust review` and the write gate's allow check read an empty rule set on Rust instead of a refusal.
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
 `page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the
@@ -170,6 +178,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `countUnscannedTrustRows` | `count_unscanned_trust_rows`: the same rows, at or below `until` when set | `SELECT count(*) …` |
 | `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
+| `listPageRefsByIds` | `list_page_refs_by_ids`: the source, slug and type of each listed page record (deleted or not), by id, once each; an unknown or negative id answers nothing | `SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals and the history counts, plus `history_unpruned` | the `WITH rows AS (…)` pick |
 | `listAmendmentsNotApplied` | `list_amendments_not_applied` (`link_queries/link_temporal.rs`): the live pages with an `amends` link to the page whose relationship start in the scope is after the edition and on or before the date, or absent; under the source and page-policy filters, by slug then source, bytewise | `SELECT f.slug, … min(lr.first_start) … GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C" …` |

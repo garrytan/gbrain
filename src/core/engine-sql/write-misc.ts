@@ -65,6 +65,62 @@ export async function sharedSkillPackTablePresent(exec: LegacyUnscopedRead): Pro
   return row?.present === true;
 }
 
+/**
+ * Whether a resident notifier has recorded coverage for any source (a `sync_notifier_sources` row with `observed_at`):
+ * one half of whether search carries the freshness notice (notifier/status.ts freshnessReported).
+ */
+export async function notifierCoverageRecorded(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
+  const covered = row?.covered;
+  return covered === true || covered === 't' || covered === 1;
+}
+
+/**
+ * The completed keys of one resumable op's checkpoint (op-checkpoint.ts loadOpCheckpoint): the append-only child rows
+ * (`op_checkpoint_paths`) and the legacy `completed_keys` array, deduplicated in first-seen order. A non-array legacy
+ * value is skipped, so the child rows still load, and reported as `corruptParent`.
+ */
+export async function readOpCheckpointKeys(exec: LegacyUnscopedRead, op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }> {
+  // UNION ALL, not UNION: the Set below dedupes, so no server-side sort runs over a large checkpoint. The legacy arm is
+  // gated on jsonb_typeof = 'array' because jsonb_array_elements_text throws on a scalar and would kill the whole union.
+  const rows = await exec.executeRaw<{ ckey: unknown; corrupt: number }>(
+    `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
+       WHERE op = $1 AND fingerprint = $2
+     UNION ALL
+     SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
+     UNION ALL
+     SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
+    [op, fingerprint],
+  );
+  const keys = new Set<string>();
+  let corruptParent = false;
+  for (const r of rows) {
+    if (Number(r.corrupt) === 1) corruptParent = true;
+    else if (typeof r.ckey === 'string') keys.add(r.ckey);
+  }
+  return { keys: [...keys], corruptParent };
+}
+
+/**
+ * The page clock of the get_health memo (health-memo.ts): the brain id and `page_generation_clock_seq`, which every
+ * page insert, update or delete advances, as `<brain id>:<clock>`.
+ */
+export async function readHealthMemoClock(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ brain: string | null; clock: string | null }>(
+    `SELECT (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS brain,
+            COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS clock`);
+  return `${row?.brain ?? ''}:${row?.clock ?? ''}`;
+}
+
+/** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
+export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
+  return rows.map(r => r.id);
+}
+
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
 export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: string): Promise<SharedSkillPackRoot[]> {
   return exec.executeRaw<SharedSkillPackRoot>(`SELECT p.source_id,p.source_incarnation,s.local_path AS source_root,
@@ -127,6 +183,22 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
   return rows.map(row => row.id);
+}
+
+/**
+ * One `access_tokens` row as `gbrain auth list` reads it. The statement is `SELECT *` so every schema generation reads
+ * (`private_pages`, `private_facts` and `member_id` arrive with their migrations; absent reads as none), so further
+ * columns may be present.
+ */
+export interface AccessTokenRow {
+  id: string; name: string; scopes: string[] | null; created_at: Date | string | null; last_used_at: Date | string | null;
+  revoked_at: Date | string | null; private_pages?: unknown; private_facts?: unknown; member_id?: string | null;
+  [column: string]: unknown;
+}
+
+/** Every legacy access token, revoked ones too, newest first. */
+export async function listAccessTokens(exec: LegacyUnscopedRead): Promise<AccessTokenRow[]> {
+  return exec.executeRaw<AccessTokenRow>('SELECT * FROM access_tokens ORDER BY created_at DESC');
 }
 
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */

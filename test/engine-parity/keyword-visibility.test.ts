@@ -46,8 +46,9 @@ const PAGES: Array<[slug: string, type: string, frontmatter: Record<string, unkn
   ['notes/access-plain', 'note', { access: 'team' }, 1],
 ];
 
-async function fixture(engine: BrainEngine): Promise<void> {
+async function fixture(engine: BrainEngine, opts: { readers?: boolean } = {}): Promise<void> {
   for (const [slug, type, frontmatter, weight] of PAGES) {
+    if (opts.readers === false && 'readable_by' in frontmatter) continue;
     const text = `${Array(weight).fill('zephyr').join(' ')} quartz notes about ${slug}.`;
     await engine.putPage(slug, { type: type as never, title: `Zephyr ${slug}`, compiled_truth: text, timeline: '', frontmatter });
     await installChunks(engine, slug, [chunk(0, text)]);
@@ -243,6 +244,47 @@ describe('engine parity: excludePrivate on keyword search for a caller with a re
       expect(granted.top).toEqual(['notes/private:0', 'notes/readers:0']);
       expect(granted.titles).not.toContain('notes/timeline-only');
       return { member, granted, stranger };
+    },
+  );
+});
+
+describe('engine parity: excludePrivate on keyword search for a remote caller on a brain with no member restriction', () => {
+  // A remote request on a brain whose config holds no access.restrictions_present (no page names readers, no member
+  // exists) renders the short member-access form (`page_readers IS NULL AND folder_rule_ids IS NULL`). The fixture
+  // keeps that true: no page here names readers.
+  parityTest(
+    'every keyword member under excludePrivate serves an unrestricted remote caller, with and without a private-readable grant',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'searchKeyword', 'searchKeywordChunks', 'countKeywordPages',
+      'searchKeywordPages', 'searchTitles'] },
+    async (engine) => {
+      await fixture(engine, { readers: false });
+      const slugs = (rows: SearchResult[]) => sorted(rows.map((r) => r.slug));
+      const snippets = (rows: SearchResult[]) => rows.map((r) => `${r.slug}:${r.chunk_text}`);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess({ restricted: false, ...access }, async () => ({
+        keyword: slugs(await engine.searchKeyword('zephyr', { limit: 20, excludePrivate: true })),
+        top: view(await engine.searchKeyword('zephyr', { limit: 2, excludePrivate: true })),
+        snippets: snippets(await engine.searchKeywordChunks('zephyr', { limit: 3, excludePrivate: true })),
+        count: await engine.countKeywordPages('zephyr', { excludePrivate: true }),
+        pages: view(await engine.searchKeywordPages('zephyr', { excludePrivate: true }, { limit: 2, offset: 1 })),
+        titles: slugs(await engine.searchTitles('zephyr', { limit: 20, excludePrivate: true })),
+      }));
+      const plain = await read({ hidePrivate: true });
+      const member = await read({ identity: ['member:alice-example'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const kept = KEPT.filter((s) => s !== 'notes/fence-short');
+      // The plain caller sees no private page, by rows, count, snippet or rank.
+      expect(plain.keyword).toEqual(kept);
+      expect(plain.count).toBe(kept.length);
+      expect(plain.top).toEqual(['notes/open:0', 'atoms/origin-open:0']);
+      expect(plain.snippets.join('\n')).not.toContain('notes/private');
+      // A member identity reads nothing more: no page names readers here.
+      expect(member).toEqual(plain);
+      // The grant shows the private pages of the source, ranked by their weight.
+      const all = sorted([...PAGES.map(([slug]) => slug), 'notes/timeline-only'].filter((s) => s !== 'notes/fence-short' && s !== 'notes/readers'));
+      expect(granted.keyword).toEqual(all);
+      expect(granted.count).toBe(all.length);
+      expect(granted.top).toEqual(['notes/private:0', 'notes/access-alias:0']);
+      return { plain, member, granted };
     },
   );
 });

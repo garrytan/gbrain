@@ -4,7 +4,7 @@
 //! answer the same questions from the store's records.
 //!
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-import.md):
-//! - sources have no `last_commit` and no `newest_content_at`: both read null;
+//! - a source's `last_commit` and `newest_content_at` are the ones `advance_source_commit` stored;
 //! - there are no source ingestion receipts: `hasCompanyBrainReceipt` is false;
 //! - there is no `guest_sources` table and no row-level security: a guest source is one whose
 //!   config says `guest: true`, `readGuestSourceRow` is never hidden and finds no row;
@@ -189,12 +189,12 @@ fn record_row(r: SourceRecord) -> SourceRecordRow {
         id: r.id,
         name: r.name,
         local_path: r.local_path,
-        last_commit: None,
+        last_commit: r.last_commit,
         last_sync_at: r.last_sync_at_us.map(iso),
         config: r.config,
         created_at: iso(r.created_at_us),
         archived: r.archived,
-        newest_content_at: None,
+        newest_content_at: r.newest_content_at_us.map(iso),
     }
 }
 

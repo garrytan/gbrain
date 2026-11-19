@@ -40,20 +40,23 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 mod fence;
+mod held_cells;
 pub mod loops;
 mod privacy;
 pub mod purge;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
+pub mod saved_match;
 pub mod trust;
 pub mod trust_reads;
 
 pub(crate) use embedding::cosine_distance;
 pub use fence::{FenceContext, FenceTarget};
-pub use privacy::PrivacyPolicy;
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::{page_hidden, version_hidden};
+pub use privacy::{OwnerOnlyForm, PrivacyPolicy};
+pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -67,6 +70,7 @@ use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
 use crate::timeline_queries::timestamptz_text;
 use crate::trust::{OriginStamp, StampRow, TrustPolicy, TrustTable, TrustTier, WriteTrust, stamp};
+use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -162,6 +166,10 @@ pub(crate) struct FactRecord {
     pub trust_tier: String,
     /// `write_origin`: the provenance JSON of the write that stamped the row (NULL: none).
     pub write_origin: Option<Value>,
+    /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
+    /// while every column is null. [`write_fact`] stamps it.
+    #[serde(skip_serializing_if = "WriteReceipt::is_empty")]
+    pub receipt: WriteReceipt,
 }
 
 impl FactRecord {
@@ -173,6 +181,79 @@ impl FactRecord {
     /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
     /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
     /// value, event_type, dimension and context.
+    /// The content tuple the attribution trigger compares
+    /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
+    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
+    fn attribution_content_changed(&self, new: &FactRecord) -> bool {
+        use crate::write_receipt::float_distinct;
+        let a = self;
+        let b = new;
+        (
+            a.id,
+            &a.source_id,
+            &a.entity_slug,
+            &a.fact,
+            &a.kind,
+            &a.visibility,
+            &a.notability,
+            &a.context,
+        ) != (
+            b.id,
+            &b.source_id,
+            &b.entity_slug,
+            &b.fact,
+            &b.kind,
+            &b.visibility,
+            &b.notability,
+            &b.context,
+        ) || (
+            a.valid_from_us,
+            a.valid_until_us,
+            a.expired_at_us,
+            a.superseded_by,
+            a.consolidated_at_us,
+            a.consolidated_into,
+            &a.source,
+            &a.source_session,
+            a.created_at_us,
+            a.row_num,
+        ) != (
+            b.valid_from_us,
+            b.valid_until_us,
+            b.expired_at_us,
+            b.superseded_by,
+            b.consolidated_at_us,
+            b.consolidated_into,
+            &b.source,
+            &b.source_session,
+            b.created_at_us,
+            b.row_num,
+        ) || (
+            &a.source_markdown_slug,
+            &a.claim_metric,
+            &a.claim_unit,
+            &a.claim_period,
+            &a.event_type,
+            &a.dimension,
+            &a.value,
+            &a.value_hash,
+            &a.dim_status,
+            &a.attributed_to,
+        ) != (
+            &b.source_markdown_slug,
+            &b.claim_metric,
+            &b.claim_unit,
+            &b.claim_period,
+            &b.event_type,
+            &b.dimension,
+            &b.value,
+            &b.value_hash,
+            &b.dim_status,
+            &b.attributed_to,
+        ) || float_distinct(Some(a.confidence), Some(b.confidence))
+            || float_distinct(a.claim_value, b.claim_value)
+    }
+
     fn trust_content_changed(&self, new: &FactRecord) -> bool {
         let float = |a: Option<f64>, b: Option<f64>| match (a, b) {
             (Some(a), Some(b)) => !(a == b || (a.is_nan() && b.is_nan())),
@@ -489,6 +570,12 @@ pub(crate) fn stamp_fact(
     };
     let stamped = stamp(trust, TrustTable::Facts, row)?;
     let mut out = new.clone();
+    out.receipt = WriteReceipt::stamp_as(
+        &trust.attribution,
+        old.map(|o| &o.receipt),
+        &new.receipt,
+        old.is_some_and(|o| o.attribution_content_changed(new)),
+    )?;
     out.trust_tier = stamped.tier.as_str().to_string();
     if let OriginStamp::Set(origin) = stamped.origin {
         out.write_origin = origin;
@@ -937,6 +1024,13 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// The caller passed a read eligibility (`eligibilityClause`): `projectionEligibleSql('facts')`
+    /// replaces the deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    pub eligible: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1212,7 +1306,7 @@ pub(crate) fn hidden_by_policy(
 }
 
 /// `quarantinedProjectionHiddenSql('facts')`: the row's live page carries a `quarantine` key.
-fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(crate) fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(slug) = &row.source_markdown_slug else {
         return Ok(false);
     };
@@ -1258,6 +1352,7 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
+            && !(self.eligible && hidden_by_quarantine(read, row)?)
             && !hidden_by_policy(read, row, &self.exclude_private)?)
     }
 
@@ -1306,11 +1401,16 @@ impl Store {
     ) -> Result<Vec<Value>> {
         q.check(op)?;
         let limit = count_arg(op, "limit", q.limit)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now)? {
+            if q.source_id == row.source_id
+                && extra(&row)
+                && q.admits(&*read, &row, now)?
+                && trust.admits(&*read, "facts", row.id, row.tier())?
+            {
                 rows.push(row);
             }
         }

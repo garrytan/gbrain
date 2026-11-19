@@ -157,6 +157,64 @@ describe('engine parity: excludePrivate on page reads', () => {
       return { off, on, scoped };
     },
   );
+
+  parityTest(
+    'findAnomalies ignores a takes-holder allow-list, as the SQL reads none, and still applies excludePrivate',
+    { methods: ['putPage', 'addLink', 'addTag', 'getPage', 'findAnomalies'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      for (const [slug] of PAGES) await engine.addTag(slug, 'probe');
+      const today = new Date((await engine.getPage('notes/private'))!.updated_at).toISOString().slice(0, 10);
+      const view = (rows: Awaited<ReturnType<typeof engine.findAnomalies>>) =>
+        sorted(rows.map((r) => ({ ...pick(r, ['cohort_kind', 'cohort_value', 'count'] as const), page_slugs: sorted(r.page_slugs) })),
+          (r) => `${r.cohort_kind}:${r.cohort_value}`);
+      // An MCP caller's read policy carries its takes-holder allow-list into every read, this one included: the op
+      // spreads the policy, so the key arrives although AnomaliesOpts does not name it.
+      const policy = { excludePrivate: true, takesHoldersAllowList: ['alice-example'] };
+      const held = view(await engine.findAnomalies({ since: today, lookback_days: 1, ...policy }));
+      const plain = view(await engine.findAnomalies({ since: today, lookback_days: 1, excludePrivate: true }));
+      expect(held.find((r) => r.cohort_value === 'probe')?.page_slugs).toEqual(KEPT);
+      expect(held).toEqual(plain);
+      return { held };
+    },
+  );
+
+  parityTest(
+    'getSalienceScores ignores the whoknows options it is handed (topic, explain, onMeta) and still applies excludePrivate',
+    { methods: ['putPage', 'addLink', 'setEmotionalWeightBatch', 'getSalienceScores'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      await engine.setEmotionalWeightBatch([{ slug: 'notes/private', source_id: 'default', weight: 1 }]);
+      const refs = PAGES.map(([slug]) => ({ slug, source_id: 'default' }));
+      const view = (scores: Map<string, number>) => sorted([...scores].map(([key, score]) => `${key}=${Math.round(score * 1000) / 1000}`));
+      // whoknows passes its whole options object: the topic, the explain flag and the meta callback ride along.
+      const whoknows = { topic: 'probe', limit: 5, explain: true, types: ['person' as never], onMeta: () => {}, sourceId: 'default', excludePrivate: true };
+      const asWhoknows = await engine.getSalienceScores(refs, whoknows as never);
+      const plain = await engine.getSalienceScores(refs, { sourceId: 'default', excludePrivate: true });
+      expect(sorted([...asWhoknows.keys()])).toEqual(sorted(KEPT.map((s) => `default::${s}`)));
+      expect(view(asWhoknows)).toEqual(view(plain));
+      return { asWhoknows: view(asWhoknows) };
+    },
+  );
+
+  parityTest(
+    'getEffectiveDates ignores the whoknows options it is handed and still applies excludePrivate',
+    { methods: ['putPage', 'addLink', 'getEffectiveDates'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      const refs = PAGES.map(([slug]) => ({ slug, source_id: 'default' }));
+      // whoknows passes its whole options object, with the remote read policy's holder list and safe-chunk flag.
+      const whoknows = {
+        topic: 'probe', limit: 5, explain: true, types: ['person' as never], onMeta: () => {},
+        sourceId: 'default', excludePrivate: true, requireSafeChunks: true, takesHoldersAllowList: ['world'],
+      };
+      const asWhoknows = sorted([...(await engine.getEffectiveDates(refs, whoknows as never)).keys()]);
+      const plain = sorted([...(await engine.getEffectiveDates(refs, { sourceId: 'default', excludePrivate: true })).keys()]);
+      expect(asWhoknows).toEqual(sorted(KEPT.map((s) => `default::${s}`)));
+      expect(asWhoknows).toEqual(plain);
+      return { asWhoknows };
+    },
+  );
 });
 
 describe('engine parity: excludePrivate and the safe-chunk fence on chunk reads', () => {
@@ -206,6 +264,30 @@ describe('engine parity: excludePrivate and the safe-chunk fence on chunk reads'
         windowNoFence: await windowRead({ excludePrivate: true, requireSafeChunks: false }),
         windowFenceOnly: await windowRead({ requireSafeChunks: true }),
       };
+    },
+  );
+
+  parityTest(
+    'getChunkPage ignores a takes-holder allow-list, as the SQL reads none, and still applies excludePrivate',
+    { methods: ['putPage', 'addLink', 'getChunkPage'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      for (const slug of ['notes/open', 'notes/private', 'notes/readers']) await installChunks(engine, slug, [chunk(0, `About ${slug}.`)]);
+      // An MCP caller's read policy carries its takes-holder allow-list into get_chunks.
+      const read = async (scope: Record<string, unknown>) => {
+        const seen: string[] = [];
+        for (const slug of ['notes/open', 'notes/private', 'notes/readers']) {
+          const page = await engine.getChunkPage(slug, { sourceId: 'default', fromIndex: 0, limit: 10, ...scope });
+          seen.push(`${slug}:${page.total_chunks}:${page.chunks.map((c) => c.chunk_text).join('|')}`);
+        }
+        return seen;
+      };
+      const held = await read({ excludePrivate: true, takesHoldersAllowList: ['alice-example'] });
+      const heldOpen = await read({ takesHoldersAllowList: [] });
+      expect(held).toEqual(['notes/open:1:About notes/open.', 'notes/private:0:', 'notes/readers:0:']);
+      expect(held).toEqual(await read({ excludePrivate: true }));
+      expect(heldOpen).toEqual(await read({}));
+      return { held, heldOpen };
     },
   );
 });
@@ -438,6 +520,194 @@ describe('engine parity: excludePrivate on tags and takes', () => {
       // The grant names `default` only: the private page's take in `other` stays out of the count.
       expect(callerFederated).toEqual(caller);
       return { all, plain, caller, callerFederated };
+    },
+  );
+});
+
+describe('engine parity: excludePrivate on raw data, versions and wanted pages', () => {
+  /** The fixture pages whose rows `read(slug)` returns, in `default`. */
+  const seenIn = async (read: (slug: string) => Promise<unknown[]>) => {
+    const seen: string[] = [];
+    for (const [slug] of PAGES) if ((await read(slug)).length > 0) seen.push(slug);
+    return sorted(seen);
+  };
+
+  /** One raw-data row per fixture page, plus one on each page of `other`. */
+  async function withRawData(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await fixture(engine, backend);
+    for (const [slug] of PAGES) await engine.putRawData(slug, 'probe', { slug });
+    await engine.putRawData('notes/private', 'probe', { slug: 'other:notes/private' }, { sourceId: 'other' });
+    await engine.putRawData('notes/open', 'probe', { slug: 'other:notes/open' }, { sourceId: 'other' });
+  }
+
+  parityTest(
+    'getRawData under excludePrivate returns no raw data of a page the page policy hides, in one source or across a grant',
+    { methods: ['putPage', 'addLink', 'putRawData', 'getRawData'] },
+    async (engine, backend) => {
+      await withRawData(engine, backend);
+      const all = await seenIn((slug) => engine.getRawData(slug));
+      const kept = await seenIn((slug) => engine.getRawData(slug, undefined, { excludePrivate: true }));
+      const keptNamed = await seenIn((slug) => engine.getRawData(slug, 'probe', { excludePrivate: true, sourceId: 'default' }));
+      const federated = (slug: string) => engine.getRawData(slug, undefined, { sourceIds: ['default', 'other'], excludePrivate: true })
+        .then((rows) => sorted(rows.map((r) => String((r.data as { slug: string }).slug))));
+      const privateAcross = await federated('notes/private');
+      const openAcross = await federated('notes/open');
+      expect(all).toEqual(sorted(PAGES.map(([slug]) => slug)));
+      expect(kept).toEqual(KEPT);
+      expect(keptNamed).toEqual(KEPT);
+      expect(privateAcross).toEqual([]);
+      expect(openAcross).toEqual(['notes/open', 'other:notes/open']);
+      return { all, kept, keptNamed, privateAcross, openAcross };
+    },
+  );
+
+  parityTest(
+    'getRawData under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'putRawData', 'getRawData'] },
+    async (engine, backend) => {
+      await withRawData(engine, backend);
+      const seen = await asCaller(() => seenIn((slug) => engine.getRawData(slug, undefined, { excludePrivate: true })));
+      const otherPrivate = await asCaller(async () =>
+        (await engine.getRawData('notes/private', undefined, { sourceId: 'other', excludePrivate: true })).length);
+      expect(seen).toEqual(CALLER_KEPT);
+      expect(otherPrivate).toEqual({ member: 0, granted: 0 });
+      return { seen, otherPrivate };
+    },
+  );
+
+  /**
+   * One version per fixture page, plus a page whose first version was private and whose second names readers, and
+   * whose page is open now: the page policy keeps the page, the version policy judges each version on its own fields.
+   */
+  async function withVersions(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await fixture(engine, backend);
+    for (const [slug] of PAGES) await engine.createVersion(slug);
+    await engine.createVersion('notes/private', { sourceId: 'other' });
+    const flip = (frontmatter: Record<string, unknown>) =>
+      engine.putPage('notes/flipped', { type: 'note', title: 'Flipped', compiled_truth: 'Flipped.', timeline: '', frontmatter });
+    await flip({ visibility: 'private' });
+    await engine.createVersion('notes/flipped');
+    await flip({ readable_by: ['alice-example'] });
+    await engine.createVersion('notes/flipped');
+    await flip({ access: 'restricted' });
+    await engine.createVersion('notes/flipped');
+    await flip({ pinned_question: true, visibility: 'world' });
+    await engine.createVersion('notes/flipped');
+    await flip({});
+    await engine.createVersion('notes/flipped');
+  }
+  /** The frontmatter of each version of `notes/flipped` a read returns, newest first. */
+  const flipped = async (engine: BrainEngine, opts: Parameters<BrainEngine['getVersions']>[1]) =>
+    (await engine.getVersions('notes/flipped', opts))
+      // Keys sorted: jsonb reorders object keys and the Rust store keeps them as written; the order is no contract.
+      .map((v) => JSON.stringify(Object.fromEntries(Object.entries(v.frontmatter ?? {}).sort(([a], [b]) => a.localeCompare(b)))));
+
+  parityTest(
+    'getVersions under excludePrivate returns no version of a hidden page and no version whose own fields are private',
+    { methods: ['putPage', 'addLink', 'createVersion', 'getVersions'] },
+    async (engine, backend) => {
+      await withVersions(engine, backend);
+      const all = await seenIn((slug) => engine.getVersions(slug));
+      const kept = await seenIn((slug) => engine.getVersions(slug, { excludePrivate: true }));
+      const flippedAll = await flipped(engine, undefined);
+      const flippedKept = await flipped(engine, { excludePrivate: true });
+      const flippedTop = await flipped(engine, { excludePrivate: true, limit: 1, includeBody: false });
+      const otherPrivate = (await engine.getVersions('notes/private', { sourceId: 'other', excludePrivate: true })).length;
+      const federated = (await engine.getVersions('notes/private', { sourceIds: ['default', 'other'], excludePrivate: true })).length;
+      expect(all).toEqual(sorted(PAGES.map(([slug]) => slug)));
+      expect(kept).toEqual(KEPT);
+      expect(flippedAll.length).toBeGreaterThanOrEqual(5);
+      expect(flippedKept.every((fm) => !/private|readable_by|restricted|pinned_question/.test(fm))).toBe(true);
+      expect(flippedKept.length).toBeGreaterThan(0);
+      expect(otherPrivate).toBe(0);
+      expect(federated).toBe(0);
+      return { all, kept, flippedAll, flippedKept, flippedTop, otherPrivate, federated };
+    },
+  );
+
+  parityTest(
+    'getVersions under excludePrivate applies a caller\'s reader identity and private-readable grant to pages and versions',
+    { methods: ['putPage', 'addLink', 'createVersion', 'getVersions'] },
+    async (engine, backend) => {
+      await withVersions(engine, backend);
+      const seen = await asCaller(() => seenIn((slug) => engine.getVersions(slug, { excludePrivate: true })));
+      const versions = await asCaller(() => flipped(engine, { excludePrivate: true }));
+      expect(seen).toEqual(CALLER_KEPT);
+      expect(versions.member.some((fm) => fm.includes('readable_by'))).toBe(true);
+      expect(versions.member.some((fm) => fm.includes('"private"'))).toBe(false);
+      expect(versions.granted.some((fm) => fm.includes('pinned_question'))).toBe(false);
+      return { seen, versions };
+    },
+  );
+
+  parityTest(
+    'getRawData and getVersions ignore the rest of a remote caller\'s read policy and still apply excludePrivate',
+    { methods: ['putPage', 'addLink', 'putRawData', 'createVersion', 'getRawData', 'getVersions'] },
+    async (engine, backend) => {
+      await withRawData(engine, backend);
+      for (const [slug] of PAGES) await engine.createVersion(slug);
+      // The MCP get_raw_data and get_versions tools pass the whole read policy: the safe-chunk flag and the
+      // takes-holder allow-list ride along, and neither read uses them.
+      const policy = { excludePrivate: true, requireSafeChunks: true, takesHoldersAllowList: ['world'] };
+      const raw = await seenIn((slug) => engine.getRawData(slug, undefined, policy));
+      const versions = await seenIn((slug) => engine.getVersions(slug, { ...policy, limit: 5 }));
+      expect(raw).toEqual(KEPT);
+      expect(versions).toEqual(KEPT);
+      return { raw, versions };
+    },
+  );
+
+  /** Each fixture page wants a missing page named after it, and wants the name `person` an open and a hidden page carry. */
+  async function withWanted(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await fixture(engine, backend);
+    await engine.putPage('people/hidden/person', { type: 'person', title: 'Hidden', compiled_truth: 'Hidden.', timeline: '', frontmatter: { visibility: 'private' } });
+    await engine.putPage('people/open/person', { type: 'person', title: 'Open', compiled_truth: 'Open.', timeline: '', frontmatter: {} });
+    for (const [slug] of PAGES) {
+      const origin = await engine.getPage(slug, { sourceId: 'default' });
+      const rows = [
+        { producer: 'body' as const, ref_kind: 'slug' as const, target_source_id: 'default', target_ref: `missing/${slug.replace('/', '-')}`, link_type: '', context: '' },
+        { producer: 'body' as const, ref_kind: 'name' as const, target_source_id: 'default', target_ref: 'person', link_type: 'mentions', context: '' },
+      ];
+      await engine.replaceWantedLinkRows({ pageId: Number(origin!.id), sourceId: 'default' }, { rows, producers: ['body'], readAt: '2026-01-02T03:04:05.678Z' });
+    }
+  }
+  const wanted = async (engine: BrainEngine, opts: { excludePrivate?: boolean; limit?: number; offset?: number }) => {
+    const { total, rows } = await engine.listWantedPages({ sourceId: 'default', limit: 100, offset: 0, ...opts });
+    const person = rows.find((r) => r.target === 'person');
+    return {
+      total,
+      targets: sorted(rows.filter((r) => r.target !== 'person').map((r) => r.target.replace('missing/', '').replace('-', '/'))),
+      person: person && { referenced_by: person.referenced_by, origins: person.sample_origins.length, matches: person.existing_matches.map((m) => m.slug) },
+    };
+  };
+
+  parityTest(
+    'listWantedPages under excludePrivate counts no wanted link from a hidden page and names no hidden page as a match',
+    { methods: ['putPage', 'addLink', 'getPage', 'replaceWantedLinkRows', 'listWantedPages'] },
+    async (engine, backend) => {
+      await withWanted(engine, backend);
+      const all = await wanted(engine, {});
+      const kept = await wanted(engine, { excludePrivate: true });
+      const paged = await wanted(engine, { excludePrivate: true, limit: 2, offset: 1 });
+      expect(all.targets).toEqual(sorted(PAGES.map(([slug]) => slug)));
+      expect(all.person?.matches).toEqual(['people/hidden/person', 'people/open/person']);
+      expect(kept.targets).toEqual(KEPT);
+      expect(kept.total).toBe(KEPT.length + 1);
+      expect(kept.person).toEqual({ referenced_by: KEPT.length, origins: 3, matches: ['people/open/person'] });
+      return { all, kept, paged: { total: paged.total, n: paged.targets.length + (paged.person ? 1 : 0) } };
+    },
+  );
+
+  parityTest(
+    'listWantedPages under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'getPage', 'replaceWantedLinkRows', 'listWantedPages'] },
+    async (engine, backend) => {
+      await withWanted(engine, backend);
+      const seen = await asCaller(() => wanted(engine, { excludePrivate: true }));
+      expect(seen.member.targets).toEqual(CALLER_KEPT.member);
+      expect(seen.granted.targets).toEqual(CALLER_KEPT.granted);
+      expect(seen.granted.person?.matches).toEqual(['people/hidden/person', 'people/open/person']);
+      return seen;
     },
   );
 });

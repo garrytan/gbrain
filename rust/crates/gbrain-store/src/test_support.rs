@@ -45,6 +45,11 @@ impl FileBackend for MemFile {
 
 /// A fresh brain on an in-memory file, with the `default` source.
 pub(crate) fn store() -> Store {
+    store_on(Arc::new(SystemEnv))
+}
+
+/// `store()` with the given clock and identifier source.
+pub(crate) fn store_on(env: Arc<dyn crate::env::Env>) -> Store {
     let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
-    Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
+    Store::open_kv(Arc::new(kv), env, OpenOptions::default()).unwrap()
 }

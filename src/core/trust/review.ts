@@ -222,19 +222,10 @@ async function holds(engine: BrainEngine, filter: TrustReviewFilter): Promise<Tr
 
 /** Pending decide_proposals whose two facts are both active (a decided or stale pair is not listed). */
 async function contradictions(engine: BrainEngine, filter: TrustReviewFilter): Promise<TrustReviewItem[]> {
-  const active = (a: string) => `${a}.expired_at IS NULL AND (${a}.valid_until IS NULL OR ${a}.valid_until > now())`;
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT p.id, p.source_id, p.sweep_id, p.created_at, p.new_fact_id, p.old_fact_id, n.fact AS new_fact, o.fact AS old_fact, n.trust_tier,
-            n.entity_slug, COALESCE(n.source_markdown_slug, o.source_markdown_slug) AS slug, n.claim_metric, n.claim_unit, n.claim_period,
-            n.claim_value AS new_value, o.claim_value AS old_value
-       FROM decide_proposals p
-       JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id AND ${active('n')}
-       JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id AND ${active('o')}
-      WHERE p.status = 'pending' AND ($1::text IS NULL OR p.source_id = $1) AND ($2::timestamptz IS NULL OR p.created_at >= $2)
-      ORDER BY p.created_at, p.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
+  const rows = await engine.listPendingContradictions({ sourceId: filter.sourceId, since: filter.since });
   return rows.map(r => {
     const id = String(Number(r.id)), newer = `f${Number(r.new_fact_id)}`, older = `f${Number(r.old_fact_id)}`;
-    const created = new Date(r.created_at as string).toISOString();
+    const created = new Date(r.created_at).toISOString();
     const tier = storedTrustTier(r.trust_tier);
     const claimLane = String(r.sweep_id).startsWith('claim_conflicts:');
     const slot = [r.claim_metric, r.claim_unit, r.claim_period].filter(Boolean).join(' ');

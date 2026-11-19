@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: scanExactBatch, nextLivePageAfter, listExactIdentityCandidates, rankEntities, listExtractionPendingPages,
- *    listUnattributedFacts and listWantedPages return the same observable result on every engine arm (PGLite always;
+ *    listUnattributedFacts, listWantedPages, readRankCoverage, readExactSnippetChunks and listExactRescanChunks return the same observable result on every engine arm (PGLite always;
  *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes what search_exact, whois, rank_entities,
  *    extraction_pending and wanted report; the Rust engine has no SQL, so each read has to exist as a typed method it
@@ -15,9 +15,10 @@
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
-import { chunk, seedPage } from './chunk-fixtures.ts';
+import { chunk, installChunks, seedPage } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { ExactScanOpts } from '../../src/core/search/exact-scan.ts';
 import type { RankEntitiesStatementOpts } from '../../src/core/engine-sql/graph-rank.ts';
 import { EXTRACTION_PROVENANCE_KEY, EXTRACTION_STATUS_KEY, PROVENANCE_AUTO_EXTRACTED, STATUS_UNVERIFIED } from '../../src/core/extraction-review.ts';
@@ -117,6 +118,34 @@ describe('engine parity: read-command statements', () => {
     return rows!.map(({ page_id: _id, ...row }) => row);
   });
 
+  parityTest('scanExactBatch for a remote caller with excludePrivate applies the caller\'s page policy and the safe-chunk fence', { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'scanExactBatch'] }, async (engine) => {
+    const pages: Array<[string, Record<string, unknown>]> = [
+      ['notes/open', {}], ['notes/private', { visibility: 'private' }], ['notes/readers', { readable_by: ['alice-example'] }],
+      ['notes/lineage', { derived_from: 'notes/private.md' }], ['notes/fence-short', {}],
+    ];
+    for (const [slug, frontmatter] of pages) {
+      const text = `the needle in ${slug}`;
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: text, timeline: '', frontmatter });
+      await installChunks(engine, slug, [chunk(0, text)]);
+    }
+    await engine.setChunkerVersion('notes/fence-short', 3);
+    const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () =>
+      (await engine.scanExactBatch(scan({ remote: true, excludePrivate: true }), 0, 100, 30_000))!.map(({ page_id: _id, ...row }) => row));
+    const plain = await read({ hidePrivate: true });
+    const member = await read({ identity: ['member:alice-example'], hidePrivate: true });
+    const granted = await read({ privateReadableSources: ['default'], hidePrivate: true });
+    const unrestricted = await read({ restricted: false, hidePrivate: true });
+    const matched = (rows: typeof plain) => rows.filter(r => r.matching_chunks).map(r => r.slug);
+    expect(matched(plain)).toEqual(['notes/open']);
+    // A hidden page leaves no row at all, so no count or gap shows it; the page below the fence is unsealed.
+    expect(plain.map(r => `${r.slug}:${r.gap}`)).toEqual(['notes/open:null', 'notes/fence-short:unsealed']);
+    expect(JSON.stringify(plain)).not.toContain('notes/private');
+    expect(matched(member)).toEqual(['notes/open', 'notes/readers']);
+    expect(matched(granted)).toEqual(['notes/open', 'notes/private', 'notes/lineage']);
+    expect(unrestricted).toEqual(plain);
+    return { plain, member, granted, unrestricted };
+  });
+
   parityTest('nextLivePageAfter steps to the next live page in id order across sources, skipping deleted pages', { methods: ['nextLivePageAfter'] }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const a = await engine.putPage('notes/a', note('A', 'a'));
@@ -208,13 +237,27 @@ describe('engine parity: read-command statements', () => {
     };
   });
 
-  parityTest('listExactIdentityCandidates for a remote caller with excludePrivate leaves out private pages', { methods: ['listExactIdentityCandidates'] }, async (engine) => {
+  parityTest('listExactIdentityCandidates for a remote caller with excludePrivate leaves out private and reader-named pages before the limit', { methods: ['listExactIdentityCandidates'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    // The hidden pages sort first (source, then slug), so a filter after the limit would return nothing.
     await engine.putPage('people/erin-example', note('Erin', 'p', { visibility: 'private' }, 'person'));
-    // The store keeps no private visibility: on the Rust arm this call is its typed refusal.
-    return engine.listExactIdentityCandidates({
+    await engine.putPage('people/erin-example', note('Erin', 'p', { readable_by: ['alice-example'] }, 'person'), { sourceId: 'other' });
+    await engine.putPage('team/erin-example', note('Erin', 'p', {}, 'person'), { sourceId: 'other' });
+    const read = (remote: { excludePrivate: boolean } | undefined, limit = 10) => engine.listExactIdentityCandidates({
       probes: { titleKeys: [], titleRaw: '', basenames: ['erin-example'], aliasKeys: [], emails: [] },
-      sourceIds: ['default'], types: { types: ['person'], per_source: [] }, remote: { excludePrivate: true }, limit: 10,
-    });
+      sourceIds: ['default', 'other'], types: { types: ['person'], per_source: [] }, ...(remote ? { remote } : {}), limit,
+    }).then(rows => rows.map(r => `${r.source_id}:${r.slug}`));
+    const local = await read(undefined);
+    const hidden = await read({ excludePrivate: true });
+    const limited = await read({ excludePrivate: true }, 1);
+    const member = await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => read({ excludePrivate: true }));
+    const granted = await withCallerAccess({ identity: ['member:bob-example'], privateReadableSources: ['default'], hidePrivate: true }, () => read({ excludePrivate: true }));
+    expect(local).toEqual(['default:people/erin-example', 'other:people/erin-example', 'other:team/erin-example']);
+    expect(hidden).toEqual(['other:team/erin-example']);
+    expect(limited).toEqual(['other:team/erin-example']);
+    expect(member).toEqual(['other:people/erin-example', 'other:team/erin-example']);
+    expect(granted).toEqual(['default:people/erin-example', 'other:team/erin-example']);
+    return { local, hidden, limited, member, granted };
   });
 
   parityTest('rankEntities folds retired pages along their redirect chains and counts distinct edges', { methods: ['rankEntities'] }, async (engine, backend) => {
@@ -268,6 +311,42 @@ describe('engine parity: read-command statements', () => {
       direction: 'in', types: { types: ['person'], per_source: [] }, sourceIds: ['default'], includeMentions: true, limit: 10, foldedCap: 5,
       remote: { excludePrivate: true },
     }, 30_000);
+  });
+
+  parityTest('rankEntities and listExactIdentityCandidates apply the remote caller\'s page policy: readers, grants and counts', { methods: ['putPage', 'addLink', 'rankEntities', 'listExactIdentityCandidates'] }, async (engine) => {
+    const person = (slug: string, fm: Record<string, unknown> = {}) => engine.putPage(slug, note(slug, slug, fm, 'person'));
+    await person('people/hub-example');
+    await person('people/fan-example');
+    await person('people/secret-example', { visibility: 'private' });
+    await person('people/team-example', { readable_by: ['alice-example'] });
+    await person('people/hidden-target', { visibility: 'private' });
+    for (const from of ['people/fan-example', 'people/secret-example', 'people/team-example']) await engine.addLink(from, 'people/hub-example', '', 'knows');
+    await engine.addLink('people/fan-example', 'people/hidden-target', '', 'knows');
+    await engine.addLink('people/team-example', 'people/fan-example', '', 'knows');
+    const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
+      rank: (await engine.rankEntities({
+        direction: 'both', types: { types: ['person'], per_source: [] }, sourceIds: ['default'], includeMentions: true, limit: 10, foldedCap: 5,
+        remote: { excludePrivate: true },
+      }, 30_000)).map(r => `${r.slug}:${r.inbound}/${r.outbound}/${r.neighbors}`),
+      whois: (await engine.listExactIdentityCandidates({
+        probes: { titleKeys: [], titleRaw: '', basenames: ['hub-example', 'secret-example', 'team-example', 'hidden-target'], aliasKeys: [], emails: [] },
+        sourceIds: ['default'], types: { types: ['person'], per_source: [] }, remote: { excludePrivate: true }, limit: 10,
+      })).map(r => r.slug),
+    }));
+    const plain = await read({ hidePrivate: true });
+    const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+    const member = await read({ identity: ['member:alice-example'], hidePrivate: true });
+    const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+    // A plain caller sees neither the private nor the reader-named pages, and no edge of theirs moves a count.
+    expect(plain.rank).toEqual(['people/fan-example:0/1/1', 'people/hub-example:1/0/1']);
+    expect(plain.whois).toEqual(['people/hub-example']);
+    expect(stranger).toEqual(plain);
+    // A named reader sees the page that names it, and its edges count.
+    expect(member.rank).toEqual(['people/fan-example:1/1/2', 'people/hub-example:2/0/2', 'people/team-example:0/2/2']);
+    expect(member.whois).toEqual(['people/hub-example', 'people/team-example']);
+    // A private-readable grant on the source shows the private pages too.
+    expect(granted.whois).toEqual(['people/hidden-target', 'people/hub-example', 'people/secret-example', 'people/team-example']);
+    return { plain, stranger, member, granted };
   });
 
   parityTest('rankEntities ranks entity pages by inbound links in scope', { methods: ['rankEntities'] }, async (engine) => {
@@ -401,9 +480,79 @@ describe('engine parity: read-command statements', () => {
     await seedWantedLinks(engine, 'notes/closed', [{ target: 'people/closed-missing', refKind: 'slug' }]);
     const all = await engine.listWantedPages({ sourceId: 'default', limit: 10, offset: 0 });
     expect(all.rows.map(r => r.target).sort()).toEqual(['people/closed-missing', 'people/open-missing']);
-    // The Rust store has no visibility filter: this call is its typed refusal (engine_capability_missing).
     const open = await engine.listWantedPages({ sourceId: 'default', excludePrivate: true, limit: 10, offset: 0 });
     expect(open.rows.map(r => r.target)).toEqual(['people/open-missing']);
     return { total: open.total, targets: open.rows.map(r => r.target) };
+  });
+
+  parityTest('readRankCoverage counts only the pages the remote caller may read', { methods: ['putPage', 'markPagesExtractedBatch', 'readRankCoverage'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'old');
+    await engine.putPage('people/open-example', note('Open', 'open', {}, 'person'));
+    await engine.putPage('people/secret-example', note('Secret', 'secret', { visibility: 'private' }, 'person'));
+    await engine.putPage('people/team-example', note('Team', 'team', { readable_by: ['alice-example'] }, 'person'));
+    await engine.putPage('people/old-example', note('Old', 'old', {}, 'person'), { sourceId: 'old' });
+    await archiveSource(engine, backend, 'old');
+    const coverage = (opts: { excludePrivate: boolean; mentionTypes?: string[]; sourceId?: string }) =>
+      engine.readRankCoverage({ sourceId: 'default', versionTs: '2020-01-01T00:00:00Z', ...opts }, 30_000);
+    // Every page is unstamped: the readable open page owes link extraction.
+    const unstamped = await coverage({ excludePrivate: true });
+    expect(unstamped.link_behind).toBe(true);
+    await engine.markPagesExtractedBatch([{ slug: 'people/open-example', source_id: 'default' }], '2999-01-01T00:00:00Z');
+    // Only reader-named and private pages are still stale: they never move a plain caller's coverage.
+    const read = (access: Parameters<typeof withCallerAccess>[0], opts: { excludePrivate: boolean; mentionTypes?: string[] }) =>
+      withCallerAccess(access, () => coverage(opts));
+    const plain = await read({ hidePrivate: true }, { excludePrivate: true });
+    const member = await read({ identity: ['member:alice-example'], hidePrivate: true }, { excludePrivate: true });
+    const trusted = await coverage({ excludePrivate: false });
+    expect(plain).toEqual({ link_behind: false, mention_due: false });
+    expect(member.link_behind).toBe(true);
+    expect(trusted.link_behind).toBe(true);
+    // No mention state is kept for any page: with mention types every readable page owes a pass.
+    const mentions = await read({ hidePrivate: true }, { excludePrivate: true, mentionTypes: ['person'] });
+    expect(mentions.mention_due).toBe(true);
+    // An archived source has no readable page.
+    const archived = await coverage({ excludePrivate: false, sourceId: 'old', mentionTypes: ['person'] });
+    expect(archived).toEqual({ link_behind: false, mention_due: false });
+    return { unstamped, plain, member, trusted, mentions, archived };
+  });
+
+  parityTest('readExactSnippetChunks and listExactRescanChunks read visible chunks and hide the caller\'s private pages', { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'readExactSnippetChunks', 'listExactRescanChunks'] }, async (engine) => {
+    const ids: Record<string, number> = {};
+    const pages: Array<[string, Record<string, unknown>]> = [
+      ['notes/open', {}], ['notes/secret', { visibility: 'private' }], ['notes/team', { readable_by: ['alice-example'] }], ['notes/fence-short', {}],
+    ];
+    for (const [slug, frontmatter] of pages) {
+      const text = `the needle in ${slug}`;
+      ids[slug] = Number((await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: text, timeline: '', frontmatter })).id);
+      await installChunks(engine, slug, [chunk(0, text), chunk(1, `second chunk of ${slug}`)]);
+    }
+    await engine.setChunkerVersion('notes/fence-short', 3);
+    const keys = [
+      { pageId: ids['notes/secret']!, chunkIndex: 0, snippet: 'needle' },
+      { pageId: ids['notes/open']!, chunkIndex: 0, snippet: 'absent' },
+      { pageId: ids['notes/open']!, chunkIndex: 1, snippet: 'second' },
+      { pageId: ids['notes/team']!, chunkIndex: 0, snippet: 'needle' },
+      { pageId: ids['notes/fence-short']!, chunkIndex: 0, snippet: 'needle' },
+      { pageId: 999_999, chunkIndex: 0, snippet: 'needle' },
+    ];
+    const rescanIds = [ids['notes/fence-short']!, ids['notes/team']!, ids['notes/secret']!, ids['notes/open']!, ids['notes/open']!];
+    const slugOf = (id: number) => Object.keys(ids).find(slug => ids[slug] === id);
+    const read = (access: Parameters<typeof withCallerAccess>[0], excludePrivate: boolean) => withCallerAccess(access, async () => ({
+      snippets: (await engine.readExactSnippetChunks(keys, { excludePrivate })).map(r => `${r.i}:${r.chunk_text}`),
+      rescan: (await engine.listExactRescanChunks(rescanIds, { excludePrivate })).map(r => `${slugOf(r.page_id)}#${r.chunk_index}:${r.chunk_source}`),
+    }));
+    const plain = await read({ hidePrivate: true }, true);
+    const member = await read({ identity: ['member:alice-example'], hidePrivate: true }, true);
+    const trusted = await read({}, false);
+    // A hidden page leaves no row; the snippet read does not check the safe fence, the rescan does.
+    expect(plain.snippets).toEqual(['3:second chunk of notes/open', '5:the needle in notes/fence-short']);
+    expect(plain.rescan).toEqual(['notes/open#0:compiled_truth', 'notes/open#1:compiled_truth']);
+    expect(JSON.stringify(plain)).not.toContain('secret');
+    expect(member.snippets).toEqual(['3:second chunk of notes/open', '4:the needle in notes/team', '5:the needle in notes/fence-short']);
+    expect(trusted.snippets).toHaveLength(4);
+    expect(trusted.rescan).toHaveLength(6);
+    expect(await engine.readExactSnippetChunks([], { excludePrivate: true })).toEqual([]);
+    expect(await engine.listExactRescanChunks([], { excludePrivate: true })).toEqual([]);
+    return { plain, member, trusted };
   });
 });

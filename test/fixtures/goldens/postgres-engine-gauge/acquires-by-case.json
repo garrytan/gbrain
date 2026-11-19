@@ -21,6 +21,15 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
+    "advanceSourceCommit#clearNewest": {
+      "raw": 1
+    },
+    "advanceSourceCommit#default": {
+      "raw": 1
+    },
+    "advanceSourceCommit#newest": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "clearCodeTraversalCache#allSources": {
@@ -219,6 +228,9 @@
       "raw": 3,
       "tx": 1
     },
+    "isSourceClaimed#default": {
+      "raw": 1
+    },
     "listActiveTakesForPages#allowList": {},
     "listActiveTakesForPages#default": {},
     "listAllPageRefs#default": {},
@@ -247,6 +259,8 @@
     "listFactsKeyset#strictTime": {},
     "listFactsSince#allFilters": {},
     "listFactsSince#default": {},
+    "listFiles#default": {},
+    "listFiles#page_slug": {},
     "listFilesForPage#default": {},
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},
@@ -270,6 +284,9 @@
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
     "listSourceLocalPaths#default": {},
+    "listSourcePathPages#default": {
+      "raw": 1
+    },
     "listSourceRoutingRows#default": {
       "raw": 1
     },
@@ -346,9 +363,21 @@
     "readEmbeddingStateCounts#ops": {
       "raw": 1
     },
+    "readLiveIdentityHolders#default": {
+      "raw": 1
+    },
+    "readPageSizeRows#default": {
+      "raw": 1
+    },
+    "readPageSizeRows#slugs": {
+      "raw": 1
+    },
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
+    "readRenameIdentityRows#default": {
+      "raw": 1
+    },
     "readSourceChunkerVersion#default": {
       "raw": 1
     },

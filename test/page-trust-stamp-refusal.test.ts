@@ -22,6 +22,7 @@ const fake = (raw: Raw, pages: PageTrustRow[] = []) => ({
   executeRaw: raw as never,
   readPageTrustRows: async () => pages,
   readRowTrustRows: async () => [],
+  listHeldFenceCells: async () => [],
 });
 
 const page = (over: Partial<PageTrustRow> = {}): PageTrustRow => ({

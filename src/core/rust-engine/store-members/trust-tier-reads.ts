@@ -1,7 +1,8 @@
 /**
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
- * `countUnscannedTrustRows` over pages, facts, takes and timeline entries, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
+ * `countUnscannedTrustRows` over pages, facts, takes and timeline entries, `listVersionTrustTiers`, `listVersionReasonWriters` and
+ * `listPageRefsByIds`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
@@ -90,6 +91,15 @@ export const listVersionReasonWriters: Member<'listVersionReasonWriters'> = (bra
   const member = 'listVersionReasonWriters';
   for (const id of ids) requireInteger(member, 'version id', id);
   return storeCall({ member }, () => brain.listVersionReasonWriters({ ids: [...ids] }));
+};
+
+export const listPageRefsByIds: Member<'listPageRefsByIds'> = async (brain, ids) => {
+  const member = 'listPageRefsByIds';
+  if (ids.length === 0) return [];
+  for (const id of ids) requireInteger(member, 'page id', id);
+  const rows: Array<{ id: number; source_id: string; slug: string; type: string | null }> =
+    await storeCall({ member }, () => brain.listPageRefsByIds({ ids: [...ids] }));
+  return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
 };
 
 /** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */

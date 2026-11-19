@@ -328,7 +328,7 @@ const scenarios: Scenario[] = [
   // 10. listColumnsOnly
   {
     name: 'listPages with listColumnsOnly',
-    expect: 'refused',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('cols/page', NOTE);
       return engine.listPages({ slugPrefix: 'cols/', listColumnsOnly: true } as never);
@@ -357,8 +357,8 @@ const scenarios: Scenario[] = [
     },
   },
   {
-    name: 'resolveSlugs on a partial name (trigram matching is a later step)',
-    expect: 'refused',
+    name: 'resolveSlugs on a partial name: a title typo found by pg_trgm similarity',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('resolve/zulu-note', { ...NOTE, title: 'Alpha Zulu' });
       return engine.resolveSlugs('Zula');

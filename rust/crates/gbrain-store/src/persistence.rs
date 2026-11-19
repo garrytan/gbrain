@@ -14,6 +14,13 @@
 //! | `d 0x02 <op> 0x00 <fingerprint>` | one housekeeping `op_checkpoints` row (`housekeeping.rs`), JSON |
 //! | `d 0x03 <principal_id> 0x00 <request_id>` | one `persistence_topology_changes` row (`topology.rs`), JSON |
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
+//! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//!
+//! `d 0x05` and `d 0x06` are taken by the `persistence_effects` rows and their claim-order index
+//! (`effects.rs`) on the branches that hold them; no other family here uses them.
+//!
+//! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
+//! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -46,6 +53,7 @@ use serde_json::{Map, Value, json};
 
 mod effect_scans;
 mod housekeeping;
+mod op_checkpoint;
 mod projection_queue;
 mod topology;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
@@ -63,6 +71,9 @@ pub(crate) const HOUSEKEEPING: u8 = 0x02;
 const TOPOLOGY: u8 = 0x03;
 /// The byte after `keys::PERSISTENCE` of a page projection job (persistence/projection_queue.rs).
 const QUEUE: u8 = 0x04;
+/// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
+/// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
+const CHECKPOINT_PATH: u8 = 0x07;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -213,7 +224,7 @@ fn extra_bool(record: &RequestRecord, column: &str) -> bool {
 }
 
 /// A `::uuid` parameter: lower-cased; anything else is refused, as Postgres refuses the cast.
-fn uuid_param(text: &str, what: &str) -> Result<String> {
+pub(crate) fn uuid_param(text: &str, what: &str) -> Result<String> {
     if is_uuid(text) {
         Ok(text.to_lowercase())
     } else {
@@ -286,6 +297,38 @@ pub(crate) fn count_outstanding_by_source_in(
         .into_iter()
         .map(|(source_id, n)| json!({ "source_id": source_id, "n": n }))
         .collect())
+}
+
+/// The journal half of `readWriteWatermarkRow` (`engine-sql/applied-watermark-reads.ts`): the
+/// outstanding requests of one source incarnation (lowest sequence, how many, oldest admission) and,
+/// when none is outstanding, the newest sequence in the brain. `incarnation` is `None` for an absent
+/// source, which has no outstanding request.
+pub(crate) fn read_request_watermark_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: Option<&str>,
+) -> Result<Value> {
+    let all = all_requests(read)?;
+    let pending: Vec<_> = all
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && incarnation == Some(r.source_incarnation.as_str())
+                && OUTSTANDING_STATES.contains(&r.state.as_str())
+        })
+        .collect();
+    let pending_min = pending.iter().map(|r| r.sequence).min();
+    let pending_since = pending.iter().map(|r| r.created_at_us).min().map(iso);
+    let newest = match pending_min {
+        None => all.iter().map(|r| r.sequence).max(),
+        Some(_) => None,
+    };
+    Ok(json!({
+        "pending_min": pending_min,
+        "pending_count": pending.len(),
+        "pending_since": pending_since,
+        "newest_sequence": newest,
+    }))
 }
 
 /// `persistence/receipt-bytes.ts` `COMPACTED_HEADROOM_BYTES`.
@@ -1120,6 +1163,16 @@ impl Store {
         principal_id: &str,
     ) -> Result<Vec<Value>> {
         count_outstanding_by_source_in(&*self.read()?, principal_kind, principal_id)
+    }
+
+    /// `readWriteWatermarkRow`'s journal half: `{ pending_min, pending_count, pending_since,
+    /// newest_sequence }` of one source incarnation (`None` for an absent source).
+    pub fn read_request_watermark(
+        &self,
+        source_id: &str,
+        incarnation: Option<&str>,
+    ) -> Result<Value> {
+        read_request_watermark_in(&*self.read()?, source_id, incarnation)
     }
 
     /// `readCounterRows(keys)`: the counter rows that exist, in byte order (`COLLATE "C"`), unlocked.

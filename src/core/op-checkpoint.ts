@@ -1,31 +1,9 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { withRetry, BULK_RETRY_OPTS, RetryAbortError } from './retry.ts';
-import { FENCE_REPAIR_ATTEMPT_OP } from './fence-repair/attempts.ts';
-import { FENCE_CANDIDATE_OP, FENCE_SCAN_OP } from './fence-repair/census-store.ts';
-import { FENCE_UNCOMMITTED_OP } from './fence-repair/uncommitted.ts';
-import { SYNC_PASS_ROW_OPS } from './persistence/sync-pass-row.ts';
-import { SYNC_DELETE_TOMBSTONE_OP } from './persistence/sync-delete-tombstones.ts';
 
 /** Max paths per append-INSERT round-trip; bounds the param-array size. */
 const APPEND_CHUNK = 1000;
-
-/**
- * Single writable-CTE statement (one round-trip): ensure the parent
- * op_checkpoints row exists (FK target) and bump its updated_at so the 7-day
- * purge tracks activity, then INSERT the delta child rows. `ON CONFLICT DO
- * NOTHING` makes re-appending an already-banked path a no-op. $3 binds a JS
- * string[] to a Postgres text[] (NOT a jsonb param), which postgres.js + PGLite
- * both handle natively — so it sidesteps executeRawJsonb's array rejection.
- */
-const APPEND_PATHS_SQL = `WITH parent AS (
-  INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-  VALUES ($1, $2, '[]'::jsonb, now())
-  ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at = now()
-)
-INSERT INTO op_checkpoint_paths (op, fingerprint, path)
-SELECT $1, $2, unnest($3::text[])
-ON CONFLICT (op, fingerprint, path) DO NOTHING`;
 
 /**
  * v0.42.x (#1794): every checkpoint write routes through the DIRECT session
@@ -121,47 +99,15 @@ export async function loadOpCheckpoint(
   key: OpCheckpointKey,
 ): Promise<string[]> {
   try {
-    // v0.42.x (#1794): union the new append-only child rows (op_checkpoint_paths)
-    // with the legacy `completed_keys` JSONB array (recordCompleted consumers +
-    // pre-upgrade rows). UNION ALL — not UNION — because the JS Set below already
-    // dedupes, so we skip a server-side dedup sort over up to 204K rows on every
-    // resume. `jsonb_array_elements_text` expands the legacy array server-side,
-    // which also removes the old postgres.js-vs-PGLite string/array handling.
-    //
-    // v0.42.x (BUG 3 guard): the legacy arm is gated on
-    // `jsonb_typeof(completed_keys) = 'array'`. Without it a non-array (scalar)
-    // parent row makes jsonb_array_elements_text throw "cannot extract elements
-    // from a scalar", which kills the WHOLE union — including the valid child
-    // rows — and loses all checkpoint progress for the key. Skipping the scalar
-    // keeps the child rows; the third arm flags the corruption so we log it once
-    // (migration v119's CHECK makes this impossible going forward; a hit implies
-    // schema drift / disabled constraint / an out-of-band writer).
-    const rows = await engine.executeRaw<{ ckey: unknown; corrupt: number }>(
-      `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
-         WHERE op = $1 AND fingerprint = $2
-       UNION ALL
-       SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
-       UNION ALL
-       SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
-         WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
-      [key.op, key.fingerprint],
-    );
-    const set = new Set<string>();
-    let corruptParent = false;
-    for (const r of rows) {
-      if (Number(r.corrupt) === 1) {
-        corruptParent = true;
-        continue;
-      }
-      if (typeof r.ckey === 'string') set.add(r.ckey);
-    }
+    // v0.42.x (#1794, BUG 3 guard): the child rows and the legacy array, a scalar legacy value skipped and flagged
+    // (engine-sql/write-misc.ts readOpCheckpointKeys; migration v119's CHECK makes a hit imply schema drift).
+    const { keys, corruptParent } = await engine.readOpCheckpointKeys(key.op, key.fingerprint);
     if (corruptParent) {
       console.error(
         `[op-checkpoint] WARNING: op_checkpoints.completed_keys for (${key.op}, ${key.fingerprint}) is a non-array (scalar) and was skipped to protect the load — child op_checkpoint_paths rows still applied. This implies schema drift, a disabled CHECK constraint, or an out-of-band writer.`,
       );
     }
-    return [...set];
+    return keys;
   } catch (e) {
     console.error(`[op-checkpoint] load failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
     return [];
@@ -184,27 +130,11 @@ export async function recordCompleted(
   // REPLACE semantics (kept deliberately — #1794 V3). Callers like
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
-  // set lands in the parent `completed_keys` JSONB column via a single UPSERT.
-  // #2339: bind through `$3::text::jsonb`, NOT `$3::jsonb`. Under postgres.js
-  // `.unsafe(sql, params)` (executeRawDirect's path) a JS string bound to a
-  // `$N::jsonb` param double-encodes — the text→jsonb cast wraps the already-JSON
-  // string into a jsonb *string scalar*, which fails the v119
-  // `op_checkpoints_completed_keys_array CHECK (jsonb_typeof = 'array')` and aborts
-  // every sync on real Postgres (PGLite parses it silently, which hid the bug).
-  // Casting through `text` first binds it as a plain text param so the text→jsonb
-  // cast parses it into a genuine jsonb array. This is the positional-param form of
-  // the CLAUDE.md double-encode trap (the grep guard only caught the template form).
-  // Sync uses `appendCompleted` (below, `unnest($3::text[])`) instead, never this.
+  // set lands in the parent `completed_keys` (engine-sql/op-checkpoint.ts
+  // writeOpCheckpointKeys, which binds it through `$3::text::jsonb`, #2339).
+  // Sync uses `appendCompleted` (below) instead, never this.
   const sorted = [...keys].sort();
-  return durableWrite(engine, key, 'write', () =>
-    engine.executeRawDirect(
-      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::text::jsonb, now())
-       ON CONFLICT (op, fingerprint) DO UPDATE
-         SET completed_keys = EXCLUDED.completed_keys,
-             updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
-    ));
+  return durableWrite(engine, key, 'write', () => engine.writeOpCheckpointKeys(key.op, key.fingerprint, sorted));
 }
 
 /**
@@ -226,8 +156,7 @@ export async function appendCompleted(
   if (deltaKeys.length === 0) return true;
   for (let i = 0; i < deltaKeys.length; i += APPEND_CHUNK) {
     const chunk = deltaKeys.slice(i, i + APPEND_CHUNK);
-    const ok = await durableWrite(engine, key, 'append', () =>
-      engine.executeRawDirect(APPEND_PATHS_SQL, [key.op, key.fingerprint, chunk]));
+    const ok = await durableWrite(engine, key, 'append', () => engine.appendOpCheckpointPaths(key.op, key.fingerprint, chunk));
     if (!ok) return false;
   }
   return true;
@@ -248,7 +177,7 @@ export async function appendCompletedOnce(
 ): Promise<boolean> {
   if (deltaKeys.length === 0) return true;
   try {
-    await engine.executeRawDirect(APPEND_PATHS_SQL, [key.op, key.fingerprint, deltaKeys]);
+    await engine.appendOpCheckpointPaths(key.op, key.fingerprint, deltaKeys);
     return true;
   } catch (e) {
     console.error(`[op-checkpoint] sigterm-append failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
@@ -272,16 +201,8 @@ export async function clearOpCheckpoint(
   // absent. Both routed through the direct pool + retry so a clean-exit clear
   // survives pool exhaustion (a swallowed clear would make the next run skip
   // already-cleared files).
-  await durableWrite(engine, key, 'clear', () =>
-    engine.executeRawDirect(
-      `DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`,
-      [key.op, key.fingerprint],
-    ));
-  await durableWrite(engine, key, 'clear-children', () =>
-    engine.executeRawDirect(
-      `DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2`,
-      [key.op, key.fingerprint],
-    ));
+  await durableWrite(engine, key, 'clear', () => engine.deleteOpCheckpoint(key.op, key.fingerprint));
+  await durableWrite(engine, key, 'clear-children', () => engine.deleteOpCheckpointPaths(key.op, key.fingerprint));
 }
 
 /**
@@ -508,49 +429,8 @@ export async function purgeStaleCheckpoints(
   ttlDays = 7,
 ): Promise<number> {
   try {
-    // Delete stale parents; the op_checkpoint_paths FK (ON DELETE CASCADE)
-    // drops their child rows automatically. The FK also guarantees no child
-    // can exist without a parent, so there are no orphans to sweep separately.
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `WITH deleted AS (
-         DELETE FROM op_checkpoints
-         WHERE updated_at < now() - ($1 || ' days')::interval
-           AND op NOT IN ('managed-atoms','managed-atoms-generation','managed-connector','managed-connector-retry','managed-connector-state','managed-connector-migration')
-           AND op<>'connector-hold-retry'
-           AND op<>'connector-db-cursor'
-           AND op<>'stuck-recovery-resolution'
-           AND op<>'sync-admission'
-           AND NOT (op='${SYNC_DELETE_TOMBSTONE_OP}' AND EXISTS (
-             SELECT 1 FROM pages p WHERE p.id::text=op_checkpoints.fingerprint AND p.deleted_at=(op_checkpoints.completed_keys->0->>'deleted_at')::timestamptz))
-           AND op<>'purge-deleted-park'
-           AND op<>'derived-origin-park'
-           AND op<>'owed-page-purge'
-           AND NOT (op='sync-identity-downgrade' AND completed_keys->0->>'disposition' IS NULL AND EXISTS (
-             SELECT 1 FROM pages p WHERE p.id::text=op_checkpoints.fingerprint AND p.deleted_at=(op_checkpoints.completed_keys->0->>'old_deleted_at')::timestamptz))
-           AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}',${SYNC_PASS_ROW_OPS.map(op => `'${op}'`).join(',')})
-             AND NOT (op='sync-hold-summary' AND COALESCE((completed_keys->0->>'count')::int,0)=0)
-             AND EXISTS (SELECT 1 FROM sources s WHERE s.id=op_checkpoints.completed_keys->0->>'source_id'
-               AND s.incarnation::text=op_checkpoints.completed_keys->0->>'incarnation'))
-           AND NOT (op='managed-sync' AND (COALESCE(completed_keys->0->>'done','false')<>'true' OR EXISTS (
-             SELECT 1 FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.fingerprint=op_checkpoints.fingerprint)))
-           AND op<>'managed-sync-failure'
-           AND NOT (op='managed-sync-manifest' AND EXISTS (
-             SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync'
-               AND c.completed_keys->0->>'runId'=op_checkpoints.fingerprint
-               AND COALESCE(c.completed_keys->0->>'done','false')<>'true'))
-           AND NOT EXISTS (
-             SELECT 1 FROM source_ingestion_receipts r,
-               LATERAL jsonb_array_elements(r.checkpoint_refs) ref
-             WHERE r.outcome = 'incomplete'
-               AND ref->>'op' = op_checkpoints.op
-               AND ref->>'fingerprint' = op_checkpoints.fingerprint
-           )
-         RETURNING 1
-       )
-       SELECT count(*)::text AS count FROM deleted`,
-      [String(ttlDays)],
-    );
-    return Number(rows[0]?.count ?? 0);
+    // A typed engine member (engine-sql/op-checkpoint.ts; the Rust store answers it too).
+    return await engine.purgeStaleCheckpoints(ttlDays);
   } catch (e) {
     console.error('[op-checkpoint] purge failed:', (e as Error).message);
     return 0;

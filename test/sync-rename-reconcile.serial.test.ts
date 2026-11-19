@@ -1527,21 +1527,16 @@ describe('#3583 review: a throwing bookmark advance can no longer lose a sentine
     writeFileSync(join(repo, 'people/newfile.md'), personMd('New', 'New person.'));
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
-    const origExecuteRaw = engine.executeRaw;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-        if (sql.includes('UPDATE sources SET last_commit')) {
-          throw new Error('injected advance outage');
-        }
-        return origExecuteRaw.call(this, sql, params);
-      }) as typeof engine.executeRaw;
+    const origAdvance = engine.advanceSourceCommit;
+    (engine as unknown as { advanceSourceCommit: typeof engine.advanceSourceCommit }).advanceSourceCommit =
+      (async () => { throw new Error('injected advance outage'); }) as typeof engine.advanceSourceCommit;
     let threw = false;
     try {
       await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     } catch {
       threw = true;
     } finally {
-      (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = origExecuteRaw;
+      (engine as unknown as { advanceSourceCommit: typeof engine.advanceSourceCommit }).advanceSourceCommit = origAdvance;
     }
     expect(threw).toBe(true);
 

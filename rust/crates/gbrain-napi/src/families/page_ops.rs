@@ -180,6 +180,16 @@ impl Brain {
         })
     }
 
+    /// `bumpPageRetrievals(ids)`: resolves the number of retrieval records written.
+    #[napi]
+    pub fn bump_page_retrievals<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.bump_page_retrievals(&ids))
+    }
+
     /// `getContentFlagsByPageIds(ids, { sourceId?, sourceIds?, live? }?)`: `[{ id, reason, detail }]`.
     #[napi]
     pub fn get_content_flags_by_page_ids<'env>(
@@ -233,6 +243,54 @@ impl Brain {
                 &required::<Vec<_>>(refs, "getEffectiveDates refs")?,
                 &arg(scope, "getEffectiveDates scope")?,
             )
+        })
+    }
+
+    /// `readAdmittedPageRefs(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ source_id, slug }]`.
+    #[napi]
+    pub fn read_admitted_page_refs<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_admitted_page_refs(
+                &required::<Vec<_>>(refs, "readAdmittedPageRefs refs")?,
+                &required(scope, "readAdmittedPageRefs scope")?,
+            )
+        })
+    }
+
+    /// `readPageSynopses(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ page_id, slug, source_id, title, type, synopsis }]`.
+    #[napi]
+    pub fn read_page_synopses<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_synopses(
+                &required::<Vec<_>>(refs, "readPageSynopses refs")?,
+                &required(scope, "readPageSynopses scope")?,
+            )
+        })
+    }
+
+    /// `readSeedTitleSlugs(sourceId, types, title)`: at most two slugs.
+    #[napi]
+    pub fn read_seed_title_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        types: Vec<String>,
+        title: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_seed_title_slugs(&source_id, &types, &title)
         })
     }
 

@@ -20,7 +20,7 @@ import type { Capability, EngineCapabilities } from './engine-capabilities.ts';
 import type { EngineConfig } from './types.ts';
 import { capabilityMissing } from './rust-engine/errors.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
-import { openRustStore, type RustStore, type StoreBrain } from './rust-engine/store.ts';
+import { openRustStore, seedEmbeddingIdentity, type RustStore, type StoreBrain } from './rust-engine/store.ts';
 import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
@@ -163,7 +163,7 @@ export class RustEngine {
     this._owner = role;
     let store: RustStore;
     try {
-      store = await openRustStore(this.addon, this.databasePath);
+      store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
     } catch (error) {
       if (this._owner === role) this._owner = null;
       await leaveRole(role);

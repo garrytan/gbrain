@@ -60,9 +60,14 @@ import * as housekeeping from './housekeeping.ts';
 import * as effectScans from './effect-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as writeAttribution from './write-attribution.ts';
+import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
+import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
+import * as pageVisibility from './page-visibility.ts';
+import * as largePage from './large-page.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
 import * as factRelinkAttempts from './fact-relink-attempts.ts';
@@ -104,10 +109,18 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
+  ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans,
   ...writeMisc,
+  // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
+  ...writeAttribution,
+  ...opCheckpoint,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
+  // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
+  ...pageVisibility,
+  // The large-page write guard's stored body size read (rust/docs/store/large-page.md).
+  ...largePage,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).

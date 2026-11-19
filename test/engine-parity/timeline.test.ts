@@ -832,6 +832,37 @@ describe('engine parity: excludePrivate on the chronicle reads', () => {
       return { member, granted, stranger };
     },
   );
+
+  parityTest(
+    'a remote read policy (requireSafeChunks and a takes holder allow-list) leaves getTimeline and the chronicle reads as excludePrivate alone answers them',
+    { methods: ['putPage', 'upsertEventProjection', 'addTimelineEntry', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay', 'getLastSeen'] },
+    async (engine, backend) => {
+      await seedPrivacy(engine, backend);
+      // The options `readPolicyOpts` (ops/context.ts) adds for a remote caller. The timeline SQL reads neither.
+      const remote = { excludePrivate: true as const, requireSafeChunks: true, takesHoldersAllowList: ['world'] };
+      const read = async (opts: { excludePrivate: true; requireSafeChunks?: boolean; takesHoldersAllowList?: string[] }) => ({
+        open: (await engine.getTimeline('life/diary/open', opts)).map((e) => `${e.date} ${e.summary}`).sort(),
+        privateDepth: (await engine.getTimeline('life/diary/private', opts)).map((e) => e.summary),
+        hiddenPerson: (await engine.getTimeline('people/hidden-person', opts)).map((e) => e.summary),
+        day: summaries(await engine.getTimelineForDate('2026-06-18', opts)),
+        week: summaries(await engine.getTimelineForDate('2026-06-18', { week: true, ...opts })),
+        since: summaries(await engine.getSince('2026-06-18', opts)),
+        onThisDay: summaries(await engine.getOnThisDay({ date: '2026-06-18', ...opts })),
+        alice: await engine.getLastSeen('people/alice-example', { asof: '2026-06-25', ...opts }),
+        hidden: await engine.getLastSeen('people/hidden-person', { asof: '2026-06-25', ...opts }),
+      });
+      const policy = await read(remote);
+      const plain = await read({ excludePrivate: true });
+      expect(policy).toEqual(plain);
+      // No private row leaks through the extra options.
+      expect(policy.privateDepth).toEqual([]);
+      expect(policy.hiddenPerson).toEqual([]);
+      expect(policy.day).toEqual(['2026-06-18 open plain', '2026-06-18 alt open plain', '2026-06-18 open depth, open event']);
+      expect(policy.open.join('\n')).not.toContain('private event');
+      expect(policy.hidden.last_date).toBeNull();
+      return { policy };
+    },
+  );
 });
 
 describe('engine parity: ontology', () => {

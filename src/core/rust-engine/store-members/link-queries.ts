@@ -5,7 +5,7 @@
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
- * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
  * listLinkEndpointPages, listPagesTitledIn, wordLexemes).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
@@ -14,8 +14,9 @@
  *
  * The store models the source filter, the page privacy policy (storePagePolicy), the trust floor and flag suppression
  * (`minTrust`, `suppressFlagged`: the page's stamped tier and its write-gate receipts) and the live test of the read
- * policy (src/core/search/read-policy-sql.ts). A privacy policy the store does not model or a temporal policy refuses
- * with `engine_capability_missing`. A derived-link
+ * policy (src/core/search/read-policy-sql.ts). relationalFanout and relationalChainHop serve the temporal edge policy
+ * (relationshipFilterSql, src/core/link-validity.ts) over the store's relationship rows. A privacy policy the store does
+ * not model or a temporal policy on another member refuses with `engine_capability_missing`. A derived-link
  * replacement serves every option PGLite takes: the origin snapshot and the line-grammar generation are checked before
  * the store call, and the wanted pages and the origin's temporal evidence (link-temporal-apply.ts) are written after it,
  * as separate store calls. See rust/docs/store/link_queries.md and rust/docs/store/link_temporal.md.
@@ -27,6 +28,7 @@ import {
 import { sanitizeForJsonb } from '../../batch-rows.ts';
 import { effectiveRangesEnabled, LINK_EXTRACTION_GENERATION_KEY } from '../../line-grammar.ts';
 import type { RelationshipKey } from '../../link-relationships.ts';
+import { relationshipFilterSql, type EdgeTemporalOpts } from '../../link-validity.ts';
 import { applyTemporalEvidence } from '../../link-temporal-apply.ts';
 import { possibleWantedRows } from '../../wanted-links-store.ts';
 import type { LinkBatchInput } from '../../engine.ts';
@@ -34,7 +36,7 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
-import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from '../../engine-sql/link-reads.ts';
+import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from '../../engine-sql/link-reads.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
@@ -302,11 +304,24 @@ export const getAdjacencyBoosts: StoreMember<[pageIds: number[], opts?: PageRead
     return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
   };
 
+/**
+ * `temporal` as `temporalWalkFilter` and readChainHop read it: the walk's own `excludePrivate`
+ * picks the relationship scope. Rendering the SQL fragment first throws the same TypeError on a
+ * date that is not a calendar day.
+ */
+function walkTemporal(opts: Pick<RelationalFanoutOpts, 'temporal' | 'excludePrivate'> | undefined) {
+  const t = opts?.temporal;
+  if (!t) return undefined;
+  const temporal: EdgeTemporalOpts = { status: t.status, asOf: t.asOf, during: t.during, disabled: t.disabled, excludePrivate: !!opts.excludePrivate };
+  relationshipFilterSql('l', temporal);
+  return temporal;
+}
+
 export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFanoutOpts], RelationalFanoutRow[]> =
   async (brain, seeds, opts) => {
     if (!seeds?.length) return [];
     const options = takeOptions('relationalFanout', opts,
-      [...POLICY_KEYS, 'seedRefs', 'linkTypes', 'direction', 'depth', 'includeMentions', 'limit']);
+      [...POLICY_KEYS, 'seedRefs', 'linkTypes', 'direction', 'depth', 'includeMentions', 'limit', 'temporal']);
     const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
     const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
     // The SQL engines bind both into integer comparisons; a fraction or NaN is not guessed at.
@@ -320,6 +335,7 @@ export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFa
       depth,
       includeMentions: !!opts?.includeMentions,
       limit,
+      temporal: walkTemporal(opts),
     };
     return storeCall({ member: 'relationalFanout' }, () => brain.relationalFanout(seeds, wire));
   };
@@ -329,13 +345,13 @@ export const relationalChainHop: StoreMember<[frontierPageIds: number[], opts: C
     if (!frontierPageIds.length || !opts.linkTypes.length) return [];
     const ids = int32Ids('relationalChainHop', [...new Set(frontierPageIds)], 'readChainHop');
     const options = takeOptions('relationalChainHop', opts,
-      [...READ_SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap'], UNREAD_BY_FILTER);
+      [...READ_SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap', 'temporal'], UNREAD_BY_FILTER);
     const cap = Math.max(1, Math.min(opts.neighborCap, 1000));
     if (!Number.isInteger(cap)) refuseMember('relationalChainHop', 'a neighborCap that is not an integer');
     const wire = {
       ...scopeOf('relationalChainHop', options),
       linkTypes: opts.linkTypes, toward: opts.toward, subjectTypes: opts.subjectTypes, objectTypes: opts.objectTypes,
-      degreeLinkTypes: opts.degreeLinkTypes, neighborCap: cap,
+      degreeLinkTypes: opts.degreeLinkTypes, neighborCap: cap, temporal: walkTemporal(opts),
     };
     return storeCall({ member: 'relationalChainHop' }, () => brain.relationalChainHop(ids, wire));
   };
@@ -441,6 +457,17 @@ export const countInboundLinks: StoreMember<[slug: string, sourceId: string, opt
     const excludePrivate = storePagePolicy('countInboundLinks', opts.excludePrivate, CALLER_READERS) ?? null;
     return Number(await storeCall({ member: 'countInboundLinks' },
       () => brain.countInboundLinks({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource })));
+  };
+
+/** The entity card's incoming edges: the links countInboundLinks counts, by link id, with raw temporal columns. */
+export const readEntityInboundEdges: StoreMember<[slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }], EntityInboundEdgeRow[]> =
+  async (brain, slug, sourceId, opts) => {
+    const excludePrivate = storePagePolicy('readEntityInboundEdges', opts.excludePrivate, CALLER_READERS) ?? null;
+    const rows: EntityInboundEdgeRow[] = await storeCall({ member: 'readEntityInboundEdges' },
+      () => brain.readEntityInboundEdges({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource }));
+    // The store prints timestamps as ISO text; Postgres returns them as Date (timestamptz).
+    const at = (v: Date | string | null) => v == null ? null : new Date(v);
+    return rows.map(r => ({ ...r, temporal_recorded_at: at(r.temporal_recorded_at), temporal_retired_at: at(r.temporal_retired_at) }));
   };
 
 /** Automatic link preparation's endpoint pages: the origin source's rows first. */

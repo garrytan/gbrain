@@ -18,6 +18,17 @@ impl Brain {
         self.run(env, move |s| s.list_local_path_sources())
     }
 
+    /// `readPlainSyncSource(id)`: `{ local_path, last_commit, config }` or `null` when the source
+    /// is missing or archived.
+    #[napi]
+    pub fn read_plain_sync_source<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_plain_sync_source(&source_id))
+    }
+
     /// `listSourceRoutingRows()`: `{ id, local_path, archived, config, default_has_pages }[]` by id.
     #[napi]
     pub fn list_source_routing_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
@@ -40,6 +51,61 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.count_source_pages(&source_id, include_deleted)
+        })
+    }
+
+    /// `readPageSizeRows(sourceId, maxBytes, slugs)`: the source's live pages a sync size-state
+    /// read reports; `slugs` null reads every such page.
+    #[napi]
+    pub fn read_page_size_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        max_bytes: i64,
+        slugs: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_size_rows(&source_id, max_bytes, slugs.as_deref())
+        })
+    }
+
+    /// `listSourcePathPages(sourceId)`: the source's live pages that have a `source_path`.
+    #[napi]
+    pub fn list_source_path_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_source_path_pages(&source_id))
+    }
+
+    /// `readRenameIdentityRows(sourceId, paths, slugs)`: the source's live pages a rename's
+    /// identity check compares.
+    #[napi]
+    pub fn read_rename_identity_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        paths: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_rename_identity_rows(&source_id, &paths, &slugs)
+        })
+    }
+
+    /// `readLiveIdentityHolders(sourceId, ids, titles)`: the source's live pages that hold one of
+    /// the frontmatter ids or titles.
+    #[napi]
+    pub fn read_live_identity_holders<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        ids: Vec<String>,
+        titles: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_identity_holders(&source_id, &ids, &titles)
         })
     }
 
