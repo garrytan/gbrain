@@ -37,3 +37,11 @@ export async function listExportPageKeys(tx: Raw, q: ExportPageKeyQuery): Promis
              AND ($4::text IS NULL OR starts_with(p.slug,$4)) ORDER BY p.id LIMIT 256`,
     [q.afterId, q.sourceId, q.type, q.slugPrefix]);
 }
+
+/** The bytes of the source's withdrawal ledger as the export sizes it: each row's jsonb text plus a separator, plus the brackets. */
+export async function readExportWithdrawalLedgerBytes(tx: Raw, sourceId: string): Promise<number> {
+  const [size] = await tx.executeRaw<{ bytes: number }>(`SELECT COALESCE(sum(octet_length(
+    jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,'withdrawn_at',withdrawn_at,'subject',subject)::text)+1),0)+2 AS bytes
+    FROM fact_withdrawals WHERE source_id=$1`, [sourceId]);
+  return Number(size!.bytes);
+}

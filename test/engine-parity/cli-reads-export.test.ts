@@ -66,4 +66,14 @@ describe('engine parity: export reads', () => {
       otherSource: (await engine.listExportPageKeys({ ...q, sourceId: 'nowhere' })).length,
     };
   });
+
+  // The export refuses a withdrawal ledger over its payload limit, so the ledger's size must be the same on every arm.
+  parityTest('readExportWithdrawalLedgerBytes sizes the ledger as jsonb text', {
+    methods: ['readExportWithdrawalLedgerBytes', 'insertFactWithdrawal'],
+  }, async (engine) => {
+    const empty = await engine.readExportWithdrawalLedgerBytes('default');
+    await engine.insertFactWithdrawal('default', 'world', 'Alice founded Acme', '*', '2026-01-03T00:00:00.000Z');
+    await engine.insertFactWithdrawal('default', 'private', 'Bob likes tea', 'people/bob', '2026-02-04T05:06:07.250Z');
+    return { empty, two: await engine.readExportWithdrawalLedgerBytes('default'), other: await engine.readExportWithdrawalLedgerBytes('nowhere') };
+  });
 });

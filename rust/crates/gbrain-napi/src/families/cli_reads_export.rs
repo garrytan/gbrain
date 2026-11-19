@@ -25,4 +25,16 @@ impl Brain {
             s.list_export_page_keys(&required::<ExportPageKeyQuery>(q, "listExportPageKeys q")?)
         })
     }
+
+    /// `readExportWithdrawalLedgerBytes(sourceId)`: the withdrawal ledger's size in bytes.
+    #[napi]
+    pub fn read_export_withdrawal_ledger_bytes<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_export_withdrawal_ledger_bytes(&source_id)
+        })
+    }
 }

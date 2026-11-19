@@ -22,3 +22,7 @@ export const setLocalStatementTimeout = async function setLocalStatementTimeout(
 /** The next 256 live pages after `q.afterId`, in id order (`cli_reads::export::list_export_page_keys`). */
 export const listExportPageKeys: StoreMember<[q: ExportPageKeyQuery], ExportPageKey[]> = (brain, q) =>
   storeCall({ member: 'listExportPageKeys' }, () => brain.listExportPageKeys(q));
+
+/** The withdrawal ledger's size in bytes (`cli_reads::export::read_export_withdrawal_ledger_bytes`). */
+export const readExportWithdrawalLedgerBytes: StoreMember<[sourceId: string], number> = (brain, sourceId) =>
+  storeCall({ member: 'readExportWithdrawalLedgerBytes', sourceId }, () => brain.readExportWithdrawalLedgerBytes(sourceId));

@@ -15,10 +15,7 @@ const EXPORT_COLLECT_BYTES = 1024 * 1024;
 export type ExportWithdrawal = PageWithdrawal & { subject: string };
 
 export async function readExportWithdrawals(tx: BrainEngine, sourceId: string): Promise<ExportWithdrawal[]> {
-  const [size] = await tx.executeRaw<{ bytes: number }>(`SELECT COALESCE(sum(octet_length(
-    jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,'withdrawn_at',withdrawn_at,'subject',subject)::text)+1),0)+2 AS bytes
-    FROM fact_withdrawals WHERE source_id=$1`, [sourceId]);
-  if (Number(size.bytes) > EXPORT_PAYLOAD_LIMIT) throw new Error('Export withdrawal ledger capacity exceeded. No destination output was published.');
+  if (await tx.readExportWithdrawalLedgerBytes(sourceId) > EXPORT_PAYLOAD_LIMIT) throw new Error('Export withdrawal ledger capacity exceeded. No destination output was published.');
   // Purge tombstones ride the same overlay and drop their rows from the export.
   return tx.executeRaw<ExportWithdrawal>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
     FROM fact_withdrawals WHERE source_id=$1

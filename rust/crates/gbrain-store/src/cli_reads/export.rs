@@ -9,15 +9,16 @@
 //!
 //! Keys: none of its own. It reads the page, page-id, page-body, raw-data and withdrawal records.
 
-use super::pg_text::jsonb_text;
+use super::pg_text::{jsonb_text, timestamptz_text};
 use super::reads::pages_after;
 use crate::Store;
 use crate::error::{Result, StoreError};
 use crate::links::no_nul;
 use crate::page_body::segmented_reference;
 use crate::raw_files::page_raw_rows;
+use crate::trust::withdrawals::source_withdrawals;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// Rows per export batch (`LIMIT 256`).
 const EXPORT_BATCH: usize = 256;
@@ -57,6 +58,12 @@ fn left(text: &str, n: usize) -> String {
 
 fn octets(text: &str) -> i64 {
     i64::try_from(text.len()).unwrap_or(i64::MAX)
+}
+
+/// `to_jsonb(timestamptz)` with TimeZone UTC: `2026-01-03T00:00:00.215+00:00`, trailing fraction
+/// zeros dropped.
+fn jsonb_timestamptz(micros: i64) -> String {
+    format!("{}:00", timestamptz_text(micros).replacen(' ', "T", 1))
 }
 
 impl Store {
@@ -135,6 +142,31 @@ impl Store {
         })?;
         Ok(rows)
     }
+
+    /// `readExportWithdrawalLedgerBytes`: the bytes of the source's withdrawal ledger as the export
+    /// sizes it, `sum(octet_length(jsonb_build_object('visibility', 'fact_hash', 'withdrawn_at',
+    /// 'subject')::text) + 1) + 2`.
+    pub fn read_export_withdrawal_ledger_bytes(&self, source_id: &str) -> Result<i64> {
+        no_nul(
+            "readExportWithdrawalLedgerBytes",
+            &[("sourceId", source_id)],
+        )?;
+        let read = self.read()?;
+        let rows = source_withdrawals(&*read, source_id)?;
+        Ok(rows
+            .iter()
+            .map(|w| {
+                let row = json!({
+                    "visibility": w.visibility,
+                    "fact_hash": w.fact_hash,
+                    "withdrawn_at": jsonb_timestamptz(w.withdrawn_at_us),
+                    "subject": w.subject,
+                });
+                octets(&jsonb_text(&row)) + 1
+            })
+            .sum::<i64>()
+            + 2)
+    }
 }
 
 #[cfg(test)]
@@ -182,5 +214,23 @@ mod tests {
         prefixed.slug_prefix = Some("people/".into());
         assert_eq!(s.list_export_page_keys(&prefixed).unwrap().len(), 1);
         assert!(s.list_export_page_keys(&query("x")).is_err());
+    }
+
+    #[test]
+    fn timestamps_take_the_jsonb_form() {
+        assert_eq!(
+            jsonb_timestamptz(1_795_000_000_215_000),
+            "2026-11-18T11:06:40.215+00:00"
+        );
+        assert_eq!(
+            jsonb_timestamptz(1_795_000_000_000_000),
+            "2026-11-18T11:06:40+00:00"
+        );
+    }
+
+    #[test]
+    fn an_empty_ledger_is_two_bytes() {
+        let s = store();
+        assert_eq!(s.read_export_withdrawal_ledger_bytes("default").unwrap(), 2);
     }
 }
