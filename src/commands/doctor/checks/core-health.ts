@@ -334,21 +334,7 @@ export async function checkVolunteerChannels(
     // seq-scans the table. Accepted DELIBERATELY for the local info check
     // (table is TTL-pruned at 90 days) — do NOT reuse on a hot path.
     const scoped = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
-    const rows = await engine.executeRaw<{ channel: string; n: string | number; last_fired: string | Date | null }>(
-      scoped
-        ? `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
-             FROM context_volunteer_events
-            WHERE source_id = ANY($1::text[])
-              AND volunteered_at > now() - interval '7 days'
-            GROUP BY channel
-            ORDER BY channel`
-        : `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
-             FROM context_volunteer_events
-            WHERE volunteered_at > now() - interval '7 days'
-            GROUP BY channel
-            ORDER BY channel`,
-      scoped ? [opts.sourceIds] : [],
-    );
+    const rows = await engine.listVolunteerChannels(scoped ? opts.sourceIds! : null);
     const channels: Record<string, { count: number; last_fired: string | null }> = {};
     for (const r of rows) {
       channels[r.channel] = {

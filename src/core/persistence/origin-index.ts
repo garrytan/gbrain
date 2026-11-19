@@ -25,10 +25,9 @@ export async function originTwinCounts(engine: Pick<BrainEngine, 'executeRaw'>, 
 
 export type OriginIndexState = 'present' | 'missing' | 'invalid';
 
-export async function originIndexState(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>): Promise<OriginIndexState> {
+export async function originIndexState(engine: Pick<BrainEngine, 'executeRaw' | 'kind' | 'originIndexPresent'>): Promise<OriginIndexState> {
   if (engine.kind !== 'postgres') {
-    const [row] = await engine.executeRaw<{ present: boolean }>('SELECT to_regclass($1) IS NOT NULL AS present', [ORIGIN_INDEX.name]);
-    return row?.present ? 'present' : 'missing';
+    return await engine.originIndexPresent(ORIGIN_INDEX.name) ? 'present' : 'missing';
   }
   const [row] = await engine.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [ORIGIN_INDEX.name]);
   return !row ? 'missing' : row.valid ? 'present' : 'invalid';
