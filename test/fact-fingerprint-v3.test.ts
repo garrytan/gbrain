@@ -5,9 +5,12 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a withdrawal stored under the fingerprint Postgres computed before the migration keeps matching its
  *    claim after it (the fact guard, the withdrawal lookup and the export overlay), no stored hash is rewritten, and an
- *    active fact the new fingerprint matches to a withdrawal is expired. Every engine computes the same fingerprint.
+ *    active fact the new fingerprint matches to a withdrawal is expired. A page read and the export strike a fence row
+ *    a pre-migration withdrawal names (an escaped cell included) and drop one a pre-migration purge tombstone names
+ *    (the page's own or a '*' one), as on every engine. Every engine computes the same fingerprint.
  *  - Regression: a claim holding U+0085 exported live on Postgres although a withdrawal of it existed, and a ledger
- *    hash Postgres wrote would stop matching once the fingerprint changed.
+ *    hash Postgres wrote would stop matching once the fingerprint changed; the overlay of a page read and the export
+ *    hashed the new fingerprint only, so on Postgres such a fence row exported live.
  *  - Why existing coverage misses it: the fingerprint goldens hold no character the locale classes disagree on, and
  *    PGLite's [[:space:]] already is the explicit list, so only a Postgres arm can show it.
  *  - Seam: the pre-migration ledger row is written with the pre-migration fingerprint spelled out in this file (the
@@ -102,5 +105,38 @@ for (const backend of testBackends()) describe(`fact fingerprint v3 (${backend})
     const [hit] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3',
       [sourceId, 'world', explicitFingerprint(legacyClaim)]);
     expect(hit!.n).toBe(2);
+  });
+
+  /** A fresh source holding `slug` with a fence of `claims`, and the migration run after `ledger` wrote its pre-migration rows. */
+  async function legacyPage(slug: string, claims: string[], ledger: (sourceId: string) => Promise<unknown>) {
+    const sourceId = `fpv3-${backend}-${crypto.randomUUID().slice(0, 8)}`;
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', [sourceId]);
+    await engine.putPage(slug, { type: 'note', title: 'Fingerprint', compiled_truth: 'Lead.\n\n' + fence(...claims) }, { sourceId });
+    await ledger(sourceId);
+    const migration = MIGRATIONS.find(m => m.name === 'fact_fingerprint_v3')!;
+    await engine.runMigration(migration.version, migration.sql);
+    return sourceId;
+  }
+  /** The fence rows of `slug` as the export and a page read show them: [claim, struck]. */
+  async function shownRows(slug: string, sourceId: string) {
+    const page = (await engine.getPage(slug, { sourceId }))!;
+    const [exported] = await readExportPages(engine, [{ id: String(page.id), source_id: sourceId, slug }], await readExportWithdrawals(engine, sourceId));
+    const read = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    return [exported!.page.compiled_truth, read.page.compiled_truth]
+      .map(body => parseFactsFenceFor(body, { slug }).facts.map(f => [f.claim, f.forgotten ?? false]));
+  }
+
+  test('a withdrawal stored before the migration strikes its claim in a fence cell that escapes a pipe', async () => {
+    const slug = 'notes/fpv3-escaped', claim = 'Theta\u0085pipe | claim';
+    const sourceId = await legacyPage(slug, [claim, 'A live claim'], id => engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash,withdrawn_at)
+      VALUES ($1,'world',${legacyFingerprintSql('$2::text')},'2026-01-02T00:00:00Z')`, [id, claim]));
+    expect(await shownRows(slug, sourceId)).toEqual([[[claim, true], ['A live claim', false]], [[claim, true], ['A live claim', false]]]);
+  });
+
+  test('a purge tombstone stored before the migration drops its claim from a fence the purge did not rewrite', async () => {
+    const slug = 'notes/fpv3-stale', claim = 'Iota\u1680purged claim', global = 'Kappa\u0085global claim';
+    const sourceId = await legacyPage(slug, [claim, global, 'A live claim'], id => engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,purged_at)
+      SELECT $1,'world',s,${legacyFingerprintSql('c')},'2026-01-02T00:00:00Z' FROM unnest($2::text[], $3::text[]) u(c, s)`, [id, [claim, global], [slug, '*']]));
+    expect(await shownRows(slug, sourceId)).toEqual([[['A live claim', false]], [['A live claim', false]]]);
   });
 });
