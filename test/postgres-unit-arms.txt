@@ -175,6 +175,7 @@ test/engine-parity/lifecycle.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/pages.test.ts

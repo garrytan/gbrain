@@ -201,6 +201,21 @@ describe('Rust engine on the store', () => {
     }
   });
 
+  withAddon('readRemoteForgetTier under the remote floor serves no caller record, a restricted or unrestricted brain and the owner, and refuses labelled-only and folder coverage', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const { ids } = await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
+    const read = () => engine.readRemoteForgetTier({ factId: ids[0]!, sourceId: 'default', remoteFloor: true });
+    const served = { restricted: { restricted: true }, unrestricted: { restricted: false }, owner: { owner: true }, ownerUnrestricted: { owner: true, restricted: false } };
+    for (const [kind, access] of Object.entries(served)) {
+      expect([kind, await withCallerAccess(access, read)]).toEqual([kind, expect.any(String)]);
+    }
+    expect(await read()).toEqual(expect.any(String));
+    // A labelled-only caller or pending folder coverage renders a floor the store has no form for.
+    expect(await code(() => withCallerAccess({ labelledOnly: true }, read))).toBe('engine_capability_missing');
+    expect(await code(() => withCallerAccess({ folderCoverage: [{ source_id: 'default', prefix: 'team/' }] }, read))).toBe('engine_capability_missing');
+  });
+
   withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);

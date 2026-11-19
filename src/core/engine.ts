@@ -183,6 +183,13 @@ export interface SourceRecordRow {
 }
 /** A source's config and incarnation (`readSourceIncarnation`). */
 export interface SourceIncarnationRow { config: unknown; incarnation: string }
+/** The source row a memory write admits against (`readSourceWriteRow`): `kind` and `role` are `config->>'kind'` and `config->>'role'`. */
+export interface SourceWriteRow { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null }
+/** `factReadableUnder`: one fact, read with any visibility (the owner) or the caller's world rule, under a read eligibility. */
+export interface FactReadableSpec {
+  id: number; sourceId: string; anyVisibility: boolean;
+  eligibility: import('./eligibility/policy.ts').ReadEligibility | undefined; excludePrivate: boolean;
+}
 /** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
 export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
 /** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
@@ -3964,6 +3971,19 @@ export interface BrainEngine {
   readCursorEdition(spec: { pageId: number; revision: string }): Promise<CursorEditionRow | null>;
   /** Whether a purge hid the page until it is derived again (a `needs_rederive` row names it). */
   pageAwaitsRederive(pageId: number): Promise<boolean>;
+  // Memory mutation reads (engine-sql/memory-mutation-reads.ts): the reads remember and forget make before admission.
+  /** The source row a memory write admits against; null for an unknown id. */
+  readSourceWriteRow(sourceId: string): Promise<SourceWriteRow | null>;
+  /** A source's checkout path; null for an unknown id or a source with none. */
+  readSourceLocalPath(sourceId: string): Promise<string | null>;
+  /** The entity slug of one fact of a source; null when there is no such fact or it names none. */
+  readFactEntitySlug(id: number, sourceId: string): Promise<string | null>;
+  /** Whether a live page of the source among the slugs has a source file. */
+  hasLiveFileBackedPage(sourceId: string, slugs: readonly string[]): Promise<boolean>;
+  /** Whether the caller reads one fact under its visibility rule, a read eligibility and optionally the private-provenance policy. */
+  factReadableUnder(spec: FactReadableSpec): Promise<boolean>;
+  /** The stored tier of a world fact of the source a remote forget targets, under the remote provenance floor with `remoteFloor`; null when none. */
+  readRemoteForgetTier(spec: { factId: number; sourceId: string; remoteFloor: boolean }): Promise<string | null>;
 
   // Decide family, group B: calibration profiles (engine-sql/calibration-profiles.ts).
   /** The newest calibration profile (`generated_at DESC`, then `id DESC`) of `holder` (any holder when unset) in `sourceIds` (an empty list matches nothing) or else `sourceId`; null when none. `id` is the BIGSERIAL as text. */
