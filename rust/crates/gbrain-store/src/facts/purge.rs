@@ -40,7 +40,7 @@ const MEMBER_PAGE_PREFIX: &str = "memory/members/";
 const SCOPE_PAGE_SLUG: &str = "memory/scope";
 
 /// `outcomeMarkerSql`.
-pub(super) fn outcome_marker(row: &FactRecord) -> bool {
+pub(crate) fn outcome_marker(row: &FactRecord) -> bool {
     AUDIT_ROW_SOURCES.contains(&row.source.as_str())
         && OUTCOME_MARKER_FACTS.contains(&row.fact.as_str())
 }

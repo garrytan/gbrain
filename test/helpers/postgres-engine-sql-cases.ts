@@ -112,6 +112,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readLinkedFactCopies': OOS.memoryMutationReads,
   'hasHiddenFactCopy': OOS.memoryMutationReads,
   'ownerReachesFact': OOS.memoryMutationReads,
+  'readFactWithdrawalClaim': OOS.memoryMutationReads,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,

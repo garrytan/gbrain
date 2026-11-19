@@ -5058,6 +5058,7 @@
         "readFactEntitySlug": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
+        "readFactWithdrawalClaim": "none",
         "readFenceOverlayRows": "none",
         "readFieldUsageSamples": "none",
         "readForgetTarget": "none",

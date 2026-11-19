@@ -1,6 +1,6 @@
 //! The reads `remember` and `forget` make before admission: `readSourceWriteRow`, `readSourceLocalPath`,
 //! `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder`, `readRemoteForgetTier`, `readForgetTarget`,
-//! `isFactEntityUnbacked`, `readLinkedFactCopies`, `hasHiddenFactCopy` and `ownerReachesFact`.
+//! `isFactEntityUnbacked`, `readLinkedFactCopies`, `hasHiddenFactCopy`, `ownerReachesFact` and `readFactWithdrawalClaim`.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::memory_mutation_reads` call on the pool through
 //! `Brain::run` and resolves plain JSON. The TypeScript members
@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::memory_mutation_reads::{
     FactReadableQuery, ForgetTargetQuery, HiddenCopyQuery, LinkedCopiesQuery, OwnerReachQuery,
-    RemoteForgetTierQuery,
+    RemoteForgetTierQuery, WithdrawalClaimQuery,
 };
 
 #[napi]
@@ -149,6 +149,19 @@ impl Brain {
         self.run(env, move |s| {
             let q: OwnerReachQuery = required(spec, "ownerReachesFact spec")?;
             s.owner_reaches_fact(&q)
+        })
+    }
+
+    /// `readFactWithdrawalClaim(spec)`: resolves the claim a withdrawal of the fact changes, or null.
+    #[napi]
+    pub fn read_fact_withdrawal_claim<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: WithdrawalClaimQuery = required(spec, "readFactWithdrawalClaim spec")?;
+            s.read_fact_withdrawal_claim(&q)
         })
     }
 }

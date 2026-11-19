@@ -5,7 +5,8 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 `remember` and `forget` (`src/core/persistence/memory-mutations.ts`) read a source, a fact and a page set before they
 admit a write; a remote `forget` also reads the target's tier (`guardRemoteForget`, `src/core/trust/supersede-handlers.ts`),
 and every `forget` reads the fact it names (`readForgetTarget` in `src/core/persistence/forget-prepare.ts`) and what its
-withdrawal reaches (`isFactEntityUnbacked`, `readLinkedFactCopies`, `hasHiddenFactCopy` and `ownerReachesFact` there). PGLite and Postgres run the SQL in `src/core/engine-sql/memory-mutation-reads.ts`. The store answers
+withdrawal reaches (`isFactEntityUnbacked`, `readLinkedFactCopies`, `hasHiddenFactCopy` and `ownerReachesFact` there);
+the withdrawal plan reads the claim it changes (`readFactWithdrawalClaim`, `planFactWithdrawal` in `src/core/facts/withdrawal.ts`). PGLite and Postgres run the SQL in `src/core/engine-sql/memory-mutation-reads.ts`. The store answers
 from the source, fact and page records the other families write
 (`crates/gbrain-store/src/memory_mutation_reads.rs`). It keeps no records of its own and adds no key prefix.
 
@@ -22,6 +23,7 @@ from the source, fact and page records the other families write
 | `brain.readLinkedFactCopies({ id, sourceId, worldOnly, remoteFloor })` | `[{ id, entity_slug }]`, the copies of the fact's claim on other entities, by id, at most five; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }` | `readLinkedFactCopies` |
 | `brain.hasHiddenFactCopy({ id, sourceId, remoteFloor })` | whether a copy of the claim the withdrawal reaches fails the floor; `remoteFloor` is `{ honorAliases, restricted, ownerOnly }` | `hasHiddenFactCopy` |
 | `brain.ownerReachesFact({ id, sourceId })` | whether an owner with no member identity reaches the fact | `ownerReachesFact` |
+| `brain.readFactWithdrawalClaim({ id, sourceId, worldOnly, memberPage, remoteFloor })` | `{ visibility, fact, fact_hash, subject, expired }` for the claim a withdrawal changes, or null; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }` | `readFactWithdrawalClaim` |
 
 ## Rules
 
@@ -51,6 +53,11 @@ from the source, fact and page records the other families write
 - `ownerReachesFact` answers for an owner with no member identity, whose read rule (`ownerReadPolicyFragment`) is
   `FALSE`: the fact belongs to the source, is not on a member page or the scope page, and no page record, a deleted one
   included, exists at its `source_markdown_slug` or `entity_slug`.
+- `readFactWithdrawalClaim` reads the fact when it belongs to the source, is not an extraction outcome marker (an audit
+  row source with the fixed marker text, `outcomeMarkerSql`), is `world`, or `private` on `memberPage`, or `worldOnly`
+  is false, and, with `remoteFloor`, passes the floor of `readRemoteForgetTier`. `fact_hash` is
+  `gbrain_fact_fingerprint(fact)`; `subject` is the slug of its owned memory page (a member page or the scope page),
+  else `*` for no entity or an unbacked one, else the entity (`factWithdrawalSubjectSql`).
 - A negative fact id reads as no fact (null or false), as the SQL `WHERE id=$1` does.
 - The TypeScript member (`src/core/rust-engine/store-members/memory-mutation-reads.ts`) refuses with
   `engine_capability_missing`:
@@ -61,8 +68,8 @@ from the source, fact and page records the other families write
   - `readRemoteForgetTier` under `remoteFloor` when `remoteProvenanceFloorSql('facts')` renders other text than with
     no caller record or with a fresh record carrying only the caller's `restricted`, `owner` and schema version (a
     labelled-only caller, folder coverage or a relaxed privacy setting);
-  - `readForgetTarget` under `remoteFloor` (without `ownPage`), `readLinkedFactCopies` under `remoteFloor` and
-    `hasHiddenFactCopy` on the same terms;
+  - `readForgetTarget` under `remoteFloor` (without `ownPage`), `readLinkedFactCopies` and `readFactWithdrawalClaim`
+    under `remoteFloor`, and `hasHiddenFactCopy`, on the same terms;
   - `ownerReachesFact` for an owner bound to a member, whose pages GST-2490's owner read rule judges.
 
 - Pinned by `test/engine-parity/memory-mutation-reads.test.ts` and `test/engine-parity/forget-reach-reads.test.ts` on every arm and by

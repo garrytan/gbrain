@@ -17,11 +17,13 @@
  * - `isFactEntityUnbacked`, `readLinkedFactCopies` and `hasHiddenFactCopy`: whether a forget's withdrawal reaches other
  *   copies of the claim (refuseForgetReachingOtherCopies, src/core/persistence/forget-prepare.ts).
  * - `ownerReachesFact`: whether the brain owner's own credential reaches a fact (forget-prepare.ts, GST-2346 D1).
+ * - `readFactWithdrawalClaim`: the claim a withdrawal of a fact changes (planFactWithdrawal, src/core/facts/withdrawal.ts).
  */
 import type {
-  BrainEngine, FactReadableSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow,
+  BrainEngine, FactReadableSpec, FactWithdrawalClaim, FactWithdrawalClaimSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow,
 } from '../engine.ts';
-import { MEMBER_PAGE_PREFIX, factVisibilitySql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
+import { MEMBER_PAGE_PREFIX, factVisibilitySql, factWithdrawalSubjectSql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
+import { outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { ownerReadPolicyFragment, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
@@ -146,4 +148,16 @@ export async function ownerReachesFact(exec: Raw, spec: OwnerReachSpec): Promise
   const found = await rows(exec, sqlFragment`SELECT 1 FROM facts WHERE id=${spec.id} AND source_id=${spec.sourceId} AND NOT ${trustedSql(onOwnedMemoryPageSql('facts'))}
     AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id=facts.source_id AND pp.slug IN (facts.source_markdown_slug, facts.entity_slug) AND NOT (${trustedSql(ownerReadPolicyFragment('pp', spec.identity, spec.satisfied))} AND ${trustedSql(readPolicyFragment('pp', spec.identity, true, spec.satisfied))}))`);
   return found.length > 0;
+}
+
+/**
+ * The claim fact `id` of `sourceId` carries for a withdrawal (visibility, text, fingerprint, ledger subject, expiry), or
+ * null for an outcome marker or a fact the caller may not withdraw: with `worldOnly` only a world fact or a private fact
+ * on `memberPage`, and with `remoteFloor` only one the remote provenance floor admits.
+ */
+export async function readFactWithdrawalClaim(exec: Raw, spec: FactWithdrawalClaimSpec): Promise<FactWithdrawalClaim | null> {
+  const [row] = await rows<FactWithdrawalClaim>(exec,
+    sqlFragment`SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${trustedSql(factWithdrawalSubjectSql('facts'))} AS subject,expired_at IS NOT NULL AS expired FROM facts WHERE id=${spec.id} AND source_id=${spec.sourceId}
+      AND NOT ${trustedSql(outcomeMarkerSql('facts'))} AND (${spec.worldOnly}::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=${spec.memberPage}::text))${trustedSql(spec.remoteFloor ? ` AND ${remoteProvenanceFloorSql('facts')}` : '')}`);
+  return row ?? null;
 }

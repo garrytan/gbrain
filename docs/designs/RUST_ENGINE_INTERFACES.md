@@ -891,7 +891,8 @@ Facts and their supersession chains.
     `readSourceWriteRow`, `readSourceLocalPath`, `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder`,
     `readRemoteForgetTier` for the remote forget guard in `trust/supersede-handlers.ts`, and `readForgetTarget` for the
     fact a forget names in `persistence/forget-prepare.ts`, with `isFactEntityUnbacked`, `readLinkedFactCopies`,
-    `hasHiddenFactCopy` and `ownerReachesFact` for what its withdrawal reaches).
+    `hasHiddenFactCopy` and `ownerReachesFact` for what its withdrawal reaches, and `readFactWithdrawalClaim` for the
+    claim `planFactWithdrawal` in `facts/withdrawal.ts` changes).
     The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
     rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
     a member page or a private-facts grant widens, a remote provenance floor that is not the no-caller one, and

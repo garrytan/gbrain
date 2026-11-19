@@ -525,6 +525,7 @@
           "readFactEntitySlug: (id: number, sourceId: string) => Promise<string | null>",
           "readFactForOwnerAction: (id: number) => Promise<OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<FactSubjectRow | null>",
+          "readFactWithdrawalClaim: (spec: FactWithdrawalClaimSpec) => Promise<FactWithdrawalClaim | null>",
           "readFenceOverlayRows: (page: { sourceId: string; slug: string; }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean; }) => Promise<FenceOverlayRow[]>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
           "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",
@@ -2089,6 +2090,7 @@
           "readFactEntitySlug: (id: number, sourceId: string) => Promise<string | null>",
           "readFactForOwnerAction: (id: number) => Promise<OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<FactSubjectRow | null>",
+          "readFactWithdrawalClaim: (spec: FactWithdrawalClaimSpec) => Promise<FactWithdrawalClaim | null>",
           "readFenceOverlayRows: (page: { sourceId: string; slug: string; }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean; }) => Promise<FenceOverlayRow[]>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
           "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",
@@ -5079,6 +5081,7 @@
           "readFactEntitySlug: (id: number, sourceId: string) => Promise<string | null>",
           "readFactForOwnerAction: (id: number) => Promise<FactsTrustSql.OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<FactsCycleSql.FactSubjectRow | null>",
+          "readFactWithdrawalClaim: (spec: FactWithdrawalClaimSpec) => Promise<FactWithdrawalClaim | null>",
           "readFenceOverlayRows: (page: { sourceId: string; slug: string; }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean; }) => Promise<FenceOverlayRow[]>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
           "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",
@@ -5462,6 +5465,28 @@
         "signature": [
           "\"private\" | \"world\""
         ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "expired: boolean",
+          "fact: string",
+          "fact_hash: string",
+          "subject: string",
+          "visibility: \"private\" | \"world\""
+        ],
+        "name": "FactWithdrawalClaim"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "memberPage: string | null",
+          "remoteFloor: boolean",
+          "sourceId: string",
+          "worldOnly: boolean"
+        ],
+        "name": "FactWithdrawalClaimSpec"
       },
       {
         "kind": "interface",
@@ -9305,6 +9330,7 @@
           "readFactEntitySlug: (id: number, sourceId: string) => Promise<string | null>",
           "readFactForOwnerAction: (id: number) => Promise<factsTrustImpl.OwnerActionFactRow | null>",
           "readFactSubject: (id: number) => Promise<factsCycleImpl.FactSubjectRow | null>",
+          "readFactWithdrawalClaim: (spec: FactWithdrawalClaimSpec) => Promise<FactWithdrawalClaim | null>",
           "readFenceOverlayRows: (page: { sourceId: string; slug: string; }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean; }) => Promise<cliReadsOpsImpl.FenceOverlayRow[]>",
           "readFieldUsageSamples: (query: fieldUsageImpl.FieldUsageQuery) => Promise<fieldUsageImpl.FieldUsageTypeSample[]>",
           "readForgetTarget: (spec: ForgetTargetSpec) => Promise<ForgetTargetRow | null>",

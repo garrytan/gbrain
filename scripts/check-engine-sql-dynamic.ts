@@ -149,6 +149,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   factVisibilitySql: 'src/core/access/member-facts.ts: visibility values filtered to the constant set world/private; widened only by memberFactAdmitSql, whose member id passed ACCESS_ID_RE (no quote) and whose page test is privatePagesFilterForCaller; no values',
   heldRowSql: 'src/core/eligibility/fence-overlay.ts: the held fence-cell test over constant key column aliases; widened only by memberFactAdmitSql (member id passed ACCESS_ID_RE) and grantedPrivateFactSql (each source id checked by isValidSourceId before it is quoted in); no values',
   onOwnedMemoryPageSql: 'src/core/access/member-facts.ts: constant memory/members/ prefix and memory/scope slug test over a code-provided facts alias; no values',
+  factWithdrawalSubjectSql: 'src/core/access/member-facts.ts: constant CASE over onOwnedMemoryPageSql and unbackedEntitySql for a code-provided facts alias; no values',
   privateProvenanceFilterUnderPolicy: 'src/core/search/private-visibility.ts: constant fact-provenance predicate (readers part with no identity, or the caller identity on its own member page whose id passed ACCESS_ID_RE; privacy part dropped only under an operator relaxation); no values',
   liveTilingSql: 'src/core/page-body/schema.ts: constant LATERAL aggregate of the live manifest rows of a caller page alias (count, covered bytes, gapless); no values (GST-1209)',
   untiledSql: 'src/core/page-body/schema.ts: constant predicate over caller page and tiling aliases; no values (GST-1209)',

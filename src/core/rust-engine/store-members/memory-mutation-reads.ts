@@ -5,6 +5,7 @@
  * over the fact rows, and `hasLiveFileBackedPage` over the page records. `readForgetTarget`'s `lock` (FOR UPDATE)
  * changes nothing here: one store call reads under the store's own lock. `isFactEntityUnbacked`, `readLinkedFactCopies`,
  * `hasHiddenFactCopy` and `ownerReachesFact` (what a forget's withdrawal reaches) read the fact and page records.
+ * `readFactWithdrawalClaim` (the claim a withdrawal changes) reads the fact record and, for its subject, the page records.
  *
  * Refused (`engine_capability_missing`):
  *  - a fact id that is not an integer, rather than guess at Postgres's bind error;
@@ -14,12 +15,12 @@
  *  - `readRemoteForgetTier` under `remoteFloor` for a caller whose remote provenance floor (remoteProvenanceFloorSql)
  *    is none of the forms the store models: the floor with no caller record, or a caller record on a brain with or
  *    without member-access restrictions, for the owner or not, at the caller's schema version. A labelled-only caller,
- *    folder coverage or a relaxed privacy setting renders other text. `readForgetTarget` and `readLinkedFactCopies`
- *    under `remoteFloor`, and `hasHiddenFactCopy` (always under the floor), refuse the same;
+ *    folder coverage or a relaxed privacy setting renders other text. `readForgetTarget`, `readLinkedFactCopies`
+ *    and `readFactWithdrawalClaim` under `remoteFloor`, and `hasHiddenFactCopy` (always under the floor), refuse the same;
  *  - `ownerReachesFact` for an owner bound to a member (ownerReadPolicyFragment renders GST-2490's owner read rule rather
  *    than FALSE), which the store does not model.
  */
-import type { BrainEngine, ForgetTargetRow, LinkedFactCopy } from '../../engine.ts';
+import type { BrainEngine, FactWithdrawalClaim, ForgetTargetRow, LinkedFactCopy } from '../../engine.ts';
 import { MEMBER_PAGE_PREFIX, factVisibilitySql } from '../../access/member-facts.ts';
 import { withDates } from '../store-codec.ts';
 import {
@@ -140,4 +141,13 @@ export const ownerReachesFact: Member<'ownerReachesFact'> = (brain, spec) => {
     refuseMember(member, 'an owner bound to a member, whose pages the owner read rule (GST-2490 lineage) judges, which the store does not model');
   }
   return storeCall({ member }, () => brain.ownerReachesFact({ id: spec.id, sourceId: spec.sourceId }));
+};
+
+export const readFactWithdrawalClaim: Member<'readFactWithdrawalClaim'> = (brain, spec) => {
+  const member = 'readFactWithdrawalClaim';
+  requireInteger(member, spec.id);
+  const remoteFloor = spec.remoteFloor ? storeRemoteFloor(member) : null;
+  return storeCall({ member }, () => brain.readFactWithdrawalClaim({
+    id: spec.id, sourceId: spec.sourceId, worldOnly: spec.worldOnly, memberPage: spec.memberPage, remoteFloor,
+  })) as Promise<FactWithdrawalClaim | null>;
 };

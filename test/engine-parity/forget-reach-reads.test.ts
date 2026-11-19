@@ -18,6 +18,10 @@
  *  - Owner-only sources: the last describe adds a source of kind imessage and one with owner_only set, then reads the
  *    floor reads with no schema version in context (the closed form: a non-owner reads no fact while any source is
  *    owner-only) and at schema 320 (the fn form: only the facts of an owner-only source are hidden).
+ *  - Withdrawal claim: readFactWithdrawalClaim (planFactWithdrawal, src/core/facts/withdrawal.ts) answers a fact's
+ *    visibility, text, fingerprint, ledger subject (its owned memory page, '*' for no or an unbacked entity, else the
+ *    entity) and expiry, never for an extraction outcome marker, under worldOnly (world facts and a private fact on the
+ *    member page), the remote floor, or both.
  *  - Seam: none. Sources come from the harness fixture, rows from typed members. Ids differ between arms, so facts are
  *    named by their text and an answered id is compared only as the name it maps to.
  */
@@ -36,13 +40,13 @@ const note = (title: string, frontmatter: Record<string, unknown> = {}) =>
   ({ type: 'note' as const, title, compiled_truth: 'x', timeline: '', frontmatter });
 
 /** Insert one fact in a transaction whose write trust settings declare the operator tier; its id. */
-async function insert(engine: BrainEngine, row: { fact: string; entity: string | null; page: string | null; visibility?: 'world' | 'private'; validUntil?: Date; sourceId?: string }, n: number): Promise<number> {
+async function insert(engine: BrainEngine, row: { fact: string; entity: string | null; page: string | null; visibility?: 'world' | 'private'; validUntil?: Date; sourceId?: string; source?: string }, n: number): Promise<number> {
   const out = await engine.transaction(async (tx) => {
     await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
       ['operator_curated', 'operator_curated', JSON.stringify({ channel: 'operator_curated' })]);
     return tx.insertFacts([{
       fact: row.fact, entity_slug: row.entity, source_markdown_slug: row.page, row_num: n, kind: 'fact',
-      visibility: row.visibility ?? 'world', source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1)),
+      visibility: row.visibility ?? 'world', source: row.source ?? 'fence', valid_from: new Date(Date.UTC(2026, 6, 1)),
       ...(row.validUntil ? { valid_until: row.validUntil } : {}),
     }] as never, { source_id: row.sourceId ?? 'default' });
   });
@@ -249,5 +253,67 @@ describe('engine parity: owner-only sources on the forget floor reads', () => {
       const fn = await underFnForm(engine, read);
       expect(fn).toEqual({ ...kept, ...vaultGone });
       return { before, closed, fn };
+    });
+});
+
+describe('engine parity: the fact withdrawal claim read', () => {
+  parityTest('readFactWithdrawalClaim reads the claim, fingerprint, subject and expiry of a fact a withdrawal admits',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'expireFact', 'readFactWithdrawalClaim'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await engine.putPage('people/e-example', note('E'));
+      await engine.putPage('notes/open', note('Open'));
+      await engine.putPage('notes/private', note('Private', { visibility: 'private' }));
+      const member = 'memory/members/alice-example';
+      const rows: Array<{ name: string; fact: string; entity: string | null; page: string | null; visibility?: 'world' | 'private'; source?: string; sourceId?: string }> = [
+        { name: 'w-entity', fact: '  Erin   ROWS boats ', entity: 'people/e-example', page: 'notes/open' },
+        { name: 'w-unlinked', fact: 'Erin rows boats', entity: null, page: 'notes/open' },
+        { name: 'w-unbacked', fact: 'Erin rows boats', entity: 'erinname', page: 'notes/open' },
+        { name: 'w-expired', fact: 'Erin rows boats', entity: 'people/h-example', page: 'notes/open' },
+        { name: 'w-private-page', fact: 'Erin rows boats', entity: 'people/f-example', page: 'notes/private' },
+        { name: 'p-member', fact: 'Erin rows boats', entity: 'people/e-example', page: member, visibility: 'private' },
+        { name: 'p-scope', fact: 'Erin rows boats', entity: null, page: 'memory/scope', visibility: 'private' },
+        { name: 'p-open', fact: 'Erin rows boats', entity: 'people/e-example', page: 'notes/open', visibility: 'private' },
+        { name: 'marker', fact: 'EXTRACTION_COMPLETE', entity: null, page: 'notes/open', source: 'cli:extract-conversation-facts:terminal' },
+        { name: 'marker-text', fact: 'EXTRACTION_COMPLETE', entity: null, page: 'notes/open' },
+        { name: 'o-other', fact: 'Erin rows boats', entity: null, page: null, sourceId: 'other' },
+      ];
+      const ids = new Map<string, number>();
+      for (const [i, r] of rows.entries()) ids.set(r.name, await insert(engine, r, i + 1));
+      expect(await engine.expireFact(ids.get('w-expired')!, { at: new Date(Date.UTC(2026, 8, 1)) })).toBe(true);
+      const forms: Record<string, { worldOnly: boolean; memberPage: string | null; remoteFloor: boolean }> = {
+        any: { worldOnly: false, memberPage: null, remoteFloor: false },
+        world: { worldOnly: true, memberPage: null, remoteFloor: false },
+        member: { worldOnly: true, memberPage: member, remoteFloor: false },
+        floor: { worldOnly: true, memberPage: null, remoteFloor: true },
+        anyFloor: { worldOnly: false, memberPage: null, remoteFloor: true },
+      };
+      const out: Record<string, Record<string, unknown>> = {};
+      for (const [form, spec] of Object.entries(forms)) {
+        out[form] = {};
+        for (const name of ids.keys()) out[form][name] = await engine.readFactWithdrawalClaim({ id: ids.get(name)!, sourceId: 'default', ...spec });
+      }
+      const unknown = Math.max(...ids.values()) + 1000;
+      const extra = {
+        otherSource: await engine.readFactWithdrawalClaim({ id: ids.get('o-other')!, sourceId: 'other', ...forms.any }),
+        unknown: await engine.readFactWithdrawalClaim({ id: unknown, sourceId: 'default', ...forms.any }),
+        unrestrictedFloor: await withCallerAccess({ restricted: false }, () => engine.readFactWithdrawalClaim({ id: ids.get('w-private-page')!, sourceId: 'default', ...forms.floor })),
+      };
+      const subjects = (form: string) => Object.fromEntries(Object.entries(out[form]).map(([name, row]) => [name, row ? (row as { subject: string }).subject : null]));
+      expect(subjects('any')).toEqual({
+        'w-entity': 'people/e-example', 'w-unlinked': '*', 'w-unbacked': '*', 'w-expired': 'people/h-example', 'w-private-page': 'people/f-example',
+        'p-member': member, 'p-scope': 'memory/scope', 'p-open': 'people/e-example', marker: null, 'marker-text': '*', 'o-other': null,
+      });
+      expect(out.any['w-entity']).toEqual({ visibility: 'world', fact: '  Erin   ROWS boats ', fact_hash: (out.any['w-unlinked'] as { fact_hash: string }).fact_hash, subject: 'people/e-example', expired: false });
+      expect((out.any['w-expired'] as { expired: boolean }).expired).toBe(true);
+      expect(subjects('world')['p-member']).toBeNull();
+      expect(subjects('world')['p-open']).toBeNull();
+      expect(subjects('member')['p-member']).toBe(member);
+      expect(subjects('member')['p-open']).toBeNull();
+      expect(subjects('floor')['w-private-page']).toBeNull();
+      expect(subjects('floor')['w-entity']).toBe('people/e-example');
+      expect(extra.otherSource).toMatchObject({ subject: '*', visibility: 'world' });
+      expect(extra.unknown).toBeNull();
+      return { out, extra };
     });
 });

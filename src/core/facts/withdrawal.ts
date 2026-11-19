@@ -6,7 +6,6 @@ import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 import { ambiguousFenceClaims, discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
 import { remoteProvenanceFloorSql } from '../search/private-visibility.ts';
-import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
@@ -67,11 +66,9 @@ function withdrawalAdmitSql(excludePrivate?: boolean): string {
  * A fact on a member page is withdrawn for that page alone (its subject is the page's slug, GST-359 D).
  */
 export async function planFactWithdrawal(engine: BrainEngine, id: number, sourceId: string, worldOnly: boolean, excludePrivate?: boolean, memberPage?: string | null) {
-  const visible = await engine.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string; expired: boolean }>(
-    `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject,expired_at IS NOT NULL AS expired FROM facts WHERE id=$1 AND source_id=$2
-      AND NOT ${outcomeMarkerSql('facts')} ${withdrawalAdmitSql(excludePrivate)}`, [id, sourceId, worldOnly, memberPage ?? null]);
-  if (!visible.length) return null;
-  const { visibility, fact, fact_hash, subject, expired } = visible[0];
+  const claim = await engine.readFactWithdrawalClaim({ id, sourceId, worldOnly, memberPage: memberPage ?? null, remoteFloor: excludePrivate === true });
+  if (!claim) return null;
+  const { visibility, fact, fact_hash, subject, expired } = claim;
   // Discovery is keyed on the claim and its subject: a subject-scoped
   // withdrawal changes only that entity's pages and its facts' provenance.
   // Only an existing withdrawal covering this subject makes it a no-op.

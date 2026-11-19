@@ -10,13 +10,15 @@
  * visibility, the remote floor, a member's own page (whose slug now binds twice, $3 and $4, where the raw text reused $3)
  * and FOR UPDATE; and the reads that decide what a forget's withdrawal reaches (refuseForgetReachingOtherCopies and
  * ownerReachesFact, forget-prepare.ts): the unbacked check, the linked copies with and without the floor, the hidden
- * copy and the owner reach for an owner with and without a member identity.
+ * copy and the owner reach for an owner with and without a member identity; and the withdrawal claim read
+ * (planFactWithdrawal, src/core/facts/withdrawal.ts) with and without a member page and the floor.
  * Fails when a member reorders a clause, renumbers a placeholder or binds a value as text.
  * No database: the engine runs on the recording fake.
  */
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { factVisibilitySql, onOwnedMemoryPageSql } from '../src/core/access/member-facts.ts';
+import { factVisibilitySql, factWithdrawalSubjectSql, onOwnedMemoryPageSql } from '../src/core/access/member-facts.ts';
+import { outcomeMarkerSql } from '../src/core/facts/audit-sources.ts';
 import { unbackedEntitySql } from '../src/core/facts/withdrawal-schema.ts';
 import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
 import { ownerReadPolicyFragment, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql } from '../src/core/search/private-visibility.ts';
@@ -138,4 +140,16 @@ test('ownerReachesFact sends the old owner reach statement, with and without a m
   const identity = ['member:alice-example'];
   await engine.ownerReachesFact({ id: 5, sourceId: 'src-a', identity, satisfied: ['rule-1'] });
   expect(last()).toEqual({ text: old(identity, ['rule-1']), params: [5, 'src-a'] });
+});
+
+test('readFactWithdrawalClaim sends the old planFactWithdrawal statement, with and without a member page and the floor', async () => {
+  const { engine, last } = recordingEngine();
+  const old = (floor: boolean) => `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject,expired_at IS NOT NULL AS expired FROM facts WHERE id=$1 AND source_id=$2
+      AND NOT ${outcomeMarkerSql('facts')} AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${floor ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`;
+  await engine.readFactWithdrawalClaim({ id: 5, sourceId: 'src-a', worldOnly: false, memberPage: null, remoteFloor: false });
+  expect(last()).toEqual({ text: old(false), params: [5, 'src-a', false, null] });
+  await engine.readFactWithdrawalClaim({ id: 5, sourceId: 'src-a', worldOnly: true, memberPage: 'memory/members/alice-example', remoteFloor: false });
+  expect(last()).toEqual({ text: old(false), params: [5, 'src-a', true, 'memory/members/alice-example'] });
+  await engine.readFactWithdrawalClaim({ id: 5, sourceId: 'src-a', worldOnly: true, memberPage: null, remoteFloor: true });
+  expect(last()).toEqual({ text: old(true), params: [5, 'src-a', true, null] });
 });

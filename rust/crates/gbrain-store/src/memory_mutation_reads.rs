@@ -16,7 +16,7 @@ use crate::cli_reads::pg_text::fm_text;
 use crate::env::iso;
 use crate::error::Result;
 use crate::facts::PrivacyPolicy;
-use crate::facts::purge::unbacked;
+use crate::facts::purge::{outcome_marker, unbacked};
 use crate::facts::{
     FactRecord, access_readers, fact_fingerprint, hidden_by_deleted_page, hidden_by_policy,
     hidden_by_provenance_page, hidden_by_quarantine, read_fact, source_rows,
@@ -122,6 +122,20 @@ pub struct HiddenCopyQuery {
 pub struct OwnerReachQuery {
     pub id: i64,
     pub source_id: String,
+}
+
+/// `readFactWithdrawalClaim`'s spec: the fact a withdrawal admits.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WithdrawalClaimQuery {
+    pub id: i64,
+    pub source_id: String,
+    /// `worldOnly`: only a `world` fact, or a `private` one on `member_page`.
+    pub world_only: bool,
+    /// `memberPage`: a member's own page (the caller checked it), whose private facts `world_only` admits.
+    pub member_page: Option<String>,
+    /// `remoteFloor`: the remote provenance floor, as [`RemoteForgetTierQuery::remote_floor`].
+    pub remote_floor: Option<RemoteFloor>,
 }
 
 /// Whether `floor` hides `row` (`privateProvenanceFilterFragment`): its provenance page fails the
@@ -400,5 +414,49 @@ impl Store {
             }
         }
         Ok(true)
+    }
+
+    /// `readFactWithdrawalClaim`: fact `id` of `source_id`'s visibility, text, fingerprint,
+    /// ledger subject (`factWithdrawalSubjectSql`: its owned memory page's slug, `*` for no or an
+    /// unbacked entity, else the entity) and whether it expired; none for an extraction outcome
+    /// marker, for a fact `world_only` refuses (neither `world` nor `private` on `member_page`),
+    /// or with `remote_floor` for one the floor hides.
+    pub fn read_fact_withdrawal_claim(&self, q: &WithdrawalClaimQuery) -> Result<Option<Value>> {
+        const OP: &str = "readFactWithdrawalClaim";
+        no_nul(OP, &[("sourceId", &q.source_id)])?;
+        if let Some(page) = &q.member_page {
+            no_nul(OP, &[("memberPage", page)])?;
+        }
+        let read = self.read()?;
+        let Some(row) = source_fact(&*read, q.id, &q.source_id)? else {
+            return Ok(None);
+        };
+        let admitted = !q.world_only
+            || row.visibility == "world"
+            || (row.visibility == "private"
+                && q.member_page.is_some()
+                && row.source_markdown_slug == q.member_page);
+        if outcome_marker(&row) || !admitted {
+            return Ok(None);
+        }
+        if let Some(floor) = &q.remote_floor
+            && floor_hides(&*read, &row, floor)?
+        {
+            return Ok(None);
+        }
+        let subject = if row.on_owned_memory_page() {
+            row.source_markdown_slug.clone().unwrap_or_default()
+        } else if unbacked(&*read, &row)? {
+            "*".to_string()
+        } else {
+            row.entity_slug.clone().unwrap_or_else(|| "*".to_string())
+        };
+        Ok(Some(json!({
+            "visibility": row.visibility,
+            "fact": row.fact,
+            "fact_hash": fact_fingerprint(&row.fact),
+            "subject": subject,
+            "expired": row.expired_at_us.is_some(),
+        })))
     }
 }

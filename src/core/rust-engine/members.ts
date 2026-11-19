@@ -760,6 +760,7 @@ export const RUST_ENGINE_MEMBERS = {
   readLinkedFactCopies: 'facts',
   hasHiddenFactCopy: 'facts',
   ownerReachesFact: 'facts',
+  readFactWithdrawalClaim: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

@@ -8,7 +8,7 @@ mod memory_env;
 use gbrain_store::facts::{InsertFactsArgs, OwnerOnlyForm};
 use gbrain_store::memory_mutation_reads::{
     FactReadableQuery, ForgetTargetQuery, HiddenCopyQuery, LinkedCopiesQuery, OwnPage,
-    OwnerReachQuery, RemoteFloor, RemoteForgetTierQuery,
+    OwnerReachQuery, RemoteFloor, RemoteForgetTierQuery, WithdrawalClaimQuery,
 };
 use gbrain_store::sources::SourceInput;
 use memory_env::{Brain, brain};
@@ -516,4 +516,118 @@ fn the_remote_floor_hides_owner_only_facts_in_its_form() {
     assert!(!tier(vault, "vault", OwnerOnlyForm::Fn));
     // Off (the owner): nothing.
     assert!(tier(vault, "vault", OwnerOnlyForm::Off) && tier(open, "default", OwnerOnlyForm::Off));
+}
+
+#[test]
+fn the_withdrawal_claim_reads_the_subject_under_the_admission_rule() {
+    let b = brain("memory-mutation-reads-withdrawal-claim");
+    page(&b, "people/e-example", json!({}), None);
+    page(&b, "notes/open", json!({}), None);
+    page(
+        &b,
+        "notes/private",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    let member = "memory/members/alice-example";
+    let entity = claim(
+        &b,
+        "  Erin ROWS  boats",
+        Some("people/e-example"),
+        "notes/open",
+        "world",
+        1,
+    );
+    let unlinked = claim(&b, "Erin rows boats", None, "notes/open", "world", 2);
+    let unbacked = claim(
+        &b,
+        "Erin rows boats",
+        Some("erinname"),
+        "notes/open",
+        "world",
+        3,
+    );
+    let hidden = claim(
+        &b,
+        "Erin rows boats",
+        Some("people/f-example"),
+        "notes/private",
+        "world",
+        4,
+    );
+    let own = claim(
+        &b,
+        "Erin rows boats",
+        Some("people/e-example"),
+        member,
+        "private",
+        5,
+    );
+    let private = claim(
+        &b,
+        "Erin rows boats",
+        Some("people/e-example"),
+        "notes/open",
+        "private",
+        6,
+    );
+    let marker = b
+        .insert_facts(&args::<InsertFactsArgs>(json!({
+            "rows": [{ "fact": "EXTRACTION_COMPLETE", "source_markdown_slug": "notes/open", "row_num": 7,
+                "kind": "fact", "visibility": "world", "source": "cli:extract-conversation-facts:terminal" }],
+            "sourceId": "default",
+        })))
+        .unwrap()["ids"][0]
+        .as_u64()
+        .unwrap();
+    let read = |id: u64, world_only: bool, member_page: Option<&str>, floor: bool| {
+        let q: WithdrawalClaimQuery = args(
+            json!({ "id": id, "sourceId": "default", "worldOnly": world_only,
+            "memberPage": member_page,
+            "remoteFloor": floor.then(|| json!({ "honorAliases": true, "restricted": true })) }),
+        );
+        b.read_fact_withdrawal_claim(&q).unwrap()
+    };
+    let subject = |id: u64, world_only: bool, member_page: Option<&str>, floor: bool| {
+        read(id, world_only, member_page, floor).map(|r| r["subject"].as_str().unwrap().to_owned())
+    };
+    let first = read(entity, false, None, false).unwrap();
+    assert_eq!(first["visibility"], "world");
+    assert_eq!(first["fact"], "  Erin ROWS  boats");
+    assert_eq!(first["expired"], false);
+    assert_eq!(
+        first["fact_hash"],
+        read(unlinked, false, None, false).unwrap()["fact_hash"]
+    );
+    assert_eq!(
+        subject(entity, false, None, false).as_deref(),
+        Some("people/e-example")
+    );
+    assert_eq!(subject(unlinked, false, None, false).as_deref(), Some("*"));
+    assert_eq!(subject(unbacked, false, None, false).as_deref(), Some("*"));
+    assert_eq!(subject(own, false, None, false).as_deref(), Some(member));
+    assert_eq!(subject(marker, false, None, false), None);
+    // worldOnly admits a world fact and a private fact on the member page only.
+    assert_eq!(subject(own, true, None, false), None);
+    assert_eq!(
+        subject(own, true, Some(member), false).as_deref(),
+        Some(member)
+    );
+    assert_eq!(subject(private, true, Some(member), false), None);
+    // The floor hides a fact whose provenance page is private.
+    assert_eq!(
+        subject(hidden, true, None, false).as_deref(),
+        Some("people/f-example")
+    );
+    assert_eq!(subject(hidden, true, None, true), None);
+    assert_eq!(
+        subject(entity, true, None, true).as_deref(),
+        Some("people/e-example")
+    );
+    // Another source, an unknown id.
+    let q: WithdrawalClaimQuery = args(
+        json!({ "id": entity, "sourceId": "other", "worldOnly": false, "memberPage": null, "remoteFloor": null }),
+    );
+    assert!(b.read_fact_withdrawal_claim(&q).unwrap().is_none());
+    assert!(read(entity + 1000, false, None, false).is_none());
 }
