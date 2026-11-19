@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readMentionIndexStatus returns the status rows of the listed sources only;
  *    countLivePagesInSource counts a source's live pages; countMentionDueSince counts a source's
- *    live, unscanned pages written at or after a bound; recountMentionIndexStatus saves a recount
+ *    live, unscanned pages written at or after a bound (`-infinity` for none); recountMentionIndexStatus saves a recount
  *    (pending, policy fingerprint, counted_at) only while the stored fingerprint is still the one
  *    the caller read, flips `complete` to `pending` when the recount is above 0, and leaves every
  *    other state, and a row whose fingerprint moved, unchanged.
@@ -70,6 +70,11 @@ for (const kind of testBackends()) {
       expect(await engine.countLivePagesInSource('ghost')).toBe(0);
       expect(await engine.countMentionDueSince('default', COUNTED_AT, MENTION_EXTRACTOR_VERSION)).toBe(2);
       expect(await engine.countMentionDueSince('default', '2999-01-01T00:00:00.000Z', MENTION_EXTRACTOR_VERSION)).toBe(0);
+    });
+
+    test('the written-since count with no bound (-infinity, a status row with no counted_at) counts every unscanned live page', async () => {
+      expect(await engine.countMentionDueSince('default', '-infinity', MENTION_EXTRACTOR_VERSION)).toBe(2);
+      expect(await engine.countMentionDueSince('other', '-infinity', MENTION_EXTRACTOR_VERSION)).toBe(1);
     });
 
     test('the recount saves only while the fingerprint is the one read, and flips complete to pending', async () => {
