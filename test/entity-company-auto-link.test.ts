@@ -31,6 +31,8 @@ import { confirmedCoMembers, linkEntityIdentity } from '../src/core/entity-ident
 import { autoLinkCompanies } from '../src/core/entities/company-auto-link.ts';
 import { decisionId, IDENTITY_DIR, projectIdentityDecisions, identityHome, syncIdentityDecisions } from '../src/core/entities/identity-decisions.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { operations, type OperationContext } from '../src/core/operations.ts';
+import { run as runImportCli } from '../src/cli/commands/import.ts';
 
 for (const backend of testBackends()) describe(backend, () => {
 let engine: BrainEngine;
@@ -77,6 +79,10 @@ async function cli(args: string[]): Promise<string> {
 }
 const previewMembers = async () => (JSON.parse(await cli(['--preview', '--json'])).groups as Array<{ members: Array<{ source_id: string; slug: string }> }>)
   .map(g => g.members.map(m => `${m.source_id}:${m.slug}`).join(' '));
+const opCtx = (overrides: Partial<OperationContext> = {}) => ({
+  engine, config: {} as never, logger: { info() {}, warn() {}, error() {} } as never, dryRun: false, remote: false, ...overrides,
+} as OperationContext);
+const op = (name: string) => operations.find(o => o.name === name)!;
 const pageRef = async (sourceId: string, slug: string) => (await engine.executeRaw<{ id: number; generation: string }>(
   'SELECT id, generation::text AS generation FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]))[0]!;
 
@@ -193,6 +199,76 @@ describe('without a repository', () => {
     await syncIdentityDecisions(engine, 'default');
     const [d] = (await engine.listIdentityDecisions()).decisions;
     expect(d!.evidence).toHaveLength(2);
+  });
+
+  test('a page that carries the same LinkedIn or GitHub id behind a query string or fragment keeps the pair unlinked on sync, as on reconcile', async () => {
+    await company('default');
+    await company('source-b');
+    await company('source-c', { linkedin: 'https://www.linkedin.com/company/acme-example?originalSubdomain=uk', website: 'acme-example.co.uk' }, 'Acme Example UK Holdings', 'companies/acme-example-uk');
+    await put('companies/orbin', 'company', 'Orbin Example', { github: 'orbin-example', website: 'https://orbin-example.com/' }, 'default');
+    await put('companies/orbin', 'company', 'Orbin Example', { github: 'orbin-example', website: 'orbin-example.com' }, 'source-b');
+    await put('companies/orbin-labs', 'company', 'Orbin Labs', { github: 'https://github.com/orbin-example#readme' }, 'source-c');
+    await sweepAfterSync('source-b', 'companies/acme-example', 'companies/orbin');
+    expect(await identities()).toEqual([]);
+    expect((await autoLinkCompanies(engine)).linked).toBe(0);
+  });
+
+  test('a person page that carries the company LinkedIn page keeps the pair unlinked, as the preview counts it', async () => {
+    await company('default');
+    await company('source-b');
+    await put('people/bob-example', 'person', 'Bob Example', { linkedin: 'https://www.linkedin.com/company/acme-example/' }, 'source-c');
+    await sweepAfterSync('source-b', 'companies/acme-example');
+    expect(await identities()).toEqual([]);
+    expect((await autoLinkCompanies(engine)).linked).toBe(0);
+  });
+
+  test('rejecting a pair of pages with no strong id keeps only that pair apart, never another pair with the same name', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-d', 'source-d') ON CONFLICT DO NOTHING");
+    await put('people/sam-example', 'person', 'Sam Example', { email: 'sam@example.com' }, 'default');
+    await put('people/sam-example', 'person', 'Sam Example', { email: 'sam@example.com' }, 'source-b');
+    await put('people/sam-example', 'person', 'Sam Example', { phone: '+1 415 555 0199' }, 'source-c');
+    await put('people/sam-example', 'person', 'Sam Example', { phone: '+1 415 555 0199' }, 'source-d');
+    const groups = JSON.parse(await cli(['--preview', '--json'])).groups as Array<{ id: string; members: Array<{ source_id: string }> }>;
+    await cli(['reject', groups.find(g => g.members.some(m => m.source_id === 'default'))!.id]);
+    expect(await previewMembers()).toEqual(['source-c:people/sam-example source-d:people/sam-example']);
+  });
+
+  test('a page the sync linked is moved by hand into another group, but not unlinked by hand; reject by the dedupe/ group id removes the link', async () => {
+    await company('default');
+    await company('source-b');
+    await company('default', { linkedin: 'linkedin.com/company/velfield-example', website: 'velfield-example.com' }, 'Velfield Example', 'companies/velfield-example');
+    await company('source-c', { linkedin: 'linkedin.com/company/velfield-example', website: 'velfield-example.com' }, 'Velfield Example', 'companies/velfield-example');
+    expect((await autoLinkCompanies(engine)).linked).toBe(2);
+    const acme = (await identities()).find(r => r.slug === 'companies/acme-example')!.entity_id;
+    await expect(op('entity_identity_unlink').handler(opCtx(), { entity_id: acme, slug: 'companies/acme-example', source_id: 'source-b' }))
+      .rejects.toMatchObject({ code: 'identity_link_owned_by_dedupe' });
+    await op('entity_identity_link').handler(opCtx(), { entity_id: 'acme-by-hand', slug: 'companies/acme-example', source_id: 'source-b', canonical: true });
+    await sweepAfterSync('source-b', 'companies/acme-example');
+    expect((await identities()).filter(r => r.slug === 'companies/acme-example').map(r => [r.source_id, r.entity_id, r.established_by]))
+      .toEqual([['source-b', 'acme-by-hand', 'manual']]);
+    const velfield = JSON.parse(await cli(['--preview', '--json'])).groups.find((g: { members: Array<{ slug: string }> }) => g.members[0]!.slug === 'companies/velfield-example').id;
+    expect(await cli(['reject', velfield])).toContain('as different people or companies');
+    expect((await identities()).filter(r => r.established_by === 'dedupe:auto')).toEqual([]);
+  });
+
+  test('rank_entities counts a company the sync linked once', async () => {
+    await company('default');
+    await company('source-b');
+    await engine.putPage('notes/n1', { type: 'note', title: 'n1', compiled_truth: 'Note.', timeline: '', frontmatter: {} } as never, { sourceId: 'source-b' });
+    await engine.addLink('notes/n1', 'companies/acme-example', '', 'references', 'manual', undefined, undefined, { fromSourceId: 'source-b', toSourceId: 'source-b' });
+    await autoLinkCompanies(engine);
+    const ranked = ((await op('rank_entities').handler(opCtx(), { types: ['company'] })) as { entities: Array<{ slug: string; source_id: string; inbound: number }> })
+      .entities.map(e => [e.source_id, e.slug, e.inbound]);
+    expect(ranked).toEqual([['default', 'companies/acme-example', 1]]);
+  });
+
+  test('gbrain import links the companies it brings in on a brain with no repository', async () => {
+    await company('source-b');
+    const dir = mkdtempSync(join(tmpdir(), 'company-auto-link-import-'));
+    mkdirSync(join(dir, 'companies'), { recursive: true });
+    writeFileSync(join(dir, 'companies', 'acme-example.md'), '---\ntype: company\ntitle: Acme Example\nlinkedin: https://www.linkedin.com/company/acme-example/\nwebsite: https://acme-example.com\n---\nAcme Example.\n');
+    await runImportCli(engine, [dir, '--no-embed']);
+    expect((await identities()).map(r => [r.source_id, r.established_by])).toEqual([['default', 'dedupe:auto'], ['source-b', 'dedupe:auto']]);
   });
 });
 

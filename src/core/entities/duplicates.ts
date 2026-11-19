@@ -80,7 +80,7 @@ export interface EntityPage extends DuplicateMember {
   ownDomains: Set<string>;
   countries: Set<string>;
   /** pageFingerprint: its variant name and strong keys, read before crowded values are dropped. */
-  fingerprint: string;
+  fingerprint: string | null;
 }
 export interface KeyValueCarriers { key: KeyType; field: string; value: string; pages: EntityPage[] }
 export interface DuplicateScan {
@@ -115,8 +115,6 @@ export interface FindDuplicatesOptions {
   near?: DuplicateMember[];
   /** How many hops out `near` reads; 2 unless set. */
   nearHops?: number;
-  /** Read only pages of this kind. */
-  onlyKind?: EntityKind;
 }
 
 const PLACEHOLDER_WORDS = new Set(['unknown', 'none', 'null', 'n/a', 'na', 'tbd', 'todo', '-', '?']);
@@ -198,10 +196,12 @@ const STRONG_KEYS: ReadonlySet<KeyType> = new Set(['linkedin', 'github', 'domain
  * A page's fingerprint: 32 hex of sha256 over its kind, its variant name (leading titles and company suffixes dropped,
  * so "Acme" and "Acme Ltd" agree) and its strong key values (LinkedIn, GitHub, domain, declared ids), never the values
  * themselves. A "different" decision keeps its members' fingerprints, so the pair stays apart after a new slug, a move
- * to another source or a suffix added to the name; a page edited to new keys or another name is new evidence.
+ * to another source or a suffix added to the name; a page edited to new keys or another name is new evidence. A page
+ * with no strong key has none, since its name alone would keep every namesake apart; its pair stays apart by slug.
  */
-export function pageFingerprint(type: EntityKind, name: string, keys: ReadonlyMap<string, PageKey>): string {
+export function pageFingerprint(type: EntityKind, name: string, keys: ReadonlyMap<string, PageKey>): string | null {
   const values = [...keys].filter(([, k]) => STRONG_KEYS.has(k.key)).flatMap(([id, k]) => [...k.values].map(v => `${id}=${v}`)).sort();
+  if (!values.length) return null;
   return createHash('sha256').update([type, name, ...values].join('\n')).digest('hex').slice(0, 32);
 }
 
@@ -237,7 +237,7 @@ async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promi
   const sources = await engine.listAllSources();
   const typesBySource = new Map<string, SourceTypes>();
   for (const s of sources) typesBySource.set(s.id, await sourceTypes(engine, s.id, opts.identityKeys));
-  const types = [...new Set([...typesBySource.values()].flatMap(t => [...(opts.onlyKind !== 'company' ? t.person : []), ...(opts.onlyKind !== 'person' ? t.company : [])]))].sort();
+  const types = [...new Set([...typesBySource.values()].flatMap(t => [...t.person, ...t.company]))].sort();
   const declaredFields = [...new Set([...typesBySource.values()].flatMap(t => [...t.declared.person, ...t.declared.company]))];
   const keyFields = [...new Set([...KEY_SPECS.flatMap(s => s.fields), ...declaredFields, 'distinct_from', 'country'])].sort();
   const tokenFields = [...new Set([...KEY_SPECS.filter(s => s.key_class === 'exclusive').flatMap(s => s.fields), ...declaredFields])].sort();
@@ -530,7 +530,7 @@ function decidedChecks(decided: FindDuplicatesOptions['decided']) {
   const matched = (evidence: string[], members: EntityPage[]) => {
     const left = [...evidence];
     let n = 0;
-    for (const m of members) { const at = left.indexOf(m.fingerprint); if (at >= 0) { left.splice(at, 1); n++; } }
+    for (const m of members) { const at = m.fingerprint ? left.indexOf(m.fingerprint) : -1; if (at >= 0) { left.splice(at, 1); n++; } }
     return n;
   };
   const confirmedSets = (decided?.confirmed ?? []).map(set => new Set(set.map(pageKey)));

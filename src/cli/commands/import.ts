@@ -17,6 +17,10 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   // so wrappers (sync, CI scripts, `&& gbrain doctor`) propagate.
   try {
     const importResult = await runImport(engine, args);
+    if (importResult.imported > 0) {
+      const [{ linkCompaniesThatShareAnId }, { serr }] = await Promise.all([import('../../core/entities/identity-decisions.ts'), import('../../core/console-prefix.ts')]);
+      await linkCompaniesThatShareAnId(engine, 'all', serr);
+    }
     if (importResult.privacy_label_notice && !args.includes('--json')) {
       const [{ cliRenderContext, renderNotice }, { renderCliNotices }, { isInteractive }] = await Promise.all([
         import('../../core/agent-output.ts'), import('../../core/agent-markers.ts'), import('../../core/interaction.ts')]);

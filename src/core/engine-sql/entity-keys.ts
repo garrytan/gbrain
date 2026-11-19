@@ -63,8 +63,8 @@ export async function listEntityKeyRows(exec: LegacyUnscopedRead, opts: EntityKe
              CROSS JOIN LATERAL (SELECT lower(btrim(v.value)) AS raw) n
              CROSS JOIN LATERAL unnest(ARRAY[n.raw, ltrim(n.raw, '@'),
                  split_part(split_part(split_part(split_part(regexp_replace(n.raw, '^[a-z][a-z0-9+.-]*://(www[.])?', ''), '/', 1), '?', 1), '#', 1), ':', 1),
-                 split_part(split_part(n.raw, 'company/', 2), '/', 1), split_part(split_part(n.raw, 'in/', 2), '/', 1),
-                 split_part(split_part(n.raw, 'pub/', 2), '/', 1), split_part(split_part(n.raw, 'github.com/', 2), '/', 1)]) AS t(form)
+                 (regexp_match(n.raw, '(?:^|/)(?:in|company|pub)/([^/?#[:space:]]+)'))[1],
+                 (regexp_match(n.raw, 'github[.]com/([^/?#[:space:]]+)'))[1]]) AS t(form)
             WHERE t.form = ANY(${tokens?.values ?? []}::text[])))
        AND (p.source_id, p.slug) > (${opts.after?.source_id ?? ''}::text, ${opts.after?.slug ?? ''}::text)
      ORDER BY p.source_id, p.slug

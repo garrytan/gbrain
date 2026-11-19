@@ -1,8 +1,8 @@
 /**
  * Companies that share an id link automatically (GST-3127, Garry's A1 and E1 to E3): after a sync, the company groups the
  * changed pages belong to are linked as one identity ('dedupe:auto' rows in entity_identities, database only, never in
- * git), and the automatic groups that no longer qualify are removed. `gbrain dedupe reconcile` runs the same sweep over
- * every company. People are never linked automatically, and nothing merges, renames or deletes a page.
+ * git), and the automatic groups that no longer qualify are removed. `gbrain dedupe reconcile` and `gbrain import` run the
+ * same sweep over every company. People are never linked automatically, and nothing merges, renames or deletes a page.
  *
  * A cross-source company group links when all of these hold: the finder classes it `clean` (one type, one member per
  * source, one strict name, no vetoing key, no two different domains, and a shared exclusive key no page outside the
@@ -42,7 +42,7 @@ export async function autoLinkCompanies(engine: BrainEngine, opts: { near?: Dupl
     opts.log?.('[dedupe] companies that share an id are linked by the host that holds the checkout of the decisions; skipped here');
     return none({ skipped_sweep: 'no_checkout' });
   }
-  const { result, kindOf, pages } = await findTypedDuplicateGroups(engine, { decided: decidedSets(read), kind: 'cross_source', onlyKind: 'company', ...(opts.near ? { near: opts.near } : {}) });
+  const { result, kindOf, pages } = await findTypedDuplicateGroups(engine, { decided: decidedSets(read), kind: 'cross_source', ...(opts.near ? { near: opts.near } : {}) });
   const touched = opts.near ? new Set(opts.near.map(memberKey)) : null;
   const inSame = new Set(read.decisions.filter(d => d.verdict === 'same').flatMap(d => d.members.map(memberKey)));
 
@@ -67,9 +67,11 @@ export async function autoLinkCompanies(engine: BrainEngine, opts: { near?: Dupl
     .filter(p => p.identity?.established_by === AUTO_LINK_ORIGIN && (!touched || touched.has(memberKey(p)) || plannedPages.has(p.page_id)) && !planned.has(p.identity.entity_id))
     .map(p => p.identity!.entity_id))];
   const gone = !!touched && [...touched].some(k => !pages.has(k));
+  const autoIds = [...pages.values()].flatMap(p => p.identity?.established_by === AUTO_LINK_ORIGIN ? [p.identity.entity_id] : []);
+  const lonely = autoIds.some(id => autoIds.indexOf(id) === autoIds.lastIndexOf(id));
   const byPage = new Map([...pages.values()].map(p => [p.page_id, p.identity?.entity_id]));
   const fresh = link.filter(g => !g.members.every(m => byPage.get(m.page_id) === g.entity_id));
-  if (!fresh.length && !unlink.length && !gone) return none({ planned: link.length });
+  if (!fresh.length && !unlink.length && !gone && !lonely) return none({ planned: link.length });
   const r = await engine.applyIdentityDecisions({ expectRevision: read.revision, auto: { link: fresh, unlink } });
   if (r.stale) return none({ planned: link.length, skipped: link.length, skipped_sweep: 'stale' });
   return { scope, planned: link.length, linked: r.auto?.linked ?? 0, unlinked: r.auto?.unlinked ?? 0, skipped: r.auto?.skipped ?? 0 };

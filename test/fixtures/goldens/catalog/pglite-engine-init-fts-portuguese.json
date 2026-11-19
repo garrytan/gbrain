@@ -2689,7 +2689,8 @@
           "9 decided_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "10 origin text/text NOT NULL",
           "11 home_source_id text/text NULL",
-          "12 git_blob text/text NULL"
+          "12 git_blob text/text NULL",
+          "13 evidence jsonb/jsonb NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
