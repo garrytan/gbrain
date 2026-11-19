@@ -83,6 +83,7 @@ const OOS = {
   factsTrust: 'out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)',
   trustWithdrawals: 'out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)',
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
+  pageRetrievals: 'out-of-scope:page-retrievals (born in engine-sql/pages.ts; pinned by test/engine-parity/pages.test.ts)',
   trustTierReads: 'out-of-scope:trust-tier-reads (born in engine-sql/trust-tier-reads.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)',
   openLoops: 'out-of-scope:open-loops (born in engine-sql/open-loops.ts; pinned by test/engine-parity/open-loops.test.ts)',
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
@@ -126,6 +127,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'upsertPageWriteGateReceipt': OOS.trustWriteGate,
   'upsertWriteGateHold': OOS.trustWriteGate,
   'upsertWriteGateReceipt': OOS.trustWriteGate,
+  'listTrustAllowRuleRows': OOS.trustWriteGate,
   // Group 5 facts statements, the minion queue and the raw transaction seam (merged into rust-engine/cli-members).
   'assertCycleLease': OOS.cycleLocks,
   'closedLoopWithActiveFact': OOS.factsRepair,
@@ -347,6 +349,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'pendingTrustProposalsFor': OOS.trustProposals,
   'updatePendingTrustProposalAfter': OOS.trustProposals,
   'transitionTrustProposal': OOS.trustProposals,
+  'listPendingContradictions': OOS.trustProposals,
   'hasPersistenceTable': OOS.connectGate,
   'listManagedRootBindings': OOS.connectGate,
   'readGraduationGateRow': OOS.connectGate,
@@ -584,6 +587,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFolderAccess': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
+  'notifierCoverageRecorded': OOS.writeMisc,
+  'bumpPageRetrievals': OOS.pageRetrievals,
   'readAdmissionSource': OOS.writeMisc,
   'sharedSkillPackTablePresent': OOS.writeMisc,
   'listSharedSkillPackRoots': OOS.writeMisc,

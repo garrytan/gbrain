@@ -3,7 +3,9 @@
  * pendingTrustProposalsFor, updatePendingTrustProposalAfter, transitionTrustProposal), over
  * `rust/crates/gbrain-store/src/trust/proposals.rs`. The store returns rows with the `SELECT *` column names and ISO times;
  * `normalizeTrustProposal` turns them into the rows the SQL engines return. The proposer principal and write request read
- * NULL on the store (rust/docs/store/trust.md, "Trust proposals").
+ * NULL on the store (rust/docs/store/trust.md, "Trust proposals"). `listPendingContradictions` reads `decide_proposals`,
+ * which the store does not keep: the decide sweep files them through raw SQL, which this engine refuses, so no Rust brain
+ * holds one and the list is empty.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { normalizeTrustProposal, trustProposalLimit } from '../../engine-sql/trust-proposals.ts';
@@ -44,3 +46,6 @@ export const updatePendingTrustProposalAfter: Member<'updatePendingTrustProposal
 export const transitionTrustProposal: Member<'transitionTrustProposal'> = (brain, id, from, to, opts = {}) =>
   storeCall({ member: 'transitionTrustProposal' }, () => brain.transitionTrustProposal(id, from, to, opts.after ?? null,
     opts.decidedBy ? { kind: opts.decidedBy.kind, id: opts.decidedBy.id } : null));
+
+/** The store keeps no decide proposals (the sweep's insert is raw SQL, refused here), so no contradiction is pending. */
+export const listPendingContradictions: Member<'listPendingContradictions'> = async () => [];
