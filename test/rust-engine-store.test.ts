@@ -524,6 +524,32 @@ describe('access member reads on a Rust brain', () => {
         ['stdio_config', 'mcp.stdio_member', null], ['member', 'alice-example', null]],
     });
   });
+
+  withAddon('listPagesNamingReader reads the stored pages, not raw SQL: readers name the principal exactly', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const put = (slug: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', frontmatter });
+    await put('notes/b', { readable_by: ['alice-example', 'group:team-a'] });
+    await put('notes/a', { readable_by: ' Member:Alice-Example ' });
+    await put('notes/open', { owner: 'alice-example' });
+    raw.length = 0;
+    const answers = {
+      member: await engine.listPagesNamingReader('member:alice-example'),
+      group: await engine.listPagesNamingReader('group:team-a'),
+      bare: await engine.listPagesNamingReader('alice-example'),
+    };
+    expect(answers).toEqual({
+      member: [{ slug: 'notes/a', source_id: 'default' }, { slug: 'notes/b', source_id: 'default' }],
+      group: [{ slug: 'notes/b', source_id: 'default' }], bare: [],
+    });
+    expect(raw).toEqual([]);
+  });
 });
 
 describe('Rust store page codec', () => {

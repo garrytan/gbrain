@@ -742,6 +742,7 @@ export const RUST_ENGINE_MEMBERS = {
   listAudienceAccessMembers: 'access_control',
   readLiveMember: 'access_control',
   readFolderAccess: 'access_control',
+  listPagesNamingReader: 'access_control',
   listActiveAccessMembers: 'access_control',
   hasLabelledOnlyMember: 'access_control',
   listAccessTokens: 'access_control',

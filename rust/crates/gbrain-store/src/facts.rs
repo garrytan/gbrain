@@ -53,7 +53,7 @@ pub mod generations;
 mod held_cells;
 pub mod loops;
 mod page_purges;
-mod privacy;
+pub(crate) mod privacy;
 pub mod purge;
 pub mod purge_ledger;
 pub mod quote;

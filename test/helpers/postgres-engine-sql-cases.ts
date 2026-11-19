@@ -729,6 +729,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAudienceAccessMembers': OOS.callerRawSql,
   'readLiveMember': OOS.callerRawSql,
   'readFolderAccess': OOS.callerRawSql,
+  'listPagesNamingReader': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'notifierCoverageRecorded': OOS.writeMisc,
@@ -1555,6 +1556,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['no_readers', (e) => e.readFolderAccess([])],
     ['readers', (e) => e.readFolderAccess(['alice-example', 'group:team-a'])],
   ]),
+  ...variants('listPagesNamingReader', [['default', (e) => e.listPagesNamingReader('member:alice-example')]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

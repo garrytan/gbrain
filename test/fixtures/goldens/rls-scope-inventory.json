@@ -2950,6 +2950,17 @@
           "*"
         ]
       },
+      "listPagesNamingReader#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPendingSegmentedProjections#default": {
         "flagOffLanes": [
           "pool"
@@ -6127,6 +6138,7 @@
         "listPageRefsByIds": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
+        "listPagesNamingReader": "none",
         "listPagesTitledIn": "none",
         "listPendingContradictions": "none",
         "listPendingSegmentedProjections": "none",
