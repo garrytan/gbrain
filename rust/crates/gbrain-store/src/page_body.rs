@@ -633,6 +633,17 @@ pub(crate) fn segmented_body_bytes(read: &dyn KvRead, page_id: u64) -> Result<Op
         .and_then(|state| state.body_bytes))
 }
 
+/// The `body_flags` of segmented page `page_id`: `Some(flags)` for a segmented page (`Some(None)` when its column is
+/// NULL), `None` for an inline page or a missing page. The link reads test `body_flags->>'has_protected'` on it.
+pub(crate) fn segmented_body_flags(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<Option<Value>>> {
+    Ok(read_body_state(read, page_id)?
+        .filter(|state| state.body_storage == "segmented")
+        .map(|state| state.body_flags))
+}
+
 fn is_segmented(state: Option<&BodyState>) -> bool {
     state.is_some_and(|s| s.body_storage == "segmented")
 }

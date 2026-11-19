@@ -23,7 +23,8 @@
 //!
 //! The read policy of `src/core/search/read-policy-sql.ts` (`pageReadFilter`) is modelled for the
 //! source filter and the live test (not soft-deleted, not quarantined, source not archived).
-//! Trust, safe-chunk and temporal filters are refused by the TypeScript members, and so is the
+//! `requireSafeChunks` is modelled on the relational walks (the canonical chunk's safe fence and the
+//! chain's evidence `textGate`). Trust and temporal filters are refused by the TypeScript members, and so is the
 //! privacy filter except on `getBacklinkCounts`, `getAdjacencyBoosts` and `supersedingPageSlugs`,
 //! which pass `excludePrivate` as a `PrivacyPolicy` (`GraphScope.exclude_private`). The
 //! store keeps every chunk inline, so a page's canonical chunk is its lowest `chunk_index`
@@ -31,7 +32,7 @@
 
 use crate::Store;
 use crate::chunks::read_chunks;
-use crate::error::{INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
+use crate::error::{INVALID_ARGUMENT, INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
@@ -165,6 +166,8 @@ pub struct FanoutOptions {
     pub depth: u32,
     pub include_mentions: bool,
     pub limit: usize,
+    /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
+    pub require_safe_chunks: bool,
 }
 
 /// `ChainHopOpts`, the part the store reads. `neighborCap` arrives clamped to 1..=1000.
@@ -179,6 +182,12 @@ pub struct ChainHopOptions {
     pub object_types: Vec<String>,
     pub degree_link_types: Vec<String>,
     pub neighbor_cap: usize,
+    /// `requiresSafeChunks(opts)`: the next page's canonical chunk is read only from a page sealed at the safe fence.
+    pub require_safe_chunks: bool,
+    /// `textGate` of readChainHop, decided by the TypeScript member (it knows the caller): `body` returns an edge's
+    /// context only when the evidence page is sealed and holds no facts / takes fence, `takes` only when it is sealed
+    /// and holds no takes fence, and absent returns it whenever the evidence page is readable.
+    pub text_gate: Option<String>,
 }
 
 /// `DerivedLinkOrigin` without the refused `snapshot`.
@@ -303,13 +312,49 @@ impl<'a> Pages<'a> {
         }
     }
 
-    /// The page's lowest-ordinal chunk id.
-    fn canonical_chunk(&self, page_id: u64) -> Result<Option<u64>> {
+    /// The page's lowest-ordinal chunk id. With `require_safe` (`requiresSafeChunks`), only a page sealed at the safe
+    /// fence has one (`EXISTS (... safeChunksFilter('cp'))`).
+    fn canonical_chunk(&mut self, page_id: u64, require_safe: bool) -> Result<Option<u64>> {
+        if require_safe && !self.get(page_id)?.is_some_and(|p| sealed_safe(&p)) {
+            return Ok(None);
+        }
         Ok(read_chunks(self.read, page_id)?
             .into_iter()
             .min_by_key(|c| c.chunk_index)
             .map(|c| c.id))
     }
+}
+
+/// `safeChunksFilter`: `chunker_version >= 4`; a page that records no version is not safe (the comparison is NULL).
+fn sealed_safe(page: &PageRecord) -> bool {
+    page.chunker_version
+        .is_some_and(|v| v >= crate::chunks::SAFE_FENCE_CHUNKER_VERSION)
+}
+
+/// `PROTECTED_MARKER` of src/core/search/safe-chunks.ts: `<!--- gbrain:(facts|takes):(begin|end) -->`.
+fn has_marker(text: Option<&str>, kinds: &[&str]) -> bool {
+    let Some(text) = text else { return false };
+    kinds.iter().any(|kind| {
+        ["begin", "end"]
+            .iter()
+            .any(|edge| text.contains(&format!("<!--- gbrain:{kind}:{edge} -->")))
+    })
+}
+
+/// `protectedBodyFilter` (kinds facts and takes) or `protectedTakesFilter` (takes only). A segmented page has no body
+/// columns: its `body_flags.has_protected` decides, and a page without the flag counts as protected (fail closed:
+/// `body_flags->>'has_protected' IS DISTINCT FROM 'false'`).
+fn protected_body(read: &dyn KvRead, page: &PageRecord, kinds: &[&str]) -> Result<bool> {
+    if let Some(flags) = crate::page_body::segmented_body_flags(read, page.id)? {
+        let unprotected = match flags.as_ref().and_then(|f| f.get("has_protected")) {
+            Some(Value::Bool(false)) => true,
+            Some(Value::String(s)) => s == "false",
+            _ => false,
+        };
+        return Ok(!unprotected);
+    }
+    Ok(has_marker(page.compiled_truth.as_deref(), kinds)
+        || has_marker(page.timeline.as_deref(), kinds))
 }
 
 /// `rankingLinkSql`: the link may feed a ranking signal.
@@ -1302,7 +1347,7 @@ impl Store {
                 "via_link_types": node.types.into_iter().collect::<Vec<_>>(),
                 "path": split(&path),
                 "path_edges": split(&edges),
-                "canonical_chunk_id": pages.canonical_chunk(id)?,
+                "canonical_chunk_id": pages.canonical_chunk(id, options.require_safe_chunks)?,
             }));
         }
         Ok(out)
@@ -1473,9 +1518,25 @@ impl Store {
                     None => None,
                 };
                 let evidence_page = el.origin_page_id.unwrap_or(el.from_page_id);
-                let context = pages
-                    .readable(evidence_page, &scope, true)?
-                    .map(|_| el.context.clone());
+                let context = match pages.readable(evidence_page, &scope, true)? {
+                    None => None,
+                    Some(ev) => {
+                        let kinds: &[&str] = match options.text_gate.as_deref() {
+                            None => &[],
+                            Some("takes") => &["takes"],
+                            Some("body") => &["facts", "takes"],
+                            Some(other) => {
+                                return Err(StoreError::new(
+                                    INVALID_ARGUMENT,
+                                    format!("relationalChainHop: unknown textGate {other:?}"),
+                                ));
+                            }
+                        };
+                        let gated = !kinds.is_empty()
+                            && (!sealed_safe(&ev) || protected_body(&*read, &ev, kinds)?);
+                        (!gated).then(|| el.context.clone())
+                    }
+                };
                 g.link_ids.sort_unstable();
                 out.push(json!({
                     "from_page_id": f,
@@ -1491,7 +1552,7 @@ impl Store {
                     "context": context,
                     "origin_page_id": el.origin_page_id,
                     "origin_slug": origin_slug,
-                    "canonical_chunk_id": pages.canonical_chunk(g.next)?,
+                    "canonical_chunk_id": pages.canonical_chunk(g.next, options.require_safe_chunks)?,
                     "from_degree": degree,
                     "neighbor_cap_hit": per_frontier > cap,
                 }));

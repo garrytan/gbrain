@@ -30,9 +30,13 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 - Read policy the store does not record: `minTrust`, `suppressFlagged` and any temporal option
   (`temporal`, `wanted`, `lineGrammar`, `temporalBody`), and `excludePrivate` on every member but the three ranking
-  reads below. `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter` does not read
-  them: they only turn the live filter on in `relationalFanout`, and they are ignored by `getBacklinkCounts`,
-  `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
+  reads below. `requireSafeChunks` and `takesHoldersAllowList` are accepted: they turn the live filter on in
+  `relationalFanout` and are ignored by `getBacklinkCounts` and `getAdjacencyBoosts`, as in the SQL engines. With
+  `requireSafeChunks`, `relationalFanout` and `relationalChainHop` give a page a `canonical_chunk_id` only when it is
+  sealed at the safe fence (`chunker_version >= 4`), and `relationalChainHop` applies readChainHop's `textGate` to edge
+  context: the TypeScript member reads the caller and sends `textGate: 'body'` (the evidence page must be sealed and hold
+  no facts / takes fence; a segmented page's `body_flags.has_protected` decides, fail closed), `'takes'` (an owner call
+  whose credential names a holders list: sealed and no takes fence) or none (the owner's own direct call).
 - `excludePrivate` on `getBacklinkCounts`, `getAdjacencyBoosts` and `supersedingPageSlugs` is the page policy
   `pageReadFilter` adds, judged by `page_hidden` in `facts/privacy.rs`. The wire scope carries it as `excludePrivate`
   (`{ honorAliases, entityPrivacy, ownerOnly }`, `GraphScope.exclude_private`) and every page the read judges must pass it: the

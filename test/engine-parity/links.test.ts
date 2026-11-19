@@ -21,10 +21,11 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
-import type { Link, PageInput, PageType } from '../../src/core/types.ts';
+import type { Link, PageInput, PageType, RelationalFanoutOpts } from '../../src/core/types.ts';
 import { linkFamily } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -492,6 +493,61 @@ describe('engine parity: relational fan-out', () => {
       expect(toSubject.map((e) => e.to)).toEqual(['people/ep-emp-c']);
       expect(empty).toEqual([]);
       return { toObject: sorted(toObject, (e) => e.to), toSubject, capped, empty };
+    },
+  );
+
+  // Review finding specialist-batched#1 / targeted#1 and #5: with requireSafeChunks the SQL engines return an edge's
+  // context only when its evidence page is sealed at the safe fence and holds no facts/takes fence (textGate), and a
+  // canonical chunk only for a sealed page.
+  parityTest(
+    'requireSafeChunks withholds edge context and canonical chunks of unsealed or fenced pages',
+    { methods: ['relationalChainHop', 'relationalFanout', 'sealChunks', 'upsertChunks', 'addLink'] },
+    async (engine) => {
+      const company = (await engine.putPage('companies/sf-co', page('companies/sf-co', { type: 'company' }))).id;
+      const people: Array<[string, string]> = [
+        ['people/sf-sealed', 'sealed plain body'],
+        ['people/sf-unsealed', 'unsealed plain body'],
+        ['people/sf-fenced', 'fenced body\n\n<!--- gbrain:facts:begin -->\n| 1 | owns the vault | fact |\n<!--- gbrain:facts:end -->'],
+        ['people/sf-takes', 'takes body\n\n<!--- gbrain:takes:begin -->\n| 1 | thinks so | take |\n<!--- gbrain:takes:end -->'],
+      ];
+      for (const [slug, body] of people) {
+        await engine.putPage(slug, page(slug, { type: 'person', compiled_truth: body }));
+        const chunks = [{ chunk_index: 0, chunk_text: `${slug} chunk`, chunk_source: 'compiled_truth' as const }];
+        if (slug === 'people/sf-unsealed') await engine.upsertChunks(slug, chunks);
+        else await engine.sealChunks(slug, chunks);
+        await engine.addLink(slug, 'companies/sf-co', `ctx ${slug}`, 'invested_in', 'manual');
+      }
+      const chain = async (opts: Partial<import('../../src/core/types.ts').ChainHopOpts>) =>
+        sorted((await engine.relationalChainHop([company], {
+          linkTypes: ['invested_in'], toward: 'subject', subjectTypes: ['person'], objectTypes: ['company'],
+          degreeLinkTypes: ['invested_in'], neighborCap: 100, ...opts,
+        })).map((e) => ({ to: e.to_slug, context: e.context, chunk: e.canonical_chunk_id != null })), (e) => e.to);
+      const fanout = async (opts: RelationalFanoutOpts) =>
+        (await engine.relationalFanout(['companies/sf-co'], { direction: 'in', ...opts }))
+          .map((r) => `${r.slug}:${r.canonical_chunk_id != null ? 'chunk' : 'nochunk'}`).sort();
+      const open = await chain({});
+      const safe = await chain({ requireSafeChunks: true });
+      const safeHolders = await chain({ requireSafeChunks: true, takesHoldersAllowList: ['people/sf-sealed'] });
+      // GST-3058: the owner's own direct call reads the stored context; a holders list still skips takes-bearing evidence.
+      const owner = <T>(fn: () => Promise<T>) => withCallerAccess({ owner: true, ownerReads: true }, fn);
+      const ownerSafe = await owner(() => chain({ requireSafeChunks: true }));
+      const ownerHolders = await owner(() => chain({ requireSafeChunks: true, takesHoldersAllowList: ['people/sf-sealed'] }));
+      const fanOpen = await fanout({});
+      const fanSafe = await fanout({ requireSafeChunks: true });
+      expect(open.every((e) => e.context !== null && e.chunk)).toBe(true);
+      expect(ownerSafe.map((e) => e.context === null)).toEqual([false, false, false, false]);
+      expect(ownerHolders.map((e) => [e.to, e.context === null])).toEqual([
+        ['people/sf-fenced', false], ['people/sf-sealed', false], ['people/sf-takes', true], ['people/sf-unsealed', true],
+      ]);
+      expect(safe).toEqual([
+        { to: 'people/sf-fenced', context: null, chunk: true },
+        { to: 'people/sf-sealed', context: 'ctx people/sf-sealed', chunk: true },
+        { to: 'people/sf-takes', context: null, chunk: true },
+        { to: 'people/sf-unsealed', context: null, chunk: false },
+      ]);
+      expect(safeHolders).toEqual(safe);
+      expect(fanSafe).toContain('people/sf-unsealed:nochunk');
+      return { open, safe, safeHolders, ownerSafe, ownerHolders, fanOpen, fanSafe };
     },
   );
 });
