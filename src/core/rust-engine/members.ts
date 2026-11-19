@@ -472,6 +472,7 @@ export const RUST_ENGINE_MEMBERS = {
   readCheckpointManifestRow: 'session_state',
   writeCheckpointManifest: 'session_state',
   ageOutSessionState: 'session_state',
+  capSessionStatePerClient: 'session_state',
   // contradictions
   writeContradictionsRun: 'contradictions',
   loadContradictionsTrend: 'contradictions',

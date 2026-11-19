@@ -19,6 +19,10 @@
  */
 import { describe, expect } from 'bun:test';
 import type { SessionStateWrite } from '../../src/core/engine-sql/session-state.ts';
+import {
+  appendCheckpointManifest, gcSessionContextState, getCheckpointManifest, getSessionContextState, readDeltaSessionState,
+  upsertSessionContextState,
+} from '../../src/core/context/session-state.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { parityArms } from './harness.ts';
 
@@ -172,6 +176,55 @@ describe('engine parity: session state', () => {
       };
       expect(rows).toEqual({ a: true, b: true });
       return rows;
+    },
+  );
+
+  parityTest(
+    'context/session-state.ts keeps a wake cursor, a delta read and a checkpoint manifest across calls',
+    {
+      methods: ['upsertSessionState', 'readSessionCursor', 'readDeltaSessionRow', 'readCheckpointManifestRow', 'writeCheckpointManifest',
+        'ageOutSessionState', 'capSessionStatePerClient'],
+    },
+    async (engine) => {
+      const long = 'x'.repeat(250);
+      const before = {
+        cursor: await getSessionContextState(engine, 'default', null, 'sess'),
+        delta: await readDeltaSessionState(engine, 'default', null, 'sess'),
+        manifest: await getCheckpointManifest(engine, 'default', null, 'sess'),
+      };
+      // The first wake banks the standing entities and the keyset; the second moves only the keyset.
+      const wakes = [
+        await upsertSessionContextState(engine, 'default', null, 'sess', {
+          standingEntities: ['people/alice-example'], lastWakeAt: '2026-11-19T00:00:00.000001Z', cursorSlug: 'notes/a', degradedWakes: 'increment',
+        }),
+        await upsertSessionContextState(engine, 'default', 'local', 'sess', { lastWakeAt: '2026-11-19T00:05:00Z', cursorSlug: '' }),
+        await upsertSessionContextState(engine, 'default', '  agent-a  ', long, {
+          lastWakeAt: '2026-11-19T00:00:00Z', factsCursor: { at: '2026-11-18T00:00:00.000002Z', id: 7 }, degradedWakes: 'reset',
+        }),
+        await upsertSessionContextState(engine, 'default', null, 'sess', { lastWakeAt: 'not a time' }),
+      ];
+      const appended = [
+        await appendCheckpointManifest(engine, 'default', null, 'sess', [{ slug: 'notes/b', title: 'B\n title' }], { seg: 'h1', n: 1, at: '2026-11-19T00:01:00.000Z' }),
+        await appendCheckpointManifest(engine, 'default', null, 'sess',
+          Array.from({ length: 22 }, (_, i) => ({ slug: `notes/c${i}`, title: `C${i}` })).concat([{ slug: 'notes/b', title: 'B again' }]),
+          { seg: 'h2', n: 2, at: '2026-11-19T00:02:00.000Z' }),
+        await appendCheckpointManifest(engine, 'default', null, 'fresh', [], { seg: 'h3', n: 3 }),
+      ];
+      await gcSessionContextState(engine);
+      const after = {
+        cursor: await getSessionContextState(engine, 'default', null, 'sess'),
+        delta: await readDeltaSessionState(engine, 'default', null, 'sess'),
+        manifest: await getCheckpointManifest(engine, 'default', null, 'sess'),
+        agent: await readDeltaSessionState(engine, 'default', 'agent-a', long.slice(0, 200)),
+        fresh: await getCheckpointManifest(engine, 'default', null, 'fresh'),
+      };
+      expect(wakes.map((w) => w.ok)).toEqual([true, true, true, false]);
+      expect(after.cursor).toEqual({ standing_entities: ['people/alice-example'], surfaced_slugs: [''], last_wake_at: '2026-11-19T00:05:00.000000Z' });
+      expect(after.manifest?.length).toBe(20);
+      expect(after.manifest?.[0]).toEqual({ slug: 'notes/c0', title: 'C0', at: '2026-11-19T00:02:00.000Z', n: 2, seg: 'h2' });
+      expect(after.agent).toMatchObject({ status: 'loaded', state: { facts_cursor_id: 7, degraded_wakes: 0 } });
+      // A failed write reports its error text, which names the engine's parser: compare only that it failed.
+      return { before, wakes: wakes.map((w) => (w.ok ? w : { ok: false })), appended, after };
     },
   );
 });

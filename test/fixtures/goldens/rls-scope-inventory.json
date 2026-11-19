@@ -4691,6 +4691,7 @@
         "batchRetry": "none",
         "bindPageOrigin": "none",
         "cancelJobs": "none",
+        "capSessionStatePerClient": "none",
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",

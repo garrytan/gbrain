@@ -471,6 +471,7 @@ describe('delta cursor lifecycle', () => {
       'readCheckpointManifestRow',
       'writeCheckpointManifest',
       'ageOutSessionState',
+      'capSessionStatePerClient',
     ]);
     const failing = new Proxy(engine, {
       get(t, k) {

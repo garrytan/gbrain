@@ -2,11 +2,12 @@
  * v0.45.7 ambient recall (issue #1) — per-session cursor + boundary-tie dedup
  * for the `delta` verb and the heartbeat runtime.
  *
- * Parity-free by construction: both engines run the SAME `engine.executeRaw`
- * SQL (no per-engine method, so there is no parity surface to drift). jsonb
- * columns are written through the sanctioned `$N::text::jsonb` positional path
- * (binds as text, the cast parses it — dodges the postgres.js ::jsonb
- * double-encode trap; guarded by scripts/check-jsonb-params.mjs). The table is
+ * Storage runs through typed engine members (BrainEngine upsertSessionState,
+ * readSessionCursor, readDeltaSessionRow, readCheckpointManifestRow,
+ * writeCheckpointManifest, ageOutSessionState, capSessionStatePerClient). On
+ * PGLite and Postgres they run the same SQL this file ran through
+ * `engine.executeRaw` (engine-sql/session-state.ts); the Rust engine serves
+ * them from its store (rust/docs/store/session_state.md). The table is
  * `session_context_state` (migration v126); its schema parity is covered by the
  * schema-drift e2e.
  *
@@ -321,21 +322,7 @@ export async function gcSessionContextState(
   try {
     await engine.ageOutSessionState(Math.max(1, Math.floor(olderThanDays)));
     // Per-client LRU cap: keep the newest `maxRowsPerClient` rows per lane.
-    await engine.executeRaw(
-      `DELETE FROM session_context_state s
-       USING (
-         SELECT source_id, client_id, session_id,
-                row_number() OVER (
-                  PARTITION BY source_id, client_id ORDER BY updated_at DESC
-                ) AS rn
-         FROM session_context_state
-       ) ranked
-       WHERE s.source_id = ranked.source_id
-         AND s.client_id = ranked.client_id
-         AND s.session_id = ranked.session_id
-         AND ranked.rn > $1`,
-      [String(Math.max(1, Math.floor(maxRowsPerClient)))],
-    );
+    await engine.capSessionStatePerClient(Math.max(1, Math.floor(maxRowsPerClient)));
   } catch {
     /* best-effort */
   }

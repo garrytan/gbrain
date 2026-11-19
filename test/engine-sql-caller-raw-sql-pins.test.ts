@@ -118,6 +118,22 @@ const PINS: Pin[] = [
     case: { method: 'ageOutSessionState', variant: 'default', run: e => e.ageOutSessionState(7) },
     texts: [`DELETE FROM session_context_state WHERE updated_at < now() - ($1 || ' days')::interval`],
   },
+  {
+    from: 'src/core/context/session-state.ts:394 gcSessionContextState (per-client cap), at eb30f47b89',
+    case: { method: 'capSessionStatePerClient', variant: 'default', run: e => e.capSessionStatePerClient(1000) },
+    texts: [`DELETE FROM session_context_state s
+       USING (
+         SELECT source_id, client_id, session_id,
+                row_number() OVER (
+                  PARTITION BY source_id, client_id ORDER BY updated_at DESC
+                ) AS rn
+         FROM session_context_state
+       ) ranked
+       WHERE s.source_id = ranked.source_id
+         AND s.client_id = ranked.client_id
+         AND s.session_id = ranked.session_id
+         AND ranked.rn > $1`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

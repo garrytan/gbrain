@@ -27,3 +27,7 @@ export const writeCheckpointManifest: StoreMember<[...Key, manifest: readonly un
 export const ageOutSessionState: StoreMember<[olderThanDays: number], void> = async (brain, olderThanDays) => {
   await storeCall({ member: 'ageOutSessionState' }, () => brain.ageOutSessionState(olderThanDays));
 };
+
+export const capSessionStatePerClient: StoreMember<[maxRowsPerClient: number], void> = async (brain, maxRowsPerClient) => {
+  await storeCall({ member: 'capSessionStatePerClient' }, () => brain.capSessionStatePerClient(maxRowsPerClient));
+};

@@ -25,6 +25,7 @@ import {
   CHECKPOINT_MANIFEST_SQL,
   WRITE_CHECKPOINT_MANIFEST_SQL,
   AGE_OUT_SESSION_STATE_SQL,
+  CAP_SESSION_STATE_SQL,
   UPSERT_SESSION_STATE_SQL,
 } from '../src/core/engine-sql/session-state.ts';
 
@@ -51,6 +52,7 @@ const STATE_MEMBER_SQL: Record<string, string> = {
   readCheckpointManifestRow: CHECKPOINT_MANIFEST_SQL,
   writeCheckpointManifest: WRITE_CHECKPOINT_MANIFEST_SQL,
   ageOutSessionState: AGE_OUT_SESSION_STATE_SQL,
+  capSessionStatePerClient: CAP_SESSION_STATE_SQL,
 };
 
 function faulty(engine: BrainEngine, faults: Faults): BrainEngine {

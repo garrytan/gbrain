@@ -157,3 +157,25 @@ export const AGE_OUT_SESSION_STATE_SQL = `DELETE FROM session_context_state WHER
 export async function ageOutSessionState(exec: SessionStateExec, olderThanDays: number): Promise<void> {
   await exec.executeRaw(AGE_OUT_SESSION_STATE_SQL, [String(olderThanDays)]);
 }
+
+/** Per-client LRU cap: keep the newest `maxRowsPerClient` rows per lane. */
+export const CAP_SESSION_STATE_SQL = `DELETE FROM session_context_state s
+       USING (
+         SELECT source_id, client_id, session_id,
+                row_number() OVER (
+                  PARTITION BY source_id, client_id ORDER BY updated_at DESC
+                ) AS rn
+         FROM session_context_state
+       ) ranked
+       WHERE s.source_id = ranked.source_id
+         AND s.client_id = ranked.client_id
+         AND s.session_id = ranked.session_id
+         AND ranked.rn > $1`;
+
+/**
+ * Keeps the newest `maxRowsPerClient` rows of each (source_id, client_id) and deletes the rest (the caller passes a
+ * whole number >= 1). Rows with equal `updated_at` are ranked in the order the database sort leaves them.
+ */
+export async function capSessionStatePerClient(exec: SessionStateExec, maxRowsPerClient: number): Promise<void> {
+  await exec.executeRaw(CAP_SESSION_STATE_SQL, [String(maxRowsPerClient)]);
+}

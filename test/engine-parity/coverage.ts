@@ -213,6 +213,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readCheckpointManifestRow',
     'writeCheckpointManifest',
     'ageOutSessionState',
+    'capSessionStatePerClient',
   ],
   // alias_fanout_reads: search's alias fan-out reads (engine-sql/alias-fanout-reads.ts)
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows'],

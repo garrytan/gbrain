@@ -3487,6 +3487,8 @@ export interface BrainEngine {
   writeCheckpointManifest(sourceId: string, clientId: string, sessionId: string, manifest: readonly unknown[]): Promise<void>;
   /** Deletes every session row last written more than `olderThanDays` (a whole number >= 1) days ago. */
   ageOutSessionState(olderThanDays: number): Promise<void>;
+  /** Keeps the newest `maxRowsPerClient` (a whole number >= 1) session rows of each (source_id, client_id). */
+  capSessionStatePerClient(maxRowsPerClient: number): Promise<void>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

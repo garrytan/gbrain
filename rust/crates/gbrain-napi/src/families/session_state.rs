@@ -98,4 +98,16 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.age_out_session_state(older_than_days))
     }
+
+    /// `capSessionStatePerClient(maxRowsPerClient)`: resolves null.
+    #[napi]
+    pub fn cap_session_state_per_client<'env>(
+        &self,
+        env: &'env Env,
+        max_rows_per_client: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.cap_session_state_per_client(max_rows_per_client)
+        })
+    }
 }
