@@ -81,7 +81,7 @@ getPage	pages	yes	83	yes	yes	yes	serves
 readPageSnapshot	pages	yes	17	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	346	yes	yes	yes	serves
+putPage	pages	yes	347	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -205,7 +205,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	68	yes	yes	yes	serves
+addLink	links	yes	69	yes	yes	yes	serves
 addLinksBatch	links	yes	9	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	8	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -216,7 +216,7 @@ getBacklinks	links	yes	3	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	2	no	yes	yes	serves
 traverseGraph	links	yes	3	yes	yes	yes	serves
-traversePaths	links	yes	3	yes	yes	yes	serves
+traversePaths	links	yes	4	yes	yes	yes	serves
 traversePathsDetailed	links	yes	1	yes	yes	yes	serves
 relationalFanout	links	yes	4	yes	yes	yes	serves
 relationalChainHop	links	yes	4	no	yes	yes	serves
@@ -579,7 +579,7 @@ listUnwithdrawnFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
 listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves
 listFactsForRelevance	facts_trust	yes	4	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	2	no	yes	yes	serves
-matchSavedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
+matchSavedFacts	facts_trust	yes	2	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
 listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
 listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
